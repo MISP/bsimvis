@@ -2377,17 +2377,11 @@ html.light-theme .analysis-tag-badge {
 
 
 /* --- File browser (file_tree.js) ---------------------------------------- */
-/* Page and card surfaces. Dark reuses the theme; light puts white cards on a
-   grey page, since the theme's own card colour is nearly the page's. */
+/* Page and card surfaces. Dark reuses the theme; light is white on white,
+   separated by hairlines rather than grey fills. */
 :root { --fb-page: var(--bg); --fb-surface: var(--card-bg); --fb-shadow: none; --fb-pop: 0 12px 32px rgba(0,0,0,.45); }
-html.light-theme {
-    --fb-page: #f3f4f6; --fb-surface: #ffffff;
-    --fb-shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.04);
-    --fb-pop: 0 10px 28px rgba(16,24,40,.14);
-}
-html.light-theme #file-browser { --fb-line: rgba(16,24,40,.09); --fb-line-strong: rgba(16,24,40,.16); }
-.fb-card, .fb-table, .fb-list, .fb-detail, .fb-panel { box-shadow: var(--fb-shadow); }
-.fb-card-note, .fb-table-head { box-shadow: none; }
+html.light-theme { --fb-page: #ffffff; --fb-surface: #ffffff; --fb-pop: 0 10px 28px rgba(16,24,40,.14); }
+html.light-theme #file-browser { --fb-line: rgba(16,24,40,.11); --fb-line-strong: rgba(16,24,40,.2); }
 /* The files view draws its own layouts instead of the dashboard table.
    Neutral hairlines, 12px radii, one accent; colours come from the theme. */
 
@@ -2410,7 +2404,7 @@ body.filters-collapsed #fb-panel { display: none; }
 .ft-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .ft-seg {
     display:inline-flex; align-items:stretch; height:30px; box-sizing:border-box;
-    border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--meta-header-bg);
+    border:1px solid var(--border); border-radius:8px; overflow:hidden; background:var(--fb-surface);
 }
 .ft-seg-btn {
     --ft-axis: var(--accent);
@@ -2581,7 +2575,7 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
     transition:background .12s;
 }
 .fb-card-body > .fb-line:first-child, .fb-card-body > .fb-fold:first-child { border-top:none; }
-.fb-line:hover { background:color-mix(in srgb, var(--text) 3%, transparent); }
+.fb-line:hover { background:color-mix(in srgb, var(--accent) 5%, transparent); }
 .fb-line-band { background:color-mix(in srgb, var(--accent) 4%, transparent); }
 .fb-line-main { display:flex; align-items:center; gap:8px; min-width:0; }
 .fb-line-sub { display:flex; align-items:center; flex-wrap:wrap; gap:4px 14px; padding-left:26px; margin-top:3px; }
@@ -2589,20 +2583,6 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 
 /* List + detail */
 .fb-split { display:grid; grid-template-columns:minmax(0, 1fr) minmax(320px, 400px); gap:16px; align-items:start; }
-.fb-list { background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden; }
-.fb-li {
-    display:grid; grid-template-columns:auto auto minmax(0, 1fr) 62px 140px 40px; align-items:center; gap:10px;
-    padding:8px 14px 8px calc(14px + var(--indent, 0) * 18px); border-top:1px solid var(--fb-line); cursor:pointer;
-    transition:background .12s;
-}
-.fb-list > :first-child { border-top:none; }
-.fb-li:hover { background:color-mix(in srgb, var(--text) 3%, transparent); }
-.fb-li.selected { background:color-mix(in srgb, var(--accent) 11%, transparent); box-shadow:inset 3px 0 0 var(--accent); }
-.fb-li-band { background:var(--fb-tint); }
-.fb-li-group { grid-template-columns:auto minmax(0, 1fr); background:var(--fb-tint); cursor:default; padding-top:11px; padding-bottom:11px; }
-.fb-li-text { min-width:0; display:flex; flex-direction:column; gap:2px; }
-.fb-li-name { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.fb-tagcount { color:var(--dim); font-size:0.7rem; display:inline-flex; gap:4px; align-items:center; justify-content:flex-end; }
 .fb-detail {
     position:sticky; top:16px; max-height:calc(100vh - 210px); overflow:auto;
     background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); padding:16px 18px;
@@ -2622,44 +2602,53 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 .fb-detail-tags .entity-tags-editor { max-width:100%; }
 .fb-detail .ft-copy { opacity:.6; }
 
-/* Table */
-.fb-table {
-    width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0;
-    background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden;
-}
-.fb-table th {
-    background:var(--fb-surface); text-align:left; white-space:nowrap;
-    font-size:0.62rem; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); font-weight:700;
-    padding:10px 12px;
-}
-.fb-table th.fb-sortable { cursor:pointer; }
-.fb-table th.fb-sortable:hover, .fb-table th.sorted { color:var(--text); }
-.fb-table th.fb-th-num { text-align:right; }
-/* One colgroup for the header and every card, so the columns line up. */
+/* Grid: the table and list layouts. One <table>, so cell selection spans it;
+   cards are drawn with spacer rows and rounded first/last rows. */
+.fb-grid { width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0; }
 .fb-col-num { width:84px; }
 .fb-col-hash { width:120px; }
 .fb-col-clusters { width:150px; }
 .fb-col-tags { width:34%; }
 .fb-col-note { width:44px; }
-.fb-table-head {
-    position:sticky; top:0; z-index:5; margin-bottom:10px;
-    box-shadow:0 8px 10px -4px var(--fb-page) !important;
+.fb-col-count { width:56px; }
+.fb-grid th {
+    position:sticky; top:0; z-index:3; background:var(--fb-page); text-align:left; white-space:nowrap;
+    font-size:0.62rem; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); font-weight:700;
+    padding:4px 12px 10px;
 }
-.fb-table-card { margin-bottom:10px; transition:border-color .15s; }
-.fb-table-card:hover { border-color:var(--fb-line-strong); }
-.fb-table-card tr.fb-tr-band:first-child td, .fb-table-card tr.fb-tr-group:first-child td { padding-top:10px; padding-bottom:10px; }
-.fb-table td { padding:7px 12px; border-top:1px solid var(--fb-line); vertical-align:middle; min-width:0; }
-.fb-table tbody tr:first-child td { border-top:none; }
-.fb-table tbody tr:hover td { background:color-mix(in srgb, var(--text) 3%, transparent); }
-.fb-table tr.fb-tr-band td { background:var(--fb-tint); }
-.fb-table tr.fb-tr-group td { background:var(--fb-tint); padding:10px 12px; }
-.fb-table tr.fb-tr-line td { padding:0; }
-.fb-table tr.fb-tr-line .fb-fold { border-top:none; }
+.fb-grid th.fb-th-num { text-align:right; }
+.fb-grid th.fb-sortable { cursor:pointer; }
+.fb-grid th.fb-sortable:hover, .fb-grid th.sorted { color:var(--text); }
+.fb-grid td {
+    padding:7px 12px; vertical-align:middle; min-width:0;
+    background:var(--fb-surface); border-top:1px solid var(--fb-line);
+}
+.fb-grid tr[data-fb-card] > td:first-child { border-left:1px solid var(--fb-line); }
+.fb-grid tr[data-fb-card] > td:last-child { border-right:1px solid var(--fb-line); }
+.fb-grid tr.fb-first > td { border-top:1px solid var(--fb-line); }
+.fb-grid tr.fb-first > td:first-child { border-top-left-radius:var(--fb-radius); }
+.fb-grid tr.fb-first > td:last-child { border-top-right-radius:var(--fb-radius); }
+.fb-grid tr.fb-last > td { border-bottom:1px solid var(--fb-line); }
+.fb-grid tr.fb-last > td:first-child { border-bottom-left-radius:var(--fb-radius); }
+.fb-grid tr.fb-last > td:last-child { border-bottom-right-radius:var(--fb-radius); }
+.fb-grid tr.fb-gap > td, .fb-grid tr.fb-tr-note > td { background:none; border:none; padding:0; height:10px; }
+.fb-grid tr.fb-tr-note > td { height:auto; padding:2px 4px; }
+.fb-grid tr[data-fb-card]:hover > td { background:color-mix(in srgb, var(--accent) 5%, var(--fb-surface)); }
+.fb-grid tr.fb-tr-band > td, .fb-grid tr.fb-tr-group > td { background:color-mix(in srgb, var(--accent) 7%, var(--fb-surface)); }
+.fb-grid tr.fb-tr-group > td { padding:10px 12px; }
+.fb-grid tr.fb-tr-line > td { padding:0; }
+.fb-grid tr.fb-tr-line .fb-fold { border-top:none; }
+.fb-grid tr.fb-li { cursor:pointer; }
+.fb-grid tr.fb-li.selected > td { background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); }
+.fb-grid tr.fb-li.selected > td:first-child { box-shadow:inset 3px 0 0 var(--accent); }
+.fb-grid td.selected-cell { background:color-mix(in srgb, var(--accent) 22%, var(--fb-surface)) !important; }
 .fb-tr-grouphead { display:flex; align-items:flex-start; gap:8px; }
 .fb-td-file { display:flex; align-items:center; gap:8px; min-width:0; padding-left:calc(var(--indent, 0) * 18px); }
+.fb-li-text { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.fb-li-name { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .fb-td-num { text-align:right; font-family:ui-monospace, Consolas, monospace; font-variant-numeric:tabular-nums; color:var(--subtle); }
-
 .fb-td-note { text-align:center; }
+.fb-td-count { color:var(--dim); font-size:0.7rem; text-align:right; white-space:nowrap; }
 .fb-td-hash { font-family:ui-monospace, Consolas, monospace; font-size:0.72rem; color:var(--subtle); }
 
 /* Full value in the DOM, clipped on screen: selecting it copies all of it. */
@@ -2678,3 +2667,7 @@ tr:hover .ft-copy, .ft-copy:focus-visible { opacity:0.6; }
     .fb-split { grid-template-columns: minmax(0, 1fr); }
     .fb-detail { position:static; max-height:none; }
 }
+/* Spacer rows between cards never show as selected. */
+.fb-grid tr.fb-gap > td { background:none !important; box-shadow:none !important; }
+.fb-detail { overflow-x:hidden; }
+.fb-crumbs span { min-width:0; overflow-wrap:anywhere; }

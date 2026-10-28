@@ -30,6 +30,7 @@ window.YaraView = {
     _textarea: null,
     _timer: null,
     _seq: 0,
+    _open: new Set(['strings']), // result sections left expanded across live re-renders
     _uuid: null,
     _run: null,
     _runTimer: null,
@@ -114,28 +115,36 @@ window.YaraView = {
                 <div style="display:flex; gap:6px; flex-wrap:wrap; font-size:0.8rem;">
                     <button class="btn" onclick="YaraView.save()"><i class="fa-solid fa-floppy-disk"></i> Save version</button>
                     <button class="btn" onclick="YaraView.exportYar()"><i class="fa-solid fa-download"></i> .yar</button>
-                    <button class="btn" onclick="YaraView.toVendored()" title="Write to data/yara_rules/custom for review"><i class="fa-solid fa-folder-plus"></i> To ruleset</button>
                     <button class="btn" onclick="YaraView.startRun('sweep')" title="Scan every file of the collection: exact numbers"><i class="fa-solid fa-magnifying-glass-chart"></i> Full sweep</button>
-                    <button class="btn" onclick="YaraView.startRun('apply')" title="Tag matching files yara:custom:<rule> (needs a saved rule)"><i class="fa-solid fa-tags"></i> Apply tags</button>
                     <button class="btn" onclick="YaraView.suggest()"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest strings</button>
                     <button class="btn" onclick="YaraView.draft()"><i class="fa-solid fa-robot"></i> LLM draft</button>
+                    <details style="position:relative;">
+                        <summary class="btn" style="list-style:none; cursor:pointer;"><i class="fa-solid fa-ellipsis"></i> More</summary>
+                        <div style="position:absolute; z-index:5; top:100%; left:0; margin-top:4px; display:flex; flex-direction:column; gap:4px; padding:6px; white-space:nowrap; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
+                            <button class="btn" onclick="YaraView.toVendored()" title="Write to data/yara_rules/custom for review"><i class="fa-solid fa-folder-plus"></i> To ruleset</button>
+                            <button class="btn" onclick="YaraView.startRun('apply')" title="Tag matching files yara:custom:<rule> (needs a saved rule)"><i class="fa-solid fa-tags"></i> Apply tags</button>
+                        </div>
+                    </details>
                 </div>
                 <div id="yara-run" style="font-size:0.8rem; color:var(--subtle);"></div>
-                <div id="yara-seed" style="${card} padding:8px 10px; font-size:0.78rem; display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                    <span style="color:var(--subtle);">Function bytes</span>
+                <details id="yara-seed" style="${card} padding:6px 10px; font-size:0.78rem;">
+                  <summary style="cursor:pointer; color:var(--subtle);">Insert function bytes</summary>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
                     <input id="yara-seed-md5" placeholder="file md5" style="width:250px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px;">
                     <input id="yara-seed-addr" placeholder="entry (hex)" style="width:100px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px;">
                     <button class="btn" onclick="YaraView.seedFromInputs()">Insert</button>
-                </div>
+                  </div>
+                </details>
             </div>
             <div style="display:flex; flex-direction:column; gap:10px; overflow-y:auto; min-height:0;">
-                <div style="${card} padding:10px 12px;">
-                    <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                <details open style="${card} padding:8px 12px;">
+                    <summary style="cursor:pointer; color:var(--accent); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:1px;">Test sets</summary>
+                    <div style="display:flex; gap:8px; align-items:center; margin:8px 0;">
                         <span style="color:var(--subtle); font-size:0.78rem;">Collection</span>
                         <select id="yara-collection" onchange="YaraView._setsChanged()" style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:4px; padding:4px;"></select>
                     </div>
                     <div class="nway-focus-body nway-match-body nway-cmp-body" id="yara-sets" style="position:static; box-shadow:none; border:0; background:transparent; padding:0; width:100%; max-width:none; max-height:none; min-width:0; align-items:stretch;"></div>
-                </div>
+                </details>
                 <div id="yara-result" style="display:flex; flex-direction:column; gap:10px;"></div>
             </div>
         </div>`;
@@ -283,6 +292,7 @@ window.YaraView = {
 
     _renderResult(res, hint) {
         const el = document.getElementById('yara-result');
+        if (!el._tog) el.addEventListener('toggle', el._tog = e => { const k = e.target.dataset && e.target.dataset.sec; if (k) e.target.open ? this._open.add(k) : this._open.delete(k); }, true);
         if (!res) { el.innerHTML = `<div style="color:var(--subtle); font-size:0.85rem; padding:10px;">${escapeHtml(hint || '')}</div>`; return; }
         if (res.error) { el.innerHTML = `<div style="color:#ef4444; padding:10px;">${escapeHtml(res.error)}</div>`; return; }
         if (!res.ok) {
@@ -296,7 +306,7 @@ window.YaraView = {
         const th = 'text-align:left; color:var(--subtle); font-weight:600; padding:3px 6px; font-size:0.72rem;';
         const td = 'padding:3px 6px; font-size:0.78rem;';
         const tbl = (head, rows) => `<table style="width:100%; border-collapse:collapse;"><thead><tr>${head.map(h => `<th style="${th}">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
-        const sec = (title, body) => `<div style="background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:8px 10px;"><div style="color:var(--accent); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">${title}</div>${body}</div>`;
+        const sec = (key, title, body) => `<details data-sec="${key}" ${this._open.has(key) ? 'open' : ''} style="background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:8px 10px;"><summary style="cursor:pointer; color:var(--accent); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:1px;">${title}</summary><div style="margin-top:6px; max-height:320px; overflow-y:auto;">${body}</div></details>`;
 
         const groups = tbl(['Group', 'Role', 'Files', 'Hits', 'Rate'], res.groups.map(g => `<tr>
             <td style="${td}">${escapeHtml(g.label)}</td>
@@ -333,10 +343,10 @@ window.YaraView = {
                 ${s.sampled ? `<b style="color:#f59e0b;">sampled</b>: ${s.negatives_scanned} of ${s.negatives_available} negatives &mdash; use Full sweep for exact numbers.` : `${s.negatives_scanned} negatives scanned.`}
                 ${s.targets_truncated ? ' Targets truncated.' : ''}${s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : ''}
             </div>
-            ${sec('Groups', groups)}
-            ${sec('Strings', strings)}
-            ${sec(`Missed targets (${m.fn})`, list(res.missed))}
-            ${sec(`False hits (${m.fp})`, list(res.false_hits, f => ` <span style="color:var(--subtle);">${escapeHtml(f.rules.join(', '))}</span>`))}`;
+            ${sec('groups', 'Groups', groups)}
+            ${sec('strings', `Strings (${res.strings.length})`, strings)}
+            ${sec('missed', `Missed targets (${m.fn})`, list(res.missed))}
+            ${sec('false', `False hits (${m.fp})`, list(res.false_hits, f => ` <span style="color:var(--subtle);">${escapeHtml(f.rules.join(', '))}</span>`))}`;
     },
 
     // --- seeds ------------------------------------------------------------

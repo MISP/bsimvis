@@ -676,7 +676,7 @@ window.ClusterDetailView = {
             if (!btn) return;
             btn.classList.toggle('active', t === tab);
             document.getElementById(`cluster-tab-${t}`).style.display =
-                t === tab ? (t === 'members' || t === 'medoid' ? 'flex' : 'block') : 'none';
+                t === tab ? (t === 'members' || t === 'medoid' || t === 'functions' ? 'flex' : 'block') : 'none';
         });
         const url = new URL(window.location.href);
         if (tab !== this.defaultTab()) url.searchParams.set('tab', tab);

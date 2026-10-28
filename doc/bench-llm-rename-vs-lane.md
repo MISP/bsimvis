@@ -140,6 +140,61 @@ free, and 65536 costs 0.2 GB more than 32768.
 
 `_selfcheck` asserts that a caller's own `num_ctx` never reaches Ollama.
 
+## Real collection: stripped functions, 120 rows
+
+Second pass on a full Mirai-family collection (uClibc, Go and Mirai's own code,
+most of it stripped). Same rule as before: the model only ever sees stripped
+members (`FUN_*`). The truth is the name of an unstripped twin in the same
+function cluster.
+
+Rows: function clusters with cohesion >= 0.9, 3 to 40 members, a plain
+identifier as name, at least 2 stripped members from different files. One row
+per name, seeded sample of 120, up to 3 stripped members each (what the N-way
+row sends). 64 rows carry a FunctionID comment, 56 don't. No Go rows survived:
+Go binaries keep their symbol table, so their clusters have no stripped members.
+
+**The 56 rows without a FunctionID comment are the real test.** That is where
+Mirai's own helpers sit (`attack_udp_generic`, `table_retrieve_val`,
+`util_strcpy`, `rand_next`) next to uClibc routines FunctionID missed.
+
+The change: before asking, name the row's stripped callees and callers after
+their cluster, the way the N-way table names its rows (`nway._attach_clusters`:
+cohesion floor, default names skipped). `FUN_0000f408` in the code becomes
+`checksum_generic`. Named callers go on a `Called from:` line.
+
+| variant | run | score | wrong | with FunctionID | no FunctionID | median |
+|:--|:--|--:|--:|--:|--:|--:|
+| `base` (today's prompt) | 1 | 163/240 | 29 | 115/128 | 48/112 | 0.96 s |
+| `base` | 2 | 161/240 | 29 | 113/128 | 48/112 | 1.02 s |
+| `callees` | 1 | 178/240 | 20 | 115/128 | 63/112 | 0.85 s |
+| `callees` | 2 | 178/240 | 19 | 113/128 | 65/112 | 1.02 s |
+| `callees` + "names in the code are callees" hint | 1 | 174/240 | 22 | 117/128 | 57/112 | 1.02 s |
+| shipped route (`/rename/suggest`) | 1 | 175/240 | 21 | 114/128 | 61/112 | 1.05 s |
+
+Run-to-run spread is about 2 points (16 of 120 names flip between identical runs
+at temperature 0.1). The gain is +15, all of it on stripped rows without a
+FunctionID comment: wrong answers there drop 24 -> 15. The lookup costs 10–20 ms.
+
+What it fixes, from the stripped rows:
+
+| truth | today | with neighbour names |
+|:--|:--|:--|
+| `rand_str` | `xorshift` | `fill_random` |
+| `attack_get_opt_int` | `getopt` | `get_option_value` |
+| `checksum_generic` | `crc16` | `compute_checksum` |
+| `util_atoi` | `strtol` | `parse_int` |
+| `__aeabi_idiv0` | `main` | `__aeabi_idiv0` |
+| `__subdf3` | `__udivdi3` | `fp_sub` |
+
+The hint line, written to stop the model naming a function after a callee it
+calls (`mbsnrtowcs` -> `mbrtowc`), fixed that FunctionID row and cost 7 points
+on stripped rows. Dropped.
+
+Still wrong with either prompt: pthread internals (`new_sem_extricate_func`,
+`__pthread_initialize_minimal`), `clock`, `fprintf`, `toupper`, and Mirai's
+`util_local_addr`. Their neighbours are as stripped as they are, or the code
+alone doesn't pin the routine.
+
 ## Not done
 
 - Caching rename suggestions by row content, the way lanes are cached. Rename is

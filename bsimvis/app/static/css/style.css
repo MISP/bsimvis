@@ -2377,10 +2377,21 @@ html.light-theme .analysis-tag-badge {
 
 
 /* --- File browser (file_tree.js) ---------------------------------------- */
+/* Page and card surfaces. Dark reuses the theme; light puts white cards on a
+   grey page, since the theme's own card colour is nearly the page's. */
+:root { --fb-page: var(--bg); --fb-surface: var(--card-bg); --fb-shadow: none; --fb-pop: 0 12px 32px rgba(0,0,0,.45); }
+html.light-theme {
+    --fb-page: #f3f4f6; --fb-surface: #ffffff;
+    --fb-shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.04);
+    --fb-pop: 0 10px 28px rgba(16,24,40,.14);
+}
+html.light-theme #file-browser { --fb-line: rgba(16,24,40,.09); --fb-line-strong: rgba(16,24,40,.16); }
+.fb-card, .fb-table, .fb-list, .fb-detail, .fb-panel { box-shadow: var(--fb-shadow); }
+.fb-card-note, .fb-table-head { box-shadow: none; }
 /* The files view draws its own layouts instead of the dashboard table.
    Neutral hairlines, 12px radii, one accent; colours come from the theme. */
 
-#table-body-wrap.fb-mounted { background: var(--bg); }
+#table-body-wrap.fb-mounted { background: var(--fb-page); }
 #file-browser {
     --fb-line: color-mix(in srgb, var(--text) 9%, transparent);
     --fb-line-strong: color-mix(in srgb, var(--text) 15%, transparent);
@@ -2419,7 +2430,7 @@ body.filters-collapsed #fb-panel { display: none; }
 /* Query bar (#search-area) */
 .fb-qbar {
     flex:1; display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-height:38px; box-sizing:border-box;
-    padding:4px 6px 4px 12px; border:1px solid var(--border); border-radius:10px; background:var(--card-bg);
+    padding:4px 6px 4px 12px; border:1px solid var(--border); border-radius:10px; background:var(--fb-surface);
     transition:border-color .15s, box-shadow .15s;
 }
 .fb-qbar:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
@@ -2450,7 +2461,7 @@ body.filters-collapsed #fb-panel { display: none; }
 .fb-addfilter-btn:hover { color:var(--accent); border-color:var(--accent); }
 .fb-addfilter-menu {
     display:none; position:absolute; right:0; top:calc(100% + 6px); z-index:300; width:240px; max-height:360px; overflow:auto;
-    background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:6px; box-shadow:0 12px 32px rgba(0,0,0,.45);
+    background:var(--fb-surface); border:1px solid var(--border); border-radius:10px; padding:6px; box-shadow:var(--fb-pop);
 }
 .fb-addfilter.open .fb-addfilter-menu { display:block; }
 .fb-addfilter-menu button {
@@ -2463,11 +2474,11 @@ body.filters-collapsed #fb-panel { display: none; }
 /* Filter panel */
 .fb-panel {
     position:sticky; top:16px; max-height:calc(100vh - 210px); overflow:auto;
-    background:var(--card-bg); border:1px solid var(--fb-line); border-radius:var(--fb-radius); padding:4px 0 10px;
+    background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); padding:4px 0 10px;
 }
 .fb-panel-head {
     display:flex; justify-content:space-between; align-items:center; padding:10px 14px 8px;
-    font-weight:600; font-size:0.8rem; position:sticky; top:0; background:var(--card-bg); z-index:1;
+    font-weight:600; font-size:0.8rem; position:sticky; top:0; background:var(--fb-surface); z-index:1;
 }
 .fb-panel-head i { color:var(--accent); margin-right:4px; }
 .fb-panel-head button { background:none; border:none; color:var(--dim); cursor:pointer; font-size:0.72rem; }
@@ -2477,7 +2488,7 @@ body.filters-collapsed #fb-panel { display: none; }
 .fb-field { display:flex; flex-direction:column; gap:4px; margin-bottom:9px; }
 .fb-field > span { font-size:0.68rem; color:var(--subtle); }
 .fb-field input, .fb-field select {
-    width:100%; box-sizing:border-box; background:var(--bg); border:1px solid var(--fb-line-strong); color:var(--text);
+    width:100%; box-sizing:border-box; background:var(--fb-page); border:1px solid var(--fb-line-strong); color:var(--text);
     border-radius:7px; padding:6px 8px; font-size:0.76rem; outline:none; color-scheme:dark;
 }
 html.light-theme .fb-field input, html.light-theme .fb-field select { color-scheme:light; }
@@ -2546,7 +2557,7 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 .fb-card-grid { columns:460px; column-gap:16px; }
 .fb-card, .fb-card-note {
     break-inside:avoid; margin-bottom:16px; display:block;
-    background:var(--card-bg); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden;
+    background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden;
     transition:border-color .15s;
 }
 .fb-card:hover { border-color:var(--fb-line-strong); }
@@ -2578,7 +2589,7 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 
 /* List + detail */
 .fb-split { display:grid; grid-template-columns:minmax(0, 1fr) minmax(320px, 400px); gap:16px; align-items:start; }
-.fb-list { background:var(--card-bg); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden; }
+.fb-list { background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden; }
 .fb-li {
     display:grid; grid-template-columns:auto auto minmax(0, 1fr) 62px 140px 40px; align-items:center; gap:10px;
     padding:8px 14px 8px calc(14px + var(--indent, 0) * 18px); border-top:1px solid var(--fb-line); cursor:pointer;
@@ -2594,7 +2605,7 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 .fb-tagcount { color:var(--dim); font-size:0.7rem; display:inline-flex; gap:4px; align-items:center; justify-content:flex-end; }
 .fb-detail {
     position:sticky; top:16px; max-height:calc(100vh - 210px); overflow:auto;
-    background:var(--card-bg); border:1px solid var(--fb-line); border-radius:var(--fb-radius); padding:16px 18px;
+    background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); padding:16px 18px;
 }
 .fb-detail h4 { margin:18px 0 8px; font-size:0.62rem; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); }
 .fb-detail h4 span { color:var(--subtle); margin-left:4px; }
@@ -2614,20 +2625,29 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 /* Table */
 .fb-table {
     width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0;
-    background:var(--card-bg); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden;
+    background:var(--fb-surface); border:1px solid var(--fb-line); border-radius:var(--fb-radius); overflow:hidden;
 }
 .fb-table th {
-    position:sticky; top:0; z-index:2; background:var(--card-bg); text-align:left; white-space:nowrap;
+    background:var(--fb-surface); text-align:left; white-space:nowrap;
     font-size:0.62rem; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); font-weight:700;
-    padding:11px 12px; border-bottom:1px solid var(--fb-line-strong);
+    padding:10px 12px;
 }
 .fb-table th.fb-sortable { cursor:pointer; }
 .fb-table th.fb-sortable:hover, .fb-table th.sorted { color:var(--text); }
-.fb-table th.fb-th-num { width:84px; text-align:right; }
-.fb-table th.fb-th-hash { width:120px; }
-.fb-table th.fb-th-clusters { width:150px; }
-.fb-table th.fb-th-note { width:44px; }
-.fb-table th:nth-last-child(2) { width:34%; }
+.fb-table th.fb-th-num { text-align:right; }
+/* One colgroup for the header and every card, so the columns line up. */
+.fb-col-num { width:84px; }
+.fb-col-hash { width:120px; }
+.fb-col-clusters { width:150px; }
+.fb-col-tags { width:34%; }
+.fb-col-note { width:44px; }
+.fb-table-head {
+    position:sticky; top:0; z-index:5; margin-bottom:10px;
+    box-shadow:0 8px 10px -4px var(--fb-page) !important;
+}
+.fb-table-card { margin-bottom:10px; transition:border-color .15s; }
+.fb-table-card:hover { border-color:var(--fb-line-strong); }
+.fb-table-card tr.fb-tr-band:first-child td, .fb-table-card tr.fb-tr-group:first-child td { padding-top:10px; padding-bottom:10px; }
 .fb-table td { padding:7px 12px; border-top:1px solid var(--fb-line); vertical-align:middle; min-width:0; }
 .fb-table tbody tr:first-child td { border-top:none; }
 .fb-table tbody tr:hover td { background:color-mix(in srgb, var(--text) 3%, transparent); }

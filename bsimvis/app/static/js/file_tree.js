@@ -944,7 +944,9 @@ window.FileTree = {
             <div class="fb-detail-tags">${n.exists === false ? '' : this._tagEditor(n, 60)}</div>`;
     },
 
-    // Table: one compact row per item.
+    // Table: one compact row per item, one card per archive, cluster group
+    // or standalone file. The cards are separate tables sharing one colgroup,
+    // so their columns line up under the single sticky header.
     _paintTable() {
         const extra = this.extraCols();
         const sortBy = this._params.get('sort_by') || 'file_name';
@@ -954,9 +956,11 @@ window.FileTree = {
                 ${sortBy === key ? `<i class="fa-solid fa-caret-${order === 'asc' ? 'up' : 'down'}"></i>` : ''}</th>`
             : `<th class="${cls}">${label}</th>`;
         const span = 5 + (extra ? 2 : 0);
-        const body = this._rows.map(r => {
+        const cols = `<colgroup><col>${extra ? '<col class="fb-col-hash"><col class="fb-col-hash">' : ''}
+            <col class="fb-col-num"><col class="fb-col-clusters"><col class="fb-col-tags"><col class="fb-col-note"></colgroup>`;
+
+        const row = r => {
             if (r.t === 'fold') return `<tr data-ft-anc="${escapeAttr(r.anc)}" class="fb-tr-line"><td colspan="${span}">${this._foldLine({ ...r, anc: '' }, r.depth)}</td></tr>`;
-            if (r.t === 'note') return `<tr data-ft-anc="${escapeAttr(r.anc)}" class="fb-tr-line"><td colspan="${span}">${this._noteLine({ ...r, anc: '' })}</td></tr>`;
             if (r.t === 'group') return `<tr class="fb-tr-group"><td colspan="${span}"><div class="fb-tr-grouphead">${this._chev(r.id)}<div>${this._groupHead(r)}</div></div></td></tr>`;
             const n = r.n;
             return `<tr class="${r.t === 'band' ? 'fb-tr-band' : ''}" data-ft-anc="${escapeAttr(r.anc)}" ${this._entityAttrs(n)}>
@@ -971,11 +975,26 @@ window.FileTree = {
                 <td class="fb-td-tags">${n.exists === false ? '' : this._tagEditor(n, 3)}</td>
                 <td class="fb-td-note">${n.exists === false ? '' : this._noteBtn(n)}</td>
             </tr>`;
-        }).join('');
-        return `<table class="fb-table"><thead><tr>
-            ${th('File', 'file_name')}${extra ? th('MD5', '', 'fb-th-hash') + th('Batch', '', 'fb-th-hash') : ''}
-            ${th('Funcs', 'function_count', 'fb-th-num')}${th('Clusters', '', 'fb-th-clusters')}${th('Tags', '')}${th('', '', 'fb-th-note')}
-        </tr></thead><tbody>${body}</tbody></table>`;
+        };
+
+        // A card starts at every top-level row; notes sit between cards.
+        const parts = [];
+        let card = null;
+        for (const r of this._rows) {
+            if (r.t === 'note') { card = null; parts.push(this._noteLine(r)); continue; }
+            if (r.depth === 0 || !card) { card = []; parts.push(card); }
+            card.push(r);
+        }
+        const body = parts.map(p => typeof p === 'string' ? p
+            : `<table class="fb-table fb-table-card${p[0].t === 'file' ? ' fb-table-loose' : ''}">${cols}<tbody>${p.map(row).join('')}</tbody></table>`).join('');
+
+        return `<div class="fb-table-stack">
+            <table class="fb-table fb-table-head">${cols}<thead><tr>
+                ${th('File', 'file_name')}${extra ? th('MD5', '') + th('Batch', '') : ''}
+                ${th('Funcs', 'function_count', 'fb-th-num')}${th('Clusters', '')}${th('Tags', '')}${th('', '')}
+            </tr></thead></table>
+            ${body}
+        </div>`;
     },
 
     _sortBy(key) {

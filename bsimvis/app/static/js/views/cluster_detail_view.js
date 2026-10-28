@@ -462,7 +462,9 @@ window.ClusterDetailView = {
 
     /** Scrolling a table down folds the hero card to its title row; back at the
      * top it unfolds. Only vertical movement counts (a sideways scroll keeps
-     * scrollTop), and the 40px gap keeps the layout shift from re-triggering. */
+     * scrollTop), and the 40px gap keeps the layout shift from re-triggering.
+     * It folds only if the content still overflows once the hero's height goes
+     * to it: otherwise the browser clamps scrollTop to 0 and the hero unfolds. */
     onDetailScroll(e) {
         const t = e.target;
         if (this.heroManual || !t || t.id === 'cluster-detail' || typeof t.scrollTop !== 'number') return;
@@ -470,7 +472,9 @@ window.ClusterDetailView = {
         const prev = this._lastTop.get(t) || 0;
         this._lastTop.set(t, t.scrollTop);
         if (t.scrollTop === prev) return;
-        if (t.scrollTop > 40 && !this.heroCompact) this.setHero(true);
+        const hero = document.getElementById('cluster-hero');
+        const room = t.scrollHeight - t.clientHeight - (hero ? hero.offsetHeight : 0);
+        if (t.scrollTop > 40 && !this.heroCompact && room > 40) this.setHero(true);
         else if (t.scrollTop === 0 && this.heroCompact) this.setHero(false);
     },
 

@@ -517,6 +517,12 @@ window.ClusterDetailView = {
         return !this.childrenLoaded.has(cid) && !!(c && c.has_children);
     },
 
+    /** Discreet cohesion of the current axis, shown like the member count. */
+    cohesionBadge(c) {
+        if (c.cohesion_score == null) return '';
+        return `<span class="bsim-node-count" style="margin-left:8px;" title="Cohesion (${escapeAttr(this.axis)})">${Number(c.cohesion_score).toFixed(2)}</span>`;
+    },
+
     renderTree() {
         const treeContainer = document.getElementById('cluster-tree');
         if (!treeContainer) return;
@@ -550,6 +556,7 @@ window.ClusterDetailView = {
                     <span class="bsim-node-label" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
                         ${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}
                     </span>
+                    ${this.cohesionBadge(c)}
                     <span class="bsim-node-count">${Number(c.count || 0).toLocaleString()}</span>
                 </div>
             `;
@@ -1148,6 +1155,7 @@ window.ClusterDetailView = {
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); margin:0 6px;"></i>
                     <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>
                     <span class="dim" style="font-size:0.72rem; margin-left:8px;">(${Number(c.count || 0).toLocaleString()} members in subtree)</span>
+                    ${this.cohesionBadge(c)}
                 </td>
             `;
             tbody.appendChild(tr);

@@ -777,6 +777,14 @@ class FileSearch(Resource):
                 "description": "Filter by exact file MD5",
                 "example": "59281a167473ca9b98515b11cb709f82",
             },
+            "exact_md5": {
+                "description": "This file only, by its own MD5 (file_md5 also matches the files it contains)",
+                "example": "59281a167473ca9b98515b11cb709f82",
+            },
+            "root_md5": {
+                "description": "Every file extracted out of one upload, at any depth",
+                "example": "59281a167473ca9b98515b11cb709f82",
+            },
             "language_id": {
                 "description": "Filter by Ghidra language ID",
                 "example": "x86:LE:64:default",

@@ -1996,6 +1996,51 @@ def test_lineage():
         str((down or {}).get("children"))[:250],
     )
 
+    # The file tree (file_tree.js) loads every upload behind a page in two
+    # requests: root_md5 for everything under the roots, exact_md5 for the
+    # roots themselves. Both take a comma list.
+    def _files(params, label):
+        res = test_endpoint(
+            "GET",
+            "/api/file/search",
+            params={"collection": coll, "limit": 50, **params},
+            label=label,
+        )
+        return (res or {}).get("files") or []
+
+    def _md5s(params, label):
+        return {f.get("file_md5") for f in _files(params, label)}
+
+    # The shared classes.dex was re-uploaded under other parents above, so ask
+    # it which upload it belongs to now instead of assuming the first apk.
+    dex_doc = next(
+        iter(_files({"exact_md5": dex_md5}, "GET /api/file/search?exact_md5=<dex>")),
+        {},
+    )
+    dex_root = dex_doc.get("root_md5")
+    under = _md5s(
+        {"root_md5": f"{dex_root or apk_md5},{'f' * 32}"},
+        "GET /api/file/search?root_md5=a,b (file tree subtree load)",
+    )
+    check(
+        "root_md5 takes a list and returns what is under the roots, not the roots",
+        (
+            (dex_md5 in under and dex_root not in under)
+            if dex_root
+            else under == _md5s({"root_md5": apk_md5}, "GET root_md5 (single)")
+        ),
+        f"root={dex_root} {str(under)[:200]}",
+    )
+    roots = _md5s(
+        {"exact_md5": f"{apk_md5},{'f' * 32}"},
+        "GET /api/file/search?exact_md5=a,b (file tree root load)",
+    )
+    check(
+        "exact_md5 returns the listed file only, not the files it contains",
+        roots == {apk_md5},
+        str(roots)[:250],
+    )
+
     requests.post(
         f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
     )

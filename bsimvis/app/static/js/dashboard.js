@@ -289,9 +289,9 @@ const routes = {
         api: '/api/file/search',
         headers: [
             { label: 'Filename', width: '17%' },
-            { label: 'MD5 / Arch', width: '11%' },
+            { label: 'MD5 / Arch', width: '11%', extra: true },
             { label: 'Inferred Tags', width: '14%' },
-            { label: 'Batch UUID', width: '9%' },
+            { label: 'Batch UUID', width: '9%', extra: true },
             { label: 'Status', width: '7%' },
             { label: 'Funcs', width: '7%', sort: 'function_count' },
             { label: 'Notes', width: '3%' },
@@ -1164,6 +1164,16 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (items.length === 0 && !append) {
             const emptyMessage = viewKey === 'functions' && data.message ? data.message : 'No data found';
             tbody.innerHTML = `<tr><td colspan="100" style="text-align:center; padding:40px;">${escapeHtml(emptyMessage)}</td></tr>`;
+        } else if (viewKey === 'files' && window.FileTree) {
+            // The tree re-draws everything loaded so far, so a page joins the
+            // archives already on screen instead of appending below them.
+            const html = await FileTree.html(items, data.bin_cluster_map || {}, {
+                append, params, collection,
+                pool: window.getRoutingState ? window.getRoutingState().pool : null,
+            });
+            if (myGen !== _refreshGeneration) return;
+            tbody.innerHTML = html;
+            FileTree.applyVisibility(tbody);
         } else {
             // Pass clusters map for views that use it
             let clustersMap = undefined;
@@ -1220,6 +1230,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 const FOOTER_META_SKIP = new Set([
     'collection', 'pool', 'pool_id', 'limit', 'offset', 'page',
     'view', 'group', 'sort', 'sort_by', 'order', 'dir', 'append',
+    'group_axis', 'group_nodes', 'fold_tag',
 ]);
 
 function listFilters(params) {
@@ -1735,9 +1746,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
         // Pool searches span collections: append a Collection column, matching
         // the trailing cell renderCollectionCell() emits in the row renderers.
-        const routeHeaders = (pool && !col && COLLECTION_COLUMN_VIEWS.includes(viewKey))
+        const routeHeaders = ((pool && !col && COLLECTION_COLUMN_VIEWS.includes(viewKey))
             ? [...route.headers, { label: 'Collection', width: '8%' }]
-            : route.headers;
+            : route.headers).filter(h => !(h.extra && !showExtraFileCols()));
 
         const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[viewKey];
         const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
@@ -1843,6 +1854,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                             <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
                             <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
                         </div>`;
+            } else if (path === 'files' && window.FileTree) {
+                settingsHtml += FileTree.toolbarHtml(params);
             } else if (path === 'bin-clusters') {
                 settingsHtml += `
                         <div class="view-toggle">
@@ -1906,16 +1919,16 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 } else if (path === 'files') {
                     headHtml += `
                         <th><input type="text" id="flt-file-name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-                        <th>
+${showExtraFileCols() ? `                        <th>
                             <div style="display:flex; flex-direction:column; gap:4px;">
                                 <input type="text" id="flt-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                             </div>
-                        </th>
+                        </th>` : ''}
                         <th>
                             <input type="text" id="flt-file-inf-tags" value="${escapeAttr(p.get('inferred_tags') || '')}" placeholder="Inf.Tags..." title="Namespace-aware inferred tags" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
                         </th>
-                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+${showExtraFileCols() ? `                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>` : ''}
                         <th>
                             <select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
                                 ${['', 'pending', 'analyzing', 'failed', 'analyzed'].map(s => `<option value="${escapeAttr(s)}" ${(p.get('status') || '') === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All Statuses'}</option>`).join('')}

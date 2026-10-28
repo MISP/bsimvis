@@ -2374,3 +2374,62 @@ html.light-theme .analysis-tag-badge {
 .metadata-value-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; flex:none; }
 
 .exp-badge { display:inline-block; margin-left:6px; padding:2px 5px; border-radius:4px; background:color-mix(in srgb, var(--warning, #d97706) 18%, transparent); color:var(--warning, #d97706); font-size:0.62rem; font-weight:bold; letter-spacing:.04em; text-transform:uppercase; vertical-align:middle; }
+
+/* --- File search tree (file_tree.js) ------------------------------------ */
+
+/* Full value in the DOM, clipped on screen: selecting it copies all of it. */
+.ft-clip-cell { display:flex; align-items:center; gap:4px; min-width:0; }
+.ft-clip {
+    display:inline-block; max-width:11ch; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; vertical-align:bottom; min-width:0;
+}
+.ft-clip .entity-md5 { display:inline; }
+.ft-copy {
+    background:none; border:none; color:var(--dim); cursor:pointer; padding:0 2px;
+    font-size:0.7rem; opacity:0.5; flex-shrink:0;
+}
+.ft-copy:hover, .ft-copy.success { opacity:1; color:var(--accent); }
+
+.ft-name-text { min-width:0; overflow-wrap:anywhere; }
+.ft-prefix { color:var(--subtle); opacity:0.8; font-family:monospace; font-size:0.7rem; }
+.ft-chev { display:inline-block; width:16px; flex-shrink:0; color:var(--dim); cursor:pointer; font-size:0.65rem; text-align:center; }
+.ft-chev:hover { color:var(--accent); }
+.ft-ic-arc { color:var(--accent); font-size:0.75rem; }
+.ft-ic-packed { color:var(--info); font-size:0.75rem; }
+.ft-kind {
+    font-family:monospace; font-size:0.6rem; text-transform:uppercase; letter-spacing:0.03em;
+    padding:0 5px; border-radius:3px; border:1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+    color:var(--accent);
+}
+.ft-kind-packed { border-color:color-mix(in srgb, var(--info) 50%, transparent); color:var(--info); }
+.ft-badge {
+    font-size:0.6rem; padding:0 6px; border-radius:9px;
+    background:color-mix(in srgb, var(--info) 15%, transparent); color:var(--info);
+}
+.ft-sub { color:var(--dim); font-size:0.65rem; margin-top:1px; }
+
+tr.ft-band > td { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+tr.ft-band .ft-name-text .lineage-link { font-size:0.8rem; }
+
+tr.ft-fold > td, tr.ft-note > td {
+    font-size:0.7rem; color:var(--subtle); padding-top:4px; padding-bottom:4px; cursor:pointer;
+    border-bottom:1px dashed var(--border);
+}
+tr.ft-note > td { cursor:default; font-style:italic; }
+tr.ft-fold:hover > td { background:var(--hover); color:var(--text); }
+tr.ft-fold b { color:var(--text); font-weight:500; }
+
+tr.ft-group > td {
+    background:color-mix(in srgb, var(--accent) 7%, transparent);
+    border-top:1px solid var(--border); padding:6px 10px;
+}
+.ft-group-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.75rem; }
+.ft-group-head .cluster-cards-container { margin:0; padding:0; }
+
+.ft-select, .ft-fold-input {
+    background:var(--window-tray); border:1px solid var(--border); color:var(--text);
+    font-size:0.7rem; padding:3px 6px; border-radius:4px;
+}
+.ft-fold-input { width:170px; }
+.ft-check { display:inline-flex; align-items:center; gap:4px; font-size:0.72rem; color:var(--text); cursor:pointer; white-space:nowrap; }
+.ft-name-text { white-space:normal; }

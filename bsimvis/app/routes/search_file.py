@@ -108,6 +108,8 @@ def search_files():
             ("note_owners", "note_owners"),
             # Every file extracted out of one upload, at any depth.
             ("root_md5", "root_md5"),
+            # One file by its own md5 only; `md5` also matches its children.
+            ("exact_md5", "file_md5"),
             ("strings", "strings"),
         ]:
             val = request.args.get(arg)
@@ -575,8 +577,18 @@ def query_files_advanced(r, collection, filters):
             "inferred_tags",
             "note_owners",
             "root_md5",
+            "file_md5",
         ]:
-            candidates &= get_field_matches(field, val)
+            if field in ("root_md5", "file_md5") and "," in val:
+                # A list of md5s: any of them. The file tree loads every
+                # upload behind a page in one request this way.
+                matches = set()
+                for v in val.split(","):
+                    if v.strip():
+                        matches |= get_field_matches(field, v.strip())
+                candidates &= matches
+            else:
+                candidates &= get_field_matches(field, val)
         elif field == "strings":
             candidates &= get_field_matches(field, val, default_kind="substring")
 

@@ -82,6 +82,18 @@ function jobStatusCell(target) {
 // File rows carry a real lifecycle (data-service-set on upload/analysis, see
 // index_service.update_file_status), not just "is a job running right now" --
 // so they get their own badge instead of jobStatusCell's generic one.
+// The cell shows a clipped value; this hands over the whole one. Selecting the
+// clipped text copies it whole too, since only CSS shortens it.
+function copyFullButton(value, label) {
+    return `<button class="ft-copy" title="Copy full ${escapeAttr(label)}"
+        onclick="event.stopPropagation(); copyToClipboard(${escapeAttr(jsString(value))}, this)"><i class="fa-regular fa-copy"></i></button>`;
+}
+
+// MD5 and batch columns of the file search are opt-in (FileTree toolbar).
+function showExtraFileCols() {
+    return !window.FileTree || FileTree.extraCols();
+}
+
 function fileStatusBadgeHtml(f) {
     // Files indexed before this field existed have no `status` -- they are,
     // by definition, already fully analyzed.
@@ -352,8 +364,8 @@ window.TableRenderers = {
                         <span class="dim" style="font-size:0.65rem;">contains ${group.rows.length} match${group.rows.length === 1 ? '' : 'es'}</span>
                     </div>
                 </td>
-                <td class="sim-cell">${EntityRenderer.renderMd5(group.file_md5, { full: true })}</td>
-                <td class="sim-cell"></td>
+                ${showExtraFileCols() ? `<td class="sim-cell">${EntityRenderer.renderMd5(group.file_md5, { full: true })}</td>
+                <td class="sim-cell"></td>` : ''}
                 <td class="sim-cell"></td>
                 <td class="sim-cell"></td>
                 <td class="sim-cell"></td>
@@ -364,9 +376,16 @@ window.TableRenderers = {
             </tr>`;
     },
 
-    /** The file rows themselves, all at one depth under one parent. */
-    _fileRows: function(rows, clustersMap, depth, parentMd5, injected) {
+    /**
+     * The file rows themselves, all at one depth under one parent.
+     *
+     * `tree` is set by FileTree (file_tree.js): it supplies the name cell
+     * (indent, archive band, path prefix) and the ancestor ids that collapsing
+     * reads. Every other cell is the same row a flat search draws.
+     */
+    _fileRows: function(rows, clustersMap, depth, parentMd5, injected, tree) {
         const { collection } = getRoutingState();
+        const extraCols = showExtraFileCols();
         return rows.map(f => {
             // Base collection: pool searches span collections, so fall back to the id prefix.
             const col = f.collection || (f['file_id'] || '').split(':')[0] || collection;
@@ -398,8 +417,18 @@ window.TableRenderers = {
             // depth, which is how collapsing knows where to stop. data-lineage-
             // parent is what stops an expand from re-adding a child already
             // drawn under this same container.
+            const nameCell = tree ? FileTree.nameCell(f, targetCol, depth, tree, nameHtml) : `
+                    <div class="lineage-cell" style="padding-left:${depth * 18}px;">
+                        ${depth > 0 ? '<span class="lineage-guide">└</span>' : ''}
+                        ${Lineage.toggleButton(f['child_count'])}
+                        ${f['is_container'] ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
+                        ${nameHtml}
+                    </div>
+                    ${contextHtml}`;
+
             return `
-            <tr class="sim-row${depth > 0 ? ' lineage-row' : ''}" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
+            <tr class="sim-row${depth > 0 && !tree ? ' lineage-row' : ''}${tree && tree.band ? ' ft-band' : ''}" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
+                ${tree ? `data-ft-anc="${escapeAttr(tree.anc || '')}"` : ''}
                 data-lineage-depth="${depth}" data-lineage-md5="${escapeAttr(f['file_md5'])}"
                 data-lineage-parent="${escapeAttr(parentMd5 || f['parent_md5'] || '')}"
                 ${injected ? 'data-lineage-injected="1"' : ''}
@@ -411,19 +440,11 @@ window.TableRenderers = {
                     collection: col
                 }))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
-                <td class="sim-cell">
-                    <div class="lineage-cell" style="padding-left:${depth * 18}px;">
-                        ${depth > 0 ? '<span class="lineage-guide">└</span>' : ''}
-                        ${Lineage.toggleButton(f['child_count'])}
-                        ${f['is_container'] ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
-                        ${nameHtml}
-                    </div>
-                    ${contextHtml}
-                </td>
-                <td class="sim-cell">
-                    ${EntityRenderer.renderMd5(f['file_md5'], { full: true })}
+                <td class="sim-cell">${nameCell}</td>
+                ${extraCols ? `<td class="sim-cell">
+                    <div class="ft-clip-cell"><span class="ft-clip">${EntityRenderer.renderMd5(f['file_md5'], { full: true })}</span>${copyFullButton(f['file_md5'], 'MD5')}</div>
                     <div class="dim" style="font-size:0.65rem">${escapeHtml(f['language_id'])}</div>
-                </td>
+                </td>` : ''}
                 <td class="sim-cell">
                     <div style="display:flex; flex-direction:column; gap:2px; font-size:0.65rem;">
                         ${(() => {
@@ -441,9 +462,9 @@ window.TableRenderers = {
                         ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${escapeHtml(Array.isArray(f['first_seen']) ? f['first_seen'].join(', ') : f['first_seen'])}</span></div>` : ''}
                     </div>
                 </td>
-                <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
-                    ${escapeHtml(batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid)}
-                </td>
+                ${extraCols ? `<td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
+                    <div class="ft-clip-cell"><span class="ft-clip">${escapeHtml(batchUuid)}</span>${batchUuid !== '---' ? copyFullButton(batchUuid, 'batch UUID') : ''}</div>
+                </td>` : ''}
                 <td class="sim-cell">${fileStatusBadgeHtml(f)}</td>
                 <td class="sim-cell">
                     <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">

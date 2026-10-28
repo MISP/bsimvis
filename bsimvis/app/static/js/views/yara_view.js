@@ -35,6 +35,7 @@ window.YaraView = {
     _suggested: null,
     _suggKey: '',
     _res: null,
+    _good: null, // last result of a rule that compiled; shown again while the rule is broken
     _hint: '',
     _view: 'live', // 'live' sample test | 'sweep' full-collection run
     _sweep: null,
@@ -333,6 +334,8 @@ window.YaraView = {
     _renderResult(res, hint) {
         this._res = res;
         this._hint = hint || '';
+        if (res && res.ok) this._good = res;
+        else if (!res) this._good = null;
         this._paint();
     },
 
@@ -350,14 +353,15 @@ window.YaraView = {
         const seg = `<div class="yw-seg" role="group" aria-label="Result source">
             <button aria-pressed="${this._view === 'live'}" onclick="YaraView.setView('live')">Sample test</button>
             <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep</button></div>`;
-        const live = this._res && this._res.ok ? this._res : null;
+        const live = this._good;
         const dtabs = [['groups', 'Groups', live ? live.groups.length : ''], ['suggest', 'Suggested', this._suggested ? this._suggested.length : '']];
         const data = `<section class="yw-card"><h3 class="yw-h">Data</h3>${this._tabsHtml(dtabs, this._dtab, true)}<div class="yw-pane">${this._dataPane(live)}</div></section>`;
         const none = `<div class="yw-hint">${escapeHtml(this._hint || 'No matching results')}</div>`;
         let body;
         if (this._view === 'sweep') body = this._run ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : none);
         else body = live ? this._resultHtml(live) : none;
-        el.innerHTML = this._errHtml(this._res) + data + `<section class="yw-card"><h3 class="yw-h">Results ${seg}</h3>${body}</section>`;
+        const err = this._errHtml(this._res) + (live && this._res && !this._res.ok ? '<div class="yw-hint">Showing the last valid result.</div>' : '');
+        el.innerHTML = err + data + `<section class="yw-card"><h3 class="yw-h">Results ${seg}</h3>${body}</section>`;
     },
 
     _tabsHtml(tabs, cur, data) {

@@ -112,6 +112,7 @@
 .cov-lanehdr { display:flex; gap:2px; }
 .cov-lanehdr > span { min-width:4px; border-top:3px solid; border-radius:2px; }
 .cov-wait { color:var(--dim); font-size:0.78rem; padding:6px 0; }
+.cov .nway-busy.inline { width:auto; }
 `;
 
     function css() {
@@ -324,6 +325,25 @@
         };
     }
 
+    // The last lanes call, shared while it runs and kept once it answered, so leaving and
+    // re-entering the tab never sends it twice. A failed call is dropped, the next render retries.
+    let flight = null;
+    function lanesCall(qs) {
+        const key = qs.toString();
+        if (flight && flight.key === key) return flight;
+        const pid = NwayPanel.progressId(), stop = new AbortController(), t0 = Date.now();
+        const f = flight = { key, pid, stop, answer: null };
+        f.promise = fetch(`/api/bin_sim/nway?${key}&progress_id=${pid}`, { signal: AbortSignal.any([stop.signal, AbortSignal.timeout(NwayPanel.TIMEOUT_MS)]) })
+            .then(async res => ({ ok: res.ok, d: await res.json().catch(() => ({})) }))
+            .catch(e => ({ ok: false, d: { message: stop.signal.aborted ? 'Cancelled.' : e.name === 'TimeoutError' ? `Timed out after ${NwayPanel.TIMEOUT_MS / 1000}s matching functions.` : String(e) } }))
+            .then(r => {
+                if (r.ok) { f.answer = r; NwayPanel._lastMs = Date.now() - t0; }
+                else if (flight === f) flight = null;
+                return r;
+            });
+        return f;
+    }
+
     async function loadLanes(el, v, c) {
         const uuid = c.cluster_uuid;
         // No name/call merge: a merged function spans rows of several file sets, and lane sizes would stop adding up to the tab counts.
@@ -334,22 +354,23 @@
         if (v.params && v.params.pool) qs.set('pool', v.params.pool);
         else qs.set('collection', v.collection || '');
         const stale = () => v.selectedClusterUuid !== uuid || !el.isConnected;
-        let d;
-        try {
-            const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`);
-            d = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                const msg = d.error === 'too_large'
-                    ? `Too many files to align here (${num(d.members)}). The Functions tab groups them by sub-cluster.`
-                    : d.message || `N-way diff failed (${res.status})`;
-                throw new Error(msg);
-            }
-        } catch (e) {
-            if (stale()) return;
-            el.querySelector('#cov-fn-body').innerHTML = `<div class="dim" style="font-size:0.78rem;">${escapeHtml(e.message)}</div>`;
+        const f = lanesCall(qs);
+        let done = null;
+        if (!f.answer) {
+            const host = el.querySelector('#cov-fn-body');
+            host.innerHTML = '';
+            done = NwayPanel.busy(host, f.pid, { inline: true, onCancel: () => f.stop.abort() });
+        }
+        const { ok, d } = await f.promise;
+        if (done) done();
+        if (stale()) return;
+        if (!ok) {
+            const msg = d.error === 'too_large'
+                ? `Too many files to align here (${num(d.members)}). The Functions tab groups them by sub-cluster.`
+                : d.message || 'N-way diff failed.';
+            el.querySelector('#cov-fn-body').innerHTML = `<div class="dim" style="font-size:0.78rem;">${escapeHtml(msg)} ${btn('fa-solid fa-rotate-right', 'var(--accent)', 'Retry', 'ClusterDetailView.renderOverviewTab()')}</div>`;
             return;
         }
-        if (stale()) return;
         const m = cur = model(d);
         const medoid = c.medoid || '';
         el.querySelector('#cov-fn-total').innerHTML = `${num(m.counts.core + m.counts.partial + m.counts.unique)}<small>code fn</small>`;

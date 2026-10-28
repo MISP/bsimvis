@@ -131,6 +131,49 @@ _DOC_CACHE = _LRU(8)
 _MATCH_CACHE = _LRU(4)
 
 
+_FLIGHTS = {}
+_FLIGHTS_LOCK = threading.Lock()
+
+
+def _single_flight(key, build):
+    """`build()` runs once per key at a time; a concurrent caller waits for it.
+
+    A reload, or the overview and the Functions tab asking for the same set,
+    joins the running build instead of starting a second one: the waiter
+    reports the leader's progress as its own (its own cancel flag still stops
+    it) and returns the leader's result. If the leader fails or is cancelled,
+    the waiter builds itself.
+    """
+    with _FLIGHTS_LOCK:
+        flight = _FLIGHTS.get(key)
+        leader = flight is None
+        if leader:
+            flight = _FLIGHTS[key] = {"done": threading.Event(), "progress": None}
+    if not leader:
+        while not flight["done"].wait(0.5):
+            if flight["progress"]:
+                _report(*flight["progress"])
+        if "result" in flight:
+            return flight["result"]
+        return _single_flight(key, build)
+    own = getattr(_progress, "fn", None)
+
+    def share(frac, label):
+        flight["progress"] = (frac, label)
+        if own:
+            own(frac, label)
+
+    set_progress(share)
+    try:
+        flight["result"] = build()
+        return flight["result"]
+    finally:
+        set_progress(own)
+        with _FLIGHTS_LOCK:
+            _FLIGHTS.pop(key, None)
+        flight["done"].set()
+
+
 def invalidate():
     """Drop cached docs: function names are not part of their revision key."""
     for c in (_BASE_CACHE, _DOC_CACHE, _MATCH_CACHE):
@@ -935,6 +978,29 @@ def coverage(rows, column_ids):
 
 
 def demo():
+    import time
+
+    # Concurrent builds of one key run once; the waiter sees the leader's progress and result.
+    calls, seen, started = [], [], threading.Event()
+
+    def slow():
+        calls.append(1)
+        started.set()
+        _report(0.5, "half")
+        time.sleep(1.2)
+        return "doc"
+
+    def waiter():
+        started.wait()
+        set_progress(lambda f, l: seen.append(l))
+        seen.append(_single_flight(("demo",), slow))
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    assert _single_flight(("demo",), slow) == "doc"
+    t.join()
+    assert len(calls) == 1 and "half" in seen and seen[-1] == "doc", (calls, seen)
+
     tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
     assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
     cols = [{"id": i, "functions": 10} for i in "abcd"]
@@ -1177,14 +1243,18 @@ def compute(r, scope, members, params=None):
     if doc is not None:
         return doc
 
-    base = _BASE_CACHE.get(base_key)
-    if base is None:
-        base = _load_base(r, scope, members, vparams, labels, warnings, sample)
-        _BASE_CACHE.put(base_key, base)
-    rows = _MATCH_CACHE.get(base_key + (min_edge,))
-    if rows is None:
-        rows = _match(base, min_edge)
-        _MATCH_CACHE.put(base_key + (min_edge,), rows)
+    def build():
+        base = _BASE_CACHE.get(base_key)
+        if base is None:
+            base = _load_base(r, scope, members, vparams, labels, warnings, sample)
+            _BASE_CACHE.put(base_key, base)
+        rows = _MATCH_CACHE.get(base_key + (min_edge,))
+        if rows is None:
+            rows = _match(base, min_edge)
+            _MATCH_CACHE.put(base_key + (min_edge,), rows)
+        return base, rows
+
+    base, rows = _single_flight(base_key + (min_edge,), build)
     # the page renames rows in place (cluster names): each doc gets its own copies
     rows = [dict(row) for row in rows]
     cov = coverage(rows, [c["id"] for c in base["columns"]])

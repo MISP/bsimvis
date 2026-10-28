@@ -172,6 +172,10 @@ A pool combines the functions/binaries of several collections into one searchabl
 |:--- |:--- |:--- |
 | `global:pools` | **Set** | All pool IDs. |
 | `global:pool:{pool_id}:meta` | **JSON** | Pool definition (name, config, timestamps, sync status). |
+| `global:yara_rules` | **ZSET** | YARA workbench rules: uuid -> updated ts. |
+| `global:yara_rule:{uuid}` | **JSON** | Current rule version, name, scope (target/negative sets). |
+| `global:yara_rule:{uuid}:v:{n}` | **JSON** | One saved version (text, ts, note). |
+| `global:yara_rule:{uuid}:tags` | **Set** | `yara:custom:` tags the rule has applied, so a rename can clear them. |
 | `global:pool:{pool_id}:collections` | **Set** | Member collection names. |
 | `{coll}:pools` | **Set** | Reverse index: pools a collection belongs to. |
 

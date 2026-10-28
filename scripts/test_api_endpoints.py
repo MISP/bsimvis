@@ -3296,6 +3296,289 @@ def test_call_edge_id_dedup():
     )
 
 
+def test_yara_editor():
+    """Live YARA workbench: validate, test (P/R), seeds, registry, sweep, apply."""
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP – YARA workbench", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5_2:
+        print(_color("\n[SKIP] No second analysed test binary.", YELLOW))
+        return
+
+    size1 = os.path.getsize(TEST_BINARY)
+    ids = [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]
+    sets = {
+        "collection": COLLECTION,
+        "targets": [{"label": "one", "files": [ids[0]]}],
+        "negatives": [{"label": "two", "files": [ids[1]]}],
+    }
+    exact = f"rule only_one {{ condition: filesize == {size1} }}"
+    both = "rule any_elf { condition: uint32(0) == 0x464c457f }"
+
+    bad = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": "rule a { condition: $nope }"},
+        label="POST /api/yara/validate (bad rule)",
+    )
+    check(
+        "validate maps the error to a line",
+        bad and not bad["ok"] and bad["errors"][0]["line"] == 1,
+        str(bad),
+    )
+    good = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": exact},
+        label="POST /api/yara/validate",
+    )
+    check("validate accepts a good rule", good and good["ok"])
+    inc = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": 'include "/etc/passwd"\nrule a { condition: true }'},
+        label="POST /api/yara/validate (include is refused)",
+    )
+    check("include directive is not honoured", inc and not inc["ok"], str(inc))
+
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": exact},
+        label="POST /api/yara/test (separates)",
+    )
+    m = (res or {}).get("metrics") or {}
+    check(
+        "separating rule: precision and recall are 1",
+        (m.get("precision"), m.get("recall")) == (1.0, 1.0),
+        str(m),
+    )
+    check(
+        "groups report their hit rates",
+        {g["label"]: g["hit_rate"] for g in res["groups"]} == {"one": 1.0, "two": 0.0},
+        str(res.get("groups")),
+    )
+
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": both},
+        label="POST /api/yara/test (matches both)",
+    )
+    m = (res or {}).get("metrics") or {}
+    check(
+        "matching both files: one false positive",
+        (m.get("tp"), m.get("fp"), m.get("precision")) == (1, 1, 0.5),
+        str(m),
+    )
+    check(
+        "the false hit is listed",
+        [f["id"] for f in res["false_hits"]] == [ids[1]],
+        str(res.get("false_hits")),
+    )
+
+    str_rule = "rule hex { strings: $m = { 7f 45 4c 46 } condition: $m at 0 }"
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": str_rule},
+        label="POST /api/yara/test (string stats)",
+    )
+    row = {x["id"]: x for x in (res or {}).get("strings", [])}.get("$m", {})
+    check(
+        "per-string counts cover targets and negatives",
+        (row.get("pos"), row.get("neg")) == (1, 1),
+        str(row),
+    )
+    check(
+        "hit landing is reported per string",
+        "hex:$m" in (res or {}).get("landing", {}),
+        str((res or {}).get("landing")),
+    )
+
+    rest = {**sets, "negatives": [{"label": "rest", "rest": True}]}
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**rest, "rule": exact},
+        label="POST /api/yara/test (rest negatives)",
+    )
+    check(
+        "'rest' negatives exclude the targets",
+        (res or {}).get("metrics", {}).get("fp") == 0
+        and res["sample"]["negatives_scanned"] >= 1,
+        str((res or {}).get("sample")),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": "rule a {"},
+        expected_ok=True,
+        label="POST /api/yara/test (syntax error -> ok false)",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={"rule": exact, "targets": []},
+        expected_status=400,
+        label="POST /api/yara/test (no scope -> 400)",
+    )
+
+    sug = test_endpoint(
+        "POST",
+        "/api/yara/suggest",
+        data={**sets, "min_frac": 1.0},
+        label="POST /api/yara/suggest",
+    )
+    check(
+        "suggest answers with a strings list",
+        isinstance(sug and sug.get("strings"), list),
+    )
+
+    # registry: versions, export, apply, sweep
+    saved = test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={
+            "rule": exact,
+            "scope": {"targets": sets["targets"], "negatives": sets["negatives"]},
+        },
+        label="POST /api/yara/rules",
+    )
+    uuid_ = (saved or {}).get("uuid")
+    check(
+        "save returns a uuid at version 1",
+        bool(uuid_) and saved["version"] == 1,
+        str(saved),
+    )
+    if not uuid_:
+        return
+    v2 = test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={"rule": exact.replace("only_one", "only_one2"), "uuid": uuid_},
+        label="POST /api/yara/rules (v2)",
+    )
+    check("saving the same uuid bumps the version", v2 and v2["version"] == 2, str(v2))
+    got = test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}",
+        params={"version": 1},
+        label="GET /api/yara/rules/<uuid>?version=1",
+    )
+    check(
+        "an old version reads back unchanged",
+        got and "only_one {" in got["text"],
+        str(got),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={"rule": "rule a {"},
+        expected_status=400,
+        label="POST /api/yara/rules (does not compile -> 400)",
+    )
+    exp = test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}/export",
+        label="GET /api/yara/rules/<uuid>/export",
+    )
+    check(
+        "export header carries uuid and version",
+        exp and uuid_ in exp["content"] and "v2" in exp["content"],
+        str(exp),
+    )
+    check(
+        "rule appears in the list",
+        any(
+            r["uuid"] == uuid_
+            for r in (
+                test_endpoint("GET", "/api/yara/rules", label="GET /api/yara/rules")
+                or {}
+            ).get("rules", [])
+        ),
+    )
+
+    sweep = test_endpoint(
+        "POST",
+        "/api/yara/sweep",
+        data={**sets, "rule": exact},
+        label="POST /api/yara/sweep",
+    )
+    run = (sweep or {}).get("run_id")
+    if run:
+        for _ in range(60):
+            st = requests.get(f"{BASE_URL}/api/yara/run/{run}", timeout=20).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        check(
+            "sweep hits exactly the target file",
+            st.get("done")
+            and st.get("hits") == 1
+            and st.get("recall") == 1.0
+            and st.get("fp") == 0,
+            str(st),
+        )
+
+    app = test_endpoint(
+        "POST",
+        "/api/yara/apply",
+        data={**sets, "rule": exact.replace("only_one", "only_one2"), "uuid": uuid_},
+        label="POST /api/yara/apply",
+    )
+    run = (app or {}).get("run_id")
+    if run:
+        for _ in range(60):
+            st = requests.get(f"{BASE_URL}/api/yara/run/{run}", timeout=20).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        tagged = _search_file_md5s(
+            {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
+        )
+        check("apply tags exactly the matching file", tagged == {file_md5}, str(tagged))
+        # a rename must drop the old version's tag
+        test_endpoint(
+            "POST",
+            "/api/yara/rules",
+            data={"rule": exact.replace("only_one", "renamed"), "uuid": uuid_},
+            label="POST /api/yara/rules (v3, renamed)",
+        )
+        app = test_endpoint(
+            "POST",
+            "/api/yara/apply",
+            data={**sets, "rule": exact.replace("only_one", "renamed"), "uuid": uuid_},
+            label="POST /api/yara/apply (renamed)",
+        )
+        for _ in range(60):
+            st = requests.get(
+                f"{BASE_URL}/api/yara/run/{app['run_id']}", timeout=20
+            ).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        check(
+            "renamed rule: old tag is gone, new tag is set",
+            not _search_file_md5s(
+                {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
+            )
+            and _search_file_md5s(
+                {"collection": COLLECTION, "tag": "yara:custom:renamed"}
+            )
+            == {file_md5},
+        )
+    test_endpoint(
+        "DELETE", f"/api/yara/rules/{uuid_}", label="DELETE /api/yara/rules/<uuid>"
+    )
+    test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}",
+        expected_status=404,
+        label="GET /api/yara/rules/<uuid> (deleted -> 404)",
+    )
+
+
 def test_strings():
     """Ghidra strings flow analyze -> index -> API, pivot, search and tagging.
 
@@ -10068,6 +10351,7 @@ if __name__ == "__main__":
     STEPS = [
         test_call_edge_id_dedup,
         test_strings,
+        test_yara_editor,
         test_maintenance_remove_validation,
         test_maintenance_remove_file,
         test_pool_member_removal,

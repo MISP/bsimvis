@@ -267,6 +267,13 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-microscope'
                 });
                 break;
+            case 'yara':
+                segments.push({
+                    label: 'YARA',
+                    url: '/yara',
+                    icon: 'fa-solid fa-shield-halved'
+                });
+                break;
             case 'scan-detail':
                 segments.push({
                     label: 'Scan',

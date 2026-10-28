@@ -1,0 +1,331 @@
+"""Live YARA workbench endpoints. Logic lives in services/yara_edit_service.py;
+file sets reuse the N-way column-set resolver, so a set here is whatever a
+Compare group can be: searches (tags, batches, clusters, ...) or explicit files."""
+
+import json
+import re
+import uuid as uuidlib
+
+from flask import request
+from flask_restx import abort
+
+from bsimvis.app.routes.nway import resolve_group
+from bsimvis.app.services import yara_edit_service as ys
+from bsimvis.app.services.bin_sim_service import _origin_coll
+from bsimvis.app.services.job_service import JobService, JobType
+from bsimvis.app.services.redis_client import (
+    get_queue_redis,
+    get_raw_redis,
+    get_redis,
+)
+
+job_service = JobService()
+_MD5 = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _body():
+    return request.get_json(silent=True) or {}
+
+
+def _scope_collections(scope):
+    if scope.get("pool"):
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(scope["pool"])
+        if not pool:
+            abort(404, "Pool not found")
+        return pool.get("collections", [])
+    return [scope["collection"]]
+
+
+def _explicit(files, label):
+    out = []
+    for t in files:
+        coll, _, md5 = str(t).rpartition(":")
+        if not coll or not _MD5.match(md5.lower()):
+            abort(400, f"{label}: want <collection>:<md5>, got {t!r}")
+        out.append((_origin_coll(coll), md5.lower()))
+    return out
+
+
+def _colset_group(spec, label):
+    """One group (`group`: its index, default all files) of a saved N-way column set."""
+    raw = get_queue_redis().get(f"nway:colset:{spec['col_set']}")
+    if not raw:
+        abort(404, f"{label}: col_set expired")
+    colset = json.loads(raw)
+    groups = colset.get("groups") or []
+    ids = colset["members"]
+    if spec.get("group") is not None:
+        try:
+            ids = groups[int(spec["group"])]["members"]
+        except (ValueError, IndexError):
+            abort(400, f"{label}: no such group in the column set")
+    return [
+        (_origin_coll(c), m)
+        for c, m in (
+            tuple(i) if isinstance(i, list) else tuple(i.rsplit(":", 1)) for i in ids
+        )
+    ]
+
+
+def _rest(r, scope, cap):
+    out = []
+    for c in _scope_collections(scope):
+        for fid in r.sscan_iter(f"{c}:all_files", count=1000):
+            fid = ys._txt(fid)
+            out.append((_origin_coll(c), fid.rsplit(":", 1)[-1]))
+            if len(out) >= cap:
+                return out
+    return out
+
+
+def resolve_sets(r, body, key, cap):
+    """`body[key]`: list of `{label, queries | files | rest}` -> `[{label, members}]`."""
+    scope = {k: body[k] for k in ("collection", "pool") if body.get(k)}
+    if len(scope) != 1:
+        abort(400, "give exactly one of collection / pool")
+    specs = body.get(key) or []
+    if not isinstance(specs, list) or not all(isinstance(g, dict) for g in specs):
+        abort(400, f"{key}: a list of {{label, queries | files | rest}}")
+    meta, out = {}, []
+    for i, spec in enumerate(specs):
+        label = str(spec.get("label") or f"{key} {i + 1}")[:60]
+        if spec.get("rest"):
+            found = _rest(r, scope, cap)
+        elif spec.get("col_set") is not None:
+            found = _colset_group(spec, label)
+        elif spec.get("files"):
+            found = _explicit(spec["files"], label)
+        else:
+            found = resolve_group(scope, spec, label, cap, meta)
+        out.append({"label": label, "members": list(dict.fromkeys(found))})
+    return out
+
+
+def _check_rule(body):
+    text = body.get("rule")
+    if not isinstance(text, str) or not text.strip():
+        abort(400, "rule: YARA source text required")
+    if len(text) > 200_000:
+        abort(413, "rule too large")
+    return text
+
+
+def post_validate():
+    """Compile only: `{ok, errors: [{line, message}], rules}`."""
+    text = _check_rule(_body())
+    rules, errors = ys.compile_source(text)
+    return {"ok": rules is not None, "errors": errors, "rules": ys.rule_names(text)}
+
+
+def post_test():
+    """Compile the rule, scan the target set and a capped sample of the negative
+    set, and report precision / recall, per-group and per-string hit counts, and
+    where the hits land."""
+    body = _body()
+    text = _check_rule(body)
+    r = get_redis()
+    targets = resolve_sets(r, body, "targets", ys.cfg("target_cap_files", 2000))
+    if not any(g["members"] for g in targets):
+        abort(400, "targets: the sets match no file")
+    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    return ys.evaluate(r, get_raw_redis(), text, targets, negatives)
+
+
+def get_seed_function():
+    """A function's raw bytes as a YARA hex string."""
+    a = request.args
+    if not (a.get("collection") and _MD5.match(a.get("md5", "")) and a.get("addr")):
+        abort(400, "collection, md5 and addr required")
+    try:
+        int(a["addr"], 16)
+    except ValueError:
+        abort(400, "addr must be hex")
+    res = ys.function_hex(
+        get_redis(),
+        get_raw_redis(),
+        _origin_coll(a["collection"]),
+        a["md5"],
+        a["addr"],
+    )
+    if res.get("error"):
+        abort(404, res["error"])
+    return res
+
+
+def post_suggest():
+    """Strings that most of the target files hold and the negatives do not."""
+    body = _body()
+    r = get_redis()
+    targets = resolve_sets(r, body, "targets", 200)
+    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    neg = list(dict.fromkeys(m for g in negatives for m in g["members"]))
+    min_frac = max(0.1, min(1.0, float(body.get("min_frac", 0.8))))
+    return {"strings": ys.suggest(r, targets, neg, min_frac)}
+
+
+def post_draft():
+    """LLM draft of a rule from the ranked suggestions."""
+    from bsimvis.app.services.llm_service import LLMService
+
+    body = _body()
+    r = get_redis()
+    targets = resolve_sets(r, body, "targets", 200)
+    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    neg = list(dict.fromkeys(m for g in negatives for m in g["members"]))
+    picks = ys.suggest(r, targets, neg, 0.8, limit=12)
+    if not picks:
+        abort(404, "no string is shared by the target files")
+    return {"rule": LLMService().draft_yara(str(body.get("name") or "family"), picks)}
+
+
+# --- registry ---------------------------------------------------------------
+
+
+def list_rules():
+    return {"rules": ys.list_rules(get_redis())}
+
+
+def save_rule():
+    body = _body()
+    text = _check_rule(body)
+    u = body.get("uuid")
+    if u is not None:
+        try:
+            u = str(uuidlib.UUID(str(u)))
+        except ValueError:
+            abort(400, "uuid must be a UUID")
+    doc = ys.save_rule(
+        get_redis(), text, u, body.get("scope"), str(body.get("note") or "")[:200]
+    )
+    if doc.get("error"):
+        abort(400, doc["error"])
+    return doc
+
+
+def get_rule(rule_uuid):
+    r = get_redis()
+    doc = ys.get_rule(r, rule_uuid, request.args.get("version", type=int))
+    if not doc:
+        abort(404, "unknown rule or version")
+    return {**doc, "versions": ys.rule_versions(r, rule_uuid)}
+
+
+def delete_rule(rule_uuid):
+    if not ys.delete_rule(get_redis(), rule_uuid):
+        abort(404, "unknown rule")
+    return {"status": "deleted"}
+
+
+def export_rule(rule_uuid):
+    """The rule as a `.yar` body, uuid and version in a header comment."""
+    doc = ys.get_rule(get_redis(), rule_uuid)
+    if not doc:
+        abort(404, "unknown rule")
+    return {
+        "filename": f"{doc['name']}.yar",
+        "content": f"// bsimvis rule {doc['uuid']} v{doc['version']}\n{doc['text']}\n",
+    }
+
+
+def export_to_vendored(rule_uuid):
+    """Write the rule into `data/yara_rules/custom/` for a human to commit."""
+    doc = ys.get_rule(get_redis(), rule_uuid)
+    if not doc:
+        abort(404, "unknown rule")
+    from bsimvis.app.services.yara_service import rules_dir
+
+    folder = rules_dir() / "custom"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{doc['uuid']}.yar"
+    path.write_text(f"// bsimvis rule {doc['uuid']} v{doc['version']}\n{doc['text']}\n")
+    return {"path": str(path)}
+
+
+# --- full sweep / apply (jobs) ----------------------------------------------
+
+
+def _start_run(mode):
+    body = _body()
+    text = _check_rule(body)
+    if ys.compile_source(text)[0] is None:
+        abort(400, "rule does not compile")
+    rule_uuid = body.get("uuid") if mode == "apply" else None
+    if mode == "apply" and not ys.get_rule(get_redis(), str(rule_uuid)):
+        abort(404, "apply needs a saved rule: save it first")
+    scope = {k: body[k] for k in ("collection", "pool") if body.get(k)}
+    if len(scope) != 1:
+        abort(400, "give exactly one of collection / pool")
+    colls = _scope_collections(scope)
+    run_id = uuidlib.uuid4().hex[:12]
+    q = get_queue_redis()
+    q.setex(
+        f"yara:sweep:{run_id}:spec",
+        6 * 3600,
+        json.dumps({k: body.get(k) for k in ("collection", "pool", "targets")}),
+    )
+    q.hset(
+        f"yara:sweep:{run_id}:stat", mapping={"collections": len(colls), "mode": mode}
+    )
+    q.expire(f"yara:sweep:{run_id}:stat", 6 * 3600)
+    jobs = [
+        job_service.create_job(
+            JobType.YARA_RULE_RUN,
+            {
+                "collection": c,
+                "rule": text,
+                "mode": mode,
+                "run_id": run_id,
+                "rule_uuid": rule_uuid,
+            },
+        )
+        for c in colls
+    ]
+    return {"run_id": run_id, "job_ids": jobs}
+
+
+def post_sweep():
+    """Scan every file of the collection / pool with the rule (exact numbers)."""
+    return _start_run("sweep")
+
+
+def post_apply():
+    """Tag every matching file `yara:custom:<rule>` and clear stale tags of this rule."""
+    return _start_run("apply")
+
+
+def get_run(run_id):
+    """Progress of a sweep / apply, with exact precision / recall against its targets."""
+    if not re.match(r"^[0-9a-f]{12}$", run_id):
+        abort(400, "bad run id")
+    q = get_queue_redis()
+    stat = {
+        ys._txt(k): ys._txt(v)
+        for k, v in q.hgetall(f"yara:sweep:{run_id}:stat").items()
+    }
+    if not stat:
+        abort(404, "unknown or expired run")
+    spec = json.loads(q.get(f"yara:sweep:{run_id}:spec") or "{}")
+    hits = {ys._txt(h) for h in q.smembers(f"yara:sweep:{run_id}:hits")}
+    out = {
+        "mode": stat.get("mode"),
+        "done": int(stat.get("done", 0)) >= int(stat.get("collections", 1)),
+        "seen": int(stat.get("seen", 0)),
+        "hits": len(hits),
+        "tagged": int(stat.get("changed", 0)),
+    }
+    if spec.get("targets") and out["done"]:
+        r = get_redis()
+        targets = resolve_sets(r, spec, "targets", ys.cfg("neg_pool_cap", 20000))
+        tset = {f"{_origin_coll(c)}:file:{m}" for g in targets for c, m in g["members"]}
+        tp = len(hits & tset)
+        out.update(
+            tp=tp,
+            fp=len(hits) - tp,
+            fn=len(tset) - tp,
+            precision=ys._ratio(tp, len(hits)),
+            recall=ys._ratio(tp, len(tset)),
+            false_hits=sorted(hits - tset)[: ys.LIST_CAP],
+        )
+    return out

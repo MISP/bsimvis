@@ -113,6 +113,22 @@ mapping). Function search takes `strings=` through the `strings` field in
 `index_config`; it is excluded from the bare `q` on purpose. Config: `[strings]` in
 `bsimvis_config.toml`. Ghidra side check: `scripts/test_strings_extract.py`.
 
+## YARA workbench
+
+`/yara` (`static/js/views/yara_view.js`, `routes/yara_edit.py`, `services/yara_edit_service.py`)
+is a live rule editor. A debounced `POST /api/yara/test` compiles the rule and scans the
+stored `{coll}:file:{md5}:raw` bytes of the target sets and a capped sample of the negative
+sets (`[yara_editor]` in the config), answering precision/recall, per-group and per-string
+hit counts, and where hits land (file offset -> LIEF address -> stored function list / string
+table; no Ghidra). Sets use the N-way column-set resolver (`nway.resolve_group`), plus
+`files`, `rest` and `col_set`+`group`. Rules are compiled with `includes=False`.
+
+Rule registry: `global:yara_rule:{uuid}` (+ `:v:{n}`, `:tags`) and `global:yara_rules` ZSET.
+`YARA_RULE_RUN` is the chunked sweep/apply job; sweep records hits in the queue Redis
+(`yara:sweep:{run}:*`, TTL) and writes nothing to Kvrocks; apply writes `yara:custom:<rule>`
+file tags. rulezet-editor is AGPL and is *fetched* by `scripts/fetch_vendor_assets.sh`
+(pinned sha), never committed; the view falls back to a textarea without it.
+
 ## Pools
 
 A pool (`pool_service.py`, `routes/pools.py`) is a named union of collections with its

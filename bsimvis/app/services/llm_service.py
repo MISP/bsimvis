@@ -310,6 +310,64 @@ class LLMService:
                     out.setdefault(item["id"], title)
         return out, None
 
+    def draft_yara(self, name, picks):
+        """A YARA rule from ranked string picks (`yara_edit_service.suggest` rows).
+
+        The strings are written by code, verbatim and escaped, so the model can
+        not invent one; it only chooses the `condition`, and a condition that
+        does not compile falls back to `2 of them`.
+        """
+        from bsimvis.app.services import yara_edit_service as ys
+
+        self._load_config()
+        ident = re.sub(r"\W", "_", name)[:40] or "family"
+        lines = [
+            '    $s%d = "%s" ascii wide'
+            % (i, p["value"].replace("\\", "\\\\").replace('"', '\\"'))
+            for i, p in enumerate(picks)
+        ]
+
+        def build(cond):
+            return (
+                f'rule {ident} {{\n  meta:\n    description = "{ident} family"\n'
+                "  strings:\n" + "\n".join(lines) + f"\n  condition:\n    {cond}\n}}\n"
+            )
+
+        cond = "2 of them"
+        listing = "\n".join(
+            f'$s{i}: "{p["value"][:60]}" in {p["pos"]}/{p["of"]} family files, {p["neg"]} others'
+            for i, p in enumerate(picks)
+        )
+        try:
+            text = (
+                Client(host=self.ollama_url, timeout=120)
+                .chat(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "Write only the condition line of a YARA rule that "
+                            "matches this malware family and avoids other files. Use "
+                            "only these string ids and 'any of', 'all of', 'N of', "
+                            "'and', 'or'.\n\n" + listing,
+                        }
+                    ],
+                    stream=False,
+                    think=False,
+                    options={"num_predict": 80, "temperature": 0},
+                )
+                .get("message", {})
+                .get("content", "")
+            )
+            guess = (
+                text.strip().strip("`").splitlines()[0].strip() if text.strip() else ""
+            )
+            if guess and ys.compile_source(build(guess))[0] is not None:
+                cond = guess
+        except Exception as e:
+            logging.error(f"LLMService draft_yara error: {e}")
+        return build(cond)
+
     def name_lane(self, evidence):
         """A description of at most six words for one lane of an N-way table, from its `evidence` text.
 

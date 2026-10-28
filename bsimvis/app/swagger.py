@@ -60,6 +60,7 @@ ns_scan = Namespace(
     "scan", description="Fast scan: compare a file without ingesting it"
 )
 ns_nway = Namespace("nway", description="N-way function set views")
+ns_yara = Namespace("yara", description="Live YARA rule workbench")
 ns_strings = Namespace(
     "strings", description="Strings extracted by Ghidra: per file, per function, pivot"
 )
@@ -87,6 +88,7 @@ api.add_namespace(ns_searches)
 api.add_namespace(ns_scan)
 api.add_namespace(ns_strings)
 api.add_namespace(ns_nway)
+api.add_namespace(ns_yara)
 
 # --- Models & Examples ---
 
@@ -4180,3 +4182,128 @@ class NwayFunctionSet(Resource):
         from bsimvis.app.routes.nway import post_function_set
 
         return post_function_set()
+
+
+_YARA_SETS = (
+    "`collection` or `pool`, `rule` (YARA source), and `targets` / `negatives`: lists "
+    'of `{label, queries: [search_files params] | files: ["coll:md5"] | rest: true}`.'
+)
+
+
+def _yara(name, *a):
+    import importlib
+
+    return getattr(importlib.import_module("bsimvis.app.routes.yara_edit"), name)(*a)
+
+
+@ns_yara.route("/validate")
+class YaraValidate(Resource):
+    def post(self):
+        """Compile a rule: errors mapped to lines. Body: `{rule}`."""
+        return _yara("post_validate")
+
+
+@ns_yara.route("/test")
+class YaraTest(Resource):
+    @ns_yara.doc(
+        description="Scans the targets and a capped sample of the negatives. Body: "
+        + _YARA_SETS
+    )
+    def post(self):
+        """Precision / recall, per-group and per-string hits, hit landing."""
+        return _yara("post_test")
+
+
+@ns_yara.route("/seed/function")
+class YaraSeedFunction(Resource):
+    @ns_yara.doc(
+        params={
+            "collection": "Origin collection",
+            "md5": "File md5",
+            "addr": "Function entry (hex)",
+        }
+    )
+    def get(self):
+        """A function's raw bytes as a YARA hex string."""
+        return _yara("get_seed_function")
+
+
+@ns_yara.route("/suggest")
+class YaraSuggest(Resource):
+    @ns_yara.doc(
+        description="Body: `targets`, `negatives`, `min_frac` (default 0.8), scope as /test."
+    )
+    def post(self):
+        """Strings most target files hold and the negatives do not."""
+        return _yara("post_suggest")
+
+
+@ns_yara.route("/draft")
+class YaraDraft(Resource):
+    def post(self):
+        """LLM draft rule from the suggested strings. Body as /suggest plus `name`."""
+        return _yara("post_draft")
+
+
+@ns_yara.route("/rules")
+class YaraRules(Resource):
+    def get(self):
+        """Saved rules, newest first."""
+        return _yara("list_rules")
+
+    @ns_yara.doc(
+        description="Body: `rule`, optional `uuid` (new version of it), `scope`, `note`."
+    )
+    def post(self):
+        """Saves the rule as the next version of its uuid."""
+        return _yara("save_rule")
+
+
+@ns_yara.route("/rules/<string:rule_uuid>")
+class YaraRuleOne(Resource):
+    @ns_yara.doc(params={"version": "Version number (default: latest)"})
+    def get(self, rule_uuid):
+        """One saved rule and its version list."""
+        return _yara("get_rule", rule_uuid)
+
+    def delete(self, rule_uuid):
+        """Deletes a rule and all its versions."""
+        return _yara("delete_rule", rule_uuid)
+
+
+@ns_yara.route("/rules/<string:rule_uuid>/export")
+class YaraRuleExport(Resource):
+    def get(self, rule_uuid):
+        """The rule as a `.yar` body with its uuid and version in a header comment."""
+        return _yara("export_rule", rule_uuid)
+
+    def post(self, rule_uuid):
+        """Writes the rule to data/yara_rules/custom/ for a human to commit."""
+        return _yara("export_to_vendored", rule_uuid)
+
+
+@ns_yara.route("/sweep")
+class YaraSweep(Resource):
+    @ns_yara.doc(
+        description="Body: `rule` and scope / `targets` as /test. Reads every file, writes nothing to Kvrocks."
+    )
+    def post(self):
+        """Full sweep job: exact precision / recall."""
+        return _yara("post_sweep")
+
+
+@ns_yara.route("/apply")
+class YaraApply(Resource):
+    @ns_yara.doc(
+        description="Body: `uuid` of a saved rule, `rule`, `collection` or `pool`. Writes `yara:custom:<rule>` file tags."
+    )
+    def post(self):
+        """Apply job: tag matching files, clear this rule's stale tags."""
+        return _yara("post_apply")
+
+
+@ns_yara.route("/run/<string:run_id>")
+class YaraRun(Resource):
+    def get(self, run_id):
+        """Progress and exact metrics of a sweep / apply."""
+        return _yara("get_run", run_id)

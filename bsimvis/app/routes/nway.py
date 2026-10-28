@@ -629,6 +629,30 @@ def get_filter_values():
     }
 
 
+def resolve_group(scope, spec, label, cap, meta):
+    """A group spec's searches -> [(origin coll, md5)], filling `meta` (id -> search row)."""
+    from bsimvis.app.routes.home import _call
+    from bsimvis.app.routes.search_file import search_files
+
+    found = []
+    # an empty search would list the whole collection: a group needs a filter
+    for query in filter(None, _group_queries(spec)):
+        try:
+            res = _call(search_files, **{**scope, **query, "limit": cap + 1})
+        except (TypeError, ValueError):
+            abort(400, f"{label}: query must be search_files parameters")
+        if res.get("error"):
+            abort(400, f"{label}: {res['error']}")
+        for f in res.get("files") or []:
+            key = (
+                _origin_coll(f["file_id"].split(":file:")[0]),
+                f["file_id"].rsplit(":", 1)[1],
+            )
+            found.append(key)
+            meta[nway_diff_service._col_id(*key)] = f
+    return found
+
+
 def post_column_set():
     """Resolve file queries into column groups: one saved set, read back by `col_set`.
 
@@ -636,9 +660,6 @@ def post_column_set():
     `<collection>:<md5>`) keeps only matches inside that set. With `preview` nothing
     is saved and empty groups are fine: it only reports the counts.
     """
-    from bsimvis.app.routes.home import _call
-    from bsimvis.app.routes.search_file import search_files
-
     body = request.get_json(silent=True) or {}
     specs, preview = body.get("groups"), bool(body.get("preview"))
     low = 1 if preview else 2
@@ -659,23 +680,7 @@ def post_column_set():
     groups, members, meta = [], [], {}
     for i, spec in enumerate(specs):
         label = str(spec.get("label") or f"Group {i + 1}")[:60]
-        found = []
-        # an empty search would list the whole collection: a group needs a filter
-        for query in filter(None, _group_queries(spec)):
-            try:
-                res = _call(search_files, **{**scope, **query, "limit": cap + 1})
-            except (TypeError, ValueError):
-                abort(400, f"{label}: query must be search_files parameters")
-            if res.get("error"):
-                abort(400, f"{label}: {res['error']}")
-            for f in res.get("files") or []:
-                key = (
-                    _origin_coll(f["file_id"].split(":file:")[0]),
-                    f["file_id"].rsplit(":", 1)[1],
-                )
-                found.append(key)
-                meta[nway_diff_service._col_id(*key)] = f
-        found = list(dict.fromkeys(found))
+        found = list(dict.fromkeys(resolve_group(scope, spec, label, cap, meta)))
         if within is not None:
             found = [m for m in found if m in within]
         if not found and not preview:

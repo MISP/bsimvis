@@ -16,6 +16,7 @@
 (function () {
     const MAX_LANES = 15;
     const TOP = 5;
+    const MEMBERS = 8;
     const LANE_TIER = 0.8; // the Functions tab's default lane tier
     const RARE = 'color-mix(in srgb, var(--warning, #d97706) 55%, var(--card-bg))';
     // Same icon + color as the Functions tab's All / Core / Partial / Unique.
@@ -50,12 +51,13 @@
 .cov-more { font-size:0.72rem; color:var(--dim); padding-left:28px; }
 .cov-sbar { display:flex; gap:2px; height:10px; border-radius:4px; overflow:hidden; background:var(--hover); }
 .cov-sbar > span { display:block; min-width:3px; }
-.cov-mrow { display:grid; grid-template-columns:minmax(0,1fr) 80px 34px; gap:8px; align-items:center; font-size:0.78rem; padding:2px 0; }
-.cov-mrow > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center; gap:7px; }
-.cov-mrow > span:first-child i { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-.cov-mrow > span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
-.cov-mbar { height:5px; border-radius:3px; background:var(--hover); overflow:hidden; }
-.cov-mbar > span { display:block; height:100%; border-radius:3px; }
+.cov-sbar.big { height:12px; border-radius:6px; background:none; }
+.cov-sbar.big > span { border-radius:3px; min-width:4px; }
+.cov-sbar.big > span:hover { filter:brightness(1.2); }
+.cov-mleg { display:flex; flex-wrap:wrap; gap:3px 12px; font-size:0.74rem; color:var(--dim); margin-top:6px; }
+.cov-mleg span { display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cov-mleg i { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.cov-mleg b { color:var(--text); font-weight:600; }
 .cov-h3 { font-size:0.62rem; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin-bottom:5px; }
 .cov-fpm { display:flex; gap:8px 16px; flex-wrap:wrap; font-size:0.78rem; color:var(--dim); }
 .cov-fpm i, .cov-h3 i { margin-right:3px; }
@@ -163,7 +165,7 @@
         [...direct].sort((a, b) => (b.centrality ?? -1) - (a.centrality ?? -1)).forEach(m => add(m.id, m.name, m.language_id, m.centrality));
         (c.sample_members || []).forEach(m => add(m.id, m.file_name || m.name));
         const total = Number(c.count || 0);
-        const rows = files.slice(0, TOP).map(f => {
+        const rows = files.slice(0, MEMBERS).map(f => {
             const at = String(f.id).lastIndexOf(':file:');
             const coll = at > 0 ? f.id.slice(0, at) : v.collection || '';
             const md5 = String(f.id).split(':').pop();
@@ -174,7 +176,7 @@
                 <span>${arch ? `<span class="cov-arch">${escapeHtml(arch)}</span>` : ''}</span>
                 <span class="dim" style="text-align:right" ${f.cen == null ? '' : 'title="Centrality"'}>${f.cen == null ? '' : Number(f.cen).toFixed(2)}</span></div>`;
         }).join('');
-        const more = [total > TOP ? `+${num(total - Math.min(TOP, files.length))} more` : '', kids ? `${num(kids)} sub-cluster${kids > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
+        const more = [total > Math.min(MEMBERS, files.length) ? `+${num(total - Math.min(MEMBERS, files.length))} more` : '', kids ? `${num(kids)} sub-cluster${kids > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
         return `<div class="cov-card">
             ${title('fa-solid fa-users', 'var(--accent)', 'Members', 'Every file of this cluster and its sub-clusters. ★ is the main file, the most central one.', `<span class="cov-big">${num(total)}<small>files</small></span>`)}
             <div class="cov-list">${rows || '<div class="dim">No members listed.</div>'}${more ? `<div class="cov-more">${more}</div>` : ''}</div>
@@ -192,26 +194,23 @@
         return (v.match(/\(([^)]+)\)\s*$/) || [null, v])[1];
     };
 
-    // Top values of one distribution as ranked rows: dot, value, coverage bar, percent.
+    // One distribution as a stacked coverage bar, with a legend of its top values (none for uuid-valued ones).
     function distBlock(label, icon, key, d) {
-        const top = [...d].sort((a, b) => b.count - a.count).slice(0, 3);
-        return `<div><div class="cov-h3"><i class="${icon}"></i> ${label}</div>${top.map((it, i) => {
-            const color = metadataColor(it, i), pct = metadataPercent(it);
-            return `<div class="cov-mrow" title="${escapeAttr(`${it.value}: ${it.count}`)}"><span><i style="background:${escapeAttr(color)}"></i>${escapeHtml(shortValue(key, it.value))}</span>
-                <span class="cov-mbar"><span style="width:${Math.min(100, pct)}%; background:${escapeAttr(color)}"></span></span><span class="dim">${pct.toFixed(0)}%</span></div>`;
-        }).join('')}${d.length > 3 ? `<div class="cov-more" style="padding-left:14px;">+${num(d.length - 3)} more</div>` : ''}</div>`;
+        const sorted = [...d].sort((a, b) => b.count - a.count);
+        const color = (it, i) => escapeAttr(metadataColor(it, i));
+        const bar = `<div class="cov-sbar big">${sorted.map((it, i) => `<span style="flex:${Number(it.count)}; background:${color(it, i)}" title="${escapeAttr(`${it.value}: ${it.count} (${metadataPercent(it).toFixed(0)}%)`)}"></span>`).join('')}</div>`;
+        const leg = key === 'batch' ? '' : `<div class="cov-mleg">${sorted.slice(0, 3).map((it, i) => `<span title="${escapeAttr(String(it.value))}"><i style="background:${color(it, i)}"></i>${escapeHtml(shortValue(key, it.value))} <b>${metadataPercent(it).toFixed(0)}%</b></span>`).join('')}${sorted.length > 3 ? `<span class="dim">+${num(sorted.length - 3)}</span>` : ''}</div>`;
+        return `<div><div class="cov-h3"><i class="${icon}"></i> ${label} <span style="float:right">${num(d.length)}</span></div>${bar}${leg}</div>`;
     }
 
     // ---- Metadata: the cluster summary ----
     function metadataCard(c) {
-        const rows = [['Architecture', 'fa-solid fa-microchip', 'arch', c.architecture_distribution], ['Format', 'fa-solid fa-file-code', 'format', c.executable_format_distribution]]
+        const rows = [['Architecture', 'fa-solid fa-microchip', 'arch', c.architecture_distribution], ['Format', 'fa-solid fa-file-code', 'format', c.executable_format_distribution], ['Batch', 'fa-solid fa-box', 'batch', c.batch_uuid_distribution]]
             .filter(([, , , d]) => d && d.length).map(a => distBlock(...a)).join('');
         const tags = [c.tag_distribution, c.file_tag_distribution].flatMap(by => Object.values(by || {}).flat())
             .sort((a, b) => metadataPercent(b) - metadataPercent(a)).slice(0, 6);
         const s = c.function_count_stats || {};
-        const batches = (c.batch_uuid_distribution || []).length;
-        const fpm = s.min === undefined && !batches ? '' : `<div class="cov-fpm">${s.min === undefined ? '' : `<span title="Functions per member"><i class="fa-solid fa-list-ol"></i> ${[['min', s.min], ['avg', s.avg], ['max', s.max]].map(([l, x]) => `${l} <b>${num(Math.round(x))}</b>`).join(' · ')}</span>`}
-            ${batches ? `<span><i class="fa-solid fa-box"></i> <b>${num(batches)}</b> batch${batches > 1 ? 'es' : ''}</span>` : ''}</div>`;
+        const fpm = s.min === undefined ? '' : `<div class="cov-fpm"><span title="Functions per member"><i class="fa-solid fa-list-ol"></i> ${[['min', s.min], ['avg', s.avg], ['max', s.max]].map(([l, x]) => `${l} <b>${num(Math.round(x))}</b>`).join(' · ')}</span></div>`;
         const archs = (c.architecture_distribution || []).length;
         return `<div class="cov-card">
             ${title('fa-solid fa-chart-pie', 'var(--info, #3b82f6)', 'Metadata', 'How the member files split by architecture, format and upload batch, and the tags most of them carry.', archs ? `<span class="cov-big">${num(archs)}<small>arch${archs > 1 ? 's' : ''}</small></span>` : '')}

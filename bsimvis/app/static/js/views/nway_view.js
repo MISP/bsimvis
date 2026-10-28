@@ -52,7 +52,7 @@ window.NwayView = {
     // Graph and comparison tabs share the focused family and URL state.
     async _initFunction() {
         const q = new URLSearchParams(window.location.search);
-        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
+        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'col_open'];
         const source = {}, doc = {}, fx = {}, cg = {};
         for (const [k, v] of q) {
             if (k.startsWith('fx_')) fx[k.slice(3)] = v;

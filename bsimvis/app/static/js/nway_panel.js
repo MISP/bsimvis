@@ -229,7 +229,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
+            if (!this.state.col_open) qs.set('col_open', this._openQ || JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
                 if (this._gflip.size) qs.set('group_flip', JSON.stringify([...this._gflip]));
@@ -246,7 +246,10 @@
             // The compare lives in the URL as `cmp`; its saved set (col_set) only caches it.
             if (!append && this.state.cmp && !this.state.col_set && !(await this._resolveCmp())) return;
             if (gen !== this._gen) return;
+            // a fresh load refits the columns to the window; per-row calls then reuse that fit
+            if (!append) this._openQ = '';
             const qs = this._listQs();
+            if (!append) this._openQ = qs.get('col_open');
             // After opening or closing a group, reload as many rows as were on screen.
             qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
             this._keep = 0;
@@ -1467,12 +1470,7 @@
 
         // The standalone page's URL: the member source, doc controls, and the focused graph.
         _cgUrl() {
-            const qs = new URLSearchParams();
-            for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
-            for (const k of DOC_KEYS) {
-                const v = this.state[k];
-                if (v !== null && v !== undefined && v !== '') qs.set(k, v);
-            }
+            const qs = this._docQs();
             const st = this._cg, f = this._cgFocus();
             qs.set('cg_name', f.name);
             qs.set('cg_cells', JSON.stringify(f.cells));
@@ -1491,6 +1489,9 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
+            // the columns the table was loaded with, so the server reuses the table's own (cached) doc
+            const open = this.state.col_open || this._openQ;
+            if (open) qs.set('col_open', open);
             return qs;
         }
 
@@ -1667,18 +1668,13 @@
             this._cgDraw();
         }
 
-        // One square per file: lit when that file's function has the edge.
-        // Each square is a file. Lit (colored by how many files) = the file has the function;
-        // a dot inside = the focus function in that file calls it. Hover shows name and md5,
-        // click opens the file details, right-click gives the usual file menu.
-        // Optional "color by file" mode (strips + column swatches); neutral ratio colors stay the default.
+        // Graph squares are the table's columns: lit (colored by how many files) = the column's files have the
+        // function; a dot inside = the focus function there calls it. One colour setting with the table
+        // (`nway.sqlane`): per file / cluster column, or by how many files have the function.
         _applyHue() {
-            let on = false;
-            try { on = localStorage.getItem('nway.hue') === '1'; } catch (e) { /* storage blocked */ }
+            const on = !this._sqLane();
             this._hueOn = on;
             for (const el of [this.el, this._dw]) if (el) el.classList.toggle('nway-hue', on);
-            // the dock has no colour toggle: its squares follow the table's (per file / cluster, or by coverage)
-            if (this._cg && this._cg.lean && this._dw) this._dw.classList.toggle('nway-hue', !this._sqLane());
         }
 
         // i is a column index (data.columns), not an index into file_columns.
@@ -1741,23 +1737,37 @@
             return `<div class="nway-node-sub dim">${fs.html} <span>${fs.n}/${files.length} files</span></div>`;
         }
 
+        // `on` / `edge` are per file; the squares are the table's columns (same collapse, order and colours),
+        // a group column filled when all its files have the function, part-filled when only some do.
         _cgStrip(on, files, edge) {
             const n = on.filter(Boolean).length;
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
-            const total = files.length;
+            const fi = new Map(files.map((c, i) => [c.id, i]));
+            const cols = this.data.columns.map((col, ci) => ({ col, ci, idx: (col.kind ? col.members : [col.id]).map(id => fi.get(id)).filter(i => i !== undefined) })).filter(u => u.idx.length);
+            const total = cols.length;
             if (total > 120) {
-                return { html: `<span class="nway-pbar ${cls}" title="${n} of ${total} files"><b style="width:${(100 * n / total).toFixed(0)}%"></b></span>`, n, cls };
+                return { html: `<span class="nway-pbar ${cls}" title="${n} of ${files.length} files"><b style="width:${(100 * n / files.length).toFixed(0)}%"></b></span>`, n, cls };
             }
             const sz = total <= 16 ? 11 : total <= 64 ? 6 : 4;
-            const sq = files.map((c, i) => {
-                const coll = c.collection || '';
+            let hued = false;
+            const sq = cols.map(({ col, ci, idx }) => {
+                const k = idx.filter(i => on[i]).length, ed = edge && idx.some(i => edge[i]);
+                const style = this._sqStyle(ci);
+                if (style) hued = true;
+                const attrs = `class="${k === idx.length ? 'on' : k ? 'part' : ''}${ed ? ' edge' : ''}"${style ? ` style="${style}"` : ''}`;
+                if (col.kind) {
+                    const names = idx.filter(i => on[i]).map(i => this._colLabel(files[i]));
+                    const tip = [`${col.label || col.id}: ${k} of ${idx.length} files have the function`, ...names, ed ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
+                    return `<i ${attrs} title="${escapeAttr(tip)}"></i>`;
+                }
+                const c = files[idx[0]], coll = c.collection || '';
                 const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
-                const tip = [c.file_name, c.md5, coll, on[i] ? 'function present' : 'function absent', edge && edge[i] ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
-                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}"${total <= 16 ? ` style="--h:${this._fileHue(this.data.columns.findIndex(x => x.id === c.id))}"` : ''} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                const tip = [c.file_name, c.md5, coll, k ? 'function present' : 'function absent', ed ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
+                return `<i ${attrs} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
                     onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
                     oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
             }).join('');
-            return { html: `<span class="nway-strip ${cls}${total <= 16 ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`, n, cls };
+            return { html: `<span class="nway-strip ${cls}${hued ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`, n, cls };
         }
 
         // Presence: the neighbor's function exists in that file. Edge: the focus function there calls it.
@@ -2330,8 +2340,11 @@
             }
             if (t.dataset.cgDetails !== undefined) { this._cg.co = this._cg.hints = !this._cg.co; return this._cgShow(); }
             if (t.dataset.cgHue !== undefined) {
-                try { localStorage.setItem('nway.hue', this._hueOn ? '0' : '1'); } catch (err) { /* storage blocked */ }
+                this._sl = this._hueOn;
+                try { localStorage.setItem('nway.sqlane', this._sl ? '1' : '0'); } catch (err) { /* storage blocked */ }
                 this._applyHue();
+                // the table shares the setting: redraw its squares too
+                if (!this.cgInit && this.data) { this._scrollSave(); this.render(); }
                 return this._cgDraw();
             }
             if (t.dataset.cgFocusgrp) {

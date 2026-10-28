@@ -3046,8 +3046,10 @@ a.home-card:hover,
 .nway-strip { display: inline-flex; flex-wrap: wrap; gap: calc(var(--sq, 11px) / 6); min-width: 0; max-width: 100%; vertical-align: middle; }
 .nway-strip i { width: var(--sq, 11px); height: var(--sq, 11px); cursor: pointer; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
 .nway-strip i.on { background: var(--rc); border-color: var(--rc); }
-.nway-hue .nway-strip.hued i.on { --fc: hsl(var(--h) 62% 58%); background: var(--fc); border-color: var(--fc); }
-html.light-theme .nway-hue .nway-strip.hued i.on { --fc: hsl(var(--h) 62% 42%); }
+.nway-strip i.part { background: color-mix(in srgb, var(--rc) 30%, transparent); border-color: var(--rc); }
+.nway-hue .nway-strip.hued i.on, .nway-hue .nway-strip.hued i.part { --fc: hsl(var(--h) 62% var(--l, 58%)); background: var(--fc); border-color: var(--fc); }
+.nway-hue .nway-strip.hued i.part { background: color-mix(in srgb, var(--fc) 30%, transparent); }
+html.light-theme .nway-hue .nway-strip.hued i.on, html.light-theme .nway-hue .nway-strip.hued i.part { --fc: hsl(var(--h) 62% var(--ll, 42%)); }
 .nway-sw { display: none; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: middle; background: hsl(var(--h) 62% 58%); }
 .nway-hue .nway-sw { display: inline-block; }
 html.light-theme .nway-sw { background: hsl(var(--h) 62% 42%); }

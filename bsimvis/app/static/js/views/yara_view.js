@@ -63,6 +63,7 @@ window.YaraView = {
         this._last = null;
         this._loadState(params);
         container.innerHTML = this._shell();
+        this._applySize(this._size.w, this._size.h);
         this._docClick = e => { const m = document.getElementById('yara-menu'); if (m && !m.contains(e.target)) m.open = false; };
         document.addEventListener('click', this._docClick);
         await this._mountEditor(params);
@@ -76,6 +77,44 @@ window.YaraView = {
 
     // The sets are a Compare form (nway_compare.js): group A must match, every other group must not.
     // An empty negative group means everything else in the collection.
+    _applySize(w, h) {
+        const main = document.querySelector('.yw-main');
+        if (!main) return;
+        if (w) main.style.setProperty('--yw-left', `${w}px`); else main.style.removeProperty('--yw-left');
+        if (h) main.style.setProperty('--yw-data-h', `${h}px`); else main.style.removeProperty('--yw-data-h');
+    },
+
+    // Drag a gutter: 'col' sizes the editor, 'row' sizes the Data panel. Saved with the rule state.
+    _drag(e, axis) {
+        e.preventDefault();
+        const main = document.querySelector('.yw-main'), data = document.getElementById('yara-data');
+        const gut = e.currentTarget;
+        gut.setPointerCapture(e.pointerId);
+        const move = ev => {
+            if (axis === 'col') {
+                const r = main.getBoundingClientRect();
+                this._size.w = Math.max(300, Math.min(r.width - 300, ev.clientX - r.left));
+            } else {
+                const r = data.getBoundingClientRect(), right = document.getElementById('yara-right').getBoundingClientRect();
+                this._size.h = Math.max(90, Math.min(right.bottom - r.top - 140, ev.clientY - r.top));
+            }
+            this._applySize(this._size.w, this._size.h);
+        };
+        const up = () => {
+            gut.removeEventListener('pointermove', move);
+            gut.removeEventListener('pointerup', up);
+            this._persist();
+        };
+        gut.addEventListener('pointermove', move);
+        gut.addEventListener('pointerup', up);
+    },
+
+    _resetSize() {
+        this._size = {};
+        this._applySize();
+        this._persist();
+    },
+
     _loadState(params) {
         let saved = {};
         try { saved = JSON.parse(localStorage.getItem('bsimvis.yara') || '{}'); } catch (e) { /* storage is a convenience */ }
@@ -85,11 +124,12 @@ window.YaraView = {
         this._savedCmp = cmp;
         this._savedRule = saved.rule;
         this._rest = saved.rest !== false;
+        this._size = saved.size || {};
     },
 
     _persist() {
         try {
-            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule(), rest: this._rest }));
+            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule(), rest: this._rest, size: this._size }));
         } catch (e) { /* ignore */ }
     },
 
@@ -146,7 +186,13 @@ window.YaraView = {
                         <button class="yw-btn" onclick="YaraView.draft()" title="Ask the model to draft a rule from the Must match files"><i class="fa-solid fa-robot"></i> Draft with LLM</button>
                     </div>
                 </div>
-                <div class="yw-right" id="yara-result"></div>
+                <div class="yw-gut col" id="yw-gut-c" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset" onpointerdown="YaraView._drag(event, 'col')" ondblclick="YaraView._resetSize()"></div>
+                <div class="yw-right" id="yara-right">
+                    <div id="yara-err"></div>
+                    <section class="yw-card yw-panel" id="yara-data"></section>
+                    <div class="yw-gut row" id="yw-gut-r" role="separator" aria-orientation="horizontal" title="Drag to resize, double-click to reset" onpointerdown="YaraView._drag(event, 'row')" ondblclick="YaraView._resetSize()"></div>
+                    <section class="yw-card yw-panel" id="yara-res"></section>
+                </div>
             </div>
         </div>`;
     },
@@ -349,20 +395,27 @@ window.YaraView = {
     // Two cards: the data (groups, suggested strings), then the results of a Sample test or a Full sweep.
     // A rule that does not compile shows its error and "no matching results"; the layout stays.
     _paint() {
-        const el = document.getElementById('yara-result');
-        if (!el) return;
+        if (!document.getElementById('yara-res')) return;
         const seg = `<div class="yw-seg" role="group" aria-label="Result source">
             <button aria-pressed="${this._view === 'live'}" onclick="YaraView.setView('live')">Sample test</button>
             <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep</button></div>`;
         const live = this._good;
         const dtabs = [['groups', 'Groups', live ? live.groups.length : ''], ['suggest', 'Suggested', this._suggested ? this._suggested.length : '']];
-        const data = `<section class="yw-card"><h3 class="yw-h">Data</h3>${this._tabsHtml(dtabs, this._dtab, true)}<div class="yw-pane">${this._dataPane(live)}</div></section>`;
+        const data = `<h3 class="yw-h">Data</h3>${this._tabsHtml(dtabs, this._dtab, true)}<div class="yw-pane">${this._dataPane(live)}</div>`;
         const none = `<div class="yw-hint">${escapeHtml(this._hint || 'No matching results')}</div>`;
         let body;
         if (this._view === 'sweep') body = this._run ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : none);
         else body = live ? this._resultHtml(live) : none;
         const err = this._errHtml(this._res, live ? 'Showing the last valid result below.' : '');
-        el.innerHTML = err + data + `<section class="yw-card"><h3 class="yw-h">Results ${seg}</h3>${body}</section>`;
+        const put = (id, html) => {
+            const n = document.getElementById(id), top = (n.querySelector('.yw-pane') || {}).scrollTop || 0;
+            n.innerHTML = html;
+            const q = n.querySelector('.yw-pane');
+            if (q) q.scrollTop = top;
+        };
+        put('yara-err', err);
+        put('yara-data', data);
+        put('yara-res', `<h3 class="yw-h">Results ${seg}</h3>${body}`);
     },
 
     _tabsHtml(tabs, cur, data) {

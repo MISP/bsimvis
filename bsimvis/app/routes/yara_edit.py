@@ -242,8 +242,10 @@ def _start_run(mode):
         6 * 3600,
         json.dumps({k: body.get(k) for k in ("collection", "pool", "targets")}),
     )
+    total = sum(get_redis().scard(f"{c}:all_files") for c in colls)
     q.hset(
-        f"yara:sweep:{run_id}:stat", mapping={"collections": len(colls), "mode": mode}
+        f"yara:sweep:{run_id}:stat",
+        mapping={"collections": len(colls), "mode": mode, "total": total},
     )
     q.expire(f"yara:sweep:{run_id}:stat", 6 * 3600)
     jobs = [
@@ -292,17 +294,39 @@ def get_run(run_id):
         "hits": len(hits),
         "tagged": int(stat.get("changed", 0)),
     }
-    if spec.get("targets") and out["done"]:
-        r = get_redis()
-        targets = resolve_sets(r, spec, "targets", ys.cfg("neg_pool_cap", 20000))
-        tset = {f"{_origin_coll(c)}:file:{m}" for g in targets for c, m in g["members"]}
-        tp = len(hits & tset)
-        out.update(
-            tp=tp,
-            fp=len(hits) - tp,
-            fn=len(tset) - tp,
-            precision=ys._ratio(tp, len(hits)),
-            recall=ys._ratio(tp, len(tset)),
-            false_hits=sorted(hits - tset)[: ys.LIST_CAP],
-        )
+    out["total"] = int(stat.get("total", 0))
+    if not out["done"]:
+        return out
+
+    def rows(fids):
+        return [
+            ys.file_label(get_redis(), (c, m))
+            for c, _, m in (f.rpartition(":file:") for f in fids)
+        ]
+
+    cap = ys.LIST_CAP
+    if not spec.get("targets"):
+        out["hit_files"] = rows(sorted(hits)[:cap])
+        return out
+    r = get_redis()
+    targets = resolve_sets(r, spec, "targets", ys.cfg("neg_pool_cap", 20000))
+    tset = {f"{_origin_coll(c)}:file:{m}" for g in targets for c, m in g["members"]}
+    tp = len(hits & tset)
+    fp, fn = len(hits) - tp, len(tset) - tp
+    precision, recall = ys._ratio(tp, len(hits)), ys._ratio(tp, len(tset))
+    out["metrics"] = {
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": max(0, out["seen"] - len(tset) - fp),
+        "precision": precision,
+        "recall": recall,
+        "f1": (
+            round(2 * precision * recall / (precision + recall), 4)
+            if precision and recall
+            else None if precision is None or recall is None else 0.0
+        ),
+    }
+    out["missed"] = rows(sorted(tset - hits)[:cap])
+    out["false_hits"] = rows(sorted(hits - tset)[:cap])
     return out

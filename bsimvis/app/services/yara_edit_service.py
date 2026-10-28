@@ -118,6 +118,16 @@ def _sample(groups, targets, cap_files, cap_bytes, sizes):
     return out, total
 
 
+def file_label(r, m):
+    """`{id: "coll:md5", name}` for a (collection, md5) member."""
+    meta = r.get(f"{_fid(*m)}:meta")
+    try:
+        name = json.loads(meta).get("file_name") if meta else None
+    except ValueError:
+        name = None
+    return {"id": f"{m[0]}:{m[1]}", "name": name or m[1]}
+
+
 def _ratio(a, b):
     return round(a / b, 4) if b else None
 
@@ -165,7 +175,9 @@ def evaluate(r, r_raw, text, targets, negatives):
     neg = [m for m in nmembers if m in hits]
     tp = [m for m in pos if hits[m][1]]
     fp = [m for m in neg if hits[m][1]]
-    precision, recall = _ratio(len(tp), len(tp) + len(fp)), _ratio(len(tp), len(pos))
+    # no negatives scanned: precision is unknown, not 100%
+    precision = _ratio(len(tp), len(tp) + len(fp)) if neg else None
+    recall = _ratio(len(tp), len(pos))
     f1 = (
         round(2 * precision * recall / (precision + recall), 4)
         if precision and recall
@@ -199,12 +211,7 @@ def evaluate(r, r_raw, text, targets, negatives):
                 per_string.setdefault((rule, sid), [0, 0])[i] += 1
 
     def label(m):
-        meta = r.get(f"{_fid(*m)}:meta")
-        try:
-            name = json.loads(meta).get("file_name") if meta else None
-        except ValueError:
-            name = None
-        return {"id": f"{m[0]}:{m[1]}", "name": name or m[1]}
+        return file_label(r, m)
 
     missed = [label(m) for m in pos if not hits[m][1]][:LIST_CAP]
     false_hits = [{**label(m), "rules": sorted(hits[m][1])} for m in fp[:LIST_CAP]]

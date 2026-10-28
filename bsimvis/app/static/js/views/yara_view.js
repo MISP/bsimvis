@@ -32,6 +32,10 @@ window.YaraView = {
     _seq: 0,
     _tab: 'strings',
     _res: null,
+    _hint: '',
+    _view: 'live', // 'live' sample test | 'sweep' full-collection run
+    _sweep: null,
+    _prog: null,
     _suggested: null,
     _uuid: null,
     _run: null,
@@ -42,6 +46,7 @@ window.YaraView = {
     destroy() {
         clearTimeout(this._timer);
         clearTimeout(this._runTimer);
+        this._busy(false);
         if (this._editor && this._editor.destroy) this._editor.destroy();
         this._editor = this._textarea = null;
         document.removeEventListener('click', this._docClick);
@@ -77,11 +82,12 @@ window.YaraView = {
         if (params.target) cmp = { groups: [{ label: 'Must match', queries: [params.target] }, { label: 'Must not match', queries: params.negative ? [params.negative] : [] }] };
         this._savedCmp = cmp;
         this._savedRule = saved.rule;
+        this._rest = saved.rest !== false;
     },
 
     _persist() {
         try {
-            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule() }));
+            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule(), rest: this._rest }));
         } catch (e) { /* ignore */ }
     },
 
@@ -120,15 +126,15 @@ window.YaraView = {
                         <button onclick="YaraView.exportYar()"><i class="fa-solid fa-download"></i> Export .yar</button>
                         <button onclick="YaraView.toVendored()" title="Write to data/yara_rules/custom for review"><i class="fa-solid fa-folder-plus"></i> Add to ruleset</button>
                         <button onclick="YaraView.startRun('apply')" title="Tag matching files yara:custom:<rule> (saves first)"><i class="fa-solid fa-tags"></i> Apply tags to matches</button>
-                        <button onclick="YaraView.draft()"><i class="fa-solid fa-robot"></i> Draft with LLM</button>
                     </div>
                 </details>
             </div>
-            <div class="yw-run" id="yara-run"></div>
             <details class="yw-sets" id="yara-setbar" open>
                 <summary><span class="yw-lbl">Test sets</span><span class="yw-sum" id="yara-setsum"></span></summary>
                 <div class="yw-sets-body">
-                    <div class="yw-sets-row"><span class="yw-lbl">Collection</span><select id="yara-collection" aria-label="Collection" onchange="YaraView._setsChanged()"></select></div>
+                    <div class="yw-sets-row"><span class="yw-lbl">Collection</span><select id="yara-collection" aria-label="Collection" onchange="YaraView._setsChanged()"></select>
+                        <span class="yw-sp"></span>
+                        <label class="yw-check" title="Without a Must not match filter, test the rule against every other file of the collection (a sample). Off: only recall is measured."><input type="checkbox" id="yara-rest" onchange="YaraView._restChanged(this.checked)"> Test against every other file</label></div>
                     <div class="nway-focus-body nway-match-body nway-cmp-body" id="yara-sets" style="position:static; box-shadow:none; border:0; background:transparent; padding:0; width:100%; max-width:none; max-height:none; min-width:0; align-items:stretch;"></div>
                 </div>
             </details>
@@ -138,6 +144,7 @@ window.YaraView = {
                     <div class="yw-tools">
                         <button class="yw-btn" onclick="YaraView.openPicker()"><i class="fa-solid fa-microchip"></i> Insert from function...</button>
                         <button class="yw-btn" onclick="YaraView.suggest()"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest strings</button>
+                        <button class="yw-btn" onclick="YaraView.draft()" title="Ask the model to draft a rule from the Must match files"><i class="fa-solid fa-robot"></i> Draft with LLM</button>
                     </div>
                 </div>
                 <div class="yw-right" id="yara-result"></div>
@@ -220,6 +227,7 @@ window.YaraView = {
         });
         box.innerHTML = this._cmp.html();
         this._cmp.bind(box);
+        document.getElementById('yara-rest').checked = this._rest;
         this._cmp._previewSoon();
         const hasTarget = this._savedCmp && this._savedCmp.groups[0] && this._savedCmp.groups[0].queries.length;
         if (hasTarget) document.getElementById('yara-setbar').open = false;
@@ -245,21 +253,18 @@ window.YaraView = {
         this.schedule(0);
     },
 
-    // A group with no filter is "everything else" on the negative side.
-    _groupSpec(g, rest) {
-        const queries = g.queries.map(q => window.NwayCompare.parseQuery(q));
-        return queries.length ? { label: g.label, queries } : (rest ? { label: g.label, rest: true } : null);
+    _restChanged(on) {
+        this._rest = on;
+        this.schedule(0);
     },
 
+    // Must match: its filters. Must not match: its filters, else every other file (if ticked), else nothing.
     _body() {
         const cmp = this._cmp.cmp();
-        const targets = [this._groupSpec(cmp.groups[0], false)].filter(Boolean);
-        return {
-            rule: this.getRule(),
-            collection: document.getElementById('yara-collection').value,
-            targets,
-            negatives: cmp.groups.slice(1).map(g => this._groupSpec(g, true)),
-        };
+        const spec = g => ({ label: g.label, queries: g.queries.map(q => window.NwayCompare.parseQuery(q)) });
+        const targets = cmp.groups[0].queries.length ? [spec(cmp.groups[0])] : [];
+        const negatives = cmp.groups.slice(1).map(g => g.queries.length ? spec(g) : (this._rest && targets.length ? { label: g.label, rest: true } : null)).filter(Boolean);
+        return { rule: this.getRule(), collection: document.getElementById('yara-collection').value, targets, negatives };
     },
 
     // --- live test --------------------------------------------------------
@@ -274,16 +279,41 @@ window.YaraView = {
         if (el) el.textContent = text;
     },
 
+    // The app's progress card (bottom right, as in the N-way view). `fraction` null = unknown.
+    _busy(on, label, fraction, right) {
+        let b = document.getElementById('yara-busy');
+        if (!on) { if (b) b.remove(); return; }
+        if (!b) {
+            b = document.createElement('div');
+            b.id = 'yara-busy';
+            b.className = 'nway-busy';
+            b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> <span class="yb-l"></span></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span></span><span class="nway-busy-r yb-r"></span></div>';
+            document.body.appendChild(b);
+        }
+        b.querySelector('.yb-l').textContent = label;
+        b.querySelector('.yb-r').textContent = right || '';
+        const fill = b.querySelector('.nway-bar-fill');
+        fill.classList.toggle('indet', !fraction);
+        fill.style.width = fraction ? `${Math.max(2, Math.round(fraction * 100))}%` : '';
+    },
+
     async test() {
         const body = this._body();
         this._persist();
         try { localStorage.setItem('bsimvis.yara.collection', body.collection); } catch (e) { /* ignore */ }
-        if (!body.collection || !body.targets.length) {
-            this._renderResult(null, 'Give "Must match" a filter (a tag, file name, batch...) to start testing.');
+        const seq = ++this._seq;
+        if (!body.collection) { this._renderResult(null, 'Pick a collection.'); return; }
+        if (!body.targets.length) {
+            // nothing to measure against: still show compile errors
+            const v = await (await fetch('/api/yara/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rule: body.rule }) })).json().catch(() => ({}));
+            if (seq !== this._seq) return;
+            this._renderResult(v.errors && v.errors.length ? { ok: false, errors: v.errors } : null,
+                'No "Must match" set yet. Add a filter to measure precision and recall, or press Full sweep to see every file this rule hits.');
             return;
         }
-        const seq = ++this._seq;
         this._status('scanning...');
+        clearTimeout(this._busyT);
+        this._busyT = setTimeout(() => { if (!this._run) this._busy(true, 'Testing the rule'); }, 500);
         let res;
         try {
             const r = await fetch('/api/yara/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -293,6 +323,8 @@ window.YaraView = {
             res = { ok: false, errors: [], error: String(e) };
         }
         if (seq !== this._seq) return; // a newer keystroke owns the panel
+        clearTimeout(this._busyT);
+        if (!this._run) this._busy(false);
         this._last = res;
         this._status(res.ok ? `${res.ms} ms` : '');
         this._renderResult(res);
@@ -308,37 +340,78 @@ window.YaraView = {
     },
 
     _renderResult(res, hint) {
-        const el = document.getElementById('yara-result');
         this._res = res;
-        if (!res) { el.innerHTML = `<div class="yw-hint">${escapeHtml(hint || '')}</div>`; return; }
-        if (res.error) { el.innerHTML = `<div class="yw-err">${escapeHtml(res.error)}</div>`; return; }
-        if (!res.ok) {
-            el.innerHTML = `<div class="yw-err">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
-            return;
-        }
+        this._hint = hint || '';
+        this._paint();
+    },
+
+    // The panel: a Sample | Full sweep switch (once a sweep exists), then the live test or the sweep result.
+    _paint() {
+        const el = document.getElementById('yara-result');
+        if (!el) return;
+        const sweeping = !!this._run;
+        const hasSweep = sweeping || !!this._sweep;
+        if (!hasSweep) this._view = 'live';
+        const stale = this._sweep && !sweeping && this._sweepRule !== this.getRule();
+        const seg = hasSweep ? `<div class="yw-seg" role="group" aria-label="Result source">
+            <button aria-pressed="${this._view === 'live'}" onclick="YaraView.setView('live')">Sample test</button>
+            <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep${stale ? ' <span class="yw-badge dead">OLD RULE</span>' : ''}</button></div>` : '';
+        let body;
+        if (this._view === 'sweep') body = sweeping ? this._progressHtml() : this._resultHtml(this._sweep);
+        else body = this._res ? this._resultHtml(this._res) : `<div class="yw-hint">${escapeHtml(this._hint)}</div>`;
+        el.innerHTML = seg + body;
+    },
+
+    setView(v) {
+        this._view = v;
+        this._paint();
+    },
+
+    _progressHtml() {
+        const p = this._prog || {};
+        const f = p.total ? Math.min(1, p.seen / p.total) : 0;
+        return `<div class="yw-prog"><div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> ${p.mode === 'apply' ? 'Tagging files' : 'Sweeping the collection'}</div>
+            <div class="nway-bar-track"><div class="nway-bar-fill${f ? '' : ' indet'}" style="${f ? `width:${Math.max(2, Math.round(f * 100))}%` : ''}"></div></div>
+            <div class="yw-dim" style="margin-top:6px;">${Number(p.seen || 0)}${p.total ? ` of ${Number(p.total)}` : ''} files scanned &middot; ${Number(p.hits || 0)} hit</div></div>`;
+    },
+
+    // Metrics, note, tabs and pane for one result: a sample test or a finished sweep (res.exact).
+    _resultHtml(res) {
+        if (res.error) return `<div class="yw-err">${escapeHtml(res.error)}</div>`;
+        if (!res.ok) return `<div class="yw-err">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
         const m = res.metrics, s = res.sample;
         const good = v => (v === 1 ? ' good' : '');
-        const tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', ''], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
-        if (this._suggested) tabs.push(['suggest', 'Suggested', this._suggested.length]);
-        if (!tabs.some(t => t[0] === this._tab)) this._tab = 'strings';
-        el.innerHTML = `
-            <div class="yw-metrics">
-                <div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
+        let head, note, tabs;
+        if (res.exact) {
+            const hasT = !!m;
+            head = hasT ? `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
-                <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>
-                <div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>
-            </div>
-            <div class="yw-note">
-                ${s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`}
-                ${s.targets_truncated ? ' Targets truncated.' : ''}${s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : ''}
-            </div>
+                <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>` :
+                `<div class="yw-m"><small>Matches</small><strong>${res.hits}</strong></div>
+                <div class="yw-m"><small>Scanned</small><strong>${res.seen}</strong></div>
+                <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
+            note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${hasT ? '' : ' No Must match set, so no precision or recall.'}`;
+            tabs = hasT ? [['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [['hits', 'Matches', res.hits]];
+        } else {
+            head = `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
+                <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
+                <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>`;
+            note = (s.negatives_scanned ? (s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`) : 'No negatives: only recall is measured.') +
+                (s.targets_truncated ? ' Targets truncated.' : '') + (s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : '');
+            tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', ''], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
+            if (this._suggested) tabs.push(['suggest', 'Suggested', this._suggested.length]);
+        }
+        if (!tabs.some(t => t[0] === this._tab)) this._tab = tabs[0][0];
+        const conf = m ? `<div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>` : '';
+        return `<div class="yw-metrics">${head}${conf}</div>
+            <div class="yw-note">${note}</div>
             <div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${this._tab === k}" onclick="YaraView.setTab('${k}')">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>
-            <div class="yw-pane" id="yara-pane">${this._pane(res)}</div>`;
+            <div class="yw-pane">${this._pane(res)}</div>`;
     },
 
     setTab(k) {
         this._tab = k;
-        this._renderResult(this._res);
+        this._paint();
     },
 
     _fnUrl(f) {
@@ -347,17 +420,20 @@ window.YaraView = {
     },
 
     _pane(res) {
-        const s = res.sample, land = res.landing || {};
-        const list = (rows, extra) => rows.length
-            ? `<ul class="yw-list">${rows.map(f => `<li>${this._fileLink(f)}${extra ? extra(f) : ''}<button class="yw-btn ghost" onclick="navigator.clipboard.writeText('${escapeAttr(f.id.slice(f.id.lastIndexOf(':') + 1))}')">Copy md5</button></li>`).join('')}</ul>`
+        const s = res.sample || {}, land = res.landing || {};
+        const list = (rows, total, extra) => rows.length
+            ? `<ul class="yw-list">${rows.map(f => `<li>${this._fileLink(f)}${extra ? extra(f) : ''}<button class="yw-btn ghost" onclick="navigator.clipboard.writeText('${escapeAttr(f.id.slice(f.id.lastIndexOf(':') + 1))}')">Copy md5</button></li>`).join('')}</ul>${total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : ''}`
             : '<div class="yw-hint">none</div>';
+        const m = res.metrics || {};
+        const rules = f => (f.rules ? ` <span class="yw-dim yw-mono">${escapeHtml(f.rules.join(', '))}</span>` : '');
+        if (this._tab === 'hits') return list(res.hit_files || [], res.hits);
         if (this._tab === 'groups') {
             return `<table><thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
                 <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : 'yw-n'}">${escapeHtml(g.role)}</td>
                 <td class="yw-mono">${g.files}</td><td class="yw-mono">${g.hits}</td><td class="yw-mono">${this._pct(g.hit_rate)}</td></tr>`).join('')}</tbody></table>`;
         }
-        if (this._tab === 'missed') return list(res.missed);
-        if (this._tab === 'false') return list(res.false_hits, f => ` <span class="yw-dim yw-mono">${escapeHtml(f.rules.join(', '))}</span>`);
+        if (this._tab === 'missed') return list(res.missed, m.fn);
+        if (this._tab === 'false') return list(res.false_hits, m.fp, rules);
         if (this._tab === 'suggest') return this._suggestPane();
         if (!res.strings.length) return '<div class="yw-hint">The rule has no strings.</div>';
         const rows = res.strings.map(x => {
@@ -454,8 +530,9 @@ window.YaraView = {
         this._status('');
         this._suggested = res.strings || [];
         this._tab = 'suggest';
-        if (this._res && this._res.ok) this._renderResult(this._res);
-        else this._renderResult(null, 'Give "Must match" a filter first.');
+        this._view = 'live';
+        if (this._res && this._res.ok) this._paint();
+        else this._renderResult(null, 'Suggestions need a "Must match" set and a rule that compiles.');
     },
 
     addString(i) {
@@ -531,24 +608,47 @@ window.YaraView = {
             if (!this._uuid) return;
         }
         const body = { ...this._body(), uuid: this._uuid };
+        if (!body.collection) return;
         const r = await fetch(`/api/yara/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (!r.ok) { this._status(res.message || res.error || `${mode} failed`); return; }
         this._run = res.run_id;
-        this._pollRun();
+        this._prog = { mode, seen: 0, hits: 0, total: 0 };
+        this._view = 'sweep';
+        this._paint();
+        this._pollRun(mode);
     },
 
-    async _pollRun() {
-        const el = document.getElementById('yara-run');
-        if (!this._run || !el) return;
-        const res = await (await fetch(`/api/yara/run/${this._run}`)).json();
-        if (res.done) {
-            el.innerHTML = `${escapeHtml(res.mode)} done: ${res.seen} files, ${res.hits} hit` +
-                (res.mode === 'apply' ? `, ${res.tagged} retagged` : '') +
-                (res.precision !== undefined ? ` &mdash; <b>exact</b> precision ${this._pct(res.precision)}, recall ${this._pct(res.recall)} (FP ${res.fp}, FN ${res.fn})` : '');
+    async _pollRun(mode) {
+        const id = this._run;
+        if (!id) return;
+        let res;
+        try {
+            const r = await fetch(`/api/yara/run/${id}`);
+            res = await r.json();
+            if (!r.ok) throw new Error(res.message || `HTTP ${r.status}`);
+        } catch (e) {
+            this._run = null;
+            this._busy(false);
+            this._status(String(e.message || e));
+            this._paint();
             return;
         }
-        el.textContent = `${res.mode || 'run'}: ${res.seen || 0} files scanned, ${res.hits || 0} hit...`;
-        this._runTimer = setTimeout(() => this._pollRun(), 2000);
+        if (id !== this._run) return; // another run started
+        if (!res.done) {
+            this._prog = { mode, ...res };
+            const f = res.total ? Math.min(1, res.seen / res.total) : 0;
+            this._busy(true, mode === 'apply' ? 'Tagging files' : 'Sweeping the collection', f, `${res.seen}${res.total ? ` / ${res.total}` : ''} files · ${res.hits} hit`);
+            this._paint();
+            this._runTimer = setTimeout(() => this._pollRun(mode), 1500);
+            return;
+        }
+        this._run = null;
+        this._busy(false);
+        this._sweep = { ok: true, exact: true, ...res };
+        this._sweepRule = this.getRule();
+        this._tab = '';
+        this._status(`${mode === 'apply' ? 'applied' : 'swept'}: ${res.seen} files, ${res.hits} hit`);
+        this._paint();
     },
 };

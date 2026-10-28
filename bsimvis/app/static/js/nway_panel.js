@@ -252,41 +252,11 @@
             this._keep = 0;
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"></div>';
-            const t0 = Date.now(), usual = NwayPanel._lastMs;
-            const pid = Math.random().toString(36).slice(2, 12) + t0.toString(36);
+            const t0 = Date.now();
+            const pid = NwayPanel.progressId();
             qs.set('progress_id', pid);
-            let prog = null, polling = false;
             const stop = new AbortController();
-            // Progress card: server fraction when reported, else elapsed time against the last run's duration.
-            const tick = () => {
-                let b = this.el.querySelector('.nway-busy');
-                if (!b) {
-                    b = document.createElement('div');
-                    b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions<button type="button" class="nway-busy-cancel" title="Stop this computation"><i class="fa-solid fa-xmark"></i> Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
-                    (this.data ? this.el : this.el.querySelector('.nway-state') || this.el).appendChild(b);
-                    b.querySelector('.nway-busy-cancel').onclick = () => {
-                        fetch(`/api/bin_sim/nway/cancel?id=${pid}`, { method: 'POST' }).catch(() => { });
-                        stop.abort();
-                    };
-                }
-                b.className = 'nway-busy' + (this.data ? '' : ' inline');
-                const el = (Date.now() - t0) / 1000, f = prog && prog.fraction > 0 ? prog.fraction : 0;
-                const fill = b.querySelector('.nway-bar-fill');
-                fill.classList.toggle('indet', !f);
-                fill.style.width = f ? `${Math.max(2, Math.round(f * 100))}%` : '';
-                const right = [f ? `${Math.round(f * 100)}%` : '', `${Math.round(el)}s`];
-                if (f > 0.1 && el > 2) right.push(`~${Math.max(1, Math.round(el * (1 - f) / f))}s left`);
-                else if (!f && usual) right.push(`usually ~${Math.max(1, Math.round(usual / 1000))}s`);
-                b.querySelector('.nway-busy-l').textContent = f ? prog.label : 'Starting...';
-                b.querySelector('.nway-busy-r').textContent = right.filter(Boolean).join(' · ') + ` · times out at ${NWAY_TIMEOUT_MS / 1000}s`;
-                if (!polling) {
-                    polling = true;
-                    fetch(`/api/bin_sim/nway/progress?id=${pid}`).then(r => r.json()).then(p => { if (p.label) prog = p; }).catch(() => { }).finally(() => { polling = false; });
-                }
-            };
-            tick();
-            const timer = setInterval(tick, 500);
-            const done = () => { clearInterval(timer); this.el.querySelector('.nway-busy')?.remove(); };
+            const done = NwayPanel.busy(this.data ? this.el : this.el.querySelector('.nway-state') || this.el, pid, { inline: !this.data, onCancel: () => stop.abort() });
             try {
                 const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`, { signal: AbortSignal.any([stop.signal, AbortSignal.timeout(NWAY_TIMEOUT_MS)]) });
                 const body = await res.json().catch(() => ({}));
@@ -3161,6 +3131,46 @@
     };
 
     // Family view of any set of functions (`coll:func:md5:addr` ids), whatever their files or collections.
+    NwayPanel.progressId = () => Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+    NwayPanel.TIMEOUT_MS = NWAY_TIMEOUT_MS;
+
+    /**
+     * The "Matching functions" card of a `/nway` call sent with `progress_id=pid`,
+     * appended to `host`: server fraction when reported, else elapsed time against
+     * the last run's duration. Cancel stops the server side and calls `onCancel`.
+     * Returns `done()`, which removes the card.
+     */
+    NwayPanel.busy = function (host, pid, { inline = true, onCancel } = {}) {
+        const t0 = Date.now(), usual = NwayPanel._lastMs;
+        let prog = null, polling = false;
+        const b = document.createElement('div');
+        b.className = 'nway-busy' + (inline ? ' inline' : '');
+        b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions<button type="button" class="nway-busy-cancel" title="Stop this computation"><i class="fa-solid fa-xmark"></i> Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
+        host.appendChild(b);
+        b.querySelector('.nway-busy-cancel').onclick = () => {
+            fetch(`/api/bin_sim/nway/cancel?id=${pid}`, { method: 'POST' }).catch(() => { });
+            if (onCancel) onCancel();
+        };
+        const tick = () => {
+            const el = (Date.now() - t0) / 1000, f = prog && prog.fraction > 0 ? prog.fraction : 0;
+            const fill = b.querySelector('.nway-bar-fill');
+            fill.classList.toggle('indet', !f);
+            fill.style.width = f ? `${Math.max(2, Math.round(f * 100))}%` : '';
+            const right = [f ? `${Math.round(f * 100)}%` : '', `${Math.round(el)}s`];
+            if (f > 0.1 && el > 2) right.push(`~${Math.max(1, Math.round(el * (1 - f) / f))}s left`);
+            else if (!f && usual) right.push(`usually ~${Math.max(1, Math.round(usual / 1000))}s`);
+            b.querySelector('.nway-busy-l').textContent = f ? prog.label : 'Starting...';
+            b.querySelector('.nway-busy-r').textContent = right.filter(Boolean).join(' · ') + ` · times out at ${NWAY_TIMEOUT_MS / 1000}s`;
+            if (!polling) {
+                polling = true;
+                fetch(`/api/bin_sim/nway/progress?id=${pid}`).then(r => r.json()).then(p => { if (p.label) prog = p; }).catch(() => { }).finally(() => { polling = false; });
+            }
+        };
+        tick();
+        const timer = setInterval(tick, 500);
+        return () => { clearInterval(timer); b.remove(); };
+    };
+
     NwayPanel.urlForFunctions = function (fids, ref) {
         const qs = new URLSearchParams({ scope: 'functions' });
         if (ref) qs.set('fx_ref', ref); else qs.set('fx_fids', [...new Set(fids)].join(','));

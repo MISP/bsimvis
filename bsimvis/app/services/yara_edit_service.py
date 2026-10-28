@@ -348,6 +348,14 @@ class Locator:
             n = 1
         return start + 15 * n
 
+    def fn_name(self, entry):
+        meta = self.r.get(f"{self.coll}:func:{self.md5}:{entry}:meta")
+        try:
+            name = (json.loads(meta) if meta else {}).get("function_name")
+        except ValueError:
+            name = None
+        return name or f"FUN_{entry}"
+
     def string_at(self, va):
         if self.strings is None:
             self.strings = []
@@ -406,7 +414,7 @@ def locate_hits(r, r_raw, hit_files):
                                 a,
                                 {
                                     "addr": a,
-                                    "name": f"FUN_{a}",
+                                    "name": loc.fn_name(a),
                                     "files": set(),
                                     "xref": True,
                                 },
@@ -443,7 +451,28 @@ def explain_hits(r, r_raw, rules, members, per_file=12):
             continue
         loc = Locator(r, coll, md5, raw)
         loc._load()
-        rows = []
+        rows, docs = [], {}
+
+        def fn_doc(entry):
+            """The function's own meta, shaped for the UI's function renderer."""
+            if entry not in docs:
+                fid = f"{coll}:func:{md5}:{entry}"
+                try:
+                    meta = json.loads(r.get(f"{fid}:meta") or "{}")
+                except ValueError:
+                    meta = {}
+                keep = ("function_name", "namespace", "parameters", "return_type")
+                docs[entry] = {
+                    "function_name": f"FUN_{entry}",
+                    **{k: meta[k] for k in keep if k in meta},
+                    "entrypoint_address": entry,
+                    "bsim_features_count": meta.get("bsim_features_count", 0),
+                    "collection": coll,
+                    "file_md5": md5,
+                    "function_id": fid,
+                }
+            return docs[entry]
+
         for m in rules.match(data=raw, timeout=cfg("scan_timeout", 20)):
             if not m.strings:
                 rows.append({"rule": m.rule})
@@ -458,16 +487,21 @@ def explain_hits(r, r_raw, rules, members, per_file=12):
                             "rule": m.rule,
                             "string": s.identifier,
                             "offset": i.offset,
+                            "address": None if va is None else f"{va:08x}",
                             "hex": b.hex(" "),
                             "text": "".join(
                                 chr(c) if 32 <= c < 127 else "." for c in b
                             ),
-                            "function": fn
-                            and {
-                                "addr": f"{fn[0]:08x}",
-                                "name": fn[1],
-                                "example": f"{coll}:{md5}",
-                            },
+                            "function": fn and fn_doc(f"{fn[0]:08x}"),
+                            # a hit in a string: the functions that reference it
+                            "xrefs": (
+                                [fn_doc(a) for a in (st.get("funcs") or [])[:6]]
+                                if st and not fn
+                                else []
+                            ),
+                            "xref_total": (
+                                len(st.get("funcs") or []) if st and not fn else 0
+                            ),
                             "str": st and st.get("value", "")[:80],
                         }
                     )
@@ -672,7 +706,7 @@ def run_chunk(
         f"{collection}:all_files", cursor=int(cursor), count=chunk_size
     )
     ids = [_txt(i) for i in ids]
-    hit_ids, changed = [], 0
+    hit_ids, changed, strs = [], 0, {}
     # tags an earlier version of this rule applied: a renamed rule must drop them
     previous = (
         {_txt(t) for t in r.smembers(f"{KEY.format(rule_uuid)}:tags")}
@@ -685,6 +719,9 @@ def run_chunk(
         found = scan_bytes(rules, data) if data else {}
         if found:
             hit_ids.append(fid)
+            strs[fid] = "|".join(
+                f"{rule}:{sid}" for rule, ss in found.items() for sid in ss
+            )
         if mode != "apply":
             continue
         raw_meta = r.get(f"{fid}:meta")
@@ -707,11 +744,13 @@ def run_chunk(
     base = f"yara:sweep:{run_id}"
     if hit_ids:
         q.sadd(f"{base}:hits", *hit_ids)
+    if strs:
+        q.hset(f"{base}:strs", mapping=strs)
     q.hincrby(f"{base}:stat", "seen", len(ids))
     q.hincrby(f"{base}:stat", "changed", changed)
     if str(new_cursor) == "0":
         q.hincrby(f"{base}:stat", "done", 1)
-    for k in (f"{base}:hits", f"{base}:stat"):
+    for k in (f"{base}:hits", f"{base}:stat", f"{base}:strs"):
         q.expire(k, 6 * 3600)
     return str(new_cursor), len(ids), len(hit_ids), changed
 

@@ -38,6 +38,8 @@ window.YaraView = {
     _seq: 0,
     _tab: 'strings', // result tab
     _sel: new Set(), // picked suggestion rows
+    _fold: new Set(), // files folded in the hit tables
+    _rowIds: [],
     _suggested: null,
     _suggKey: '',
     _res: null,
@@ -463,7 +465,8 @@ window.YaraView = {
                 <div class="yw-m"><small>Scanned</small><strong>${res.seen}</strong></div>
                 <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
             note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${m ? '' : ' No Must match set, so no precision or recall.'}`;
-            tabs = m ? [['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [['hits', 'Matches', res.hits]];
+            const pre = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length]];
+            tabs = m ? [...pre, ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [...pre, ['hits', 'Matches', res.hits]];
         } else {
             head = `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
@@ -490,38 +493,69 @@ window.YaraView = {
         return `/collections/${encodeURIComponent(f.example.slice(0, i))}/files/${f.example.slice(i + 1)}/functions/${escapeAttr(f.addr)}`;
     },
 
-    // Missed / false hits / matches: one table, same look as the data tables.
+    // Missed / matches: file rows. True / false hits: the evidence, one row per match, folded by file.
     _resultPane(res) {
         if (this._tab === 'strings') return this._stringsPane(res);
         if (this._tab === 'groups') return this._groupsPane(res);
         const m = res.metrics || {};
-        const [rows, total, withRules] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : this._tab === 'true' ? [res.true_hits || [], m.tp, true] : [res.missed, m.fn];
+        const [rows, total, detail] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : this._tab === 'true' ? [res.true_hits || [], m.tp, true] : [res.missed, m.fn];
         if (!rows.length) return '<div class="yw-hint">none</div>';
+        const more = total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : '';
+        if (detail) return this._hitsPane(rows) + more;
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
-            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td>${withRules ? `<td>${this._matchCell(f)}</td>` : ''}</tr>`;
+            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td></tr>`;
         }).join('');
-        return `<table class="${withRules ? 'yw-wide' : ''}"><thead><tr><th>File</th><th>md5</th>${withRules ? '<th>Matched</th>' : ''}</tr></thead><tbody>${body}</tbody></table>
-            ${total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : ''}`;
+        return `<table class="yw-fixed"><colgroup><col><col style="width:110px"></colgroup><thead><tr><th>File</th><th>md5</th></tr></thead><tbody>${body}</tbody></table>${more}`;
     },
 
-    // A false hit's evidence: per match, the string, offset, bytes and where it lands.
-    _matchCell(f) {
-        const ms = f.matches || [];
-        if (!ms.length) return (f.rules || []).map(r => `<span class="yw-badge noisy">${escapeHtml(r)}</span>`).join('');
-        return ms.map(x => {
-            if (x.string === undefined) return `<div class="yw-hit"><span class="yw-badge noisy">${escapeHtml(x.rule)}</span> <span class="yw-dim">condition only, no string</span></div>`;
-            const where = x.function ? `<a href="${this._fnUrl(x.function)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(x.function.name)}</a>`
-                : x.str ? `str &ldquo;${escapeHtml(x.str)}&rdquo;` : '<span class="yw-dim">unmapped</span>';
-            return `<div class="yw-hit"><div class="yw-hit-h"><span class="yw-badge noisy">${escapeHtml(x.rule)} ${escapeHtml(x.string)}</span> <span class="yw-dim yw-mono">@0x${Number(x.offset).toString(16)}</span> &rarr; ${where}</div>
-                <code class="yw-mono">${escapeHtml(x.hex)}</code> <span class="yw-dim yw-mono">&ldquo;${escapeHtml(x.text)}&rdquo;</span></div>`;
+    toggleFile(id, e) {
+        if (e && e.target.closest('.entity-filename, .entity-md5, a')) return;
+        if (!this._fold.delete(id)) this._fold.add(id);
+        this._paint();
+    },
+
+    foldAll(on) {
+        this._fold = new Set(on ? this._rowIds : []);
+        this._paint();
+    },
+
+    _hitsPane(rows) {
+        this._rowIds = rows.map(f => f.id);
+        const body = rows.map(f => {
+            const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
+            const ms = f.matches || [];
+            const open = !this._fold.has(f.id);
+            const rules = (f.rules || []).map(r => `<span class="yw-badge noisy">${escapeHtml(r)}</span>`).join('');
+            const head = `<tr class="yw-fh" onclick="YaraView.toggleFile(${escapeAttr(jsString(f.id))}, event)"><td colspan="4">
+                <i class="fa-solid fa-chevron-${open ? 'down' : 'right'} yw-chev"></i>
+                <span class="yw-fname">${EntityRenderer.renderFileName(f.name, md5, coll)}</span> ${EntityRenderer.renderMd5(md5, { collection: coll })}
+                <span class="yw-dim">${ms.length ? `${ms.length} match${ms.length > 1 ? 'es' : ''}` : 'no details (list limit)'}</span>${rules}</td></tr>`;
+            if (!open) return head;
+            return head + ms.map(x => {
+                if (x.string === undefined) return `<tr class="yw-mr"><td><span class="yw-badge noisy" style="margin:0">${escapeHtml(x.rule)}</span></td><td colspan="3" class="yw-dim">matched on the condition alone, no string</td></tr>`;
+                const at = x.address ? x.address : `@0x${Number(x.offset).toString(16)}`;
+                const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}</div>`;
+                const where = x.function ? fnHtml(x.function)
+                    : x.str ? `<div class="yw-dim" title="Hit inside a string of the string table">str &ldquo;${escapeHtml(x.str)}&rdquo;</div>`
+                        + (x.xrefs.length ? `<div class="yw-xr"><span class="yw-dim">referenced by</span>${x.xrefs.map(fnHtml).join('')}${x.xref_total > x.xrefs.length ? `<span class="yw-dim">+${x.xref_total - x.xrefs.length} more</span>` : ''}</div>` : '<div class="yw-dim">no function references it</div>')
+                        : '<span class="yw-dim">not in a function or string</span>';
+                return `<tr class="yw-mr">
+                    <td title="${escapeAttr(`${x.rule} ${x.string}`)}"><span class="yw-mono">${escapeHtml(x.string)}</span> <span class="yw-dim yw-rule">${escapeHtml(x.rule)}</span></td>
+                    <td class="yw-mono" title="${escapeAttr(`file offset 0x${Number(x.offset).toString(16)}`)}">${escapeHtml(at)}</td>
+                    <td><code title="${escapeAttr(`${x.hex}\n"${x.text}"`)}">${escapeHtml(x.hex)}</code></td>
+                    <td>${where}</td></tr>`;
+            }).join('');
         }).join('');
+        return `<div class="yw-foldbar"><button class="yw-btn ghost" onclick="YaraView.foldAll(true)">Collapse all</button><button class="yw-btn ghost" onclick="YaraView.foldAll(false)">Expand all</button></div>
+            <table class="yw-fixed yw-hits"><colgroup><col style="width:17%"><col style="width:84px"><col style="width:26%"><col></colgroup>
+            <thead><tr><th>String</th><th>Address</th><th>Bytes</th><th>Function</th></tr></thead><tbody>${body}</tbody></table>`;
     },
 
     _groupsPane(res) {
         return `<table class="yw-fixed"><colgroup><col><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:70px"></colgroup>
             <thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
-            <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : 'yw-n'}">${escapeHtml(g.role)}</td>
+            <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : g.role === 'negative' ? 'yw-n' : 'yw-dim'}">${escapeHtml(g.role)}</td>
             <td class="yw-mono">${g.files}</td><td class="yw-mono">${g.hits}</td><td class="yw-mono">${this._pct(g.hit_rate)}</td></tr>`).join('')}</tbody></table>`;
     },
 

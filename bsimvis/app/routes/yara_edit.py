@@ -241,7 +241,8 @@ def _start_run(mode):
         f"yara:sweep:{run_id}:spec",
         6 * 3600,
         json.dumps(
-            {k: body.get(k) for k in ("collection", "pool", "targets")} | {"rule": text}
+            {k: body.get(k) for k in ("collection", "pool", "targets", "negatives")}
+            | {"rule": text}
         ),
     )
     total = sum(get_redis().scard(f"{c}:all_files") for c in colls)
@@ -307,12 +308,94 @@ def get_run(run_id):
         ]
 
     cap = ys.LIST_CAP
-    if not spec.get("targets"):
+    r = get_redis()
+    text = spec.get("rule") or ""
+    rules, _ = ys.compile_source(text)
+    out["rules"] = ys.rule_names(text)
+    targets = (
+        resolve_sets(r, spec, "targets", ys.cfg("neg_pool_cap", 20000))
+        if spec.get("targets")
+        else []
+    )
+
+    def fids(group):
+        return {f"{_origin_coll(c)}:file:{m}" for c, m in group["members"]}
+
+    tset = set().union(*(fids(g) for g in targets)) if targets else set()
+
+    # what each string hit, split into target / other files
+    per = {(rule, sid): [0, 0] for rule, sid in ys.defined_strings(text)}
+    for fid, found in q.hscan_iter(f"yara:sweep:{run_id}:strs"):
+        side = 1 if tset and ys._txt(fid) not in tset else 0
+        for key in ys._txt(found).split("|"):
+            rule, _, sid = key.rpartition(":")
+            per.setdefault((rule, sid), [0, 0])[side] += 1
+    out["strings"] = [
+        {"rule": k[0], "id": k[1], "pos": v[0], "neg": v[1]} for k, v in per.items()
+    ]
+    out["sample"] = {"targets": len(tset) or out["seen"]}
+
+    groups = [
+        {
+            "label": g["label"],
+            "role": "target",
+            "files": len(fids(g)),
+            "hits": len(fids(g) & hits),
+            "hit_rate": ys._ratio(len(fids(g) & hits), len(fids(g))),
+        }
+        for g in targets
+    ]
+    negs = spec.get("negatives") or []
+    explicit = [g for g in negs if isinstance(g, dict) and not g.get("rest")]
+    if explicit:
+        for g in resolve_sets(
+            r, {**spec, "negatives": explicit}, "negatives", cap * 400
+        ):
+            n = fids(g) - tset
+            groups.append(
+                {
+                    "label": g["label"],
+                    "role": "negative",
+                    "files": len(n),
+                    "hits": len(n & hits),
+                    "hit_rate": ys._ratio(len(n & hits), len(n)),
+                }
+            )
+    if any(isinstance(g, dict) and g.get("rest") for g in negs):
+        rest = out["seen"] - len(tset)
+        groups.append(
+            {
+                "label": "Everything else",
+                "role": "negative",
+                "files": rest,
+                "hits": len(hits - tset),
+                "hit_rate": ys._ratio(len(hits - tset), rest),
+            }
+        )
+    groups.append(
+        {
+            "label": "Whole collection",
+            "role": "scanned",
+            "files": out["seen"],
+            "hits": len(hits),
+            "hit_rate": ys._ratio(len(hits), out["seen"]),
+        }
+    )
+    out["groups"] = groups
+
+    landed = sorted(hits & tset if tset else hits)[: ys.cfg("land_files", 20)]
+    raw_r = get_raw_redis()
+    found_in = []
+    for fid in landed:
+        c, _, m = fid.rpartition(":file:")
+        data = raw_r.get(f"{fid}:raw")
+        if data and rules is not None:
+            found_in.append(((c, m), ys.scan_bytes(rules, data)))
+    out["landing"] = ys.locate_hits(r, raw_r, found_in)
+
+    if not tset:
         out["hit_files"] = rows(sorted(hits)[:cap])
         return out
-    r = get_redis()
-    targets = resolve_sets(r, spec, "targets", ys.cfg("neg_pool_cap", 20000))
-    tset = {f"{_origin_coll(c)}:file:{m}" for g in targets for c, m in g["members"]}
     tp = len(hits & tset)
     fp, fn = len(hits) - tp, len(tset) - tp
     precision, recall = ys._ratio(tp, len(hits)), ys._ratio(tp, len(tset))
@@ -332,12 +415,11 @@ def get_run(run_id):
     out["missed"] = rows(sorted(tset - hits)[:cap])
     out["false_hits"] = rows(sorted(hits - tset)[:cap])
     out["true_hits"] = rows(sorted(hits & tset)[:cap])
-    rules, _ = ys.compile_source(spec.get("rule") or "")
     if rules is not None:
         for key in ("false_hits", "true_hits"):
             detail = ys.explain_hits(
                 r,
-                get_raw_redis(),
+                raw_r,
                 rules,
                 [tuple(f["id"].rsplit(":", 1)) for f in out[key]],
             )

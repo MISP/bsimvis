@@ -30,13 +30,13 @@ window.YaraView = {
     _textarea: null,
     _timer: null,
     _seq: 0,
-    _tab: 'strings',
+    _tab: 'missed', // result tab
+    _dtab: 'strings', // rule data tab
     _res: null,
     _hint: '',
     _view: 'live', // 'live' sample test | 'sweep' full-collection run
     _sweep: null,
     _prog: null,
-    _suggested: null,
     _uuid: null,
     _run: null,
     _runTimer: null,
@@ -143,7 +143,6 @@ window.YaraView = {
                     <div class="yw-editor" id="yara-editor"></div>
                     <div class="yw-tools">
                         <button class="yw-btn" onclick="YaraView.openPicker()"><i class="fa-solid fa-microchip"></i> Insert from function...</button>
-                        <button class="yw-btn" onclick="YaraView.suggest()"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest strings</button>
                         <button class="yw-btn" onclick="YaraView.draft()" title="Ask the model to draft a rule from the Must match files"><i class="fa-solid fa-robot"></i> Draft with LLM</button>
                     </div>
                 </div>
@@ -345,21 +344,35 @@ window.YaraView = {
         this._paint();
     },
 
-    // The panel: a Sample | Full sweep switch (once a sweep exists), then the live test or the sweep result.
+    _errHtml(res) {
+        if (!res || res.ok) return '';
+        if (res.error) return `<div class="yw-err">${escapeHtml(res.error)}</div>`;
+        return `<div class="yw-err">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
+    },
+
+    // Two cards: the rule's data (strings, groups), then the results of a Sample test or a Full sweep.
     _paint() {
         const el = document.getElementById('yara-result');
         if (!el) return;
         const sweeping = !!this._run;
-        const hasSweep = sweeping || !!this._sweep;
-        if (!hasSweep) this._view = 'live';
         const stale = this._sweep && !sweeping && this._sweepRule !== this.getRule();
-        const seg = hasSweep ? `<div class="yw-seg" role="group" aria-label="Result source">
+        const seg = `<div class="yw-seg" role="group" aria-label="Result source">
             <button aria-pressed="${this._view === 'live'}" onclick="YaraView.setView('live')">Sample test</button>
-            <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep${stale ? ' <span class="yw-badge dead">OLD RULE</span>' : ''}</button></div>` : '';
+            <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep${stale ? ' <span class="yw-badge dead">OLD RULE</span>' : ''}</button></div>`;
+        const live = this._res && this._res.ok ? this._res : null;
+        let data = '';
+        if (live) {
+            const dtabs = [['strings', 'Strings', live.strings.length], ['groups', 'Groups', live.groups.length]];
+            data = `<section class="yw-card"><h3 class="yw-h">Rule data</h3>${this._tabsHtml(dtabs, this._dtab, true)}<div class="yw-pane">${this._dataPane(live)}</div></section>`;
+        }
         let body;
-        if (this._view === 'sweep') body = sweeping ? this._progressHtml() : this._resultHtml(this._sweep);
-        else body = this._res ? this._resultHtml(this._res) : `<div class="yw-hint">${escapeHtml(this._hint)}</div>`;
-        el.innerHTML = seg + body;
+        if (this._view === 'sweep') body = sweeping ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : '<div class="yw-hint">No sweep yet. Press Full sweep to scan every file of the collection.</div>');
+        else body = live ? this._resultHtml(live) : (this._res ? '' : `<div class="yw-hint">${escapeHtml(this._hint)}</div>`);
+        el.innerHTML = this._errHtml(this._res) + data + `<section class="yw-card"><h3 class="yw-h">Results ${seg}</h3>${body}</section>`;
+    },
+
+    _tabsHtml(tabs, cur, data) {
+        return `<div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${cur === k}" onclick="YaraView.setTab('${k}', ${!!data})">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>`;
     },
 
     setView(v) {
@@ -377,40 +390,39 @@ window.YaraView = {
 
     // Metrics, note, tabs and pane for one result: a sample test or a finished sweep (res.exact).
     _resultHtml(res) {
-        if (res.error) return `<div class="yw-err">${escapeHtml(res.error)}</div>`;
-        if (!res.ok) return `<div class="yw-err">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
+        const err = this._errHtml(res);
+        if (err) return err;
         const m = res.metrics, s = res.sample;
         const good = v => (v === 1 ? ' good' : '');
         let head, note, tabs;
         if (res.exact) {
-            const hasT = !!m;
-            head = hasT ? `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
+            head = m ? `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
                 <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>` :
                 `<div class="yw-m"><small>Matches</small><strong>${res.hits}</strong></div>
                 <div class="yw-m"><small>Scanned</small><strong>${res.seen}</strong></div>
                 <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
-            note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${hasT ? '' : ' No Must match set, so no precision or recall.'}`;
-            tabs = hasT ? [['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [['hits', 'Matches', res.hits]];
+            note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${m ? '' : ' No Must match set, so no precision or recall.'}`;
+            tabs = m ? [['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [['hits', 'Matches', res.hits]];
         } else {
             head = `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
                 <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>`;
             note = (s.negatives_scanned ? (s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`) : 'No negatives: only recall is measured.') +
                 (s.targets_truncated ? ' Targets truncated.' : '') + (s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : '');
-            tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', ''], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
-            if (this._suggested) tabs.push(['suggest', 'Suggested', this._suggested.length]);
+            tabs = [['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
         }
         if (!tabs.some(t => t[0] === this._tab)) this._tab = tabs[0][0];
         const conf = m ? `<div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>` : '';
         return `<div class="yw-metrics">${head}${conf}</div>
             <div class="yw-note">${note}</div>
-            <div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${this._tab === k}" onclick="YaraView.setTab('${k}')">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>
-            <div class="yw-pane">${this._pane(res)}</div>`;
+            ${this._tabsHtml(tabs, this._tab)}
+            <div class="yw-pane">${this._resultPane(res)}</div>`;
     },
 
-    setTab(k) {
-        this._tab = k;
+    setTab(k, data) {
+        if (data) this._dtab = k;
+        else this._tab = k;
         this._paint();
     },
 
@@ -419,22 +431,27 @@ window.YaraView = {
         return `/collections/${encodeURIComponent(f.example.slice(0, i))}/files/${f.example.slice(i + 1)}/functions/${escapeAttr(f.addr)}`;
     },
 
-    _pane(res) {
-        const s = res.sample || {}, land = res.landing || {};
-        const list = (rows, total, extra) => rows.length
-            ? `<ul class="yw-list">${rows.map(f => `<li>${this._fileLink(f)}${extra ? extra(f) : ''}<button class="yw-btn ghost" onclick="navigator.clipboard.writeText('${escapeAttr(f.id.slice(f.id.lastIndexOf(':') + 1))}')">Copy md5</button></li>`).join('')}</ul>${total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : ''}`
-            : '<div class="yw-hint">none</div>';
+    // Missed / false hits / matches: one table, same look as the data tables.
+    _resultPane(res) {
         const m = res.metrics || {};
-        const rules = f => (f.rules ? ` <span class="yw-dim yw-mono">${escapeHtml(f.rules.join(', '))}</span>` : '');
-        if (this._tab === 'hits') return list(res.hit_files || [], res.hits);
-        if (this._tab === 'groups') {
+        const [rows, total, withRules] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : [res.missed, m.fn];
+        if (!rows.length) return '<div class="yw-hint">none</div>';
+        const body = rows.map(f => {
+            const md5 = f.id.slice(f.id.lastIndexOf(':') + 1);
+            return `<tr><td>${this._fileLink(f)}</td><td class="yw-mono yw-dim">${escapeHtml(md5.slice(0, 12))}</td>${withRules ? `<td class="yw-mono">${escapeHtml((f.rules || []).join(', '))}</td>` : ''}
+                <td><button class="yw-btn ghost" onclick="navigator.clipboard.writeText('${escapeAttr(md5)}')">Copy md5</button></td></tr>`;
+        }).join('');
+        return `<table><thead><tr><th>File</th><th>md5</th>${withRules ? '<th>Rules</th>' : ''}<th></th></tr></thead><tbody>${body}</tbody></table>
+            ${total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : ''}`;
+    },
+
+    _dataPane(res) {
+        const s = res.sample || {}, land = res.landing || {};
+        if (this._dtab === 'groups') {
             return `<table><thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
                 <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : 'yw-n'}">${escapeHtml(g.role)}</td>
                 <td class="yw-mono">${g.files}</td><td class="yw-mono">${g.hits}</td><td class="yw-mono">${this._pct(g.hit_rate)}</td></tr>`).join('')}</tbody></table>`;
         }
-        if (this._tab === 'missed') return list(res.missed, m.fn);
-        if (this._tab === 'false') return list(res.false_hits, m.fp, rules);
-        if (this._tab === 'suggest') return this._suggestPane();
         if (!res.strings.length) return '<div class="yw-hint">The rule has no strings.</div>';
         const rows = res.strings.map(x => {
             const l = land[`${x.rule}:${x.id}`] || { functions: [], strings: [] };
@@ -450,16 +467,6 @@ window.YaraView = {
                 <td>${where[0] || '<span class="yw-dim">no hit</span>'}${more}${l.unmapped ? ` <span class="yw-dim">(${l.unmapped} unmapped)</span>` : ''}</td></tr>`;
         }).join('');
         return `<table><thead><tr><th>String</th><th>Hits (target &middot; other)</th><th>Lands in</th></tr></thead><tbody>${rows}</tbody></table>`;
-    },
-
-    _suggestPane() {
-        const rows = (this._suggested || []).map((x, i) => `<tr>
-            <td class="yw-mono">${escapeHtml(x.value)}</td><td class="yw-mono">${x.pos}/${x.of}</td>
-            <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'inherit'};">${x.neg}</td>
-            <td><button class="yw-btn ghost" onclick="YaraView.addString(${i})">Insert</button></td></tr>`).join('');
-        return rows
-            ? `<table><thead><tr><th>String (in &ge;80% of targets)</th><th>Targets</th><th>Others</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-            : '<div class="yw-hint">Nothing is shared by 80% of the target files.</div>';
     },
 
     // --- seeds ------------------------------------------------------------
@@ -520,24 +527,6 @@ window.YaraView = {
         if (!md5 || !addr) return;
         this.closePicker();
         this.insertFunction(document.getElementById('yara-collection').value, md5, addr.replace(/^0x/, ''));
-    },
-
-    async suggest() {
-        const body = { ...this._body(), min_frac: 0.8 };
-        this._status('ranking strings...');
-        const r = await fetch('/api/yara/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const res = await r.json();
-        this._status('');
-        this._suggested = res.strings || [];
-        this._tab = 'suggest';
-        this._view = 'live';
-        if (this._res && this._res.ok) this._paint();
-        else this._renderResult(null, 'Suggestions need a "Must match" set and a rule that compiles.');
-    },
-
-    addString(i) {
-        const v = this._suggested[i].value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        this.insertText(`// $s = "${v}" ascii wide`);
     },
 
     async draft() {
@@ -647,7 +636,6 @@ window.YaraView = {
         this._busy(false);
         this._sweep = { ok: true, exact: true, ...res };
         this._sweepRule = this.getRule();
-        this._tab = '';
         this._status(`${mode === 'apply' ? 'applied' : 'swept'}: ${res.seen} files, ${res.hits} hit`);
         this._paint();
     },

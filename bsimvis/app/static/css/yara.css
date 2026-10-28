@@ -72,7 +72,7 @@
 #yara-sets .nway-cmp-empty { text-align: center; padding: 28px 8px; }
 @media (max-width: 900px) { #yara-sets .nway-cmp-split { grid-template-columns: 1fr; } }
 
-.yw-seg { display: inline-flex; margin: 10px 18px 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; align-self: flex-start; }
+.yw-seg { display: inline-flex; margin: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; align-self: flex-start; }
 .yw-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 12px; font: inherit; font-size: 0.74rem; cursor: pointer; }
 .yw-seg button + button { border-left: 1px solid var(--border); }
 .yw-seg button[aria-pressed=true] { background: var(--hover); color: var(--text); font-weight: 600; }
@@ -99,7 +99,7 @@
 .yw-hint { padding: 16px 18px; color: var(--subtle); }
 .yw-err { padding: 12px 18px; color: #ef4444; font: 0.78rem monospace; }
 
-.yw-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 2; }
+.yw-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .yw-tab { border: 0; background: none; color: var(--subtle); padding: 9px 10px; font: inherit; font-size: 0.78rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .yw-tab:hover { color: var(--text); }
 .yw-tab[aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
@@ -141,3 +141,6 @@
     .yw-main { grid-template-columns: 1fr; }
     .yw-left { border-right: 0; border-bottom: 1px solid var(--border); }
 }
+
+.yw-card { border-bottom: 1px solid var(--border); }
+.yw-h { display: flex; align-items: center; gap: 12px; margin: 0; padding: 10px 18px 0; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--subtle); }

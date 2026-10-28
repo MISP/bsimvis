@@ -215,6 +215,9 @@ def evaluate(r, r_raw, text, targets, negatives):
 
     missed = [label(m) for m in pos if not hits[m][1]][:LIST_CAP]
     false_hits = [{**label(m), "rules": sorted(hits[m][1])} for m in fp[:LIST_CAP]]
+    detail = explain_hits(r, r_raw, rules, fp)
+    for f in false_hits:
+        f["matches"] = detail.get(f["id"], [])
 
     landing = locate_hits(
         r, r_raw, [(m, hits[m][1]) for m in tp][: cfg("land_files", 20)]
@@ -425,6 +428,48 @@ def locate_hits(r, r_raw, hit_files):
 
 
 # --- seeds -------------------------------------------------------------------
+
+
+def explain_hits(r, r_raw, rules, members, per_file=12):
+    """What the rule matched in each file: string id, offset, bytes, and the
+    function / string-table entry the offset lands in. Capped to `land_files` files."""
+    out = {}
+    for coll, md5 in members[: cfg("land_files", 20)]:
+        raw = r_raw.get(f"{_fid(coll, md5)}:raw")
+        if not raw:
+            continue
+        loc = Locator(r, coll, md5, raw)
+        loc._load()
+        rows = []
+        for m in rules.match(data=raw, timeout=cfg("scan_timeout", 20)):
+            if not m.strings:
+                rows.append({"rule": m.rule})
+            for s in m.strings:
+                for i in s.instances[:3]:
+                    b = i.matched_data[:32]
+                    va = loc.to_ghidra(i.offset)
+                    fn = loc.function_at(va) if va is not None else None
+                    st = loc.string_at(va) if va is not None else None
+                    rows.append(
+                        {
+                            "rule": m.rule,
+                            "string": s.identifier,
+                            "offset": i.offset,
+                            "hex": b.hex(" "),
+                            "text": "".join(
+                                chr(c) if 32 <= c < 127 else "." for c in b
+                            ),
+                            "function": fn
+                            and {
+                                "addr": f"{fn[0]:08x}",
+                                "name": fn[1],
+                                "example": f"{coll}:{md5}",
+                            },
+                            "str": st and st.get("value", "")[:80],
+                        }
+                    )
+        out[f"{coll}:{md5}"] = rows[:per_file]
+    return out
 
 
 def function_hex(r, r_raw, coll, md5, addr):

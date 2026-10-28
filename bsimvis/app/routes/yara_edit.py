@@ -240,7 +240,9 @@ def _start_run(mode):
     q.setex(
         f"yara:sweep:{run_id}:spec",
         6 * 3600,
-        json.dumps({k: body.get(k) for k in ("collection", "pool", "targets")}),
+        json.dumps(
+            {k: body.get(k) for k in ("collection", "pool", "targets")} | {"rule": text}
+        ),
     )
     total = sum(get_redis().scard(f"{c}:all_files") for c in colls)
     q.hset(
@@ -329,4 +331,14 @@ def get_run(run_id):
     }
     out["missed"] = rows(sorted(tset - hits)[:cap])
     out["false_hits"] = rows(sorted(hits - tset)[:cap])
+    rules, _ = ys.compile_source(spec.get("rule") or "")
+    if rules is not None:
+        detail = ys.explain_hits(
+            r,
+            get_raw_redis(),
+            rules,
+            [tuple(f["id"].rsplit(":", 1)) for f in out["false_hits"]],
+        )
+        for f in out["false_hits"]:
+            f["matches"] = detail.get(f["id"], [])
     return out

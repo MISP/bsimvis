@@ -3516,8 +3516,8 @@ def test_yara_editor():
             "sweep hits exactly the target file",
             st.get("done")
             and st.get("hits") == 1
-            and st.get("recall") == 1.0
-            and st.get("fp") == 0,
+            and st.get("metrics", {}).get("recall") == 1.0
+            and st.get("metrics", {}).get("fp") == 0,
             str(st),
         )
 

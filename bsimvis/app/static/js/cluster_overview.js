@@ -70,11 +70,11 @@
 .cov-tile:hover { background:color-mix(in srgb, var(--c) 18%, transparent); }
 .cov-tile span { font-size:0.7rem; color:var(--c); white-space:nowrap; }
 .cov-tile b { font-size:1.15rem; font-variant-numeric:tabular-nums; }
-.cov-lane { display:grid; grid-template-columns:minmax(0,1fr) auto 36px; gap:8px; align-items:center; font-size:0.78rem; padding:3px 4px; border-radius:5px; cursor:pointer; }
+.cov-lane { display:grid; grid-template-columns:minmax(50%,1fr) minmax(0,max-content) 36px; gap:8px; align-items:center; font-size:0.78rem; padding:3px 4px; border-radius:5px; cursor:pointer; }
 .cov-lane:hover { background:var(--hover); }
 .cov-lane > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cov-dots { display:flex; gap:2px; }
-.cov-dots i { width:5px; height:11px; border-radius:1px; background:var(--hover); display:block; }
+.cov-dots { display:flex; gap:1px; min-width:0; }
+.cov-dots i { flex:0 1 5px; min-width:1px; height:11px; border-radius:1px; background:var(--hover); display:block; }
 .cov-legend { display:flex; gap:12px; flex-wrap:wrap; font-size:0.72rem; color:var(--dim); }
 .cov-legend span { display:inline-flex; align-items:center; gap:5px; }
 .cov-legend .sw { width:10px; height:10px; border-radius:2px; display:inline-block; }

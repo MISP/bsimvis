@@ -7,10 +7,10 @@
  * which scans the stored bytes and answers with precision / recall, per-group
  * and per-string hit counts, and where the hits land.
  *
- * A set row is `label` + a search (`tag=family:mirai&bin_cluster_uuid=...`, the
- * same params as the file search) or `files=<coll>:<md5>,...`; a negative row
- * can also be "everything else". Everything shown came off an uploaded sample,
- * so every value goes through escapeHtml / escapeAttr.
+ * The file sets are the N-way Compare form (nway_compare.js): the first group
+ * must match, the others must not; an empty negative group is everything else.
+ * Everything shown came off an uploaded sample, so every value goes through
+ * escapeHtml / escapeAttr.
  */
 
 const YARA_DEBOUNCE_MS = 800;
@@ -19,7 +19,7 @@ const YARA_DEFAULT_RULE = `rule family_name
     meta:
         description = ""
     strings:
-        $s1 = "" ascii wide
+        $s1 = "CHANGE_ME" ascii wide
     condition:
         any of them
 }
@@ -33,7 +33,7 @@ window.YaraView = {
     _uuid: null,
     _run: null,
     _runTimer: null,
-    _sets: { targets: [], negatives: [] },
+    _cmp: null,
     _last: null,
 
     destroy() {
@@ -53,7 +53,7 @@ window.YaraView = {
         container.innerHTML = this._shell();
         await this._mountEditor(params);
         await this._loadCollections(params.collection);
-        this._renderSets();
+        this._mountSets();
         this._loadRules();
         if (params.seed_md5 && params.seed_addr) this.insertFunction(params.seed_collection || params.collection, params.seed_md5, params.seed_addr);
         this.schedule(0);
@@ -61,26 +61,21 @@ window.YaraView = {
 
     // --- state ------------------------------------------------------------
 
+    // The sets are a Compare form (nway_compare.js): group A must match, every other group must not.
+    // An empty negative group means everything else in the collection.
     _loadState(params) {
         let saved = {};
         try { saved = JSON.parse(localStorage.getItem('bsimvis.yara') || '{}'); } catch (e) { /* storage is a convenience */ }
-        const fromUrl = k => (params[k] ? [{ label: k === 'target' ? 'Target' : 'Negative', query: params[k] }] : null);
-        this._sets.targets = fromUrl('target') || saved.targets || [{ label: 'Family', query: '' }];
-        this._sets.negatives = fromUrl('negative') || saved.negatives || [{ label: 'Everything else', rest: true }];
-        // from an N-way table: its saved column set, one group per side
-        if (params.col_set) {
-            const grp = (g, label) => ({ label, query: `col_set=${params.col_set}&group=${g}` });
-            this._sets.targets = [grp(params.target_group || 0, 'Target group')];
-            this._sets.negatives = params.negative_group !== undefined
-                ? [grp(params.negative_group, 'Negative group')]
-                : [{ label: 'Everything else', rest: true }];
-        }
+        let cmp = saved.cmp || null;
+        try { if (params.cmp) cmp = JSON.parse(params.cmp); } catch (e) { /* bad link: use the saved sets */ }
+        if (params.target) cmp = { groups: [{ label: 'Must match', queries: [params.target] }, { label: 'Must not match', queries: params.negative ? [params.negative] : [] }] };
+        this._savedCmp = cmp;
         this._savedRule = saved.rule;
     },
 
     _persist() {
         try {
-            localStorage.setItem('bsimvis.yara', JSON.stringify({ ...this._sets, rule: this.getRule() }));
+            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule() }));
         } catch (e) { /* ignore */ }
     },
 
@@ -106,6 +101,7 @@ window.YaraView = {
     _shell() {
         const card = 'background:var(--hover); border:1px solid var(--border); border-radius:8px;';
         return `
+        <style>#yara-sets .nway-cmp-label { width:130px; }</style>
         <div style="flex:1; display:grid; grid-template-columns:minmax(380px, 1fr) minmax(420px, 1.1fr); gap:14px; padding:14px 18px; min-height:0; color:var(--text);">
             <div style="display:flex; flex-direction:column; gap:10px; min-height:0;">
                 <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -136,9 +132,9 @@ window.YaraView = {
                 <div style="${card} padding:10px 12px;">
                     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
                         <span style="color:var(--subtle); font-size:0.78rem;">Collection</span>
-                        <select id="yara-collection" onchange="YaraView.schedule(0)" style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:4px; padding:4px;"></select>
+                        <select id="yara-collection" onchange="YaraView._setsChanged()" style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:4px; padding:4px;"></select>
                     </div>
-                    <div id="yara-sets"></div>
+                    <div class="nway-focus-body nway-match-body nway-cmp-body" id="yara-sets" style="position:static; box-shadow:none; border:0; background:transparent; padding:0; width:100%; max-width:none; max-height:none; min-width:0; align-items:stretch;"></div>
                 </div>
                 <div id="yara-result" style="display:flex; flex-direction:column; gap:10px;"></div>
             </div>
@@ -201,59 +197,42 @@ window.YaraView = {
 
     // --- sets -------------------------------------------------------------
 
-    _renderSets() {
+    _mountSets() {
         const box = document.getElementById('yara-sets');
-        const block = (key, title, color) => `
-            <div style="margin-bottom:8px;">
-                <div style="color:${color}; font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin:4px 0;">${title}
-                    <a href="#" onclick="YaraView.addSet('${key}'); return false;" style="margin-left:8px; font-weight:400;">+ add</a></div>
-                ${this._sets[key].map((s, i) => `
-                <div style="display:flex; gap:6px; margin-bottom:4px; align-items:center;">
-                    <input value="${escapeAttr(s.label || '')}" onchange="YaraView.editSet('${key}', ${i}, 'label', this.value)" style="width:110px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px; font-size:0.78rem;">
-                    ${s.rest
-                        ? '<span style="flex:1; color:var(--subtle); font-size:0.78rem;">every file of the collection not in a target</span>'
-                        : `<input value="${escapeAttr(s.query || '')}" placeholder="tag=family:mirai&bin_cluster_uuid=...  |  files=coll:md5,coll:md5" onchange="YaraView.editSet('${key}', ${i}, 'query', this.value)" style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px; font-size:0.78rem; font-family:monospace;">`}
-                    <a href="#" title="remove" onclick="YaraView.removeSet('${key}', ${i}); return false;" style="color:var(--subtle);"><i class="fa-solid fa-xmark"></i></a>
-                </div>`).join('')}
-            </div>`;
-        box.innerHTML = block('targets', 'Must match', '#10b981') + block('negatives', 'Must not match', '#ef4444');
+        this._cmp = new window.NwayCompare({
+            scope: () => ({ collection: document.getElementById('yara-collection').value }),
+            saved: () => this._savedCmp,
+            labels: ['Must match', 'Must not match'],
+            runLabel: 'Test',
+            onPreview: () => this.schedule(),
+            onRun: () => this.schedule(0),
+        });
+        box.innerHTML = this._cmp.html();
+        this._cmp.bind(box);
+        this._cmp._previewSoon();
     },
 
-    addSet(key) {
-        this._sets[key].push({ label: `${key === 'targets' ? 'Target' : 'Negative'} ${this._sets[key].length + 1}`, query: '' });
-        this._renderSets();
-    },
-
-    removeSet(key, i) {
-        this._sets[key].splice(i, 1);
-        this._renderSets();
+    _setsChanged() {
+        this._cmp.counts = null;
+        this._cmp.refresh();
+        this._cmp._previewSoon();
         this.schedule(0);
     },
 
-    editSet(key, i, field, value) {
-        this._sets[key][i][field] = value;
-        this.schedule(0);
-    },
-
-    // `a=1&b=2&tag=x&tag=y` -> {a:'1', b:'2', tag:['x','y']}; `files=` is a list of ids
-    _spec(set) {
-        if (set.rest) return { label: set.label, rest: true };
-        const q = {};
-        for (const [k, v] of new URLSearchParams(set.query || '')) {
-            if (k === 'files') return { label: set.label, files: v.split(',').map(x => x.trim()).filter(Boolean) };
-            q[k] = k in q ? [].concat(q[k], v) : v;
-        }
-        if (q.col_set) return { label: set.label, col_set: q.col_set, group: q.group };
-        return { label: set.label, queries: [q] };
+    // A group with no filter is "everything else" on the negative side.
+    _groupSpec(g, rest) {
+        const queries = g.queries.map(q => window.NwayCompare.parseQuery(q));
+        return queries.length ? { label: g.label, queries } : (rest ? { label: g.label, rest: true } : null);
     },
 
     _body() {
-        const spec = list => list.filter(s => s.rest || (s.query || '').trim()).map(s => this._spec(s));
+        const cmp = this._cmp.cmp();
+        const targets = [this._groupSpec(cmp.groups[0], false)].filter(Boolean);
         return {
             rule: this.getRule(),
             collection: document.getElementById('yara-collection').value,
-            targets: spec(this._sets.targets),
-            negatives: spec(this._sets.negatives),
+            targets,
+            negatives: cmp.groups.slice(1).map(g => this._groupSpec(g, true)),
         };
     },
 
@@ -274,7 +253,7 @@ window.YaraView = {
         this._persist();
         try { localStorage.setItem('bsimvis.yara.collection', body.collection); } catch (e) { /* ignore */ }
         if (!body.collection || !body.targets.length) {
-            this._renderResult(null, 'Give at least one target set a search (e.g. tag=family:mirai).');
+            this._renderResult(null, 'Give "Must match" a filter (a tag, file name, batch...) to start testing.');
             return;
         }
         const seq = ++this._seq;
@@ -402,7 +381,7 @@ window.YaraView = {
 
     async draft() {
         this._status('asking the model...');
-        const r = await fetch('/api/yara/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this._body(), name: (this._sets.targets[0] || {}).label || 'family' }) });
+        const r = await fetch('/api/yara/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...this._body(), name: (this._body().targets[0] || {}).label || 'family' }) });
         const res = await r.json();
         this._status('');
         if (!r.ok) { this._status(res.message || res.error || 'draft failed'); return; }
@@ -426,16 +405,13 @@ window.YaraView = {
         if (!r.ok) return;
         const doc = await r.json();
         this._uuid = doc.uuid;
-        if (doc.scope && doc.scope.targets) {
-            this._sets = { targets: doc.scope.targets, negatives: doc.scope.negatives };
-            this._renderSets();
-        }
+        if (doc.scope && doc.scope.cmp) this._cmp.load(doc.scope.cmp);
         this.setRule(doc.text);
         this._status(`${doc.name} v${doc.version}`);
     },
 
     async save() {
-        const body = { rule: this.getRule(), uuid: this._uuid, scope: { ...this._sets }, note: '' };
+        const body = { rule: this.getRule(), uuid: this._uuid, scope: { cmp: this._cmp.cmp() }, note: '' };
         const r = await fetch('/api/yara/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (!r.ok) { this._status(res.message || res.error || 'save failed'); return; }

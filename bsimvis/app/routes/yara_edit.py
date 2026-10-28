@@ -48,27 +48,6 @@ def _explicit(files, label):
     return out
 
 
-def _colset_group(spec, label):
-    """One group (`group`: its index, default all files) of a saved N-way column set."""
-    raw = get_queue_redis().get(f"nway:colset:{spec['col_set']}")
-    if not raw:
-        abort(404, f"{label}: col_set expired")
-    colset = json.loads(raw)
-    groups = colset.get("groups") or []
-    ids = colset["members"]
-    if spec.get("group") is not None:
-        try:
-            ids = groups[int(spec["group"])]["members"]
-        except (ValueError, IndexError):
-            abort(400, f"{label}: no such group in the column set")
-    return [
-        (_origin_coll(c), m)
-        for c, m in (
-            tuple(i) if isinstance(i, list) else tuple(i.rsplit(":", 1)) for i in ids
-        )
-    ]
-
-
 def _rest(r, scope, cap):
     out = []
     for c in _scope_collections(scope):
@@ -93,8 +72,6 @@ def resolve_sets(r, body, key, cap):
         label = str(spec.get("label") or f"{key} {i + 1}")[:60]
         if spec.get("rest"):
             found = _rest(r, scope, cap)
-        elif spec.get("col_set") is not None:
-            found = _colset_group(spec, label)
         elif spec.get("files"):
             found = _explicit(spec["files"], label)
         else:

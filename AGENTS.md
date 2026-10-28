@@ -121,7 +121,7 @@ stored `{coll}:file:{md5}:raw` bytes of the target sets and a capped sample of t
 sets (`[yara_editor]` in the config), answering precision/recall, per-group and per-string
 hit counts, and where hits land (file offset -> LIEF address -> stored function list / string
 table; no Ghidra). Sets use the N-way column-set resolver (`nway.resolve_group`), plus
-`files`, `rest` and `col_set`+`group`. Rules are compiled with `includes=False`.
+`files` and `rest`. Rules are compiled with `includes=False`.
 
 Rule registry: `global:yara_rule:{uuid}` (+ `:v:{n}`, `:tags`) and `global:yara_rules` ZSET.
 `YARA_RULE_RUN` is the chunked sweep/apply job; sweep records hits in the queue Redis

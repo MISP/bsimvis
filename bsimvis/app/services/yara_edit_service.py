@@ -623,7 +623,7 @@ def function_hex(r, r_raw, coll, md5, addr):
     }
 
 
-def suggest(r, groups_pos, members_neg, min_frac=0, limit=200, scan=400):
+def suggest(r, groups_pos, members_neg, min_frac=0, limit=500, scan=1500):
     """Strings of the target files, best coverage first (then fewest negatives).
     `min_frac` drops the rare ones; only the `scan` most shared are checked
     against the negatives. Reads the per-file string tables of up to 50 targets and the cross-file
@@ -660,12 +660,15 @@ def suggest(r, groups_pos, members_neg, min_frac=0, limit=200, scan=400):
     pipe = r.pipeline(transaction=False)
     for coll, sid in cands:
         pipe.scard(f"{coll}:idx:string:file:{sid}")
+    keep = [
+        (k, size) for k, size in zip(cands, pipe.execute()) if size <= 5000
+    ]  # a bigger holder set is ubiquitous: useless as a family marker
+    pipe = r.pipeline(transaction=False)
+    for (coll, sid), _ in keep:
+        pipe.smembers(f"{coll}:idx:string:file:{sid}")
     out = []
-    for (coll, sid), size in zip(cands, pipe.execute()):
-        key = f"{coll}:idx:string:file:{sid}"
-        if size > 5000:  # ubiquitous: useless as a family marker
-            continue
-        holders = {_txt(h) for h in r.smembers(key)}
+    for ((coll, sid), _), held in zip(keep, pipe.execute()):
+        holders = {_txt(h) for h in held}
         out.append(
             {
                 "value": example[(coll, sid)][:200],

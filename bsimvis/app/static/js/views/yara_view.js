@@ -595,7 +595,7 @@ window.YaraView = {
         const ids = new Set(missed.map(f => f.id)), inRule = this._defMap();
         const rows = (this._suggested || []).map((x, i) => ({ ...x, i, hit: (x.files || []).filter(f => ids.has(f)).length }))
             .filter(x => x.hit && !inRule.has(this._vkey(x.value)))
-            .sort((a, b) => b.hit - a.hit || b.score - a.score).slice(0, 30);
+            .sort((a, b) => b.hit - a.hit || b.score - a.score).slice(0, 80);
         if (!rows.length) return '';
         return `<div class="yw-dim" style="padding:6px 0;">Suggested strings not in the rule that match missed files</div>
             <table class="yw-fixed yw-sug"><colgroup><col><col style="width:90px"><col style="width:90px"><col style="width:60px"><col style="width:60px"><col style="width:36px"></colgroup>

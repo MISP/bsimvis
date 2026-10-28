@@ -32,6 +32,8 @@ window.YaraView = {
     _seq: 0,
     _tab: 'missed', // result tab
     _dtab: 'strings', // rule data tab
+    _suggested: null,
+    _suggKey: '',
     _res: null,
     _hint: '',
     _view: 'live', // 'live' sample test | 'sweep' full-collection run
@@ -311,6 +313,7 @@ window.YaraView = {
             return;
         }
         this._status('scanning...');
+        this._loadSuggest(body);
         clearTimeout(this._busyT);
         this._busyT = setTimeout(() => { if (!this._run) this._busy(true, 'Testing the rule'); }, 500);
         let res;
@@ -357,7 +360,7 @@ window.YaraView = {
         const live = this._res && this._res.ok ? this._res : null;
         let data = '';
         if (live) {
-            const dtabs = [['strings', 'Strings', live.strings.length], ['groups', 'Groups', live.groups.length]];
+            const dtabs = [['strings', 'Strings', live.strings.length], ['groups', 'Groups', live.groups.length], ['suggest', 'Suggested', this._suggested ? this._suggested.length : '']];
             data = `<section class="yw-card"><h3 class="yw-h">Rule data</h3>${this._tabsHtml(dtabs, this._dtab, true)}<div class="yw-pane">${this._dataPane(live)}</div></section>`;
         }
         let body;
@@ -444,6 +447,7 @@ window.YaraView = {
 
     _dataPane(res) {
         const s = res.sample || {}, land = res.landing || {};
+        if (this._dtab === 'suggest') return this._suggestPane();
         if (this._dtab === 'groups') {
             return `<table><thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
                 <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : 'yw-n'}">${escapeHtml(g.role)}</td>
@@ -464,6 +468,38 @@ window.YaraView = {
                 <td>${where[0] || '<span class="yw-dim">no hit</span>'}${more}${l.unmapped ? ` <span class="yw-dim">(${l.unmapped} unmapped)</span>` : ''}</td></tr>`;
         }).join('');
         return `<table><thead><tr><th>String</th><th>Hits (target &middot; other)</th><th>Lands in</th></tr></thead><tbody>${rows}</tbody></table>`;
+    },
+
+    _suggestPane() {
+        if (!this._suggested) return '<div class="yw-hint">Ranking strings...</div>';
+        const rows = this._suggested.map((x, i) => `<tr>
+            <td class="yw-mono">${escapeHtml(x.value)}</td><td class="yw-mono">${x.pos}/${x.of}</td>
+            <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'inherit'};">${x.neg}</td>
+            <td><button class="yw-btn ghost" onclick="YaraView.addString(${i})">Insert</button></td></tr>`).join('');
+        return rows
+            ? `<table><thead><tr><th>String (in &ge;80% of targets)</th><th>Targets</th><th>Others</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+            : '<div class="yw-hint">Nothing is shared by 80% of the target files.</div>';
+    },
+
+    // Suggestions depend on the sets only, so refetch when those change, not per keystroke.
+    async _loadSuggest(body) {
+        const key = JSON.stringify([body.collection, body.targets, body.negatives]);
+        if (key === this._suggKey) return;
+        this._suggKey = key;
+        this._suggested = null;
+        let res = {};
+        try {
+            const r = await fetch('/api/yara/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, min_frac: 0.8 }) });
+            if (r.ok) res = await r.json();
+        } catch (e) { /* an empty tab shows the problem */ }
+        if (key !== this._suggKey) return;
+        this._suggested = res.strings || [];
+        this._paint();
+    },
+
+    addString(i) {
+        const v = this._suggested[i].value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        this.insertText(`// $s = "${v}" ascii wide`);
     },
 
     // --- seeds ------------------------------------------------------------

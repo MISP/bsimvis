@@ -655,7 +655,11 @@ def _cluster_files(scope, uuid, axis):
         abort(404, "unknown cluster_uuid")
     members = r.smembers(f"{coll}:bin_cluster:{algo}:{cid}:members")
     return [
-        (_origin_coll(coll), m.decode() if isinstance(m, bytes) else m) for m in members
+        (
+            _origin_coll(coll),
+            (m.decode() if isinstance(m, bytes) else m).rsplit(":", 1)[-1],
+        )
+        for m in members
     ]
 
 

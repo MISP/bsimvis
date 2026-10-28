@@ -260,6 +260,8 @@ class TableSelection {
         if (!td) return null;
         const tr = td.parentElement;
         if (!tr || tr.parentElement !== this.tbody) return null;
+        // Rows marked data-ts-skip are layout (spacers between cards), not data.
+        if (tr.hasAttribute('data-ts-skip')) return null;
 
         const rowIndex = Array.from(this.tbody.children).indexOf(tr);
         const colIndex = Array.from(tr.children).indexOf(td);
@@ -543,6 +545,7 @@ class TableSelection {
 
         for (let r = startR; r <= endR; r++) {
             const row = this.tbody.children[r];
+            if (row && row.hasAttribute('data-ts-skip')) continue;
             if (row && row.dataset.id) {
                 this.selectedIds.add(row.dataset.id);
             }
@@ -672,7 +675,7 @@ class TableSelection {
         // method already measured above.
         const selStats = this.selStatsEl();
         if (selStats) {
-            const rows = maxR - minR + 1;
+            const rows = new Set([...this.selectedCells].map(k => k.split(':')[0])).size;
             const cols = maxC - minC + 1;
             const cells = this.selectedCells.size;
             selStats.style.display = 'inline-block';

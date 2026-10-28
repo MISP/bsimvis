@@ -2701,3 +2701,21 @@ tr:hover .ft-copy, .ft-copy:focus-visible { opacity:0.6; }
 .fb-grid tr.fb-gap > td.selected-cell { background:none !important; box-shadow:none !important; }
 /* No row divider inside a selection. */
 .fb-grid tr:not(.fb-first) > td.selected-cell:not(.sel-t) { border-top-color: color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); }
+/* The dashboard stripes and hovers whole rows (tr:nth-child(even), tr:hover);
+   on the grid that paint shows through spacer rows and round corners. */
+.fb-grid tr, .fb-grid tr:hover, .fb-grid tr:nth-child(even) { background: none !important; }
+/* Where the selection meets a card side, colour the card's own border rather
+   than drawing a second line just inside it. */
+.fb-grid tr[data-fb-card] > td.selected-cell.sel-l:first-child { --sl: 0.5px; border-left-color: var(--sel); }
+.fb-grid tr[data-fb-card] > td.selected-cell.sel-r:last-child { --sr: 0.5px; border-right-color: var(--sel); }
+.fb-grid tr.fb-first > td.selected-cell { --st: 0.5px; border-top-color: var(--sel); }
+.fb-grid tr.fb-last > td.selected-cell { --sb: 0.5px; border-bottom-color: var(--sel); }
+/* On a card side, away from the card's corners, the selection stays square
+   so it sits flush on the card edge. */
+.fb-grid tr:not(.fb-first) > td.selected-cell.sel-t.sel-l:first-child { border-top-left-radius: 0; }
+.fb-grid tr:not(.fb-first) > td.selected-cell.sel-t.sel-r:last-child { border-top-right-radius: 0; }
+.fb-grid tr:not(.fb-last) > td.selected-cell.sel-b.sel-l:first-child { border-bottom-left-radius: 0; }
+.fb-grid tr:not(.fb-last) > td.selected-cell.sel-b.sel-r:last-child { border-bottom-right-radius: 0; }
+/* dashboard.css gives every td a bottom border; the grid draws its own lines. */
+.fb-grid td { border-bottom-width: 0; }
+.fb-grid tr.fb-last > td { border-bottom-width: 1px; }

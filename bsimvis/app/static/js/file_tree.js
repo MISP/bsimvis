@@ -1000,11 +1000,11 @@ window.FileTree = {
         for (const r of this._rows) {
             if (r.t === 'note') {
                 open = false;
-                out.push(`<tr class="fb-tr-note"><td colspan="${span}">${this._noteLine(r)}</td></tr>`);
+                out.push(`<tr class="fb-tr-note" data-ts-skip><td colspan="${span}">${this._noteLine(r)}</td></tr>`);
                 continue;
             }
             if (r.depth === 0 || !open) {
-                if (card >= 0) out.push(`<tr class="fb-gap" aria-hidden="true"><td colspan="${span}"></td></tr>`);
+                if (card >= 0) out.push(`<tr class="fb-gap" data-ts-skip aria-hidden="true"><td colspan="${span}"></td></tr>`);
                 card++;
                 open = true;
             }

@@ -339,10 +339,11 @@ window.YaraView = {
         this._paint();
     },
 
-    _errHtml(res) {
+    _errHtml(res, note) {
         if (!res || res.ok) return '';
-        if (res.error) return `<div class="yw-err">${escapeHtml(res.error)}</div>`;
-        return `<div class="yw-err">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
+        const lines = res.error ? [escapeHtml(res.error)] : (res.errors || []).map(e => `<span class="yw-dim">line ${Number(e.line)}</span> ${escapeHtml(e.message)}`);
+        return `<div class="yw-errbox" role="alert"><div class="yw-errhead"><i class="fa-solid fa-circle-exclamation"></i> ${res.error ? 'Test failed' : 'Rule does not compile'}</div>
+            <div class="yw-errlines">${lines.join('<br>')}</div>${note ? `<div class="yw-errnote">${note}</div>` : ''}</div>`;
     },
 
     // Two cards: the data (groups, suggested strings), then the results of a Sample test or a Full sweep.
@@ -360,7 +361,7 @@ window.YaraView = {
         let body;
         if (this._view === 'sweep') body = this._run ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : none);
         else body = live ? this._resultHtml(live) : none;
-        const err = this._errHtml(this._res) + (live && this._res && !this._res.ok ? '<div class="yw-hint">Showing the last valid result.</div>' : '');
+        const err = this._errHtml(this._res, live ? 'Showing the last valid result below.' : '');
         el.innerHTML = err + data + `<section class="yw-card"><h3 class="yw-h">Results ${seg}</h3>${body}</section>`;
     },
 

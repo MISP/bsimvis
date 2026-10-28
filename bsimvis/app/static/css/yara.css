@@ -97,7 +97,10 @@
 .yw-note { padding: 6px 18px; font-size: 0.72rem; color: var(--subtle); border-bottom: 1px solid var(--border); }
 .yw-note b { color: #f59e0b; }
 .yw-hint { padding: 16px 18px; color: var(--subtle); }
-.yw-err { padding: 12px 18px; color: #ef4444; font: 0.78rem monospace; }
+.yw-errbox { margin: 12px 18px; border: 1px solid color-mix(in srgb, #ef4444 45%, var(--border)); border-left: 3px solid #ef4444; border-radius: 6px; background: color-mix(in srgb, #ef4444 8%, transparent); overflow: hidden; }
+.yw-errhead { padding: 7px 12px; font-size: 0.72rem; font-weight: 700; color: #ef4444; }
+.yw-errlines { padding: 0 12px 9px; font: 0.76rem/1.5 monospace; overflow-wrap: anywhere; }
+.yw-errnote { padding: 6px 12px; font-size: 0.7rem; color: var(--subtle); border-top: 1px solid color-mix(in srgb, #ef4444 25%, transparent); }
 
 .yw-tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg); }
 .yw-tab { border: 0; background: none; color: var(--subtle); padding: 9px 10px; font: inherit; font-size: 0.78rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }

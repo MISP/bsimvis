@@ -356,18 +356,56 @@ class Locator:
             name = None
         return name or f"FUN_{entry}"
 
+    def _load_strings(self):
+        """`self.strings`: (start, end, rec) for rows with a real address;
+        `self.records`: every row. A backfilled table (scripts/backfill_strings.py)
+        keys rows `decomp::{id}`: no address, so those can only be matched by value."""
+        self.strings, self.records = [], []
+        table = self.r.hgetall(f"{self.coll}:file:{self.md5}:strings")
+        for addr, rec in table.items():
+            try:
+                rec = json.loads(rec)
+            except (ValueError, TypeError):
+                continue
+            self.records.append(rec)
+            addr = _txt(addr)
+            if addr.startswith("decomp::"):
+                continue
+            try:
+                a = int(addr.split(":")[-1], 16)
+            except ValueError:
+                continue
+            self.strings.append((a, a + max(1, rec.get("length", 1)), rec))
+        self.strings.sort(key=lambda s: s[0])
+
+    def string_near(self, offset):
+        """The table string whose bytes (ascii or utf-16) cover file `offset`,
+        found by value. The longest wins; None when the table has no such row."""
+        if self.strings is None:
+            self._load_strings()
+        lo = max(0, offset - 512)
+        window = self.raw[lo : offset + 512]
+        best = None
+        for rec in self.records:
+            v = rec.get("value") or ""
+            if len(v) < 4 or (best and len(v) <= len(best["value"])):
+                continue
+            for enc in ("ascii", "utf-16-le"):
+                try:
+                    b = v.encode(enc)
+                except UnicodeEncodeError:
+                    continue
+                p = window.find(b)
+                while p != -1:
+                    if lo + p <= offset < lo + p + len(b):
+                        best = rec
+                        break
+                    p = window.find(b, p + 1)
+        return best
+
     def string_at(self, va):
         if self.strings is None:
-            self.strings = []
-            table = self.r.hgetall(f"{self.coll}:file:{self.md5}:strings")
-            for addr, rec in table.items():
-                try:
-                    rec = json.loads(rec)
-                    a = int(_txt(addr).split(":")[-1], 16)
-                except (ValueError, TypeError):
-                    continue
-                self.strings.append((a, a + max(1, rec.get("length", 1)), rec))
-            self.strings.sort(key=lambda s: s[0])
+            self._load_strings()
         for a, b, rec in self.strings:
             if a <= va < b:
                 return rec
@@ -393,10 +431,10 @@ def locate_hits(r, r_raw, hit_files):
                 )
                 for off in offsets[:3]:
                     va = loc.to_ghidra(off)
-                    if va is None:
-                        slot["unmapped"] += 1
-                        continue
-                    fn, st = loc.function_at(va), loc.string_at(va)
+                    fn = loc.function_at(va) if va is not None else None
+                    st = loc.string_at(va) if va is not None and not fn else None
+                    if not fn and not st:
+                        st = loc.string_near(off)
                     if fn:
                         e = slot["functions"].setdefault(
                             fn[0],
@@ -482,6 +520,8 @@ def explain_hits(r, r_raw, rules, members, per_file=12):
                     va = loc.to_ghidra(i.offset)
                     fn = loc.function_at(va) if va is not None else None
                     st = loc.string_at(va) if va is not None else None
+                    if not fn and not st:
+                        st = loc.string_near(i.offset)
                     rows.append(
                         {
                             "rule": m.rule,

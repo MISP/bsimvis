@@ -8,9 +8,18 @@ the Strings pages, pivots, `strings=` search and the N-diff Strings facet all
 work. Pure Kvrocks pass: no Ghidra, no re-ingest, no binary needed.
 
 What it cannot recover: strings the decompiler shows as `DAT_...` or never
-prints, strings no function uses, the real address/section, and YARA hits on
-strings. Backfilled rows carry section `decompiler` and the address
-`decomp::{id}`, so a later real analysis can tell them apart and replace them.
+prints, and strings no function uses. A decompiler token carries the address of
+the instruction that uses a literal, not of the literal itself, so a row starts
+with section `decompiler` and the address `decomp::{id}`.
+
+--locate gives those rows a real address: it finds the literal's bytes in the
+stored `{coll}:file:{md5}:raw` and maps the file offset to a Ghidra address with
+LIEF (the YARA workbench's `Locator`), taking the LIEF section name. The first
+NUL-terminated occurrence wins, else the first one. A literal that is not in the
+file (built at runtime, packed sample) keeps its `decomp::` row. `funcs` stays
+"functions whose source prints it", not Ghidra's xrefs. With --locate, files that
+already have a backfilled table are relocated in place (rows with a real address
+are never touched), and new backfills are located as they are written.
 
 A file that already has strings is skipped (never overwrite a real extraction)
 unless --force.
@@ -18,6 +27,7 @@ unless --force.
     uv run python scripts/backfill_strings.py --collection main --dry-run
     uv run python scripts/backfill_strings.py --collection main
     uv run python scripts/backfill_strings.py --all
+    uv run python scripts/backfill_strings.py --collection main --locate
 """
 
 import argparse
@@ -29,7 +39,7 @@ from tqdm import tqdm
 
 from bsimvis.app.services import string_service
 from bsimvis.app.services.config_service import config_service
-from bsimvis.app.services.redis_client import get_redis
+from bsimvis.app.services.redis_client import get_raw_redis, get_redis
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -82,7 +92,63 @@ def literals(source, min_len):
     return found
 
 
-def backfill_file(r, coll, md5, entries, min_len, cap, dry_run):
+def find_offset(raw, value, enc):
+    """File offset of `value` in `raw`, or None. Prefers a NUL-terminated copy."""
+    try:
+        b = value.encode("utf-16-le" if enc == "utf-16" else "utf-8")
+    except UnicodeEncodeError:
+        return None
+    nul = b"\0\0" if enc == "utf-16" else b"\0"
+    for needle in (b + nul, b):
+        off = raw.find(needle)
+        if off != -1:
+            return off
+    return None
+
+
+def locate(r, coll, md5, records):
+    """Give `decomp::` records a real address and section in place. -> count."""
+    from bsimvis.app.services.yara_edit_service import Locator
+
+    raw = get_raw_redis().get(f"{coll}:file:{md5}:raw")
+    if not raw:
+        return 0
+    loc = Locator(r, coll, md5, raw)
+    loc._load()
+    if loc.binary is None:
+        return 0
+    taken = {rec["addr"] for rec in records if not rec["addr"].startswith("decomp::")}
+    n = 0
+    for rec in records:
+        if not rec["addr"].startswith("decomp::"):
+            continue
+        off = find_offset(raw, rec["value"], rec.get("encoding"))
+        va = None if off is None else loc.to_ghidra(off)
+        if va is None or f"{va:08x}" in taken:
+            continue
+        rec["addr"] = f"{va:08x}"
+        taken.add(rec["addr"])
+        try:
+            rec["section"] = loc.binary.section_from_offset(off).name or rec["section"]
+        except Exception:
+            pass
+        n += 1
+    return n
+
+
+def relocate_file(r, coll, md5, dry_run):
+    """Locate an existing backfilled table and rewrite it. -> rows located."""
+    table = r.hgetall(string_service.file_key(coll, md5))
+    records = [json.loads(_s(v)) for k, v in table.items() if v]
+    if not any(rec["addr"].startswith("decomp::") for rec in records):
+        return 0
+    n = locate(r, coll, md5, records)
+    if n and not dry_run:
+        string_service.index_file_strings(r, coll, md5, records)
+    return n
+
+
+def backfill_file(r, coll, md5, entries, min_len, cap, dry_run, locate_rows=False):
     """Index one file's strings from the sources of its functions. -> count."""
     table = {}  # value -> [encoding, set of function entry addrs]
     for start in range(0, len(entries), BATCH):
@@ -113,10 +179,12 @@ def backfill_file(r, coll, md5, entries, min_len, cap, dry_run):
             value, f"decomp::{sid}", enc, SECTION, funcs=funcs
         )
         records.append(rec)
+    if locate_rows:
+        locate(r, coll, md5, records)
     return string_service.index_file_strings(r, coll, md5, records)
 
 
-def backfill(collection, dry_run=False, force=False):
+def backfill(collection, dry_run=False, force=False, locate_rows=False):
     r = get_redis()
     min_len = int(config_service.get("strings.min_length", 4))
     cap = int(config_service.get("strings.max_per_file", 10000))
@@ -132,15 +200,20 @@ def backfill(collection, dry_run=False, force=False):
         logging.warning(f"[!] No functions in collection {collection}")
         return 0
 
-    done = skipped = total = 0
+    done = skipped = total = located = 0
     for md5, entries in tqdm(sorted(files.items()), desc=collection, unit="file"):
         if not force and r.hlen(string_service.file_key(collection, md5)):
+            if locate_rows:
+                located += relocate_file(r, collection, md5, dry_run)
             skipped += 1
             continue
         total += backfill_file(
-            r, collection, md5, sorted(entries), min_len, cap, dry_run
+            r, collection, md5, sorted(entries), min_len, cap, dry_run, locate_rows
         )
         done += 1
+    if locate_rows:
+        verb = "would locate" if dry_run else "located"
+        logging.info(f"[+] {collection}: {verb} {located} existing rows")
 
     verb = "would write" if dry_run else "wrote"
     logging.info(
@@ -164,6 +237,10 @@ def demo():
         ]
     }
     assert literals(src, 4) == {"apple": "ascii", "wide str": "utf-16"}
+    raw = b"xx/proc/%d/mapsYY\0/proc/%d/maps\0w\0i\0d\0e\0\0\0"
+    assert find_offset(raw, "/proc/%d/maps", "ascii") == 18  # NUL-terminated copy
+    assert find_offset(raw, "wide", "utf-16") == 32
+    assert find_offset(raw, "absent", "ascii") is None
     print("backfill_strings demo ok")
 
 
@@ -174,6 +251,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="report, write nothing")
     ap.add_argument(
         "--force", action="store_true", help="also replace files that have strings"
+    )
+    ap.add_argument(
+        "--locate",
+        action="store_true",
+        help="give decomp:: rows a real address from the stored file bytes",
     )
     ap.add_argument("--demo", action="store_true", help="run the self-check and exit")
     args = ap.parse_args()
@@ -188,7 +270,7 @@ def main():
         ap.error("pass --collection NAME (repeatable) or --all")
 
     for c in collections:
-        backfill(c, dry_run=args.dry_run, force=args.force)
+        backfill(c, dry_run=args.dry_run, force=args.force, locate_rows=args.locate)
 
 
 if __name__ == "__main__":

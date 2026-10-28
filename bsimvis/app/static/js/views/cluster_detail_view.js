@@ -61,9 +61,9 @@ window.ClusterDetailView = {
         this._nway = null;
     },
 
-    /** Function clusters open on their medoid's code, file clusters on the member list. */
+    /** Function clusters open on their medoid's code, file clusters on the overview. */
     defaultTab() {
-        return this.isBinary ? 'members' : 'medoid';
+        return this.isBinary ? 'overview' : 'medoid';
     },
 
     /** The Functions tab (N-way diff of the node's files) exists for binary file clusters only. */
@@ -353,13 +353,13 @@ window.ClusterDetailView = {
                     <div id="cluster-header"></div>
 
                     <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:12px 0 8px; flex-shrink:0;">
-                        ${this.isBinary ? '' : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
-                        <button class="bsim-tab${this.isBinary ? ' active' : ''}" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
+                        ${this.isBinary ? `<button class="bsim-tab active" id="cluster-tab-btn-overview" onclick="ClusterDetailView.switchTab('overview')" title="What is behind each tab">Overview</button>` : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
+                        <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
                     </div>
 
-                    <div id="cluster-tab-members" style="display:${this.isBinary ? 'flex' : 'none'}; flex-direction:column; flex:1; min-height:0;">
+                    <div id="cluster-tab-members" style="display:none; flex-direction:column; flex:1; min-height:0;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
@@ -391,6 +391,7 @@ window.ClusterDetailView = {
                         </div>
                     </div>
 
+                    <div id="cluster-tab-overview" style="display:${this.isBinary ? 'block' : 'none'}; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-functions" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-medoid" style="display:${this.isBinary ? 'none' : 'flex'}; flex:1; min-height:0; flex-direction:column;"></div>
@@ -635,6 +636,7 @@ window.ClusterDetailView = {
         }
 
         this.renderTable();
+        if (this.tab === 'overview') this.renderOverviewTab();
         if (this.tab === 'metadata') this.renderMetadataTab();
         if (this.tab === 'functions') this.renderFunctionsTab();
         if (this.tab === 'medoid') this.renderMedoidTab();
@@ -669,7 +671,7 @@ window.ClusterDetailView = {
 
     switchTab(tab) {
         this.tab = tab;
-        ['members', 'metadata', 'functions', 'medoid'].forEach(t => {
+        ['overview', 'members', 'metadata', 'functions', 'medoid'].forEach(t => {
             const btn = document.getElementById(`cluster-tab-btn-${t}`);
             if (!btn) return;
             btn.classList.toggle('active', t === tab);
@@ -680,9 +682,15 @@ window.ClusterDetailView = {
         if (tab !== this.defaultTab()) url.searchParams.set('tab', tab);
         else url.searchParams.delete('tab');
         window.history.replaceState({ path: url.pathname + url.search }, '', url.pathname + url.search);
+        if (tab === 'overview') this.renderOverviewTab();
         if (tab === 'metadata') this.renderMetadataTab();
         if (tab === 'functions') this.renderFunctionsTab();
         if (tab === 'medoid') this.renderMedoidTab();
+    },
+
+    /** File clusters: one card per tab, then the lanes of shared code (cluster_overview.js). */
+    renderOverviewTab() {
+        if (window.ClusterOverview) window.ClusterOverview.render(document.getElementById('cluster-tab-overview'), this);
     },
 
     /** Function clusters: the medoid's code view, embedded as-is (in-iframe mode hides the app chrome). */

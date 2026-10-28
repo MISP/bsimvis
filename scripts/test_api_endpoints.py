@@ -5455,6 +5455,23 @@ def test_nway_diff():
             str(_hit)[:200],
         )
 
+    # AI suggest names the row's stripped neighbours first; that lookup never errors.
+    if _first:
+        _sg = lambda fids: requests.post(
+            f"{BASE_URL}/api/notes/rename/suggest", json={"func_ids": fids}, timeout=180
+        )
+        _sg_none = _sg([f"{COLLECTION}:func:{'0' * 32}:00000000"])
+        _sg_row = _sg(_rf)
+        check(
+            "rename suggest: unknown function is a 404, a real row a name or an LLM error",
+            _sg_none.status_code == 404
+            and (
+                (_sg_row.status_code == 200 and _sg_row.json().get("name"))
+                or _sg_row.status_code == 502
+            ),
+            f"HTTP {_sg_none.status_code} / {_sg_row.status_code} {_sg_row.text[:200]}",
+        )
+
     # The name is searchable, batch-settable, and every change is kept in history.
     if _first:
         _bn = requests.post(

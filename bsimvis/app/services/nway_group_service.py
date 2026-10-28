@@ -981,7 +981,8 @@ LANE_NAME_FIDS = 20  # heaviest functions whose similar-function names the model
 _DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+\s*(\[\d+\])?;\s*$")
 # decompiler noise: PowerPC condition-register packing, comment ends, lone braces
 _NOISE = re.compile(r"\bin_cr\d|\bunaff_cr\d|^\s*\|\s*\(uint\)|^\s*\*/|^\s*[{}]\s*$")
-_JUNK_NAME = re.compile(r"^(func_|LAB_|DAT_)|\+\d")
+# FID_conflict: is FunctionID picking one of several libc bodies, often wrongly
+_JUNK_NAME = re.compile(r"^(func_|LAB_|DAT_|FID_conflict:)|\+\d")
 _LIT = re.compile(r'"((?:[^"\\\n]|\\.){4,60})"')
 LANE_NAME_TTL = 30 * 86400
 LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
@@ -1196,7 +1197,7 @@ def lane_names(lanes):
             "fids": fids,
             "name_fids": name_fids,
             "tag_rows": tag_rows,
-            "v": 8,  # bump when the prompt changes, so cached names are redone
+            "v": 9,  # bump when the prompt changes, so cached names are redone
         }
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}

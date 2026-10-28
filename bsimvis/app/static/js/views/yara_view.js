@@ -375,9 +375,11 @@ window.YaraView = {
         return `<div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${cur === k}" onclick="YaraView.setTab('${k}', ${!!data})">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>`;
     },
 
+    // Entering Full sweep runs one unless a current result (same rule) or a run exists.
     setView(v) {
         this._view = v;
         this._paint();
+        if (v === 'sweep' && !this._run && (!this._sweep || this._sweepRule !== this.getRule())) this.startRun('sweep');
     },
 
     _progressHtml() {

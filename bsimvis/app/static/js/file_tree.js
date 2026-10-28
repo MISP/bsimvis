@@ -41,8 +41,8 @@ window.FileTree = {
     _rows: [],
     _params: new URLSearchParams(),
     _collection: '',
-    _collapsed: new Set(),   // bands / groups the user closed
-    _opened: new Set(),      // folds the user opened
+    _open: new Map(),        // id -> open, for what the user toggled
+    _shut: new Set(),        // bands that start closed (nothing inside matched)
     _sel: null,              // md5 shown in the list layout's detail pane
 
     // --- filter fields ---------------------------------------------------
@@ -347,8 +347,7 @@ window.FileTree = {
 
     /** Open or close every archive band / cluster group at once. Folds stay as they are. */
     setAllOpen(open) {
-        if (open) this._collapsed.clear();
-        else this._rows.forEach(r => { if (r.t === 'band' || r.t === 'group') this._collapsed.add(r.id); });
+        this._rows.forEach(r => { if (r.t === 'band' || r.t === 'group') this._open.set(r.id, open); });
         this.applyVisibility();
     },
 
@@ -387,6 +386,7 @@ window.FileTree = {
             this._uploads = new Map();
             this._truncated = false;
         }
+        this._shut = new Set();
         this._items.push(...items);
         Object.assign(this._clusters, clustersMap || {});
         this._params = new URLSearchParams(params);
@@ -538,14 +538,21 @@ window.FileTree = {
             }
             const id = `b:${n.file_md5}`;
             const files = this._descendants(n, kids);
-            rows.push({ t: 'band', ...row, id, count: files.length, context: filtered && !hits.has(n.file_md5) });
-
             const inner = [...anc, id];
             const shown = [], tagged = [], other = [];
             for (const c of children) {
                 if (filtered && !hasHit(c)) other.push(c);
                 else if (!kids.has(c.file_md5) && this._folded(c, ctx.folds) && !(filtered && hits.has(c.file_md5))) tagged.push(c);
                 else shown.push(c);
+            }
+            // Nothing inside matched: the band itself is the fold. It starts
+            // closed, instead of an open band around a closed "N other files" line.
+            const noneMatched = filtered && other.length === children.length;
+            if (noneMatched) this._shut.add(id);
+            rows.push({ t: 'band', ...row, id, count: files.length, noneMatched, context: filtered && !hits.has(n.file_md5) });
+            if (noneMatched) {
+                other.forEach(c => draw(c, depth + 1, inner, n, false));
+                return;
             }
             shown.forEach(c => draw(c, depth + 1, inner, n, filtered));
             if (tagged.length) {
@@ -557,7 +564,7 @@ window.FileTree = {
                 const fid = `f:${n.file_md5}:other`;
                 const count = other.reduce((s, c) => s + (kids.has(c.file_md5) ? this._descendants(c, kids).length + 1 : 1), 0);
                 rows.push({ t: 'fold', id: fid, depth: depth + 1, anc: inner.join(' '),
-                    html: `<b>${count} other file${count === 1 ? '' : 's'}</b> <span>in this archive did not match</span>` });
+                    html: `<b>${count} other file${count === 1 ? '' : 's'}</b> <span>in this ${n.is_container ? 'archive' : 'binary'} did not match</span>` });
                 other.forEach(c => draw(c, depth + 1, [...inner, fid], n, false));
             }
         };
@@ -707,7 +714,7 @@ window.FileTree = {
         const seen = [].concat(n.first_seen || []).filter(Boolean).map(v => this._day(v)).join(', ');
         const busy = (n.status && n.status !== 'analyzed') || (window.activeJobsByTarget && window.activeJobsByTarget[n.file_md5]);
         const parts = [
-            inside && r.t === 'band' ? `<span class="fb-meta-strong">${r.count} file${r.count === 1 ? '' : 's'} inside${r.context ? ' · context' : ''}</span>` : '',
+            inside && r.t === 'band' ? `<span class="fb-meta-strong">${r.count} file${r.count === 1 ? '' : 's'} inside${r.noneMatched ? ' · none matched' : r.context ? ' · context' : ''}</span>` : '',
             ft && !(r.t === 'band' && n.is_container) ? `<span class="fb-meta-type" title="${escapeAttr(ft)}">${escapeHtml(ft)}</span>` : '',
             n.language_id ? `<span class="fb-mono">${escapeHtml(n.language_id)}</span>` : '',
             seen ? `<span title="First seen">seen ${escapeHtml(seen)}</span>` : '',
@@ -752,7 +759,7 @@ window.FileTree = {
     applyVisibility() {
         const host = document.getElementById('fb-results');
         if (!host) return;
-        const closed = id => id.startsWith('f:') ? !this._opened.has(id) : this._collapsed.has(id);
+        const closed = id => !this._isOpen(id);
         host.querySelectorAll('[data-ft-anc]').forEach(el => {
             const anc = el.dataset.ftAnc;
             el.style.display = anc && anc.split(' ').some(closed) ? 'none' : '';
@@ -764,10 +771,15 @@ window.FileTree = {
         host.querySelectorAll('[data-ft-card]').forEach(el => el.classList.toggle('fb-collapsed', closed(el.dataset.ftCard)));
     },
 
+    /** Folds and the bands in _shut start closed; everything else starts open. */
+    _isOpen(id) {
+        if (this._open.has(id)) return this._open.get(id);
+        return !id.startsWith('f:') && !this._shut.has(id);
+    },
+
     toggle(event, id) {
         event.stopPropagation();
-        const set = id.startsWith('f:') ? this._opened : this._collapsed;
-        set.has(id) ? set.delete(id) : set.add(id);
+        this._open.set(id, !this._isOpen(id));
         this.applyVisibility();
     },
 

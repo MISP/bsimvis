@@ -538,6 +538,17 @@
                     <span>Compare ${nwayFiles.length} Files (N-way)</span>
                 </div>`;
             }
+            if (window.yaraUrl) {
+                const pickedY = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
+                const yFiles = (pickedY.length ? pickedY : [norm.id]).slice(0, 200);
+                const yCol = yFiles[0].split(':')[0] || col;
+                const yUrl = window.yaraUrl(yCol, yFiles.filter(id => (id.split(':')[0] || col) === yCol).map(id => `only_md5=${id.split(':').pop()}`));
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(yUrl))}, event, { title: 'YARA workbench' })">
+                    <i class="fa-solid fa-shield-halved" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>YARA rule for ${yFiles.length > 1 ? yFiles.length + ' files' : 'this file'}</span>
+                </div>`;
+            }
             if (window.NwayBasket) {
                 const picked = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
                 const basketIds = picked.length ? picked : [norm.id];

@@ -817,7 +817,7 @@ window.ClusterDetailView = {
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
+                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderRuleLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
             <div class="hero-fold"><div class="hero-fold-in">
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
@@ -955,6 +955,18 @@ window.ClusterDetailView = {
         const uuid = this.selectedClusterUuid;
         const ref = this.params.pool ? `pool:${this.params.pool}:${uuid}` : `cluster:${this.collection}:${uuid}`;
         Nav.openPath(NwayPanel.urlForFunctions([], ref), event, { title: 'N-way diff', type: 'bin_sim' });
+    },
+
+    /** Open the YARA workbench with this file cluster as the Must match set (collections only). */
+    renderRuleLink(self) {
+        if (!this.isBinary || !this.collection || (this.params && this.params.pool) || !window.yaraUrl) return '';
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-shield-halved',
+            label: 'YARA',
+            tooltip: 'Write a YARA rule for the files of this cluster',
+            onClick: `Nav.openPath(${jsString(window.yaraUrl(this.collection, [`cluster_uuid=${self.cluster_uuid}&axis=${this.axis || 'overall'}`]))}, event)`,
+        });
     },
 
     renderSimilaritiesLink(self) {

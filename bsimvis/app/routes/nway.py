@@ -629,6 +629,36 @@ def get_filter_values():
     }
 
 
+def _cluster_files(scope, uuid, axis):
+    """The files of one binary cluster node, read from its member set (the same
+    namespace `_cluster_node` uses), so a parent cluster resolves as well as a leaf."""
+    from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.config_service import config_service
+
+    coll = scope.get("collection")
+    if not coll:
+        abort(400, "cluster_uuid needs a collection")
+    axis = (axis or "overall").strip().lower()
+    algo = resolve_collection_algo(coll, None)
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    if (
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
+        == "hierarchical_snn"
+    ):
+        algo = f"{algo}:snn"
+    r = get_redis()
+    cid = resolve_cluster_id_by_uuid(
+        r, coll, algo, str(uuid).strip().lower(), "bin_cluster"
+    )
+    if cid is None:
+        abort(404, "unknown cluster_uuid")
+    members = r.smembers(f"{coll}:bin_cluster:{algo}:{cid}:members")
+    return [
+        (_origin_coll(coll), m.decode() if isinstance(m, bytes) else m) for m in members
+    ]
+
+
 def resolve_group(scope, spec, label, cap, meta):
     """A group spec's searches -> [(origin coll, md5)], filling `meta` (id -> search row)."""
     from bsimvis.app.routes.home import _call
@@ -637,6 +667,9 @@ def resolve_group(scope, spec, label, cap, meta):
     found = []
     # an empty search would list the whole collection: a group needs a filter
     for query in filter(None, _group_queries(spec)):
+        if query.get("cluster_uuid"):
+            found += _cluster_files(scope, query["cluster_uuid"], query.get("axis"))
+            continue
         try:
             res = _call(search_files, **{**scope, **query, "limit": cap + 1})
         except (TypeError, ValueError):

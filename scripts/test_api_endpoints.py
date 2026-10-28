@@ -3315,6 +3315,25 @@ def test_yara_editor():
     exact = f"rule only_one {{ condition: filesize == {size1} }}"
     both = "rule any_elf { condition: uint32(0) == 0x464c457f }"
 
+    one = requests.get(
+        f"{BASE_URL}/api/file/search",
+        params={"collection": COLLECTION, "only_md5": file_md5},
+        timeout=30,
+    ).json()
+    check(
+        "only_md5 selects exactly one file",
+        [f["file_md5"] for f in one.get("files", [])] == [file_md5],
+        str(one.get("files")),
+    )
+    fh = requests.post(
+        f"{BASE_URL}/api/yara/test", json={**sets, "rule": both}, timeout=60
+    ).json()
+    check(
+        "a false hit carries its match evidence",
+        bool((fh.get("false_hits") or [{}])[0].get("matches")),
+        str(fh.get("false_hits")),
+    )
+
     bad = test_endpoint(
         "POST",
         "/api/yara/validate",

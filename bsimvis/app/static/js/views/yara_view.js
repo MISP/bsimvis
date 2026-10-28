@@ -25,6 +25,12 @@ const YARA_DEFAULT_RULE = `rule family_name
 }
 `;
 
+// Link into the workbench with a set of files as "Must match": one search per query string.
+window.yaraUrl = function (collection, queries) {
+    const cmp = { groups: [{ label: 'Must match', queries }, { label: 'Must not match', queries: [] }] };
+    return `/yara?collection=${encodeURIComponent(collection)}&cmp=${encodeURIComponent(JSON.stringify(cmp))}`;
+};
+
 window.YaraView = {
     _editor: null,
     _textarea: null,
@@ -494,9 +500,9 @@ window.YaraView = {
         if (!rows.length) return '<div class="yw-hint">none</div>';
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
-            return `<tr><td>${EntityRenderer.renderFileName(f.name, md5, coll)}</td><td>${EntityRenderer.renderMd5(md5, { collection: coll })}</td>${withRules ? `<td>${this._matchCell(f)}</td>` : ''}</tr>`;
+            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td>${withRules ? `<td>${this._matchCell(f)}</td>` : ''}</tr>`;
         }).join('');
-        return `<table><thead><tr><th>File</th><th>md5</th>${withRules ? '<th>Matched</th>' : ''}</tr></thead><tbody>${body}</tbody></table>
+        return `<table class="${withRules ? 'yw-wide' : ''}"><thead><tr><th>File</th><th>md5</th>${withRules ? '<th>Matched</th>' : ''}</tr></thead><tbody>${body}</tbody></table>
             ${total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : ''}`;
     },
 
@@ -508,8 +514,8 @@ window.YaraView = {
             if (x.string === undefined) return `<div class="yw-hit"><span class="yw-badge noisy">${escapeHtml(x.rule)}</span> <span class="yw-dim">condition only, no string</span></div>`;
             const where = x.function ? `<a href="${this._fnUrl(x.function)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(x.function.name)}</a>`
                 : x.str ? `str &ldquo;${escapeHtml(x.str)}&rdquo;` : '<span class="yw-dim">unmapped</span>';
-            return `<div class="yw-hit"><span class="yw-badge noisy">${escapeHtml(x.rule)} ${escapeHtml(x.string)}</span> <span class="yw-dim yw-mono">@0x${Number(x.offset).toString(16)}</span>
-                <code class="yw-mono">${escapeHtml(x.hex)}</code> <span class="yw-dim">&ldquo;${escapeHtml(x.text)}&rdquo;</span> &rarr; ${where}</div>`;
+            return `<div class="yw-hit"><div class="yw-hit-h"><span class="yw-badge noisy">${escapeHtml(x.rule)} ${escapeHtml(x.string)}</span> <span class="yw-dim yw-mono">@0x${Number(x.offset).toString(16)}</span> &rarr; ${where}</div>
+                <code class="yw-mono">${escapeHtml(x.hex)}</code> <span class="yw-dim yw-mono">&ldquo;${escapeHtml(x.text)}&rdquo;</span></div>`;
         }).join('');
     },
 

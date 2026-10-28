@@ -942,7 +942,8 @@ window.FileTree = {
     /**
      * Table and list layouts are one real <table id="fb-table">, so the
      * dashboard's cell selection (TableSelection) works across all of it.
-     * The cards are drawn on that one table: spacer rows between them, and
+     * It is laid out as a CSS grid, so the cards are drawn on the rows: a
+     * margin above each card's first row is the gap (no spacer element), and
      * applyVisibility() marks each card's first and last visible row so CSS
      * can round and close its edges whatever is collapsed.
      */
@@ -955,9 +956,10 @@ window.FileTree = {
                 ${sortBy === key ? `<i class="fa-solid fa-caret-${order === 'asc' ? 'up' : 'down'}"></i>` : ''}</th>`
             : `<th class="${cls}">${label}</th>`;
         const span = list ? 4 : 5 + (extra ? 2 : 0);
+        // Rows are CSS grid rows (see .fb-grid): one template for every row.
         const cols = list
-            ? '<colgroup><col><col class="fb-col-num"><col class="fb-col-clusters"><col class="fb-col-count"></colgroup>'
-            : `<colgroup><col>${extra ? '<col class="fb-col-hash"><col class="fb-col-hash">' : ''}<col class="fb-col-num"><col class="fb-col-clusters"><col class="fb-col-tags"><col class="fb-col-note"></colgroup>`;
+            ? 'minmax(0, 1fr) 84px 150px 56px'
+            : `minmax(0, 1fr) ${extra ? '120px 120px ' : ''}84px 150px minmax(0, 34%) 44px`;
         const head = list
             ? `${th('File', 'file_name')}${th('Funcs', 'function_count', 'fb-th-num')}${th('Clusters', '')}${th('', '')}`
             : `${th('File', 'file_name')}${extra ? th('MD5', '') + th('Batch', '') : ''}${th('Funcs', 'function_count', 'fb-th-num')}${th('Clusters', '')}${th('Tags', '')}${th('', '')}`;
@@ -1004,13 +1006,12 @@ window.FileTree = {
                 continue;
             }
             if (r.depth === 0 || !open) {
-                if (card >= 0) out.push(`<tr class="fb-gap" data-ts-skip aria-hidden="true"><td colspan="${span}"></td></tr>`);
                 card++;
                 open = true;
             }
             out.push(row(r, card));
         }
-        return `<table id="fb-table" class="fb-grid${list ? ' fb-grid-list' : ''}">${cols}
+        return `<table id="fb-table" class="fb-grid${list ? ' fb-grid-list' : ''}" style="--fb-cols:${cols}">
             <thead><tr>${head}</tr></thead><tbody>${out.join('')}</tbody></table>`;
     },
 

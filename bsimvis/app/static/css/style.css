@@ -2602,53 +2602,73 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 .fb-detail-tags .entity-tags-editor { max-width:100%; }
 .fb-detail .ft-copy { opacity:.6; }
 
-/* Grid: the table and list layouts. One <table>, so cell selection spans it;
-   cards are drawn with spacer rows and rounded first/last rows. */
-.fb-grid { width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0; }
-.fb-col-num { width:84px; }
-.fb-col-hash { width:120px; }
-.fb-col-clusters { width:150px; }
-.fb-col-tags { width:34%; }
-.fb-col-note { width:44px; }
-.fb-col-count { width:56px; }
+/* Grid: the table and list layouts. A real <table> (cell selection reads
+   its rows) laid out with CSS grid: every row uses one column template, the
+   card frame is drawn on the rows, and the gap between cards is a margin, so
+   there is nothing between cards to click or select. */
+.fb-grid { display:block; width:100%; border-collapse:separate; border-spacing:0; }
+.fb-grid thead, .fb-grid tbody { display:block; }
+.fb-grid thead { position:sticky; top:0; z-index:3; background:var(--fb-page); }
+.fb-grid tr { display:grid; grid-template-columns:var(--fb-cols); background:none; }
+.fb-grid th, .fb-grid td { display:flex; flex-direction:column; justify-content:center; min-width:0; box-sizing:border-box; }
+.fb-grid td[colspan], .fb-grid th[colspan] { grid-column:1 / -1; }
 .fb-grid th {
-    position:sticky; top:0; z-index:3; background:var(--fb-page); text-align:left; white-space:nowrap;
+    background:none; text-align:left; white-space:nowrap; border:0;
     font-size:0.62rem; letter-spacing:.09em; text-transform:uppercase; color:var(--dim); font-weight:700;
     padding:4px 12px 10px;
 }
-.fb-grid th.fb-th-num { text-align:right; }
-.fb-grid th.fb-sortable { cursor:pointer; }
+.fb-grid th.fb-th-num { align-items:flex-end; }
+.fb-grid th.fb-sortable { cursor:pointer; flex-direction:row; justify-content:flex-start; align-items:center; gap:4px; }
+.fb-grid th.fb-th-num.fb-sortable { justify-content:flex-end; }
 .fb-grid th.fb-sortable:hover, .fb-grid th.sorted { color:var(--text); }
-.fb-grid td {
-    padding:7px 12px; vertical-align:middle; min-width:0;
-    background:var(--fb-surface); border-top:1px solid var(--fb-line);
+.fb-grid td { padding:7px 12px; border:0; background:none; }
+
+/* Card frame, on the rows */
+.fb-grid tbody tr[data-fb-card] {
+    background:var(--fb-surface);
+    border-left:1px solid var(--fb-line); border-right:1px solid var(--fb-line);
 }
-.fb-grid tr[data-fb-card] > td:first-child { border-left:1px solid var(--fb-line); }
-.fb-grid tr[data-fb-card] > td:last-child { border-right:1px solid var(--fb-line); }
-.fb-grid tr.fb-first > td { border-top:1px solid var(--fb-line); }
-.fb-grid tr.fb-first > td:first-child { border-top-left-radius:var(--fb-radius); }
-.fb-grid tr.fb-first > td:last-child { border-top-right-radius:var(--fb-radius); }
-.fb-grid tr.fb-last > td { border-bottom:1px solid var(--fb-line); }
-.fb-grid tr.fb-last > td:first-child { border-bottom-left-radius:var(--fb-radius); }
-.fb-grid tr.fb-last > td:last-child { border-bottom-right-radius:var(--fb-radius); }
-.fb-grid tr.fb-gap > td, .fb-grid tr.fb-tr-note > td { background:none; border:none; padding:0; height:10px; }
-.fb-grid tr.fb-tr-note > td { height:auto; padding:2px 4px; }
-.fb-grid tr[data-fb-card]:hover > td { background:color-mix(in srgb, var(--accent) 5%, var(--fb-surface)); }
-.fb-grid tr.fb-tr-band > td, .fb-grid tr.fb-tr-group > td { background:color-mix(in srgb, var(--accent) 7%, var(--fb-surface)); }
-.fb-grid tr.fb-tr-group > td { padding:10px 12px; }
-.fb-grid tr.fb-tr-line > td { padding:0; }
-.fb-grid tr.fb-tr-line .fb-fold { border-top:none; }
-.fb-grid tr.fb-li { cursor:pointer; }
-.fb-grid tr.fb-li.selected > td { background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); }
-.fb-grid tr.fb-li.selected > td:first-child { box-shadow:inset 3px 0 0 var(--accent); }
+.fb-grid tbody tr[data-fb-card]:not(.fb-first) > td { border-top:1px solid var(--fb-line); }
+.fb-grid tbody tr.fb-first { border-top:1px solid var(--fb-line); border-radius:var(--fb-radius) var(--fb-radius) 0 0; margin-top:10px; }
+.fb-grid tbody tr.fb-last { border-bottom:1px solid var(--fb-line); border-bottom-left-radius:var(--fb-radius); border-bottom-right-radius:var(--fb-radius); }
+.fb-grid tbody tr.fb-first > td:first-child { border-top-left-radius:calc(var(--fb-radius) - 1px); }
+.fb-grid tbody tr.fb-first > td:last-child { border-top-right-radius:calc(var(--fb-radius) - 1px); }
+.fb-grid tbody tr.fb-last > td:first-child { border-bottom-left-radius:calc(var(--fb-radius) - 1px); }
+.fb-grid tbody tr.fb-last > td:last-child { border-bottom-right-radius:calc(var(--fb-radius) - 1px); }
+.fb-grid tbody tr[data-fb-card]:hover { background:color-mix(in srgb, var(--accent) 5%, var(--fb-surface)); }
+.fb-grid tbody tr.fb-tr-band, .fb-grid tbody tr.fb-tr-group { background:color-mix(in srgb, var(--accent) 7%, var(--fb-surface)); }
+.fb-grid tbody tr.fb-tr-group > td { padding:10px 12px; }
+.fb-grid tbody tr.fb-tr-line > td { padding:0; }
+.fb-grid tbody tr.fb-tr-line .fb-fold { border-top:none; }
+.fb-grid tbody tr.fb-tr-note > td { padding:8px 4px 0; }
+.fb-grid tbody tr.fb-li { cursor:pointer; }
+.fb-grid tbody tr.fb-li.selected { background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); box-shadow:inset 3px 0 0 var(--accent); }
 .fb-tr-grouphead { display:flex; align-items:flex-start; gap:8px; }
 .fb-td-file { display:flex; align-items:center; gap:8px; min-width:0; padding-left:calc(var(--indent, 0) * 18px); }
 .fb-li-text { min-width:0; display:flex; flex-direction:column; gap:2px; }
 .fb-li-name { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.fb-td-num { text-align:right; font-family:ui-monospace, Consolas, monospace; font-variant-numeric:tabular-nums; color:var(--subtle); }
-.fb-td-note { text-align:center; }
-.fb-td-count { color:var(--dim); font-size:0.7rem; text-align:right; white-space:nowrap; }
+.fb-grid td.fb-td-num { align-items:flex-end; font-family:ui-monospace, Consolas, monospace; font-variant-numeric:tabular-nums; color:var(--subtle); }
+.fb-grid td.fb-td-note, .fb-grid td.fb-td-count { align-items:center; }
+.fb-td-count { color:var(--dim); font-size:0.7rem; white-space:nowrap; }
 .fb-td-hash { font-family:ui-monospace, Consolas, monospace; font-size:0.72rem; color:var(--subtle); }
+
+/* Cell selection: a tint and one 1.5px inset outline, the same width on
+   every edge. Corners round only where they meet a card corner. */
+.fb-grid td.selected-cell {
+    --sel: color-mix(in srgb, var(--accent) 80%, transparent);
+    --st: 0px; --sb: 0px; --sl: 0px; --sr: 0px;
+    background:color-mix(in srgb, var(--accent) 14%, transparent) !important;
+    box-shadow:
+        inset 0 var(--st) 0 0 var(--sel), inset 0 calc(-1 * var(--sb)) 0 0 var(--sel),
+        inset var(--sl) 0 0 0 var(--sel), inset calc(-1 * var(--sr)) 0 0 0 var(--sel) !important;
+}
+.fb-grid td.focused-cell { background:color-mix(in srgb, var(--accent) 24%, transparent) !important; }
+.fb-grid td.selected-cell.sel-t, .fb-grid tr.fb-first > td.selected-cell { --st: 1.5px; }
+.fb-grid td.selected-cell.sel-b, .fb-grid tr.fb-last > td.selected-cell { --sb: 1.5px; }
+.fb-grid td.selected-cell.sel-l { --sl: 1.5px; }
+.fb-grid td.selected-cell.sel-r { --sr: 1.5px; }
+/* No row divider inside a selection. */
+.fb-grid tbody tr:not(.fb-first) > td.selected-cell:not(.sel-t) { border-top-color:transparent; }
 
 /* Full value in the DOM, clipped on screen: selecting it copies all of it. */
 .ft-clip-cell { display:flex; align-items:center; gap:4px; min-width:0; }
@@ -2666,56 +2686,7 @@ tr:hover .ft-copy, .ft-copy:focus-visible { opacity:0.6; }
     .fb-split { grid-template-columns: minmax(0, 1fr); }
     .fb-detail { position:static; max-height:none; }
 }
-/* Spacer rows between cards never show as selected. */
-.fb-grid tr.fb-gap > td { background:none !important; box-shadow:none !important; }
 .fb-detail { overflow-x:hidden; }
 .fb-crumbs span { min-width:0; overflow-wrap:anywhere; }
-
-/* Cell selection on the grid: a soft tint and a thin outline with rounded
-   corners, instead of the square 2px frame the plain tables use. Each edge
-   class only sets its own width; one box-shadow draws whichever are set.
-   A selection that crosses a card gap is closed at each card's edge, so it
-   reads as one rounded piece per card. */
-.fb-grid td.selected-cell {
-    --sel: color-mix(in srgb, var(--accent) 75%, transparent);
-    --st: 0px; --sb: 0px; --sl: 0px; --sr: 0px;
-    background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)) !important;
-    box-shadow:
-        inset 0 var(--st) 0 0 var(--sel), inset 0 calc(-1 * var(--sb)) 0 0 var(--sel),
-        inset var(--sl) 0 0 0 var(--sel), inset calc(-1 * var(--sr)) 0 0 0 var(--sel) !important;
-}
-.fb-grid td.focused-cell { background:color-mix(in srgb, var(--accent) 22%, var(--fb-surface)) !important; }
-.fb-grid td.selected-cell.sel-t, .fb-grid tr.fb-first > td.selected-cell { --st: 1.5px; }
-.fb-grid td.selected-cell.sel-b, .fb-grid tr.fb-last > td.selected-cell { --sb: 1.5px; }
-.fb-grid td.selected-cell.sel-l { --sl: 1.5px; }
-.fb-grid td.selected-cell.sel-r { --sr: 1.5px; }
-.fb-grid td.selected-cell.sel-t.sel-l, .fb-grid tr.fb-first > td.selected-cell.sel-l { border-top-left-radius: 8px; }
-.fb-grid td.selected-cell.sel-t.sel-r, .fb-grid tr.fb-first > td.selected-cell.sel-r { border-top-right-radius: 8px; }
-.fb-grid td.selected-cell.sel-b.sel-l, .fb-grid tr.fb-last > td.selected-cell.sel-l { border-bottom-left-radius: 8px; }
-.fb-grid td.selected-cell.sel-b.sel-r, .fb-grid tr.fb-last > td.selected-cell.sel-r { border-bottom-right-radius: 8px; }
-/* Where the selection reaches a card corner, it follows the card's curve. */
-.fb-grid tr.fb-first > td.selected-cell.sel-l:first-child { border-top-left-radius: var(--fb-radius); }
-.fb-grid tr.fb-first > td.selected-cell.sel-r:last-child { border-top-right-radius: var(--fb-radius); }
-.fb-grid tr.fb-last > td.selected-cell.sel-l:first-child { border-bottom-left-radius: var(--fb-radius); }
-.fb-grid tr.fb-last > td.selected-cell.sel-r:last-child { border-bottom-right-radius: var(--fb-radius); }
-.fb-grid tr.fb-gap > td.selected-cell { background:none !important; box-shadow:none !important; }
-/* No row divider inside a selection. */
-.fb-grid tr:not(.fb-first) > td.selected-cell:not(.sel-t) { border-top-color: color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); }
-/* The dashboard stripes and hovers whole rows (tr:nth-child(even), tr:hover);
-   on the grid that paint shows through spacer rows and round corners. */
-.fb-grid tr, .fb-grid tr:hover, .fb-grid tr:nth-child(even) { background: none !important; }
-/* Where the selection meets a card side, colour the card's own border rather
-   than drawing a second line just inside it. */
-.fb-grid tr[data-fb-card] > td.selected-cell.sel-l:first-child { --sl: 0.5px; border-left-color: var(--sel); }
-.fb-grid tr[data-fb-card] > td.selected-cell.sel-r:last-child { --sr: 0.5px; border-right-color: var(--sel); }
-.fb-grid tr.fb-first > td.selected-cell { --st: 0.5px; border-top-color: var(--sel); }
-.fb-grid tr.fb-last > td.selected-cell { --sb: 0.5px; border-bottom-color: var(--sel); }
-/* On a card side, away from the card's corners, the selection stays square
-   so it sits flush on the card edge. */
-.fb-grid tr:not(.fb-first) > td.selected-cell.sel-t.sel-l:first-child { border-top-left-radius: 0; }
-.fb-grid tr:not(.fb-first) > td.selected-cell.sel-t.sel-r:last-child { border-top-right-radius: 0; }
-.fb-grid tr:not(.fb-last) > td.selected-cell.sel-b.sel-l:first-child { border-bottom-left-radius: 0; }
-.fb-grid tr:not(.fb-last) > td.selected-cell.sel-b.sel-r:last-child { border-bottom-right-radius: 0; }
-/* dashboard.css gives every td a bottom border; the grid draws its own lines. */
-.fb-grid td { border-bottom-width: 0; }
-.fb-grid tr.fb-last > td { border-bottom-width: 1px; }
+.fb-grid thead tr, .fb-grid thead tr:hover { background:none !important; }
+.fb-grid thead tr { border-left:1px solid transparent; border-right:1px solid transparent; }

@@ -77,7 +77,17 @@ def resolve_sets(r, body, key, cap):
         else:
             found = resolve_group(scope, spec, label, cap, meta)
         out.append({"label": label, "members": list(dict.fromkeys(found))})
-    return out
+    return ys.apply_pins(out, _pins(body), key[:-1])
+
+
+def _pins(body):
+    """`body.pins`: {"coll:md5": "target" | "negative" | "drop"} -> {(coll, md5): role}."""
+    pins = body.get("pins") or {}
+    if not isinstance(pins, dict) or len(pins) > 1000:
+        abort(400, "pins: at most 1000 {<collection>:<md5>: role}")
+    if any(v not in ("target", "negative", "drop") for v in pins.values()):
+        abort(400, "pins: role is target, negative or drop")
+    return dict(zip(_explicit(list(pins), "pins"), pins.values()))
 
 
 def _check_rule(body):
@@ -139,7 +149,10 @@ def post_suggest():
     negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
     neg = list(dict.fromkeys(m for g in negatives for m in g["members"]))
     min_frac = max(0.0, min(1.0, float(body.get("min_frac", 0))))
-    return {"strings": ys.suggest(r, targets, neg, min_frac)}
+    return {
+        "strings": ys.suggest(r, targets, neg, min_frac),
+        "consts": ys.suggest_consts(r, get_raw_redis(), targets, neg),
+    }
 
 
 def post_draft():
@@ -241,7 +254,10 @@ def _start_run(mode):
         f"yara:sweep:{run_id}:spec",
         6 * 3600,
         json.dumps(
-            {k: body.get(k) for k in ("collection", "pool", "targets", "negatives")}
+            {
+                k: body.get(k)
+                for k in ("collection", "pool", "targets", "negatives", "pins")
+            }
             | {"rule": text}
         ),
     )
@@ -290,6 +306,9 @@ def get_run(run_id):
         abort(404, "unknown or expired run")
     spec = json.loads(q.get(f"yara:sweep:{run_id}:spec") or "{}")
     hits = {ys._txt(h) for h in q.smembers(f"yara:sweep:{run_id}:hits")}
+    # a dropped file is out of the measure: not a hit, not a negative
+    drop = {f"{c}:file:{m}" for (c, m), v in _pins(spec).items() if v == "drop"}
+    hits -= drop
     out = {
         "mode": stat.get("mode"),
         "done": int(stat.get("done", 0)) >= int(stat.get("collections", 1)),
@@ -348,8 +367,16 @@ def get_run(run_id):
         for key in filter(None, found.split("|")):
             rule, _, sid = key.rpartition(":")
             per.setdefault((rule, sid), [0, 0])[side] += 1
+    others = max(0, out["seen"] - len(tset) - len(drop))
     out["strings"] = [
-        {"rule": k[0], "id": k[1], "pos": v[0], "neg": v[1]} for k, v in per.items()
+        {
+            "rule": k[0],
+            "id": k[1],
+            "pos": v[0],
+            "neg": v[1],
+            "score": (ys.string_score(v[0], len(tset), v[1], others) if tset else None),
+        }
+        for k, v in per.items()
     ]
     out["sample"] = {"targets": len(tset) or out["seen"]}
 
@@ -420,7 +447,7 @@ def get_run(run_id):
         "tp": tp,
         "fp": fp,
         "fn": fn,
-        "tn": max(0, out["seen"] - len(tset) - fp),
+        "tn": max(0, out["seen"] - len(tset) - len(drop) - fp),
         "precision": precision,
         "recall": recall,
         "f1": (

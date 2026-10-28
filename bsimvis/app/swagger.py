@@ -4186,7 +4186,9 @@ class NwayFunctionSet(Resource):
 
 _YARA_SETS = (
     "`collection` or `pool`, `rule` (YARA source), and `targets` / `negatives`: lists "
-    'of `{label, queries: [search_files params] | files: ["coll:md5"] | rest: true}`.'
+    'of `{label, queries: [search_files params] | files: ["coll:md5"] | rest: true}`. '
+    'Optional `pins: {"coll:md5": "target" | "negative" | "drop"}` moves single files '
+    "between the sets, or out of them."
 )
 
 

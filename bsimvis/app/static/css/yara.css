@@ -175,3 +175,27 @@
 .yw-rule { font-size: 0.66rem; }
 .yw-fn { overflow: hidden; }
 .yw-xr { padding-left: 10px; margin-top: 2px; border-left: 2px solid var(--border); font-size: 0.72rem; }
+
+/* pinned files, quick actions, sortable string tables */
+.yw-pins { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 18px; font-size: 0.74rem; }
+.yw-pins:not(:empty) { padding: 6px 18px; border-bottom: 1px solid var(--border); }
+.yw-pin { display: inline-flex; align-items: center; gap: 5px; max-width: 260px; padding: 2px 4px 2px 8px; border: 1px solid var(--border); border-radius: 99px; background: var(--hover); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yw-pin button { border: 0; background: none; color: var(--subtle); cursor: pointer; padding: 0 4px; }
+.yw-pin button:hover { color: var(--text); }
+.yw-acts { display: inline-flex; gap: 2px; }
+.yw-acts .yw-btn.icon, .yw-pane td > .yw-btn.icon { width: 24px; height: 24px; font-size: 0.72rem; }
+.yw-fhb { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.yw-fhb .yw-fname { flex: 0 1 auto; max-width: 40%; }
+.yw-sortable { cursor: pointer; user-select: none; }
+.yw-sortable:hover { color: var(--text); }
+.yw-land { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.yw-land > .yw-fn, .yw-land > .yw-cut { flex: 1; min-width: 0; }
+.yw-land + .yw-land { margin-top: 2px; }
+
+.yw-vers { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.yw-vchip { display: inline-flex; border: 1px solid var(--border); border-radius: 99px; overflow: hidden; }
+.yw-vchip button { border: 0; background: none; color: var(--subtle); padding: 3px 9px; font: inherit; font-size: 0.74rem; cursor: pointer; }
+.yw-vchip button + button { padding: 3px 7px 3px 4px; }
+.yw-vchip[aria-pressed=true] { background: var(--hover); border-color: var(--accent); }
+.yw-vchip[aria-pressed=true] button { color: var(--text); font-weight: 600; }
+.yw-badge.in { color: #10b981; }

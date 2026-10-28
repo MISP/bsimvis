@@ -53,6 +53,10 @@ window.YaraView = {
     _runTimer: null,
     _cmp: null,
     _last: null,
+    _pins: {}, // "coll:md5" -> {role: target | negative | drop, name}
+    _vers: [], // stored results of each saved version: {n, rule, live, sweep}
+    _cur: -1, // version tab on show; -1 = the rule being edited
+    _sort: { sug: ['score', -1], str: ['score', -1] }, // [key, direction] per strings table
 
     destroy() {
         clearTimeout(this._timer);
@@ -133,11 +137,12 @@ window.YaraView = {
         this._savedRule = saved.rule;
         this._rest = saved.rest !== false;
         this._size = saved.size || {};
+        this._pins = saved.pins || {};
     },
 
     _persist() {
         try {
-            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule(), rest: this._rest, size: this._size }));
+            localStorage.setItem('bsimvis.yara', JSON.stringify({ cmp: this._cmp.cmp(), rule: this.getRule(), rest: this._rest, size: this._size, pins: this._pins }));
         } catch (e) { /* ignore */ }
     },
 
@@ -187,6 +192,7 @@ window.YaraView = {
                     <div class="nway-focus-body nway-match-body nway-cmp-body" id="yara-sets" style="position:static; box-shadow:none; border:0; background:transparent; padding:0; width:100%; max-width:none; max-height:none; min-width:0; align-items:stretch;"></div>
                 </div>
             </details>
+            <div class="yw-pins" id="yara-pins"></div>
             <div class="yw-main">
                 <div class="yw-left">
                     <div class="yw-editor" id="yara-editor"></div>
@@ -278,6 +284,7 @@ window.YaraView = {
         const hasTarget = this._savedCmp && this._savedCmp.groups[0] && this._savedCmp.groups[0].queries.length;
         if (hasTarget) document.getElementById('yara-setbar').open = false;
         this._sum(null);
+        this._pinsBar();
     },
 
     // One line for the collapsed bar: each group's filters and file count.
@@ -305,12 +312,55 @@ window.YaraView = {
     },
 
     // Must match: its filters. Must not match: its filters, else every other file (if ticked), else nothing.
+    // Pinned files override both (the server applies them to every set).
     _body() {
         const cmp = this._cmp.cmp();
         const spec = g => ({ label: g.label, queries: g.queries.map(q => window.NwayCompare.parseQuery(q)) });
         const targets = cmp.groups[0].queries.length ? [spec(cmp.groups[0])] : [];
-        const negatives = cmp.groups.slice(1).map(g => g.queries.length ? spec(g) : (this._rest && targets.length ? { label: g.label, rest: true } : null)).filter(Boolean);
-        return { rule: this.getRule(), collection: document.getElementById('yara-collection').value, targets, negatives };
+        const pins = Object.fromEntries(Object.entries(this._pins).map(([id, p]) => [id, p.role]));
+        const hasT = targets.length || Object.values(pins).includes('target');
+        const negatives = cmp.groups.slice(1).map(g => g.queries.length ? spec(g) : (this._rest && hasT ? { label: g.label, rest: true } : null)).filter(Boolean);
+        return { rule: this.getRule(), collection: document.getElementById('yara-collection').value, targets, negatives, pins, hasT };
+    },
+
+    // --- pinned files -----------------------------------------------------
+
+    pin(id, name, role) {
+        if (this._pins[id] && this._pins[id].role === role) return;
+        this._pins = { ...this._pins, [id]: { role, name } };
+        this._pinsChanged();
+    },
+
+    unpin(id) {
+        const { [id]: _, ...rest } = this._pins;
+        this._pins = id === '*' ? {} : rest;
+        this._pinsChanged();
+    },
+
+    _pinsChanged() {
+        this._persist();
+        this._pinsBar();
+        this.schedule(0);
+    },
+
+    _pinsBar() {
+        const el = document.getElementById('yara-pins');
+        if (!el) return;
+        const all = Object.entries(this._pins);
+        const role = { target: ['Must match', 'yw-t', 'fa-circle-check'], negative: ['Must not match', 'yw-n', 'fa-circle-xmark'], drop: ['Dropped', 'yw-dim', 'fa-ban'] };
+        el.innerHTML = all.length ? `<span class="yw-lbl">Pinned files</span>${all.map(([id, p]) => `<span class="yw-pin" title="${escapeAttr(`${role[p.role][0]}: ${id}`)}">
+            <i class="fa-solid ${role[p.role][2]} ${role[p.role][1]}"></i>${escapeHtml(p.name || id)}
+            <button aria-label="Unpin" onclick="YaraView.unpin(${escapeAttr(jsString(id))})"><i class="fa-solid fa-xmark"></i></button></span>`).join('')}
+            <button class="yw-btn ghost" onclick="YaraView.unpin('*')">Clear</button>` : '';
+    },
+
+    // Quick actions on a file row: move it to the other set, or drop it from the test.
+    _pinBtns(f, role) {
+        const acts = [['target', 'fa-circle-check', 'Move to Must match'], ['negative', 'fa-circle-xmark', 'Move to Must not match'], ['drop', 'fa-ban', 'Drop from the test sets']];
+        const args = `${escapeAttr(jsString(f.id))}, ${escapeAttr(jsString(f.name || ''))}`;
+        const pinned = this._pins[f.id];
+        return `<span class="yw-acts">${acts.filter(a => a[0] !== role).map(([v, i, t]) =>
+            `<button class="yw-btn ghost icon" title="${t}" aria-label="${t}" onclick="event.stopPropagation(); YaraView.pin(${args}, '${v}')"><i class="fa-solid ${i}"></i></button>`).join('')}${pinned ? `<button class="yw-btn ghost icon" title="Unpin" aria-label="Unpin" onclick="event.stopPropagation(); YaraView.unpin(${escapeAttr(jsString(f.id))})"><i class="fa-solid fa-thumbtack-slash"></i></button>` : ''}</span>`;
     },
 
     // --- live test --------------------------------------------------------
@@ -349,7 +399,7 @@ window.YaraView = {
         try { localStorage.setItem('bsimvis.yara.collection', body.collection); } catch (e) { /* ignore */ }
         const seq = ++this._seq;
         if (!body.collection) { this._renderResult(null, 'Pick a collection.'); return; }
-        if (!body.targets.length) {
+        if (!body.hasT) {
             // nothing to measure against: still show compile errors
             const v = await (await fetch('/api/yara/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rule: body.rule }) })).json().catch(() => ({}));
             if (seq !== this._seq) return;
@@ -375,6 +425,7 @@ window.YaraView = {
         if (seq !== this._seq) return; // a newer keystroke owns the panel
         clearTimeout(this._busyT);
         if (!this._run) this._busy(false);
+        res._rule = body.rule;
         this._last = res;
         this._status(res.ok ? `${res.ms} ms` : '');
         this._renderResult(res);
@@ -409,11 +460,13 @@ window.YaraView = {
             <button aria-pressed="${this._view === 'sweep'}" onclick="YaraView.setView('sweep')">Full sweep</button></div>`;
         const live = this._good;
         const data = this._suggestHtml();
-        const none = `<div class="yw-hint">${escapeHtml(this._hint || 'No matching results')}</div>`;
+        const snap = this._cur >= 0 ? this._vers[this._cur] : null;
+        const none = `<div class="yw-hint">${escapeHtml(snap ? `No ${this._view === 'sweep' ? 'sweep' : 'sample test'} was stored with this version.` : (this._hint || 'No matching results'))}</div>`;
         let body;
-        if (this._view === 'sweep') body = this._run ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : none);
+        if (snap) { const r = this._view === 'sweep' ? snap.sweep : snap.live; body = r ? this._resultHtml(r) : none; }
+        else if (this._view === 'sweep') body = this._run ? this._progressHtml() : (this._sweep ? this._resultHtml(this._sweep) : none);
         else body = live ? this._resultHtml(live) : none;
-        const err = this._errHtml(this._res, live ? 'Showing the last valid result below.' : '');
+        const err = snap ? '' : this._errHtml(this._res, live ? 'Showing the last valid result below.' : '');
         const put = (id, html) => {
             const n = document.getElementById(id), top = (n.querySelector('.yw-pane') || {}).scrollTop || 0;
             n.innerHTML = html;
@@ -422,7 +475,38 @@ window.YaraView = {
         };
         put('yara-err', err);
         put('yara-data', data);
-        put('yara-res', `<h3 class="yw-h">Results ${seg}</h3>${body}`);
+        put('yara-res', `<h3 class="yw-h">Results ${seg}</h3>${this._verBar()}${body}`);
+    },
+
+    // One tab per saved version plus the rule being edited; each keeps the results it had when saved.
+    _verBar() {
+        if (!this._vers.length) return '';
+        const chip = (i, label, x) => `<span class="yw-vchip" aria-pressed="${this._cur === i}"><button onclick="YaraView.showVer(${i})">${label}</button>${x}</span>`;
+        const clear = (i, n) => `<button aria-label="Clear the results of ${n}" title="Clear the stored results of ${n}" onclick="YaraView.clearVer(${i})"><i class="fa-solid fa-xmark"></i></button>`;
+        return `<div class="yw-vers">${chip(-1, 'Editing', '')}${this._vers.map((v, i) => chip(i, `v${Number(v.n)}`, clear(i, `v${Number(v.n)}`))).join('')}<span class="yw-sp"></span>
+            ${this._cur >= 0 ? `<button class="yw-btn ghost" onclick="YaraView.loadVer(${this._cur})">Load rule into editor</button>` : ''}
+            <button class="yw-btn ghost" onclick="YaraView.clearVer(-1)">Clear all</button></div>`;
+    },
+
+    showVer(i) {
+        this._cur = i;
+        this._paint();
+    },
+
+    loadVer(i) {
+        this.setRule(this._vers[i].rule);
+        this._cur = -1;
+        this._paint();
+    },
+
+    // i < 0 clears every stored version.
+    clearVer(i) {
+        if (i < 0) { this._vers = []; this._cur = -1; }
+        else {
+            this._vers.splice(i, 1);
+            this._cur = this._cur === i ? -1 : this._cur > i ? this._cur - 1 : this._cur;
+        }
+        this._paint();
     },
 
     _tabsHtml(tabs, cur) {
@@ -488,11 +572,6 @@ window.YaraView = {
         this._paint();
     },
 
-    _fnUrl(f) {
-        const i = f.example.lastIndexOf(':');
-        return `/collections/${encodeURIComponent(f.example.slice(0, i))}/files/${f.example.slice(i + 1)}/functions/${escapeAttr(f.addr)}`;
-    },
-
     // Missed / matches: file rows. True / false hits: the evidence, one row per match, folded by file.
     _resultPane(res) {
         if (this._tab === 'strings') return this._stringsPane(res);
@@ -500,13 +579,30 @@ window.YaraView = {
         const m = res.metrics || {};
         const [rows, total, detail] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : this._tab === 'true' ? [res.true_hits || [], m.tp, true] : [res.missed, m.fn];
         if (!rows.length) return '<div class="yw-hint">none</div>';
+        const lead = this._tab === 'missed' && this._cur < 0 ? this._missedSugg(rows) : '';
         const more = total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : '';
-        if (detail) return this._hitsPane(rows) + more;
+        const role = this._tab === 'false' ? 'negative' : this._tab === 'hits' ? '' : 'target';
+        if (detail) return this._hitsPane(rows, role, res.rules.length > 1) + more;
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
-            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td></tr>`;
+            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td><td>${this._pinBtns(f, role)}</td></tr>`;
         }).join('');
-        return `<table class="yw-fixed"><colgroup><col><col style="width:110px"></colgroup><thead><tr><th>File</th><th>md5</th></tr></thead><tbody>${body}</tbody></table>${more}`;
+        return `${lead}<table class="yw-fixed"><colgroup><col><col style="width:110px"><col style="width:96px"></colgroup><thead><tr><th>File</th><th>md5</th><th></th></tr></thead><tbody>${body}</tbody></table>${more}`;
+    },
+
+    // Suggested strings the rule lacks that sit in the missed files: adding one may bring them back.
+    _missedSugg(missed) {
+        const ids = new Set(missed.map(f => f.id)), inRule = this._defMap();
+        const rows = (this._suggested || []).map((x, i) => ({ ...x, i, hit: (x.files || []).filter(f => ids.has(f)).length }))
+            .filter(x => x.hit && !inRule.has(this._vkey(x.value)))
+            .sort((a, b) => b.hit - a.hit || b.score - a.score).slice(0, 30);
+        if (!rows.length) return '';
+        return `<div class="yw-dim" style="padding:6px 0;">Suggested strings not in the rule that match missed files</div>
+            <table class="yw-fixed yw-sug"><colgroup><col><col style="width:90px"><col style="width:90px"><col style="width:60px"><col style="width:60px"><col style="width:36px"></colgroup>
+            <thead><tr><th>String</th><th>Missed</th><th>Targets</th><th>Others</th><th>Score</th><th></th></tr></thead><tbody>${rows.map(x => `<tr>
+            <td class="yw-sv">${this._sugLabel(x)}</td><td class="yw-mono">${x.hit}/${ids.size}</td><td class="yw-mono">${x.pos}/${x.of}</td>
+            <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</td><td>${this._scoreHtml(x.score)}</td>
+            <td><button class="yw-btn ghost icon" title="Add to the rule" aria-label="Add to the rule" onclick="YaraView.addSug(${x.i})"><i class="fa-solid fa-plus"></i></button></td></tr>`).join('')}</tbody></table>`;
     },
 
     toggleFile(id, e) {
@@ -520,36 +616,46 @@ window.YaraView = {
         this._paint();
     },
 
-    _hitsPane(rows) {
+    // One row per (string, place) in each file: repeat instances fold into a count.
+    _hitsPane(rows, role, manyRules) {
         this._rowIds = rows.map(f => f.id);
+        const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}</div>`;
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
             const ms = f.matches || [];
             const open = !this._fold.has(f.id);
-            const rules = (f.rules || []).map(r => `<span class="yw-badge noisy">${escapeHtml(r)}</span>`).join('');
-            const head = `<tr class="yw-fh" onclick="YaraView.toggleFile(${escapeAttr(jsString(f.id))}, event)"><td colspan="4">
+            const rules = manyRules ? (f.rules || []).map(r => `<span class="yw-badge noisy">${escapeHtml(r)}</span>`).join('') : '';
+            const groups = new Map();
+            for (const x of ms) {
+                const k = [x.rule, x.string, x.function ? x.function.entrypoint_address : x.str || ''].join('|');
+                if (groups.has(k)) groups.get(k).n++; else groups.set(k, { x, n: 1 });
+            }
+            const head = `<tr class="yw-fh" onclick="YaraView.toggleFile(${escapeAttr(jsString(f.id))}, event)"><td colspan="4"><div class="yw-fhb">
                 <i class="fa-solid fa-chevron-${open ? 'down' : 'right'} yw-chev"></i>
                 <span class="yw-fname">${EntityRenderer.renderFileName(f.name, md5, coll)}</span> ${EntityRenderer.renderMd5(md5, { collection: coll })}
-                <span class="yw-dim">${ms.length ? `${ms.length} match${ms.length > 1 ? 'es' : ''}` : 'no details (list limit)'}</span>${rules}</td></tr>`;
+                <span class="yw-dim">${ms.length ? `${ms.length} match${ms.length > 1 ? 'es' : ''}` : 'no details (list limit)'}</span>${rules}
+                <span class="yw-sp"></span>${this._pinBtns(f, role)}</div></td></tr>`;
             if (!open) return head;
-            return head + ms.map(x => {
-                if (x.string === undefined) return `<tr class="yw-mr"><td><span class="yw-badge noisy" style="margin:0">${escapeHtml(x.rule)}</span></td><td colspan="3" class="yw-dim">matched on the condition alone, no string</td></tr>`;
+            return head + [...groups.values()].map(({ x, n }) => {
+                if (x.string === undefined) return `<tr class="yw-mr"><td colspan="4" class="yw-dim">${escapeHtml(x.rule)}: matched on the condition alone, no string</td></tr>`;
                 const at = x.address ? x.address : `@0x${Number(x.offset).toString(16)}`;
-                const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}</div>`;
+                // printable bytes read better as text, binary ones as hex
+                const shown = (x.text.match(/[^.]/g) || []).length >= x.text.length * 0.6 ? x.text : x.hex;
+                const xr = x.xrefs || [];
                 const where = x.function ? fnHtml(x.function)
-                    : x.str ? `<div class="yw-dim" title="Hit inside a string of the string table">str &ldquo;${escapeHtml(x.str)}&rdquo;</div>`
-                        + (x.xrefs.length ? `<div class="yw-xr"><span class="yw-dim">referenced by</span>${x.xrefs.map(fnHtml).join('')}${x.xref_total > x.xrefs.length ? `<span class="yw-dim">+${x.xref_total - x.xrefs.length} more</span>` : ''}</div>` : '<div class="yw-dim">no function references it</div>')
+                    : x.str ? `<div class="yw-cut" title="${escapeAttr(x.str)}"><span class="yw-dim">str</span> &ldquo;${escapeHtml(x.str)}&rdquo;</div>`
+                        + (xr.length ? `<div class="yw-xr">${xr.slice(0, 2).map(fnHtml).join('')}${x.xref_total > 2 ? `<span class="yw-dim">+${x.xref_total - 2} more references</span>` : ''}</div>` : '<div class="yw-dim">no function references it</div>')
                         : '<span class="yw-dim">not in a function or string</span>';
                 return `<tr class="yw-mr">
-                    <td title="${escapeAttr(`${x.rule} ${x.string}`)}"><span class="yw-mono">${escapeHtml(x.string)}</span> <span class="yw-dim yw-rule">${escapeHtml(x.rule)}</span></td>
-                    <td class="yw-mono" title="${escapeAttr(`file offset 0x${Number(x.offset).toString(16)}`)}">${escapeHtml(at)}</td>
-                    <td><code title="${escapeAttr(`${x.hex}\n"${x.text}"`)}">${escapeHtml(x.hex)}</code></td>
-                    <td>${where}</td></tr>`;
+                    <td class="yw-mono" title="${escapeAttr(`${x.rule} ${x.string}`)}">${escapeHtml(manyRules ? `${x.rule} ` : '')}${escapeHtml(x.string)}${n > 1 ? ` <span class="yw-dim">&times;${n}</span>` : ''}</td>
+                    <td><code title="${escapeAttr(`${x.hex}\n"${x.text}"`)}">${escapeHtml(shown)}</code></td>
+                    <td>${where}</td>
+                    <td class="yw-mono yw-dim" title="${escapeAttr(`file offset 0x${Number(x.offset).toString(16)}`)}">${escapeHtml(at)}</td></tr>`;
             }).join('');
         }).join('');
         return `<div class="yw-foldbar"><button class="yw-btn ghost" onclick="YaraView.foldAll(true)">Collapse all</button><button class="yw-btn ghost" onclick="YaraView.foldAll(false)">Expand all</button></div>
-            <table class="yw-fixed yw-hits"><colgroup><col style="width:17%"><col style="width:84px"><col style="width:26%"><col></colgroup>
-            <thead><tr><th>String</th><th>Address</th><th>Bytes</th><th>Function</th></tr></thead><tbody>${body}</tbody></table>`;
+            <table class="yw-fixed yw-hits"><colgroup><col style="width:110px"><col style="width:24%"><col><col style="width:84px"></colgroup>
+            <thead><tr><th>String</th><th>Matched</th><th>Lands in</th><th>Address</th></tr></thead><tbody>${body}</tbody></table>`;
     },
 
     _groupsPane(res) {
@@ -562,49 +668,129 @@ window.YaraView = {
     _stringsPane(res) {
         const s = res.sample || {}, land = res.landing || {};
         if (!res.strings.length) return '<div class="yw-hint">The rule has no strings.</div>';
-        const rows = res.strings.map(x => {
+        const defs = this._ruleStrings(res._rule || '');
+        const rows = this._sorted('str', res.strings, { id: x => x.id, pos: x => x.pos, score: x => x.score }).map(x => {
             const l = land[`${x.rule}:${x.id}`] || { functions: [], strings: [] };
+            const files = n => `<span class="yw-dim" title="${escapeAttr(`in ${n} file${n > 1 ? 's' : ''}`)}">&times;${n}</span>`;
             const where = [
-                ...l.functions.map(f => `<a href="${this._fnUrl(f)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(f.name)}</a> <span class="yw-dim">&times;${f.files}</span>`),
-                ...l.strings.map(t => `str &ldquo;${escapeHtml(t.value)}&rdquo; <span class="yw-dim">&times;${t.files}</span>`),
+                ...l.functions.map(f => `<div class="yw-land"><div class="yw-fn">${EntityRenderer.renderFunction({ ...f.doc }, { showActions: false })}</div>${f.xref ? '<span class="yw-dim" title="References the matched string">xref</span>' : ''}${files(f.files)}</div>`),
+                ...l.strings.map(t => `<div class="yw-land"><div class="yw-cut" title="${escapeAttr(t.value)}"><span class="yw-dim">str</span> &ldquo;${escapeHtml(t.value)}&rdquo;</div>${files(t.files)}</div>`),
             ];
-            const more = where.length > 1 ? ` <span class="yw-dim" title="${escapeAttr(`${where.length - 1} more places`)}">+${where.length - 1}</span>` : '';
+            const more = where.length > 2 ? `<span class="yw-dim">+${where.length - 2} more</span>` : '';
+            const def = defs.find(d => d.rule === x.rule && d.id === x.id);
+            const rm = x.id === '$' || this._cur >= 0 ? '' : `<button class="yw-btn ghost icon" title="Remove ${escapeAttr(x.id)} from the rule" aria-label="Remove ${escapeAttr(x.id)} from the rule" onclick="YaraView.removeString(${escapeAttr(jsString(x.rule))}, ${escapeAttr(jsString(x.id))})"><i class="fa-solid fa-trash-can"></i></button>`;
             const w = Math.round(x.pos / Math.max(1, s.targets) * 84);
             const dead = x.pos === 0 && x.neg === 0;
-            return `<tr><td class="yw-mono">${escapeHtml(res.rules.length > 1 ? `${x.rule} ` : '')}${escapeHtml(x.id)}${dead ? '<span class="yw-badge dead">DEAD</span>' : ''}${x.neg > 0 ? '<span class="yw-badge noisy">NOISY</span>' : ''}</td>
+            return `<tr><td class="yw-mono">${escapeHtml(res.rules.length > 1 ? `${x.rule} ` : '')}${escapeHtml(x.id)}${dead ? '<span class="yw-badge dead">DEAD</span>' : ''}${x.neg > 0 ? '<span class="yw-badge noisy">NOISY</span>' : ''}${def ? `<div class="yw-cut yw-dim" title="${escapeAttr(def.raw)}">${escapeHtml(def.raw)}</div>` : ''}</td>
                 <td><div class="yw-bar2"><div class="yw-track"><i style="width:${w}px"></i><i class="n" style="width:${x.neg ? Math.min(30, 3 + x.neg) : 0}px"></i></div>${x.pos}/${s.targets} &middot; <span style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</span></div></td>
-                <td>${where[0] || '<span class="yw-dim">no hit</span>'}${more}${l.unmapped ? ` <span class="yw-dim">(${l.unmapped} unmapped)</span>` : ''}</td></tr>`;
+                <td>${this._scoreHtml(x.score)}</td>
+                <td>${where.slice(0, 2).join('') || '<span class="yw-dim">no hit</span>'}${more}${l.unmapped ? ` <span class="yw-dim">(${l.unmapped} unmapped)</span>` : ''}</td><td>${rm}</td></tr>`;
         }).join('');
-        return `<table class="yw-fixed"><colgroup><col style="width:24%"><col style="width:170px"><col></colgroup>
-            <thead><tr><th>String</th><th>Hits (target &middot; other)</th><th>Lands in</th></tr></thead><tbody>${rows}</tbody></table>`;
+        const th = (k, label) => this._th('str', k, label);
+        return `<table class="yw-fixed"><colgroup><col style="width:30%"><col style="width:160px"><col style="width:64px"><col><col style="width:36px"></colgroup>
+            <thead><tr>${th('id', 'String')}${th('pos', 'Hits (target &middot; other)')}${th('score', 'Score')}<th>Lands in</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    },
+
+    // --- sorting / score ----------------------------------------------------
+
+    // `list` ordered by the table's current sort; `keys` maps a sort key to a value getter.
+    _sorted(table, list, keys) {
+        const [k, dir] = this._sort[table], get = keys[k] || keys.score;
+        const val = x => { const v = get(x); return v === null || v === undefined ? -Infinity : v; };
+        return [...list].sort((a, b) => {
+            const va = val(a), vb = val(b);
+            return dir * (typeof va === 'string' ? va.localeCompare(vb) : va - vb);
+        });
+    },
+
+    _th(table, k, label) {
+        const [cur, dir] = this._sort[table];
+        const icon = cur === k ? `<i class="fa-solid fa-sort-${dir > 0 ? 'up' : 'down'}"></i>` : '';
+        const tip = k === 'score' ? ' title="Share of target files that hold the string x share of other files that do not. 1.0 = in every target and no other; 0 = in every other file"' : '';
+        return `<th class="yw-sortable" aria-sort="${cur === k ? (dir > 0 ? 'ascending' : 'descending') : 'none'}"${tip} onclick="YaraView.sortBy('${table}', '${k}')">${label} ${icon}</th>`;
+    },
+
+    sortBy(table, k) {
+        const [cur, dir] = this._sort[table];
+        this._sort = { ...this._sort, [table]: [k, cur === k ? -dir : (k === 'id' || k === 'value' ? 1 : -1)] };
+        this._paint();
+    },
+
+    _scoreHtml(v) {
+        if (v === null || v === undefined) return '<span class="yw-dim">&mdash;</span>';
+        const c = v >= 0.8 ? '#10b981' : v >= 0.5 ? '#f59e0b' : 'var(--subtle)';
+        return `<span class="yw-mono" style="color:${c}; font-weight:600;">${v.toFixed(2)}</span>`;
     },
 
     // The Data card: every string of the target files, best coverage first, with a multi-select insert.
+    // The strings a rule defines, read off its source: [{rule, id, raw, key}]; `key` is the _vkey of the value.
+    _ruleStrings(src) {
+        const out = [];
+        let rule = '';
+        const re = /^[ \t]*(?:(?:private|global)\s+)*rule\s+(\w+)|^[ \t]*(\$\w*)[ \t]*=[ \t]*(?:"((?:[^"\\\n]|\\.)*)"|\{([^}]*)\})/gm;
+        for (const m of src.matchAll(re)) {
+            if (m[1]) { rule = m[1]; continue; }
+            if (m[3] !== undefined) {
+                const val = m[3].replace(/\\(x[0-9a-fA-F]{2}|.)/g, (_, c) => c.length === 3 ? String.fromCharCode(parseInt(c.slice(1), 16)) : ({ n: '\n', r: '\r', t: '\t' }[c] ?? c));
+                out.push({ rule, id: m[2], raw: `"${m[3]}"`, key: `"${val}` });
+            } else {
+                const hex = `{ ${m[4].trim().toLowerCase().split(/\s+/).join(' ')} }`;
+                out.push({ rule, id: m[2], raw: hex, key: hex });
+            }
+        }
+        return out;
+    },
+
+    // A suggestion's value in the same form as the `_ruleStrings` keys.
+    _vkey(v) {
+        return /^\{ [0-9a-f]{2}( [0-9a-f]{2})* \}$/.test(v) ? v : `"${v}`;
+    },
+
+    // key -> [{rule, id}] for the rule in the editor.
+    _defMap() {
+        const m = new Map();
+        for (const d of this._ruleStrings(this.getRule())) m.set(d.key, [...(m.get(d.key) || []), d]);
+        return m;
+    },
+
+    _sugLabel(x) {
+        return x.kind ? `<span class="yw-dim">${escapeHtml(x.kind)}</span> ${escapeHtml(x.label)} <span class="yw-mono yw-dim">${escapeHtml(x.value)}</span>` : escapeHtml(x.value);
+    },
+
     _suggestHtml() {
         const list = this._suggested;
+        const inRule = this._defMap();
+        const has = i => inRule.has(this._vkey(list[i].value));
+        const sel = list ? [...this._sel].filter(i => list[i]) : [];
+        const nAdd = sel.filter(i => !has(i)).length, nDel = sel.length - nAdd;
         const n = this._sel.size;
-        const head = `<h3 class="yw-h">Suggested strings${list ? `<em class="yw-count">${list.length}</em>` : ''}</h3>`;
+        const head = `<h3 class="yw-h">Suggested strings and constants${list ? `<em class="yw-count">${list.length}</em>` : ''}</h3>`;
         if (!list) return `${head}<div class="yw-hint">Ranking strings...</div>`;
         if (!list.length) return `${head}<div class="yw-hint">No stored strings for the target files.</div>`;
-        const rows = list.map((x, i) => {
-            const pct = Math.round(100 * x.pos / Math.max(1, x.of));
+        const order = this._sorted('sug', list.map((x, i) => ({ ...x, i })), { value: x => x.value, pos: x => x.pos, neg: x => x.neg, score: x => x.score });
+        const rows = order.map(x => {
+            const i = x.i, pct = Math.round(100 * x.pos / Math.max(1, x.of)), on = has(i);
             return `<tr class="${this._sel.has(i) ? 'on' : ''}" onclick="YaraView.toggleSug(${i})">
                 <td><input type="checkbox" tabindex="-1" ${this._sel.has(i) ? 'checked' : ''}></td>
-                <td class="yw-sv">${escapeHtml(x.value)}</td>
+                <td class="yw-sv">${on ? '<span class="yw-badge in">IN RULE</span> ' : ''}${this._sugLabel(x)}</td>
                 <td><div class="yw-bar2"><div class="yw-track"><i style="width:${pct}%"></i></div><span>${x.pos}/${x.of}</span></div></td>
-                <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</td></tr>`;
+                <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</td>
+                <td>${this._scoreHtml(x.score)}</td>
+                <td><button class="yw-btn ghost icon" title="${on ? 'Remove from the rule' : 'Add to the rule'}" aria-label="${on ? 'Remove from the rule' : 'Add to the rule'}" onclick="event.stopPropagation(); YaraView.${on ? 'removeSug' : 'addSug'}(${i})"><i class="fa-solid ${on ? 'fa-minus' : 'fa-plus'}"></i></button></td></tr>`;
         }).join('');
+        const th = (k, label) => this._th('sug', k, label);
         return `${head}<div class="yw-sugbar">
             <label class="yw-check"><input type="checkbox" ${n && n === list.length ? 'checked' : ''} onchange="YaraView.selAll(this.checked)"> All</label>
             <span class="yw-dim">${n} selected</span><span class="yw-sp"></span>
-            <button class="yw-btn primary" ${n ? '' : 'disabled'} onclick="YaraView.insertSelected()"><i class="fa-solid fa-plus"></i> Insert${n ? ` ${n} string${n > 1 ? 's' : ''}` : ''}</button></div>
-            <div class="yw-pane"><table class="yw-fixed yw-sug"><colgroup><col style="width:30px"><col><col style="width:140px"><col style="width:64px"></colgroup>
-            <thead><tr><th></th><th>String</th><th>Targets</th><th>Others</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+            <button class="yw-btn primary" ${nAdd ? '' : 'disabled'} onclick="YaraView.addSelected()"><i class="fa-solid fa-plus"></i> Add${nAdd ? ` ${nAdd}` : ''}</button>
+            <button class="yw-btn" ${nDel ? '' : 'disabled'} onclick="YaraView.removeSelected()"><i class="fa-solid fa-minus"></i> Remove${nDel ? ` ${nDel}` : ''}</button></div>
+            <div class="yw-pane"><table class="yw-fixed yw-sug"><colgroup><col style="width:30px"><col><col style="width:140px"><col style="width:64px"><col style="width:64px"><col style="width:36px"></colgroup>
+            <thead><tr><th></th>${th('value', 'String')}${th('pos', 'Targets')}${th('neg', 'Others')}${th('score', 'Score')}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
     },
 
     // Suggestions depend on the sets only, so refetch when those change, not per keystroke.
     async _loadSuggest(body) {
-        const key = JSON.stringify([body.collection, body.targets, body.negatives]);
+        const key = JSON.stringify([body.collection, body.targets, body.negatives, body.pins]);
         if (key === this._suggKey) return;
         this._suggKey = key;
         this._suggested = null;
@@ -614,7 +800,7 @@ window.YaraView = {
             if (r.ok) res = await r.json();
         } catch (e) { /* an empty tab shows the problem */ }
         if (key !== this._suggKey) return;
-        this._suggested = res.strings || [];
+        this._suggested = [...(res.strings || []), ...(res.consts || [])];
         this._sel = new Set();
         this._paint();
     },
@@ -629,10 +815,48 @@ window.YaraView = {
         this._paint();
     },
 
-    insertSelected() {
-        this.addStrings([...this._sel].sort((a, b) => a - b).map(i => this._suggested[i].value));
+    addSug(i) {
+        this.addStrings([this._suggested[i].value]);
+        this._paint();
+    },
+
+    removeSug(i) {
+        for (const d of this._defMap().get(this._vkey(this._suggested[i].value)) || []) this.removeString(d.rule, d.id);
+        this._paint();
+    },
+
+    addSelected() {
+        const inRule = this._defMap();
+        const vals = [...this._sel].sort((a, b) => a - b).map(i => this._suggested[i].value).filter(v => !inRule.has(this._vkey(v)));
+        if (vals.length) this.addStrings(vals);
         this._sel = new Set();
         this._paint();
+    },
+
+    removeSelected() {
+        for (const i of [...this._sel]) this.removeSug(i);
+        this._sel = new Set();
+        this._paint();
+    },
+
+    // Delete one string from a rule: its definition (a hex string may span lines until `}`),
+    // its `and` / `or` / `,` uses in the condition, and an emptied strings: section.
+    removeString(rule, id) {
+        const text = this.getRule(), name = id.slice(1);
+        const heads = [...text.matchAll(/^[ \t]*(?:(?:private|global)\s+)*rule\s+(\w+)/gm)];
+        const h = heads.findIndex(m => m[1] === rule);
+        const start = h < 0 ? 0 : heads[h].index, end = h >= 0 && heads[h + 1] ? heads[h + 1].index : text.length;
+        let block = text.slice(start, end);
+        const before = block;
+        block = block.replace(new RegExp(`^[ \\t]*\\$${name}[ \\t]*=[ \\t]*(?:\\{[^}]*\\}|.*)[^\\n]*\\n?`, 'm'), '');
+        if (block === before) { this._status(`${id} not found in ${rule}`); return; }
+        const ci = Math.max(0, block.search(/^[ \t]*condition[ \t]*:/m));
+        const ref = `\\$${name}\\b(?!\\*)`;
+        const cond = block.slice(ci).replace(new RegExp(`\\s+(?:and|or)\\s+${ref}|${ref}\\s+(?:and|or)\\s+|\\s*,\\s*${ref}|${ref}\\s*,\\s*`, 'g'), '');
+        // an emptied strings: section does not compile
+        block = block.slice(0, ci).replace(/^[ \t]*strings[ \t]*:[ \t]*\n(?:[ \t]*\n)*(?![ \t]*[$/])/m, '') + cond;
+        this.setRule(text.slice(0, start) + block + text.slice(end));
+        this._status(new RegExp(`[$#@!]${name}\\b(?!\\*)`).test(cond) ? `removed ${id}; the condition still uses it` : `removed ${id}`);
     },
 
     // Add `$sN = "..." ascii wide` lines to the first rule's strings: section (created if missing),
@@ -640,11 +864,13 @@ window.YaraView = {
     addStrings(values) {
         const text = this.getRule();
         let n = Math.max(0, ...[...text.matchAll(/\$s(\d+)\b/g)].map(m => +m[1]));
+        const hex = v => /^\{ [0-9a-f]{2}( [0-9a-f]{2})* \}$/.test(v);
+        const def = (v, n) => `$s${n} = ${hex(v) ? v : `"${esc(v)}" ascii wide`}`;
         const esc = v => v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
         const cond = /^([ \t]*)condition[ \t]*:/m.exec(text);
-        if (!cond) { this.insertText(values.map(v => `$s${++n} = "${esc(v)}" ascii wide`).join('\n')); return; }
+        if (!cond) { this.insertText(values.map(v => def(v, ++n)).join('\n')); return; }
         const kw = cond[1], item = `${kw}    `;
-        const lines = values.map(v => `${item}$s${++n} = "${esc(v)}" ascii wide\n`).join('');
+        const lines = values.map(v => `${item}${def(v, ++n)}\n`).join('');
         const before = text.slice(0, cond.index);
         const ruleAt = Math.max(0, ...[...before.matchAll(/\brule\s+\w+/g)].map(m => m.index));
         const has = /^[ \t]*strings[ \t]*:/m.test(before.slice(ruleAt));
@@ -679,18 +905,26 @@ window.YaraView = {
         const r = await fetch(`/api/yara/rules/${encodeURIComponent(uuid)}`);
         if (!r.ok) return;
         const doc = await r.json();
+        if (this._uuid !== doc.uuid) { this._vers = []; this._cur = -1; }
         this._uuid = doc.uuid;
         if (doc.scope && doc.scope.cmp) this._cmp.load(doc.scope.cmp);
+        if (doc.scope) { this._pins = doc.scope.pins || {}; this._pinsBar(); }
         this.setRule(doc.text);
         this._status(`${doc.name} v${doc.version}`);
     },
 
     async save() {
-        const body = { rule: this.getRule(), uuid: this._uuid, scope: { cmp: this._cmp.cmp() }, note: '' };
+        clearTimeout(this._timer);
+        await this.test(); // so the stored results are of the text being saved
+        const body = { rule: this.getRule(), uuid: this._uuid, scope: { cmp: this._cmp.cmp(), pins: this._pins }, note: '' };
         const r = await fetch('/api/yara/rules', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (!r.ok) { this._status(res.message || res.error || 'save failed'); return; }
+        if (this._uuid !== res.uuid) { this._vers = []; this._cur = -1; }
         this._uuid = res.uuid;
+        const fresh = r => (r && r._rule === body.rule ? r : null);
+        this._vers.push({ n: res.version, rule: body.rule, live: fresh(this._good), sweep: this._sweepKey === JSON.stringify(this._body()) ? fresh(this._sweep) : null });
+        this._paint();
         this._status(`saved ${res.name} v${res.version} (${res.uuid.slice(0, 8)})`);
         this._loadRules();
     },
@@ -724,6 +958,7 @@ window.YaraView = {
         const body = { ...this._body(), uuid: this._uuid };
         if (!body.collection) return;
         this._sweepKey = JSON.stringify(this._body());
+        this._sweepRule = body.rule;
         const r = await fetch(`/api/yara/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         if (!r.ok) { this._status(res.message || res.error || `${mode} failed`); return; }
@@ -760,7 +995,7 @@ window.YaraView = {
         }
         this._run = null;
         this._busy(false);
-        this._sweep = { ok: true, exact: true, ...res };
+        this._sweep = { ok: true, exact: true, ...res, _rule: this._sweepRule };
         this._status(`${mode === 'apply' ? 'applied' : 'swept'}: ${res.seen} files, ${res.hits} hit`);
         this._paint();
         this._syncSweep();

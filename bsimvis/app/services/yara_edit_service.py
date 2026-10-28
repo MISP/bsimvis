@@ -132,6 +132,17 @@ def _ratio(a, b):
     return round(a / b, 4) if b else None
 
 
+def string_score(pos, targets, neg, others):
+    """How well one string separates the sets: the share of target files that hold
+    it times the share of other files that do not. Rates on both sides, so a small
+    or sampled set weighs the same as a big one. 1.0 = every target and no other;
+    0 = in no target, or in every other file."""
+    if not targets:
+        return None
+    clean = 1 - min(1, neg / others) if others else 1
+    return round(pos / targets * clean, 4)
+
+
 def evaluate(r, r_raw, text, targets, negatives):
     """Compile `text` and measure it. `targets` / `negatives` are lists of
     `{label, members: [(coll, md5)]}`. Returns the report dict."""
@@ -250,7 +261,13 @@ def evaluate(r, r_raw, text, targets, negatives):
             {"rule": k, "pos": v[0], "neg": v[1]} for k, v in per_rule.items()
         ],
         "strings": [
-            {"rule": k[0], "id": k[1], "pos": v[0], "neg": v[1]}
+            {
+                "rule": k[0],
+                "id": k[1],
+                "pos": v[0],
+                "neg": v[1],
+                "score": string_score(v[0], len(pos), v[1], len(neg)),
+            }
             for k, v in per_string.items()
         ],
         "missed": missed,
@@ -414,6 +431,40 @@ class Locator:
         return None
 
 
+def function_doc(r, coll, md5, entry):
+    """The function's own meta, shaped for the UI's function renderer."""
+    fid = f"{coll}:func:{md5}:{entry}"
+    try:
+        meta = json.loads(r.get(f"{fid}:meta") or "{}")
+    except ValueError:
+        meta = {}
+    keep = ("function_name", "namespace", "parameters", "return_type")
+    return {
+        "function_name": f"FUN_{entry}",
+        **{k: meta[k] for k in keep if k in meta},
+        "entrypoint_address": entry,
+        "bsim_features_count": meta.get("bsim_features_count", 0),
+        "collection": coll,
+        "file_md5": md5,
+        "function_id": fid,
+    }
+
+
+def apply_pins(groups, pins, role):
+    """Per-file overrides on top of the searches. `pins` maps (coll, md5) to
+    "target" | "negative" | "drop": a pinned file leaves every set, then joins the
+    first set of its role, which is added when `role` has none."""
+    if not pins:
+        return groups
+    out = [{**g, "members": [m for m in g["members"] if m not in pins]} for g in groups]
+    add = [m for m, v in pins.items() if v == role]
+    if add:
+        if not out:
+            out.append({"label": "Pinned", "members": []})
+        out[0]["members"] += add
+    return out
+
+
 def locate_hits(r, r_raw, hit_files):
     """Where do the string hits land? `hit_files` is `[((coll, md5), found)]`.
     Returns `{"rule:$id": {functions: [...], strings: [...], unmapped: n}}`."""
@@ -464,7 +515,12 @@ def locate_hits(r, r_raw, hit_files):
         rank = lambda d: sorted(d.values(), key=lambda e: -len(e["files"]))[:5]
         out[key] = {
             "functions": [
-                {**e, "files": len(e["files"]), "example": sorted(e["files"])[0]}
+                {
+                    **e,
+                    "files": len(e["files"]),
+                    "example": min(e["files"]),
+                    "doc": function_doc(r, *min(e["files"]).rsplit(":", 1), e["addr"]),
+                }
                 for e in rank(slot["functions"])
             ],
             "strings": [
@@ -492,23 +548,8 @@ def explain_hits(r, r_raw, rules, members, per_file=12):
         rows, docs = [], {}
 
         def fn_doc(entry):
-            """The function's own meta, shaped for the UI's function renderer."""
             if entry not in docs:
-                fid = f"{coll}:func:{md5}:{entry}"
-                try:
-                    meta = json.loads(r.get(f"{fid}:meta") or "{}")
-                except ValueError:
-                    meta = {}
-                keep = ("function_name", "namespace", "parameters", "return_type")
-                docs[entry] = {
-                    "function_name": f"FUN_{entry}",
-                    **{k: meta[k] for k in keep if k in meta},
-                    "entrypoint_address": entry,
-                    "bsim_features_count": meta.get("bsim_features_count", 0),
-                    "collection": coll,
-                    "file_md5": md5,
-                    "function_id": fid,
-                }
+                docs[entry] = function_doc(r, coll, md5, entry)
             return docs[entry]
 
         for m in rules.match(data=raw, timeout=cfg("scan_timeout", 20)):
@@ -595,7 +636,7 @@ def suggest(r, groups_pos, members_neg, min_frac=0, limit=200, scan=400):
     pipe = r.pipeline(transaction=False)
     for coll, md5 in targets:
         pipe.hvals(ss.file_key(coll, md5))
-    count, example = {}, {}
+    count, example, files = {}, {}, {}
     for (coll, md5), vals in zip(targets, pipe.execute()):
         seen = set()
         for rec in vals:
@@ -608,6 +649,7 @@ def suggest(r, groups_pos, members_neg, min_frac=0, limit=200, scan=400):
                 continue
             seen.add(sid)
             count[(coll, sid)] = count.get((coll, sid), 0) + 1
+            files.setdefault((coll, sid), []).append(f"{coll}:{md5}")
             example.setdefault((coll, sid), rec.get("value", ""))
     need = max(1, int(len(targets) * min_frac + 0.9999))
     cands = sorted(
@@ -630,9 +672,86 @@ def suggest(r, groups_pos, members_neg, min_frac=0, limit=200, scan=400):
                 "pos": count[(coll, sid)],
                 "of": len(targets),
                 "neg": len(holders & neg_ids),
+                "files": files[(coll, sid)],
             }
         )
-    out.sort(key=lambda s: (-s["pos"], s["neg"], -len(s["value"])))
+    for s in out:
+        s["score"] = string_score(s["pos"], s["of"], s["neg"], len(neg_ids))
+    out.sort(key=lambda s: (-s["score"], -s["pos"], -len(s["value"])))
+    return out[:limit]
+
+
+_CONST_RE = re.compile(r"\(const, 0x([0-9a-f]+), ([1248])\)")
+_TRIVIAL = {0xFFFFFFFF, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFFFFFFFFFF}
+
+
+def _target_consts(r, coll, md5, cap=3000):
+    """Non-trivial `(value, size)` constants in the stored pcode of one file."""
+    fids = [
+        _txt(f).removesuffix(":meta")
+        for f in r.smembers(f"{coll}:idx:file:functions:{md5}")
+    ]
+    found = set()
+    for i in range(0, min(len(fids), cap), 200):
+        pipe = r.pipeline(transaction=False)
+        for f in fids[i : i + 200]:
+            pipe.get(f"{f}:vec:meta")
+        for raw in pipe.execute():
+            for v, size in _CONST_RE.findall(raw or ""):
+                v = int(v, 16)
+                size = int(size)
+                # small negative offsets (0xfffffff8) are stack/struct noise
+                if 0xFFFF < v < (1 << 8 * size) - 0xFFFF and v not in _TRIVIAL:
+                    found.add((v, size))
+    return found
+
+
+def suggest_consts(r, r_raw, groups_pos, members_neg, limit=100, scan=300, neg_cap=60):
+    """Pcode constants of the target files as byte patterns. The pcode only names
+    the candidates; the counts come from the raw bytes, so they are what YARA will see.
+    A constant is tried in the file's own byte order; MIPS/ARM immediates are split
+    across instructions and mostly show up only in data, which the counts show."""
+    targets = list(dict.fromkeys(m for g in groups_pos for m in g["members"]))[:30]
+    if not targets:
+        return []
+    cnt, order = {}, {}
+    for coll, md5 in targets:
+        meta = r.get(f"{_fid(coll, md5)}:meta")
+        lang = (json.loads(meta) if meta else {}).get("language_id", "")
+        order[(coll, md5)] = "big" if ":BE:" in lang else "little"
+        for v, size in _target_consts(r, coll, md5):
+            if v < 1 << (8 * size):
+                cnt[(v, size)] = cnt.get((v, size), 0) + 1
+    cands = sorted(cnt, key=lambda k: -cnt[k])[:scan]
+    seen = set(targets)
+    neg = [m for m in dict.fromkeys(members_neg) if m not in seen]
+    neg = sorted(neg, key=lambda m: hashlib.md5("".join(m).encode()).digest())[:neg_cap]
+    pos_raw = [(m, r_raw.get(f"{_fid(*m)}:raw") or b"") for m in targets]
+    neg_raw = [r_raw.get(f"{_fid(*m)}:raw") or b"" for m in neg]
+    out = []
+    for v, size in cands:
+        pats = {o: v.to_bytes(size, o) for o in ("little", "big")}
+        held = [m for m, raw in pos_raw if pats[order[m]] in raw]
+        pos = len(held)
+        if not pos:
+            continue
+        # a pattern is tried in both orders on the negatives: it is the same bytes, either way round
+        pat = {pats[order[m]] for m, _ in pos_raw}
+        n = sum(any(p in raw for p in pat) for raw in neg_raw)
+        hexs = "{ " + " ".join(f"{b:02x}" for b in pats["little"]) + " }"
+        out.append(
+            {
+                "kind": "const",
+                "value": hexs,
+                "label": f"0x{v:x}",
+                "pos": pos,
+                "of": len(targets),
+                "neg": n,
+                "files": [f"{c}:{md5}" for c, md5 in held],
+                "score": string_score(pos, len(targets), n, len(neg)),
+            }
+        )
+    out.sort(key=lambda s: (-s["score"], -s["pos"]))
     return out[:limit]
 
 
@@ -805,6 +924,16 @@ def demo():
     assert defined_strings(text) == []  # one-line source: line parser is per-line
     multi = 'rule a {\n strings:\n  $x = "h"\n condition: $x\n}'
     assert defined_strings(multi) == [("a", "$x")]
+    a, b, c = ("c", "a"), ("c", "b"), ("c", "c")
+    gs = [{"label": "T", "members": [a, b]}]
+    pins = {a: "drop", c: "target", b: "negative"}
+    assert apply_pins(gs, pins, "target")[0]["members"] == [c]
+    assert apply_pins([], pins, "negative") == [{"label": "Pinned", "members": [b]}]
+    assert apply_pins(gs, {}, "target") is gs
+    assert string_score(10, 10, 0, 0) == 1.0 and string_score(5, 10, 0, 0) == 0.5
+    assert string_score(95, 101, 12, 12) == 0.0  # in every other file: useless
+    assert string_score(27, 50, 6, 42) > string_score(45, 50, 40, 42)
+    assert string_score(1, 0, 0, 5) is None
     bad, errs = compile_source("rule a { condition: $nope }")
     assert bad is None and errs[0]["line"] == 1 and "nope" in errs[0]["message"]
     print("yara_edit_service demo OK")

@@ -61,9 +61,9 @@ window.ClusterDetailView = {
         this._nway = null;
     },
 
-    /** Function clusters open on their medoid's code, file clusters on the member list. */
+    /** Function clusters open on their medoid's code, file clusters on the overview. */
     defaultTab() {
-        return this.isBinary ? 'members' : 'medoid';
+        return this.isBinary ? 'overview' : 'medoid';
     },
 
     /** The Functions tab (N-way diff of the node's files) exists for binary file clusters only. */
@@ -353,13 +353,13 @@ window.ClusterDetailView = {
                     <div id="cluster-header"></div>
 
                     <div class="bsim-tabbar" id="cluster-view-tabs" style="margin:12px 0 8px; flex-shrink:0;">
-                        ${this.isBinary ? '' : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
-                        <button class="bsim-tab${this.isBinary ? ' active' : ''}" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
+                        ${this.isBinary ? `<button class="bsim-tab active" id="cluster-tab-btn-overview" onclick="ClusterDetailView.switchTab('overview')" title="What is behind each tab">Overview</button>` : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
+                        <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
                     </div>
 
-                    <div id="cluster-tab-members" style="display:${this.isBinary ? 'flex' : 'none'}; flex-direction:column; flex:1; min-height:0;">
+                    <div id="cluster-tab-members" style="display:none; flex-direction:column; flex:1; min-height:0;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; flex-shrink:0;">
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
@@ -391,6 +391,7 @@ window.ClusterDetailView = {
                         </div>
                     </div>
 
+                    <div id="cluster-tab-overview" style="display:${this.isBinary ? 'block' : 'none'}; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-functions" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-medoid" style="display:${this.isBinary ? 'none' : 'flex'}; flex:1; min-height:0; flex-direction:column;"></div>
@@ -635,6 +636,7 @@ window.ClusterDetailView = {
         }
 
         this.renderTable();
+        if (this.tab === 'overview') this.renderOverviewTab();
         if (this.tab === 'metadata') this.renderMetadataTab();
         if (this.tab === 'functions') this.renderFunctionsTab();
         if (this.tab === 'medoid') this.renderMedoidTab();
@@ -669,20 +671,26 @@ window.ClusterDetailView = {
 
     switchTab(tab) {
         this.tab = tab;
-        ['members', 'metadata', 'functions', 'medoid'].forEach(t => {
+        ['overview', 'members', 'metadata', 'functions', 'medoid'].forEach(t => {
             const btn = document.getElementById(`cluster-tab-btn-${t}`);
             if (!btn) return;
             btn.classList.toggle('active', t === tab);
             document.getElementById(`cluster-tab-${t}`).style.display =
-                t === tab ? (t === 'members' || t === 'medoid' ? 'flex' : 'block') : 'none';
+                t === tab ? (t === 'members' || t === 'medoid' || t === 'functions' ? 'flex' : 'block') : 'none';
         });
         const url = new URL(window.location.href);
         if (tab !== this.defaultTab()) url.searchParams.set('tab', tab);
         else url.searchParams.delete('tab');
         window.history.replaceState({ path: url.pathname + url.search }, '', url.pathname + url.search);
+        if (tab === 'overview') this.renderOverviewTab();
         if (tab === 'metadata') this.renderMetadataTab();
         if (tab === 'functions') this.renderFunctionsTab();
         if (tab === 'medoid') this.renderMedoidTab();
+    },
+
+    /** File clusters: one card per tab, then the lanes of shared code (cluster_overview.js). */
+    renderOverviewTab() {
+        if (window.ClusterOverview) window.ClusterOverview.render(document.getElementById('cluster-tab-overview'), this);
     },
 
     /** Function clusters: the medoid's code view, embedded as-is (in-iframe mode hides the app chrome). */
@@ -753,14 +761,17 @@ window.ClusterDetailView = {
         if (!el || !this.selectedClusterUuid || !window.NwayPanel) return;
         if (this._nway) this._nway.destroy();
         const url = new URLSearchParams(window.location.search);
-        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
+        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'focus', 'focus_rule', 'side', 'q', 'tags', 'offset', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
         const state = {};
         keys.forEach(k => { if (url.has(k)) state[k] = url.get(k); });
         if (url.get('ntab')) state.tab = url.get('ntab');
         const source = { cluster_uuid: this.selectedClusterUuid, axis: this.axis };
         if (this.params && this.params.pool) source.pool = this.params.pool;
         else source.collection = this.collection;
-        this._nway = new window.NwayPanel(el, {
+        el.innerHTML = `<div style="display:flex; justify-content:flex-end; margin-bottom:6px;">
+            <button class="btn-code-action" title="Open this table on its own page" onclick="ClusterDetailView.openFunctionsFull(event)"><i class="fa-solid fa-expand" style="color:var(--accent)"></i> Full screen</button>
+        </div><div id="cluster-nway-host"></div>`;
+        this._nway = new window.NwayPanel(document.getElementById('cluster-nway-host'), {
             source,
             state,
             onState: s => {
@@ -948,6 +959,18 @@ window.ClusterDetailView = {
             tooltip: 'Open in N-diff view',
             onClick: `Nav.openPath(${jsString(`/diff/nway?${qs}`)}, event)`,
         });
+    },
+
+    /** The Functions tab on its own page (/diff/nway), with the tab's current controls. */
+    openFunctionsFull(event) {
+        const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, axis: this.axis });
+        if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+        else qs.set('collection', this.collection || '');
+        const def = window.NwayPanel.DEFAULTS;
+        Object.entries((this._nway && this._nway.state) || {}).forEach(([k, v]) => {
+            if (v != null && String(v) !== String(def[k] ?? '')) qs.set(k, v);
+        });
+        Nav.openPath(`/diff/nway?${qs}`, event);
     },
 
     /** N-way diff of a function cluster's members (family view): the server resolves the members from the cluster. */

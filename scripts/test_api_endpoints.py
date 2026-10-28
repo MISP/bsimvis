@@ -3333,6 +3333,11 @@ def test_yara_editor():
         bool((fh.get("false_hits") or [{}])[0].get("matches")),
         str(fh.get("false_hits")),
     )
+    check(
+        "a true hit carries its match evidence",
+        bool((fh.get("true_hits") or [{}])[0].get("matches")),
+        str(fh.get("true_hits")),
+    )
 
     bad = test_endpoint(
         "POST",

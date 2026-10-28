@@ -215,9 +215,11 @@ def evaluate(r, r_raw, text, targets, negatives):
 
     missed = [label(m) for m in pos if not hits[m][1]][:LIST_CAP]
     false_hits = [{**label(m), "rules": sorted(hits[m][1])} for m in fp[:LIST_CAP]]
-    detail = explain_hits(r, r_raw, rules, fp)
-    for f in false_hits:
-        f["matches"] = detail.get(f["id"], [])
+    true_hits = [{**label(m), "rules": sorted(hits[m][1])} for m in tp[:LIST_CAP]]
+    for rows, members in ((false_hits, fp), (true_hits, tp)):
+        detail = explain_hits(r, r_raw, rules, members)
+        for f in rows:
+            f["matches"] = detail.get(f["id"], [])
 
     landing = locate_hits(
         r, r_raw, [(m, hits[m][1]) for m in tp][: cfg("land_files", 20)]
@@ -253,6 +255,7 @@ def evaluate(r, r_raw, text, targets, negatives):
         ],
         "missed": missed,
         "false_hits": false_hits,
+        "true_hits": true_hits,
         "landing": landing,
         "ms": int((time.time() - t0) * 1000),
     }
@@ -505,9 +508,10 @@ def function_hex(r, r_raw, coll, md5, addr):
     }
 
 
-def suggest(r, groups_pos, members_neg, min_frac, limit=30):
-    """Strings present in >= `min_frac` of the target files and few negatives.
-    Reads the per-file string tables of up to 50 targets and the cross-file
+def suggest(r, groups_pos, members_neg, min_frac=0, limit=200, scan=400):
+    """Strings of the target files, best coverage first (then fewest negatives).
+    `min_frac` drops the rare ones; only the `scan` most shared are checked
+    against the negatives. Reads the per-file string tables of up to 50 targets and the cross-file
     `idx:string:file:{id}` sets for the negative side."""
     from bsimvis.app.services import string_service as ss
 
@@ -532,12 +536,18 @@ def suggest(r, groups_pos, members_neg, min_frac, limit=30):
             count[(coll, sid)] = count.get((coll, sid), 0) + 1
             example.setdefault((coll, sid), rec.get("value", ""))
     need = max(1, int(len(targets) * min_frac + 0.9999))
-    cands = [k for k, n in count.items() if n >= need]
+    cands = sorted(
+        (k for k, n in count.items() if n >= need),
+        key=lambda k: (-count[k], -len(example[k])),
+    )[:scan]
     neg_ids = {f"{c}:file:{m}" for c, m in members_neg}
-    out = []
+    pipe = r.pipeline(transaction=False)
     for coll, sid in cands:
+        pipe.scard(f"{coll}:idx:string:file:{sid}")
+    out = []
+    for (coll, sid), size in zip(cands, pipe.execute()):
         key = f"{coll}:idx:string:file:{sid}"
-        if r.scard(key) > 5000:  # ubiquitous: useless as a family marker
+        if size > 5000:  # ubiquitous: useless as a family marker
             continue
         holders = {_txt(h) for h in r.smembers(key)}
         out.append(
@@ -548,7 +558,7 @@ def suggest(r, groups_pos, members_neg, min_frac, limit=30):
                 "neg": len(holders & neg_ids),
             }
         )
-    out.sort(key=lambda s: (s["neg"], -s["pos"], -len(s["value"])))
+    out.sort(key=lambda s: (-s["pos"], s["neg"], -len(s["value"])))
     return out[:limit]
 
 

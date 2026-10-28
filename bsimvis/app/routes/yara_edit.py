@@ -138,7 +138,7 @@ def post_suggest():
     targets = resolve_sets(r, body, "targets", 200)
     negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
     neg = list(dict.fromkeys(m for g in negatives for m in g["members"]))
-    min_frac = max(0.1, min(1.0, float(body.get("min_frac", 0.8))))
+    min_frac = max(0.0, min(1.0, float(body.get("min_frac", 0))))
     return {"strings": ys.suggest(r, targets, neg, min_frac)}
 
 
@@ -331,14 +331,16 @@ def get_run(run_id):
     }
     out["missed"] = rows(sorted(tset - hits)[:cap])
     out["false_hits"] = rows(sorted(hits - tset)[:cap])
+    out["true_hits"] = rows(sorted(hits & tset)[:cap])
     rules, _ = ys.compile_source(spec.get("rule") or "")
     if rules is not None:
-        detail = ys.explain_hits(
-            r,
-            get_raw_redis(),
-            rules,
-            [tuple(f["id"].rsplit(":", 1)) for f in out["false_hits"]],
-        )
-        for f in out["false_hits"]:
-            f["matches"] = detail.get(f["id"], [])
+        for key in ("false_hits", "true_hits"):
+            detail = ys.explain_hits(
+                r,
+                get_raw_redis(),
+                rules,
+                [tuple(f["id"].rsplit(":", 1)) for f in out[key]],
+            )
+            for f in out[key]:
+                f["matches"] = detail.get(f["id"], [])
     return out

@@ -464,14 +464,14 @@ window.YaraView = {
                 <div class="yw-m"><small>Scanned</small><strong>${res.seen}</strong></div>
                 <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
             note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${m ? '' : ' No Must match set, so no precision or recall.'}`;
-            tabs = m ? [['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [['hits', 'Matches', res.hits]];
+            tabs = m ? [['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [['hits', 'Matches', res.hits]];
         } else {
             head = `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
                 <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>`;
             note = (s.negatives_scanned ? (s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`) : 'No negatives: only recall is measured.') +
                 (s.targets_truncated ? ' Targets truncated.' : '') + (s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : '');
-            tabs = [['strings', 'Strings', res.strings.length], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
+            tabs = [['strings', 'Strings', res.strings.length], ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
         }
         if (!tabs.some(t => t[0] === this._tab)) this._tab = tabs[0][0];
         const conf = m ? `<div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>` : '';
@@ -496,7 +496,7 @@ window.YaraView = {
     _resultPane(res) {
         if (this._tab === 'strings') return this._stringsPane(res);
         const m = res.metrics || {};
-        const [rows, total, withRules] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : [res.missed, m.fn];
+        const [rows, total, withRules] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : this._tab === 'true' ? [res.true_hits || [], m.tp, true] : [res.missed, m.fn];
         if (!rows.length) return '<div class="yw-hint">none</div>';
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
@@ -549,12 +549,12 @@ window.YaraView = {
     _suggestPane() {
         if (!this._suggested) return '<div class="yw-hint">Ranking strings...</div>';
         const rows = this._suggested.map((x, i) => `<tr>
-            <td class="yw-mono">${escapeHtml(x.value)}</td><td class="yw-mono">${x.pos}/${x.of}</td>
+            <td class="yw-mono">${escapeHtml(x.value)}</td><td class="yw-mono">${x.pos}/${x.of} <span class="yw-dim">${Math.round(100 * x.pos / Math.max(1, x.of))}%</span></td>
             <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'inherit'};">${x.neg}</td>
             <td><button class="yw-btn ghost" onclick="YaraView.addString(${i})">Insert</button></td></tr>`).join('');
         return rows
-            ? `<table><thead><tr><th>String (in &ge;80% of targets)</th><th>Targets</th><th>Others</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-            : '<div class="yw-hint">Nothing is shared by 80% of the target files.</div>';
+            ? `<table><thead><tr><th>String</th><th>Targets</th><th>Others</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+            : '<div class="yw-hint">No stored strings for the target files.</div>';
     },
 
     // Suggestions depend on the sets only, so refetch when those change, not per keystroke.
@@ -565,7 +565,7 @@ window.YaraView = {
         this._suggested = null;
         let res = {};
         try {
-            const r = await fetch('/api/yara/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, min_frac: 0.8 }) });
+            const r = await fetch('/api/yara/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, min_frac: 0 }) });
             if (r.ok) res = await r.json();
         } catch (e) { /* an empty tab shows the problem */ }
         if (key !== this._suggKey) return;

@@ -30,7 +30,9 @@ window.YaraView = {
     _textarea: null,
     _timer: null,
     _seq: 0,
-    _open: new Set(['strings']), // result sections left expanded across live re-renders
+    _tab: 'strings',
+    _res: null,
+    _suggested: null,
     _uuid: null,
     _run: null,
     _runTimer: null,
@@ -42,6 +44,7 @@ window.YaraView = {
         clearTimeout(this._runTimer);
         if (this._editor && this._editor.destroy) this._editor.destroy();
         this._editor = this._textarea = null;
+        document.removeEventListener('click', this._docClick);
     },
 
     async init(params, containerId) {
@@ -52,6 +55,8 @@ window.YaraView = {
         this._last = null;
         this._loadState(params);
         container.innerHTML = this._shell();
+        this._docClick = e => { const m = document.getElementById('yara-menu'); if (m && !m.contains(e.target)) m.open = false; };
+        document.addEventListener('click', this._docClick);
         await this._mountEditor(params);
         await this._loadCollections(params.collection);
         this._mountSets();
@@ -100,52 +105,49 @@ window.YaraView = {
     // --- layout -----------------------------------------------------------
 
     _shell() {
-        const card = 'background:var(--hover); border:1px solid var(--border); border-radius:8px;';
         return `
-        <style>#yara-sets .nway-cmp-label { width:130px; }</style>
-        <div style="flex:1; display:grid; grid-template-columns:minmax(380px, 1fr) minmax(420px, 1.1fr); gap:14px; padding:14px 18px; min-height:0; color:var(--text);">
-            <div style="display:flex; flex-direction:column; gap:10px; min-height:0;">
-                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <h2 style="margin:0; color:var(--accent); font-size:1.2rem;"><i class="fa-solid fa-shield-halved"></i> YARA workbench</h2>
-                    <span id="yara-status" style="color:var(--subtle); font-size:0.78rem;"></span>
-                    <span style="flex:1;"></span>
-                    <select id="yara-rules" onchange="YaraView.openRule(this.value)" style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:4px; padding:4px; max-width:200px;"><option value="">Saved rules...</option></select>
-                </div>
-                <div id="yara-editor" style="flex:1; min-height:300px; border:1px solid var(--border); border-radius:6px; overflow:hidden;"></div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap; font-size:0.8rem;">
-                    <button class="btn" onclick="YaraView.save()"><i class="fa-solid fa-floppy-disk"></i> Save version</button>
-                    <button class="btn" onclick="YaraView.exportYar()"><i class="fa-solid fa-download"></i> .yar</button>
-                    <button class="btn" onclick="YaraView.startRun('sweep')" title="Scan every file of the collection: exact numbers"><i class="fa-solid fa-magnifying-glass-chart"></i> Full sweep</button>
-                    <button class="btn" onclick="YaraView.suggest()"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest strings</button>
-                    <button class="btn" onclick="YaraView.draft()"><i class="fa-solid fa-robot"></i> LLM draft</button>
-                    <details style="position:relative;">
-                        <summary class="btn" style="list-style:none; cursor:pointer;"><i class="fa-solid fa-ellipsis"></i> More</summary>
-                        <div style="position:absolute; z-index:5; top:100%; left:0; margin-top:4px; display:flex; flex-direction:column; gap:4px; padding:6px; white-space:nowrap; background:var(--bg); border:1px solid var(--border); border-radius:6px;">
-                            <button class="btn" onclick="YaraView.toVendored()" title="Write to data/yara_rules/custom for review"><i class="fa-solid fa-folder-plus"></i> To ruleset</button>
-                            <button class="btn" onclick="YaraView.startRun('apply')" title="Tag matching files yara:custom:<rule> (needs a saved rule)"><i class="fa-solid fa-tags"></i> Apply tags</button>
-                        </div>
-                    </details>
-                </div>
-                <div id="yara-run" style="font-size:0.8rem; color:var(--subtle);"></div>
-                <details id="yara-seed" style="${card} padding:6px 10px; font-size:0.78rem;">
-                  <summary style="cursor:pointer; color:var(--subtle);">Insert function bytes</summary>
-                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-                    <input id="yara-seed-md5" placeholder="file md5" style="width:250px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px;">
-                    <input id="yara-seed-addr" placeholder="entry (hex)" style="width:100px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:3px 6px; border-radius:4px;">
-                    <button class="btn" onclick="YaraView.seedFromInputs()">Insert</button>
-                  </div>
+        <div class="yw">
+            <div class="yw-bar">
+                <h2 class="yw-title"><i class="fa-solid fa-shield-halved"></i> YARA workbench</h2>
+                <select id="yara-rules" aria-label="Saved rules" onchange="YaraView.openRule(this.value)" style="max-width:220px;"><option value="">Saved rules...</option></select>
+                <span class="yw-status" id="yara-status"></span>
+                <span class="yw-sp"></span>
+                <button class="yw-btn" onclick="YaraView.startRun('sweep')" title="Scan every file of the collection: exact numbers"><i class="fa-solid fa-magnifying-glass-chart"></i> Full sweep</button>
+                <button class="yw-btn primary" onclick="YaraView.save()"><i class="fa-solid fa-floppy-disk"></i> Save version</button>
+                <details class="yw-menu" id="yara-menu">
+                    <summary class="yw-btn icon" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary>
+                    <div class="yw-pop">
+                        <button onclick="YaraView.exportYar()"><i class="fa-solid fa-download"></i> Export .yar</button>
+                        <button onclick="YaraView.toVendored()" title="Write to data/yara_rules/custom for review"><i class="fa-solid fa-folder-plus"></i> Add to ruleset</button>
+                        <button onclick="YaraView.startRun('apply')" title="Tag matching files yara:custom:<rule> (saves first)"><i class="fa-solid fa-tags"></i> Apply tags to matches</button>
+                        <button onclick="YaraView.draft()"><i class="fa-solid fa-robot"></i> Draft with LLM</button>
+                    </div>
                 </details>
             </div>
-            <div style="display:flex; flex-direction:column; gap:10px; overflow-y:auto; min-height:0;">
-                <details open style="${card} padding:8px 12px;">
-                    <summary style="cursor:pointer; color:var(--accent); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:1px;">Test sets</summary>
-                    <div style="display:flex; gap:8px; align-items:center; margin:8px 0;">
-                        <span style="color:var(--subtle); font-size:0.78rem;">Collection</span>
-                        <select id="yara-collection" onchange="YaraView._setsChanged()" style="background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:4px; padding:4px;"></select>
-                    </div>
+            <div class="yw-run" id="yara-run"></div>
+            <details class="yw-sets" id="yara-setbar" open>
+                <summary><span class="yw-lbl">Test sets</span><span class="yw-sum" id="yara-setsum"></span></summary>
+                <div class="yw-sets-body">
+                    <div class="yw-sets-row"><span class="yw-lbl">Collection</span><select id="yara-collection" aria-label="Collection" onchange="YaraView._setsChanged()"></select></div>
                     <div class="nway-focus-body nway-match-body nway-cmp-body" id="yara-sets" style="position:static; box-shadow:none; border:0; background:transparent; padding:0; width:100%; max-width:none; max-height:none; min-width:0; align-items:stretch;"></div>
-                </details>
-                <div id="yara-result" style="display:flex; flex-direction:column; gap:10px;"></div>
+                </div>
+            </details>
+            <div class="yw-main">
+                <div class="yw-left">
+                    <div class="yw-editor" id="yara-editor"></div>
+                    <div class="yw-tools">
+                        <button class="yw-btn" onclick="YaraView.openPicker()"><i class="fa-solid fa-microchip"></i> Insert from function...</button>
+                        <button class="yw-btn" onclick="YaraView.suggest()"><i class="fa-solid fa-wand-magic-sparkles"></i> Suggest strings</button>
+                    </div>
+                </div>
+                <div class="yw-right" id="yara-result"></div>
+            </div>
+            <div class="yw-modal" id="yara-picker" onclick="if (event.target === this) YaraView.closePicker()">
+                <div class="yw-dlg" role="dialog" aria-label="Insert from function">
+                    <header><input class="yw-in" id="yara-fq" placeholder="Search functions in the collection: name, address, tag..." oninput="YaraView._pickSoon()" autocomplete="off"><button class="yw-btn" onclick="YaraView.closePicker()">Close</button></header>
+                    <div class="yw-resbox" id="yara-fres"></div>
+                    <footer><span>Or paste</span><input class="yw-in" id="yara-paste" placeholder="md5:entry  e.g. 3f9ac2e810b4...:00401a20"><button class="yw-btn" onclick="YaraView.pastePick()">Insert</button></footer>
+                </div>
             </div>
         </div>`;
     },
@@ -213,12 +215,27 @@ window.YaraView = {
             saved: () => this._savedCmp,
             labels: ['Must match', 'Must not match'],
             runLabel: 'Test',
-            onPreview: () => this.schedule(),
+            onPreview: counts => { this._sum(counts); this.schedule(); },
             onRun: () => this.schedule(0),
         });
         box.innerHTML = this._cmp.html();
         this._cmp.bind(box);
         this._cmp._previewSoon();
+        const hasTarget = this._savedCmp && this._savedCmp.groups[0] && this._savedCmp.groups[0].queries.length;
+        if (hasTarget) document.getElementById('yara-setbar').open = false;
+        this._sum(null);
+    },
+
+    // One line for the collapsed bar: each group's filters and file count.
+    _sum(counts) {
+        const el = document.getElementById('yara-setsum');
+        if (!el) return;
+        const groups = this._cmp.cmp().groups;
+        el.innerHTML = groups.map((g, i) => {
+            const n = counts && counts.groups[i] && g.queries.length ? ` (${Number(counts.groups[i].files)})` : '';
+            const what = g.queries.length ? g.queries.map(q => escapeHtml(q)).join(' or ') : (i ? 'everything else' : 'no filter yet');
+            return `<b>${escapeHtml(g.label)}</b> ${what}${n}`;
+        }).join(' &middot; ');
     },
 
     _setsChanged() {
@@ -292,61 +309,81 @@ window.YaraView = {
 
     _renderResult(res, hint) {
         const el = document.getElementById('yara-result');
-        if (!el._tog) el.addEventListener('toggle', el._tog = e => { const k = e.target.dataset && e.target.dataset.sec; if (k) e.target.open ? this._open.add(k) : this._open.delete(k); }, true);
-        if (!res) { el.innerHTML = `<div style="color:var(--subtle); font-size:0.85rem; padding:10px;">${escapeHtml(hint || '')}</div>`; return; }
-        if (res.error) { el.innerHTML = `<div style="color:#ef4444; padding:10px;">${escapeHtml(res.error)}</div>`; return; }
+        this._res = res;
+        if (!res) { el.innerHTML = `<div class="yw-hint">${escapeHtml(hint || '')}</div>`; return; }
+        if (res.error) { el.innerHTML = `<div class="yw-err">${escapeHtml(res.error)}</div>`; return; }
         if (!res.ok) {
-            el.innerHTML = `<div style="color:#ef4444; font-family:monospace; font-size:0.8rem; padding:10px;">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
+            el.innerHTML = `<div class="yw-err">${(res.errors || []).map(e => `line ${e.line}: ${escapeHtml(e.message)}`).join('<br>')}</div>`;
             return;
         }
         const m = res.metrics, s = res.sample;
-        const card = (label, value, color) => `<div style="flex:1; min-width:78px; background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:8px 10px; text-align:center;">
-            <div style="color:var(--subtle); font-size:0.68rem; text-transform:uppercase;">${label}</div>
-            <div style="font-size:1.25rem; font-weight:700; color:${color || 'var(--text)'};">${value}</div></div>`;
-        const th = 'text-align:left; color:var(--subtle); font-weight:600; padding:3px 6px; font-size:0.72rem;';
-        const td = 'padding:3px 6px; font-size:0.78rem;';
-        const tbl = (head, rows) => `<table style="width:100%; border-collapse:collapse;"><thead><tr>${head.map(h => `<th style="${th}">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;
-        const sec = (key, title, body) => `<details data-sec="${key}" ${this._open.has(key) ? 'open' : ''} style="background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:8px 10px;"><summary style="cursor:pointer; color:var(--accent); font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:1px;">${title}</summary><div style="margin-top:6px; max-height:320px; overflow-y:auto;">${body}</div></details>`;
-
-        const groups = tbl(['Group', 'Role', 'Files', 'Hits', 'Rate'], res.groups.map(g => `<tr>
-            <td style="${td}">${escapeHtml(g.label)}</td>
-            <td style="${td} color:${g.role === 'target' ? '#10b981' : '#ef4444'};">${escapeHtml(g.role)}</td>
-            <td style="${td}">${g.files}</td><td style="${td}">${g.hits}</td><td style="${td}">${this._pct(g.hit_rate)}</td></tr>`));
-
-        const land = res.landing || {};
-        const strings = res.strings.length ? tbl(['String', 'Targets', 'Others', 'Lands in'], res.strings.map(x => {
-            const l = land[`${x.rule}:${x.id}`] || { functions: [], strings: [] };
-            const where = [
-                ...l.functions.map(f => `<a href="/collections/${encodeURIComponent(f.example.slice(0, f.example.lastIndexOf(':')))}/files/${f.example.slice(f.example.lastIndexOf(':') + 1)}/functions/${escapeAttr(f.addr)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(f.name)}</a> <span style="color:var(--subtle);">&times;${f.files}</span>`),
-                ...l.strings.map(t => `str &ldquo;${escapeHtml(t.value)}&rdquo; <span style="color:var(--subtle);">&times;${t.files}</span>`),
-            ];
-            const dead = x.pos === 0 && x.neg === 0;
-            const noisy = x.neg > 0;
-            return `<tr><td style="${td} font-family:monospace;">${escapeHtml(res.rules.length > 1 ? `${x.rule} ` : '')}${escapeHtml(x.id)}${dead ? ' <span style="color:#f59e0b;">dead</span>' : ''}</td>
-                <td style="${td}">${x.pos}/${s.targets}</td><td style="${td} color:${noisy ? '#ef4444' : 'inherit'};">${x.neg}</td>
-                <td style="${td}">${where.join('<br>') || '<span style="color:var(--subtle);">&mdash;</span>'}${l.unmapped ? ` <span style="color:var(--subtle);">(${l.unmapped} unmapped)</span>` : ''}</td></tr>`;
-        })) : '<div style="color:var(--subtle); font-size:0.78rem;">no strings</div>';
-
-        const list = (rows, extra) => rows.length
-            ? `<ul style="margin:0; padding-left:18px; font-size:0.78rem;">${rows.map(f => `<li>${this._fileLink(f)}${extra ? extra(f) : ''}</li>`).join('')}</ul>`
-            : '<div style="color:var(--subtle); font-size:0.78rem;">none</div>';
-
+        const good = v => (v === 1 ? ' good' : '');
+        const tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', ''], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
+        if (this._suggested) tabs.push(['suggest', 'Suggested', this._suggested.length]);
+        if (!tabs.some(t => t[0] === this._tab)) this._tab = 'strings';
         el.innerHTML = `
-            <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                ${card('Precision', this._pct(m.precision), m.precision === 1 ? '#10b981' : '')}
-                ${card('Recall', this._pct(m.recall), m.recall === 1 ? '#10b981' : '')}
-                ${card('F1', this._pct(m.f1))}
-                ${card('TP / FN', `${m.tp} / ${m.fn}`)}
-                ${card('FP / TN', `${m.fp} / ${m.tn}`, m.fp ? '#ef4444' : '')}
+            <div class="yw-metrics">
+                <div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
+                <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
+                <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>
+                <div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>
             </div>
-            <div style="color:var(--subtle); font-size:0.74rem;">
-                ${s.sampled ? `<b style="color:#f59e0b;">sampled</b>: ${s.negatives_scanned} of ${s.negatives_available} negatives &mdash; use Full sweep for exact numbers.` : `${s.negatives_scanned} negatives scanned.`}
+            <div class="yw-note">
+                ${s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`}
                 ${s.targets_truncated ? ' Targets truncated.' : ''}${s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : ''}
             </div>
-            ${sec('groups', 'Groups', groups)}
-            ${sec('strings', `Strings (${res.strings.length})`, strings)}
-            ${sec('missed', `Missed targets (${m.fn})`, list(res.missed))}
-            ${sec('false', `False hits (${m.fp})`, list(res.false_hits, f => ` <span style="color:var(--subtle);">${escapeHtml(f.rules.join(', '))}</span>`))}`;
+            <div class="yw-tabs" role="tablist">${tabs.map(([k, l, c, red]) => `<button class="yw-tab" role="tab" aria-selected="${this._tab === k}" onclick="YaraView.setTab('${k}')">${l}${c !== '' ? `<em class="${red && c ? 'red' : ''}">${c}</em>` : ''}</button>`).join('')}</div>
+            <div class="yw-pane" id="yara-pane">${this._pane(res)}</div>`;
+    },
+
+    setTab(k) {
+        this._tab = k;
+        this._renderResult(this._res);
+    },
+
+    _fnUrl(f) {
+        const i = f.example.lastIndexOf(':');
+        return `/collections/${encodeURIComponent(f.example.slice(0, i))}/files/${f.example.slice(i + 1)}/functions/${escapeAttr(f.addr)}`;
+    },
+
+    _pane(res) {
+        const s = res.sample, land = res.landing || {};
+        const list = (rows, extra) => rows.length
+            ? `<ul class="yw-list">${rows.map(f => `<li>${this._fileLink(f)}${extra ? extra(f) : ''}<button class="yw-btn ghost" onclick="navigator.clipboard.writeText('${escapeAttr(f.id.slice(f.id.lastIndexOf(':') + 1))}')">Copy md5</button></li>`).join('')}</ul>`
+            : '<div class="yw-hint">none</div>';
+        if (this._tab === 'groups') {
+            return `<table><thead><tr><th>Group</th><th>Role</th><th>Files</th><th>Hits</th><th>Rate</th></tr></thead><tbody>${res.groups.map(g => `<tr>
+                <td>${escapeHtml(g.label)}</td><td class="${g.role === 'target' ? 'yw-t' : 'yw-n'}">${escapeHtml(g.role)}</td>
+                <td class="yw-mono">${g.files}</td><td class="yw-mono">${g.hits}</td><td class="yw-mono">${this._pct(g.hit_rate)}</td></tr>`).join('')}</tbody></table>`;
+        }
+        if (this._tab === 'missed') return list(res.missed);
+        if (this._tab === 'false') return list(res.false_hits, f => ` <span class="yw-dim yw-mono">${escapeHtml(f.rules.join(', '))}</span>`);
+        if (this._tab === 'suggest') return this._suggestPane();
+        if (!res.strings.length) return '<div class="yw-hint">The rule has no strings.</div>';
+        const rows = res.strings.map(x => {
+            const l = land[`${x.rule}:${x.id}`] || { functions: [], strings: [] };
+            const where = [
+                ...l.functions.map(f => `<a href="${this._fnUrl(f)}" onclick="Nav.openPath(this.href, event)">${escapeHtml(f.name)}</a> <span class="yw-dim">&times;${f.files}</span>`),
+                ...l.strings.map(t => `str &ldquo;${escapeHtml(t.value)}&rdquo; <span class="yw-dim">&times;${t.files}</span>`),
+            ];
+            const more = where.length > 1 ? ` <span class="yw-dim" title="${escapeAttr(`${where.length - 1} more places`)}">+${where.length - 1}</span>` : '';
+            const w = Math.round(x.pos / Math.max(1, s.targets) * 84);
+            const dead = x.pos === 0 && x.neg === 0;
+            return `<tr><td class="yw-mono">${escapeHtml(res.rules.length > 1 ? `${x.rule} ` : '')}${escapeHtml(x.id)}${dead ? '<span class="yw-badge dead">DEAD</span>' : ''}${x.neg > 0 ? '<span class="yw-badge noisy">NOISY</span>' : ''}</td>
+                <td><div class="yw-bar2"><div class="yw-track"><i style="width:${w}px"></i><i class="n" style="width:${x.neg ? Math.min(30, 3 + x.neg) : 0}px"></i></div>${x.pos}/${s.targets} &middot; <span style="color:${x.neg ? '#ef4444' : 'var(--subtle)'};">${x.neg}</span></div></td>
+                <td>${where[0] || '<span class="yw-dim">no hit</span>'}${more}${l.unmapped ? ` <span class="yw-dim">(${l.unmapped} unmapped)</span>` : ''}</td></tr>`;
+        }).join('');
+        return `<table><thead><tr><th>String</th><th>Hits (target &middot; other)</th><th>Lands in</th></tr></thead><tbody>${rows}</tbody></table>`;
+    },
+
+    _suggestPane() {
+        const rows = (this._suggested || []).map((x, i) => `<tr>
+            <td class="yw-mono">${escapeHtml(x.value)}</td><td class="yw-mono">${x.pos}/${x.of}</td>
+            <td class="yw-mono" style="color:${x.neg ? '#ef4444' : 'inherit'};">${x.neg}</td>
+            <td><button class="yw-btn ghost" onclick="YaraView.addString(${i})">Insert</button></td></tr>`).join('');
+        return rows
+            ? `<table><thead><tr><th>String (in &ge;80% of targets)</th><th>Targets</th><th>Others</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+            : '<div class="yw-hint">Nothing is shared by 80% of the target files.</div>';
     },
 
     // --- seeds ------------------------------------------------------------
@@ -360,11 +397,53 @@ window.YaraView = {
         this.insertText(`// $fn_${addr} from ${md5.slice(0, 8)}${note}\n// $fn_${addr} = ${res.hex}`);
     },
 
-    seedFromInputs() {
-        const md5 = document.getElementById('yara-seed-md5').value.trim();
-        const addr = document.getElementById('yara-seed-addr').value.trim().replace(/^0x/, '');
+    // --- function picker --------------------------------------------------
+
+    openPicker() {
+        document.getElementById('yara-picker').classList.add('on');
+        const q = document.getElementById('yara-fq');
+        q.focus();
+        this._pickSoon(0);
+    },
+
+    closePicker() {
+        document.getElementById('yara-picker').classList.remove('on');
+    },
+
+    _pickSoon(delay = 300) {
+        clearTimeout(this._pickTimer);
+        this._pickTimer = setTimeout(() => this._pickSearch(), delay);
+    },
+
+    async _pickSearch() {
+        const box = document.getElementById('yara-fres');
         const coll = document.getElementById('yara-collection').value;
-        if (md5 && addr) this.insertFunction(coll, md5, addr);
+        const params = new URLSearchParams({ collection: coll, limit: 15 });
+        const q = document.getElementById('yara-fq').value.trim();
+        if (q) params.set('q', q);
+        let fns = [];
+        try {
+            const res = await (await fetch(`/api/function/search?${params}`)).json();
+            fns = res.functions || [];
+        } catch (e) { /* an empty list shows the problem */ }
+        this._fns = fns;
+        box.innerHTML = fns.map((f, i) => `<div class="yw-res">
+            <span><b class="yw-mono">${escapeHtml(f.function_name || f.name || '')}</b> <span class="yw-mono yw-dim">@ ${escapeHtml(f.entrypoint_address || '')}</span></span>
+            <span class="sub">${escapeHtml(f.file_name || '')}</span>
+            <button class="yw-btn primary" onclick="YaraView.pick(${i})">Insert</button></div>`).join('') || '<div class="yw-hint">No functions match.</div>';
+    },
+
+    pick(i) {
+        const f = this._fns[i];
+        this.closePicker();
+        this.insertFunction(document.getElementById('yara-collection').value, f.file_md5, String(f.entrypoint_address).replace(/^0x/, ''));
+    },
+
+    pastePick() {
+        const [md5, addr] = document.getElementById('yara-paste').value.trim().split(':');
+        if (!md5 || !addr) return;
+        this.closePicker();
+        this.insertFunction(document.getElementById('yara-collection').value, md5, addr.replace(/^0x/, ''));
     },
 
     async suggest() {
@@ -373,15 +452,10 @@ window.YaraView = {
         const r = await fetch('/api/yara/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const res = await r.json();
         this._status('');
-        const el = document.getElementById('yara-result');
-        const rows = (res.strings || []).map((x, i) => `<tr>
-            <td style="padding:3px 6px; font-family:monospace; font-size:0.78rem;">${escapeHtml(x.value)}</td>
-            <td style="padding:3px 6px;">${x.pos}/${x.of}</td><td style="padding:3px 6px; color:${x.neg ? '#ef4444' : 'inherit'};">${x.neg}</td>
-            <td><a href="#" onclick="YaraView.addString(${i}); return false;">insert</a></td></tr>`).join('');
         this._suggested = res.strings || [];
-        el.insertAdjacentHTML('afterbegin', `<div style="background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:8px 10px;">
-            <div style="color:var(--accent); font-size:0.72rem; font-weight:700; text-transform:uppercase;">Suggested strings (in &ge;80% of targets)</div>
-            ${rows ? `<table style="width:100%;">${rows}</table>` : '<div style="color:var(--subtle); font-size:0.8rem;">nothing shared by 80% of the target files</div>'}</div>`);
+        this._tab = 'suggest';
+        if (this._res && this._res.ok) this._renderResult(this._res);
+        else this._renderResult(null, 'Give "Must match" a filter first.');
     },
 
     addString(i) {

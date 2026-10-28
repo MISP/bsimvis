@@ -761,14 +761,17 @@ window.ClusterDetailView = {
         if (!el || !this.selectedClusterUuid || !window.NwayPanel) return;
         if (this._nway) this._nway.destroy();
         const url = new URLSearchParams(window.location.search);
-        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'q', 'tags', 'offset', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
+        const keys = ['scope', 'k', 'min_edge', 'mode', 'columns', 'child_presence', 'focus', 'focus_rule', 'side', 'q', 'tags', 'offset', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open'];
         const state = {};
         keys.forEach(k => { if (url.has(k)) state[k] = url.get(k); });
         if (url.get('ntab')) state.tab = url.get('ntab');
         const source = { cluster_uuid: this.selectedClusterUuid, axis: this.axis };
         if (this.params && this.params.pool) source.pool = this.params.pool;
         else source.collection = this.collection;
-        this._nway = new window.NwayPanel(el, {
+        el.innerHTML = `<div style="display:flex; justify-content:flex-end; margin-bottom:6px;">
+            <button class="btn-code-action" title="Open this table on its own page" onclick="ClusterDetailView.openFunctionsFull(event)"><i class="fa-solid fa-expand" style="color:var(--accent)"></i> Full screen</button>
+        </div><div id="cluster-nway-host"></div>`;
+        this._nway = new window.NwayPanel(document.getElementById('cluster-nway-host'), {
             source,
             state,
             onState: s => {
@@ -956,6 +959,18 @@ window.ClusterDetailView = {
             tooltip: 'Open in N-diff view',
             onClick: `Nav.openPath(${jsString(`/diff/nway?${qs}`)}, event)`,
         });
+    },
+
+    /** The Functions tab on its own page (/diff/nway), with the tab's current controls. */
+    openFunctionsFull(event) {
+        const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, axis: this.axis });
+        if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+        else qs.set('collection', this.collection || '');
+        const def = window.NwayPanel.DEFAULTS;
+        Object.entries((this._nway && this._nway.state) || {}).forEach(([k, v]) => {
+            if (v != null && String(v) !== String(def[k] ?? '')) qs.set(k, v);
+        });
+        Nav.openPath(`/diff/nway?${qs}`, event);
     },
 
     /** N-way diff of a function cluster's members (family view): the server resolves the members from the cluster. */

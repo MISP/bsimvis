@@ -325,9 +325,27 @@ def get_run(run_id):
 
     # what each string hit, split into target / other files
     per = {(rule, sid): [0, 0] for rule, sid in ys.defined_strings(text)}
-    for fid, found in q.hscan_iter(f"yara:sweep:{run_id}:strs"):
-        side = 1 if tset and ys._txt(fid) not in tset else 0
-        for key in ys._txt(found).split("|"):
+    raw_r = get_raw_redis()
+    strs_key = f"yara:sweep:{run_id}:strs"
+    if hits and rules is not None and not q.exists(strs_key):
+        # a worker older than the per-string counts: tally a sample of the hit files instead
+        sample = sorted(hits)[: ys.cfg("sweep_string_sample", 300)]
+        out["strings_sampled"] = len(sample) < len(hits)
+        found_by = {}
+        for fid in sample:
+            data = raw_r.get(f"{fid}:raw")
+            if data:
+                found_by[fid] = "|".join(
+                    f"{rule}:{sid}"
+                    for rule, ss in ys.scan_bytes(rules, data).items()
+                    for sid in ss
+                )
+    else:
+        found_by = ((ys._txt(f), ys._txt(v)) for f, v in q.hscan_iter(strs_key))
+        found_by = dict(found_by)
+    for fid, found in found_by.items():
+        side = 1 if tset and fid not in tset else 0
+        for key in filter(None, found.split("|")):
             rule, _, sid = key.rpartition(":")
             per.setdefault((rule, sid), [0, 0])[side] += 1
     out["strings"] = [
@@ -384,7 +402,6 @@ def get_run(run_id):
     out["groups"] = groups
 
     landed = sorted(hits & tset if tset else hits)[: ys.cfg("land_files", 20)]
-    raw_r = get_raw_redis()
     found_in = []
     for fid in landed:
         c, _, m = fid.rpartition(":file:")

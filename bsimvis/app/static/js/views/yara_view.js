@@ -464,7 +464,7 @@ window.YaraView = {
                 `<div class="yw-m"><small>Matches</small><strong>${res.hits}</strong></div>
                 <div class="yw-m"><small>Scanned</small><strong>${res.seen}</strong></div>
                 <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
-            note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${m ? '' : ' No Must match set, so no precision or recall.'}`;
+            note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${res.strings_sampled ? ' String counts come from a sample of the hit files.' : ''}${m ? '' : ' No Must match set, so no precision or recall.'}`;
             const pre = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length]];
             tabs = m ? [...pre, ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [...pre, ['hits', 'Matches', res.hits]];
         } else {

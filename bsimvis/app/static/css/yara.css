@@ -25,27 +25,52 @@
 .yw-pop button { border: 0; background: none; color: var(--text); text-align: left; padding: 7px 10px; border-radius: 5px; cursor: pointer; font: inherit; font-size: 0.76rem; display: flex; gap: 8px; align-items: center; }
 .yw-pop button:hover { background: var(--hover); }
 
-.yw-sets { border-bottom: 1px solid var(--border); background: var(--hover); }
-.yw-sets > summary { cursor: pointer; padding: 8px 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; list-style: none; }
+.yw-sets { margin: 12px 18px 0; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
+.yw-sets > summary { cursor: pointer; padding: 10px 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; list-style: none; border-radius: 12px; }
+.yw-sets > summary:hover { background: var(--hover); }
 .yw-sets > summary::-webkit-details-marker { display: none; }
-.yw-sets > summary::before { content: '\25B8'; color: var(--subtle); }
+.yw-sets > summary::before { content: '\25B8'; color: var(--subtle); font-size: 0.7rem; }
 .yw-sets[open] > summary::before { content: '\25BE'; }
+.yw-sets[open] > summary { border-bottom: 1px solid var(--border); border-radius: 12px 12px 0 0; }
 .yw-lbl { color: var(--subtle); font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
 .yw-sum { color: var(--subtle); font-size: 0.76rem; }
 .yw-sum b { color: var(--text); font-weight: 600; }
-.yw-sets-body { padding: 4px 18px 12px; display: flex; flex-direction: column; gap: 8px; }
+.yw-sets-body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
 .yw-sets-row { display: flex; gap: 8px; align-items: center; }
-/* the shared Compare form, trimmed to two side-by-side filter boxes */
-#yara-sets { gap: 6px; }
-#yara-sets .nway-cmp-split { display: block; }
-#yara-sets .nway-cmp-left { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-#yara-sets .nway-cmp-label, #yara-sets .nway-cmp-right, #yara-sets .nway-chips, #yara-sets .nway-cmp-bar { display: none; }
-#yara-sets .nway-cg { background: var(--bg); border-left-color: #10b981; }
-#yara-sets .nway-cg-b { border-left-color: #ef4444; }
-#yara-sets .nway-cgn { font-size: 0.7rem; text-transform: uppercase; letter-spacing: .08em; }
-#yara-sets .nway-cmp-leg { font-size: 0.72rem; color: var(--subtle); }
-@media (max-width: 760px) { #yara-sets .nway-cmp-left { grid-template-columns: 1fr; } }
 .yw-check { display: inline-flex; gap: 6px; align-items: center; color: var(--subtle); font-size: 0.74rem; cursor: pointer; }
+
+/* the shared Compare form, restyled: two filter cards on the left, the matching files on the right */
+#yara-sets { gap: 8px; }
+#yara-sets .nway-cmp-split { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 1.5fr); gap: 16px; align-items: start; }
+#yara-sets .nway-cmp-left { gap: 10px; }
+#yara-sets .nway-cmp-label, #yara-sets .nway-chips { display: none; }
+#yara-sets .nway-cg { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; gap: 8px; }
+#yara-sets .nway-cgh { gap: 8px; }
+#yara-sets .nway-cgh::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #10b981; flex: none; }
+#yara-sets .nway-cg-b .nway-cgh::before { background: #ef4444; }
+#yara-sets .nway-cgn { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+#yara-sets .nway-cgh .dim { margin-left: auto; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+#yara-sets .nway-cq { border-top: 0; padding: 0; gap: 6px; }
+#yara-sets .nway-cor { font-size: 0.62rem; text-transform: uppercase; letter-spacing: .08em; }
+#yara-sets .nway-tok { border-radius: 999px; padding: 2px 4px 2px 10px; font-family: inherit; background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+#yara-sets .nway-tok b { color: var(--subtle); font-weight: 500; font-size: 0.68rem; }
+#yara-sets .nway-tokin input { border: 1px dashed var(--border); border-radius: 999px; background: transparent; padding: 4px 12px; outline: none; }
+#yara-sets .nway-tokin input:focus { border-style: solid; border-color: var(--accent); }
+#yara-sets .nway-blink { border: 0; background: none; color: var(--subtle); font: inherit; font-size: 0.72rem; cursor: pointer; padding: 0; align-self: flex-start; }
+#yara-sets .nway-blink:hover { color: var(--accent); }
+#yara-sets .nway-cmp-bar { height: 6px; }
+#yara-sets .nway-cmp-bar .ga, #yara-sets .nway-mk-a { background: #10b981; }
+#yara-sets .nway-cmp-bar .gb, #yara-sets .nway-mk-b { background: #ef4444; }
+#yara-sets .nway-cmp-leg { font-size: 0.72rem; color: var(--subtle); }
+#yara-sets .nway-cmp-right { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+#yara-sets .nway-cmp-tabs { gap: 4px; }
+#yara-sets .nway-cmp-files { border: 0; max-height: 260px; }
+#yara-sets .nway-cmp-files th { background: var(--bg); border-bottom: 1px solid var(--border); }
+#yara-sets .nway-cmp-files td { border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); padding: 5px 8px; }
+#yara-sets .nway-cmp-files tr:hover td { background: var(--hover); }
+#yara-sets .nway-mk { padding: 1px 7px; border-radius: 999px; font-size: 0.62rem; margin: 0; }
+#yara-sets .nway-cmp-empty { text-align: center; padding: 28px 8px; }
+@media (max-width: 900px) { #yara-sets .nway-cmp-split { grid-template-columns: 1fr; } }
 
 .yw-seg { display: inline-flex; margin: 10px 18px 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; align-self: flex-start; }
 .yw-seg button { border: 0; background: none; color: var(--subtle); padding: 4px 12px; font: inherit; font-size: 0.74rem; cursor: pointer; }
@@ -53,7 +78,7 @@
 .yw-seg button[aria-pressed=true] { background: var(--hover); color: var(--text); font-weight: 600; }
 .yw-prog { padding: 24px 18px; }
 
-.yw-main { flex: 1; display: grid; grid-template-columns: minmax(360px, 1.05fr) minmax(400px, 1fr); min-height: 0; }
+.yw-main { margin-top: 12px; border-top: 1px solid var(--border); flex: 1; display: grid; grid-template-columns: minmax(360px, 1.05fr) minmax(400px, 1fr); min-height: 0; }
 .yw-left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); }
 .yw-editor { flex: 1; min-height: 320px; overflow: hidden; }
 .yw-tools { display: flex; gap: 6px; padding: 8px 18px; border-top: 1px solid var(--border); flex-wrap: wrap; align-items: center; }

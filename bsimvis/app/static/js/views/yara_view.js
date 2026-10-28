@@ -333,11 +333,6 @@ window.YaraView = {
         return v === null || v === undefined ? '&mdash;' : `${(v * 100).toFixed(1)}%`;
     },
 
-    _fileLink(f) {
-        const [coll, md5] = [f.id.slice(0, f.id.lastIndexOf(':')), f.id.slice(f.id.lastIndexOf(':') + 1)];
-        return `<a href="/collections/${encodeURIComponent(coll)}/files/${md5}" onclick="Nav.openPath(this.href, event)">${escapeHtml(f.name)}</a>`;
-    },
-
     _renderResult(res, hint) {
         this._res = res;
         this._hint = hint || '';
@@ -439,11 +434,11 @@ window.YaraView = {
         const [rows, total, withRules] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : [res.missed, m.fn];
         if (!rows.length) return '<div class="yw-hint">none</div>';
         const body = rows.map(f => {
-            const md5 = f.id.slice(f.id.lastIndexOf(':') + 1);
-            return `<tr><td>${this._fileLink(f)}</td><td class="yw-mono yw-dim">${escapeHtml(md5.slice(0, 12))}</td>${withRules ? `<td class="yw-mono">${escapeHtml((f.rules || []).join(', '))}</td>` : ''}
-                <td><button class="yw-btn ghost" onclick="navigator.clipboard.writeText('${escapeAttr(md5)}')">Copy md5</button></td></tr>`;
+            const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
+            const rules = (f.rules || []).map(r => `<span class="yw-badge noisy">${escapeHtml(r)}</span>`).join('');
+            return `<tr><td>${EntityRenderer.renderFileName(f.name, md5, coll)}</td><td>${EntityRenderer.renderMd5(md5, { collection: coll })}</td>${withRules ? `<td>${rules}</td>` : ''}</tr>`;
         }).join('');
-        return `<table><thead><tr><th>File</th><th>md5</th>${withRules ? '<th>Rules</th>' : ''}<th></th></tr></thead><tbody>${body}</tbody></table>
+        return `<table><thead><tr><th>File</th><th>md5</th>${withRules ? '<th>Rules</th>' : ''}</tr></thead><tbody>${body}</tbody></table>
             ${total > rows.length ? `<div class="yw-dim" style="padding-top:6px;">Showing the first ${rows.length} of ${total}.</div>` : ''}`;
     },
 

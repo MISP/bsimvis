@@ -463,7 +463,9 @@ function clearFilters() {
     const newParams = new URLSearchParams();
 
     // Preserved context keys
-    const preserved = viewKey === 'function-similarity' ? ['view'] : ['algo', 'view'];
+    const preserved = viewKey === 'function-similarity' ? ['view']
+        : viewKey === 'files' ? ['algo', 'view', 'group', 'group_axis', 'group_nodes', 'fold_tag', 'sort_by', 'sort_order']
+        : ['algo', 'view'];
     preserved.forEach(k => {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
@@ -1161,19 +1163,18 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const tbody = document.getElementById('table-body');
         if (!append) tbody.innerHTML = '';
 
-        if (items.length === 0 && !append) {
-            const emptyMessage = viewKey === 'functions' && data.message ? data.message : 'No data found';
-            tbody.innerHTML = `<tr><td colspan="100" style="text-align:center; padding:40px;">${escapeHtml(emptyMessage)}</td></tr>`;
-        } else if (viewKey === 'files' && window.FileTree) {
-            // The tree re-draws everything loaded so far, so a page joins the
-            // archives already on screen instead of appending below them.
-            const html = await FileTree.html(items, data.bin_cluster_map || {}, {
+        if (viewKey === 'files' && window.FileTree) {
+            // The file browser (file_tree.js) re-draws everything loaded so
+            // far, so a page joins the archives already on screen.
+            await FileTree.render(items, data.bin_cluster_map || {}, {
                 append, params, collection,
                 pool: window.getRoutingState ? window.getRoutingState().pool : null,
+                stale: () => myGen !== _refreshGeneration,
             });
             if (myGen !== _refreshGeneration) return;
-            tbody.innerHTML = html;
-            FileTree.applyVisibility(tbody);
+        } else if (items.length === 0 && !append) {
+            const emptyMessage = viewKey === 'functions' && data.message ? data.message : 'No data found';
+            tbody.innerHTML = `<tr><td colspan="100" style="text-align:center; padding:40px;">${escapeHtml(emptyMessage)}</td></tr>`;
         } else {
             // Pass clusters map for views that use it
             let clustersMap = undefined;
@@ -1648,6 +1649,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
     const tableWrap = document.getElementById('table-wrap');
     const tableBodyWrap = document.getElementById('table-body-wrap');
     const searchArea = document.getElementById('search-area');
+    if (window.FileTree) FileTree.mount(viewKey === 'files');
 
     // Reset all special view containers and stop active processes
     if (gview) gview.style.display = 'none';
@@ -2157,7 +2159,7 @@ ${showExtraFileCols() ? `                        <th><input type="text" id="flt-
             // Search Bar building
             if (searchArea) {
                 if (path === 'files') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i></div>${window.NwayCompareDraft ? NwayCompareDraft.buttons() : ''}</div>`;
+                    searchArea.innerHTML = `<div class="filter-bar">${window.FileTree ? FileTree.queryBarHtml(p) : ''}${window.NwayCompareDraft ? NwayCompareDraft.buttons() : ''}</div>`;
                 } else if (path === 'functions') {
                     const fileMd5 = p.get('file_md5');
                     const callGraphBtn = fileMd5 ? `<a class="btn-action" onclick="Nav.openPath('/collections/${encodeURIComponent(p.get('collection'))}/files/${encodeURIComponent(fileMd5)}/functions', event, { title: 'Call Graph: ${fileMd5}', type: 'call_graph' })" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; cursor:pointer;">View File Call Graph 🕸️</a>` : '';

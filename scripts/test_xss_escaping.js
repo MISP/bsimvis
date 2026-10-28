@@ -21,7 +21,7 @@ const JS_DIR = path.join(__dirname, '..', 'bsimvis', 'app', 'static', 'js');
 // Values carrying attacker-controlled content.
 const TAINTED = /(file_name|file_names|path_in_parent|avtype|yara|cc_ip|function_name|func_name|cluster_name|language_id|\bfile_md5)/i;
 // Escapers, and the helpers that escape internally (verified by hand).
-const ESCAPED = /escapeHtml|escapeAttr|jsString|safeCss|encodeURI|renderFileName|renderFunction|renderTag|renderMd5|renderNoteButton|formatArray|\blabel\(|\besc\(|FunctionFilters\.|middleTruncate|\.length\b|toFixed|Number\(|parseInt/;
+const ESCAPED = /escapeHtml|escapeAttr|jsString|safeCss|encodeURI|renderFileName|renderFunction|renderTag|renderMd5|renderNoteButton|copyFullButton|formatArray|\blabel\(|\besc\(|FunctionFilters\.|middleTruncate|\.length\b|toFixed|Number\(|parseInt/;
 // A template literal that is emitting markup, not building a URL or an object.
 const MARKUP = /<\w|<\/\w|\w+="|\w+='/;
 

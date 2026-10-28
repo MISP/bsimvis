@@ -5,8 +5,8 @@
  *
  *   ClusterOverview.render(el, ClusterDetailView);
  *
- * Members come from the file search (the whole subtree, as Members "Group by:
- * None"); Metadata from the cluster summary. The lanes come from one
+ * Members and Metadata come from what the view already loaded (the cluster
+ * summary, its direct members and its sample of the subtree). The lanes come from one
  * /api/bin_sim/nway call (`columns=files`, lanes closed, no page limit: the
  * groups without their rows), drawn when it answers. A lane or a file opens the
  * Functions tab on the N-way Focus that holds exactly its functions. Colors and
@@ -50,12 +50,15 @@
 .cov-more { font-size:0.72rem; color:var(--dim); padding-left:28px; }
 .cov-sbar { display:flex; gap:2px; height:10px; border-radius:4px; overflow:hidden; background:var(--hover); }
 .cov-sbar > span { display:block; min-width:3px; }
-.cov-sbar.tall { height:16px; }
-.cov-sbar.tall > span { font-size:0.62rem; line-height:16px; color:var(--bg); padding-left:5px; white-space:nowrap; overflow:hidden; }
-.cov-dist { display:grid; grid-template-columns:72px minmax(0,1fr); gap:8px; align-items:center; font-size:0.75rem; color:var(--dim); }
-.cov-dist i { width:14px; text-align:center; margin-right:4px; }
+.cov-mrow { display:grid; grid-template-columns:minmax(0,1fr) 80px 34px; gap:8px; align-items:center; font-size:0.78rem; padding:2px 0; }
+.cov-mrow > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:flex; align-items:center; gap:7px; }
+.cov-mrow > span:first-child i { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+.cov-mrow > span:last-child { text-align:right; font-variant-numeric:tabular-nums; }
+.cov-mbar { height:5px; border-radius:3px; background:var(--hover); overflow:hidden; }
+.cov-mbar > span { display:block; height:100%; border-radius:3px; }
 .cov-h3 { font-size:0.62rem; text-transform:uppercase; letter-spacing:1px; color:var(--dim); margin-bottom:5px; }
-.cov-fpm { display:flex; gap:16px; font-size:0.8rem; color:var(--dim); }
+.cov-fpm { display:flex; gap:8px 16px; flex-wrap:wrap; font-size:0.78rem; color:var(--dim); }
+.cov-fpm i, .cov-h3 i { margin-right:3px; }
 .cov-fpm b { color:var(--text); }
 .cov-chips { display:flex; gap:5px; flex-wrap:wrap; }
 .cov-chip { font-size:0.68rem; padding:1px 7px 1px 5px; border-radius:10px; border:1px solid var(--border); white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; display:inline-flex; align-items:center; gap:5px; }
@@ -136,68 +139,83 @@
         <span class="cov-ico" style="--c:${color}"><i class="${icon}"></i></span><b>${name}</b>
         <i class="fa-solid fa-circle-info cov-info" title="${escapeAttr(info)}"></i>${right || ''}</div>`;
     const btn = (icon, color, label, js, tip) => `<button class="btn-code-action cov-btn" style="--c:${color}" ${tip ? `title="${escapeAttr(tip)}"` : ''} ${go(js)}><i class="${icon}"></i> ${escapeHtml(label)}</button>`;
-    const sbar = (parts, tall) => `<div class="cov-sbar${tall ? ' tall' : ''}">${parts.filter(p => p[1] > 0)
-        .map(([color, v, label]) => `<span style="flex:${Number(v)}; background:${color}" title="${escapeAttr(`${label}: ${num(v)}`)}">${tall ? escapeHtml(label) : ''}</span>`).join('')}</div>`;
+    const sbar = parts => `<div class="cov-sbar">${parts.filter(p => p[1] > 0)
+        .map(([color, v, label]) => `<span style="flex:${Number(v)}; background:${color}" title="${escapeAttr(`${label}: ${num(v)}`)}"></span>`).join('')}</div>`;
     const fullBtn = () => btn('fa-solid fa-expand', 'var(--accent)', 'Full screen', 'ClusterDetailView.openFunctionsFull(event)', 'Open the N-way table on its own page');
 
-    // ---- Members: the whole subtree, from the file search ----
-    function membersCard(c) {
+    // ---- Members: the main file, the most central direct members, then the summary's sample of the subtree ----
+    // ponytail: no file search here -- its bin_cluster_uuid index is empty for any node with children.
+    function membersCard(v, c) {
+        const direct = v.memberCache[c.cluster_uuid] || [];
+        const kids = (v.childrenMap[c.cluster_id] || []).length;
+        const med = c.medoid || '';
+        const mf = (v._medoidFiles || {})[med] || {};
+        const named = Object.fromEntries([...(c.sample_members || []), ...direct].map(m => [m.id, m.file_name || m.name]));
+        const known = Object.fromEntries(direct.map(m => [m.id, m]));
+        const seen = new Set(), files = [];
+        const add = (id, name, arch, cen) => {
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            const k = known[id] || {};
+            files.push({ id, name: name || named[id], arch: arch || k.language_id, cen: cen ?? k.centrality });
+        };
+        if (med) add(med, mf.file_name, mf.language_id);
+        [...direct].sort((a, b) => (b.centrality ?? -1) - (a.centrality ?? -1)).forEach(m => add(m.id, m.name, m.language_id, m.centrality));
+        (c.sample_members || []).forEach(m => add(m.id, m.file_name || m.name));
+        const total = Number(c.count || 0);
+        const rows = files.slice(0, TOP).map(f => {
+            const at = String(f.id).lastIndexOf(':file:');
+            const coll = at > 0 ? f.id.slice(0, at) : v.collection || '';
+            const md5 = String(f.id).split(':').pop();
+            const arch = String(f.arch || '').split(':')[0];
+            return `<div class="cov-row">
+                <span style="color:var(--accent)" ${f.id === med ? 'title="Main file (medoid)"' : ''}>${f.id === med ? '★' : ''}</span>
+                ${EntityRenderer.renderFileName(f.name || md5, md5, coll)}
+                <span>${arch ? `<span class="cov-arch">${escapeHtml(arch)}</span>` : ''}</span>
+                <span class="dim" style="text-align:right" ${f.cen == null ? '' : 'title="Centrality"'}>${f.cen == null ? '' : Number(f.cen).toFixed(2)}</span></div>`;
+        }).join('');
+        const more = [total > TOP ? `+${num(total - Math.min(TOP, files.length))} more` : '', kids ? `${num(kids)} sub-cluster${kids > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
         return `<div class="cov-card">
-            ${title('fa-solid fa-users', 'var(--accent)', 'Members', 'Every file of this cluster and its sub-clusters. ★ is the main file, the most central one.', `<span class="cov-big" id="cov-mem-total">${num(c.count)}<small>files</small></span>`)}
-            <div class="cov-list" id="cov-mem-list">${spin('Loading members…')}</div>
+            ${title('fa-solid fa-users', 'var(--accent)', 'Members', 'Every file of this cluster and its sub-clusters. ★ is the main file, the most central one.', `<span class="cov-big">${num(total)}<small>files</small></span>`)}
+            <div class="cov-list">${rows || '<div class="dim">No members listed.</div>'}${more ? `<div class="cov-more">${more}</div>` : ''}</div>
             <div class="cov-foot">${btn('fa-solid fa-list', 'var(--accent)', 'All members', "ClusterDetailView.switchTab('members')")}</div>
         </div>`;
     }
 
-    async function loadMembers(el, v, c) {
-        const uuid = c.cluster_uuid;
-        const qs = new URLSearchParams({ bin_cluster_uuid: uuid, limit: String(TOP * 2) });
-        if (v.params && v.params.pool) qs.set('pool', v.params.pool);
-        if (v.collection) qs.set('collection', v.collection);
-        let data;
-        try {
-            const res = await fetch(`/api/file/search?${qs.toString()}`);
-            if (!res.ok) throw new Error(`File search failed (${res.status})`);
-            data = await res.json();
-        } catch (e) {
-            data = { error: e.message };
+    // `AARCH64:LE:64:v8A` -> `AARCH64 64-bit`; `Executable and Linking Format (ELF)` -> `ELF`.
+    const shortValue = (key, value) => {
+        const v = String(value ?? '');
+        if (key === 'arch') {
+            const p = v.split(':');
+            return p.length > 2 ? `${p[0]} ${p[2]}-bit` : v;
         }
-        const box = el.querySelector('#cov-mem-list');
-        if (v.selectedClusterUuid !== uuid || !box) return;
-        if (data.error) { box.innerHTML = `<div class="dim">${escapeHtml(data.error)}</div>`; return; }
-        const medMd5 = String(c.medoid || '').split(':file:').pop();
-        const cen = Object.fromEntries((v.memberCache[uuid] || []).map(m => [m.file_md5, m.centrality]));
-        let files = (data.files || []).map(m => ({ ...m, md5: m.md5 || m.file_md5 }));
-        const med = files.find(f => f.md5 === medMd5) || (medMd5 && (v._medoidFiles || {})[c.medoid]);
-        files = files.filter(f => f.md5 !== medMd5);
-        if (med && (med.file_name || med.md5)) files.unshift({ ...med, md5: medMd5 });
-        const total = Number(data.total ?? c.count);
-        el.querySelector('#cov-mem-total').innerHTML = `${num(total)}<small>files</small>`;
-        box.innerHTML = files.slice(0, TOP).map(f => {
-            const k = cen[f.md5];
-            const arch = String(f.language_id || '').split(':')[0];
-            return `<div class="cov-row" ${k == null ? '' : `title="Centrality ${Number(k).toFixed(2)}"`}>
-                <span style="color:var(--accent)">${f.md5 === medMd5 ? '★' : ''}</span>
-                ${EntityRenderer.renderFileName(f.file_name || f.name || f.md5, f.md5, f.collection || v.collection || '')}
-                <span>${arch ? `<span class="cov-arch">${escapeHtml(arch)}</span>` : ''}</span>
-                <span class="dim" style="text-align:right">${f.function_count != null ? num(f.function_count) : ''}</span></div>`;
-        }).join('') + (total > TOP ? `<div class="cov-more">+${num(total - TOP)} more</div>` : '');
+        return (v.match(/\(([^)]+)\)\s*$/) || [null, v])[1];
+    };
+
+    // Top values of one distribution as ranked rows: dot, value, coverage bar, percent.
+    function distBlock(label, icon, key, d) {
+        const top = [...d].sort((a, b) => b.count - a.count).slice(0, 3);
+        return `<div><div class="cov-h3"><i class="${icon}"></i> ${label}</div>${top.map((it, i) => {
+            const color = metadataColor(it, i), pct = metadataPercent(it);
+            return `<div class="cov-mrow" title="${escapeAttr(`${it.value}: ${it.count}`)}"><span><i style="background:${escapeAttr(color)}"></i>${escapeHtml(shortValue(key, it.value))}</span>
+                <span class="cov-mbar"><span style="width:${Math.min(100, pct)}%; background:${escapeAttr(color)}"></span></span><span class="dim">${pct.toFixed(0)}%</span></div>`;
+        }).join('')}${d.length > 3 ? `<div class="cov-more" style="padding-left:14px;">+${num(d.length - 3)} more</div>` : ''}</div>`;
     }
 
     // ---- Metadata: the cluster summary ----
     function metadataCard(c) {
-        const dists = [['Arch', 'fa-solid fa-microchip', c.architecture_distribution], ['Format', 'fa-solid fa-file-code', c.executable_format_distribution], ['Batch', 'fa-solid fa-box', c.batch_uuid_distribution]]
-            .filter(([, , d]) => d && d.length);
-        const rows = dists.map(([label, icon, d]) => `<div class="cov-dist"><span><i class="${icon}"></i>${label}</span>${sbar(d.map((it, i) => [metadataColor(it, i), it.count, String(it.value ?? '')]), true)}</div>`).join('');
+        const rows = [['Architecture', 'fa-solid fa-microchip', 'arch', c.architecture_distribution], ['Format', 'fa-solid fa-file-code', 'format', c.executable_format_distribution]]
+            .filter(([, , , d]) => d && d.length).map(a => distBlock(...a)).join('');
         const tags = [c.tag_distribution, c.file_tag_distribution].flatMap(by => Object.values(by || {}).flat())
             .sort((a, b) => metadataPercent(b) - metadataPercent(a)).slice(0, 6);
         const s = c.function_count_stats || {};
-        const fpm = s.min === undefined ? '' : `<div><div class="cov-h3">Functions per member</div>
-            <div class="cov-fpm">${[['min', s.min], ['avg', s.avg], ['max', s.max]].map(([l, x]) => `<span>${l} <b>${num(Math.round(x))}</b></span>`).join('')}</div></div>`;
+        const batches = (c.batch_uuid_distribution || []).length;
+        const fpm = s.min === undefined && !batches ? '' : `<div class="cov-fpm">${s.min === undefined ? '' : `<span title="Functions per member"><i class="fa-solid fa-list-ol"></i> ${[['min', s.min], ['avg', s.avg], ['max', s.max]].map(([l, x]) => `${l} <b>${num(Math.round(x))}</b>`).join(' · ')}</span>`}
+            ${batches ? `<span><i class="fa-solid fa-box"></i> <b>${num(batches)}</b> batch${batches > 1 ? 'es' : ''}</span>` : ''}</div>`;
         const archs = (c.architecture_distribution || []).length;
         return `<div class="cov-card">
             ${title('fa-solid fa-chart-pie', 'var(--info, #3b82f6)', 'Metadata', 'How the member files split by architecture, format and upload batch, and the tags most of them carry.', archs ? `<span class="cov-big">${num(archs)}<small>arch${archs > 1 ? 's' : ''}</small></span>` : '')}
-            ${rows ? `<div style="display:flex; flex-direction:column; gap:7px;">${rows}</div>` : `<div class="dim" style="font-size:0.78rem;">No distributions stored. A cluster below the configured min_cohesion reports none.</div>`}
+            ${rows ? `<div style="display:flex; flex-direction:column; gap:10px;">${rows}</div>` : `<div class="dim" style="font-size:0.78rem;">No distributions stored. A cluster below the configured min_cohesion reports none.</div>`}
             ${fpm}
             ${tags.length ? `<div class="cov-chips">${tags.map((t, i) => `<span class="cov-chip" style="--c:${escapeAttr(metadataColor(t, i, 'tag_id'))}" title="${escapeAttr(t.tag_id)}">${escapeHtml(t.tag_id)} <span class="dim">${metadataPercent(t).toFixed(0)}%</span></span>`).join('')}</div>` : ''}
             <div class="cov-foot">${btn('fa-solid fa-chart-pie', 'var(--info, #3b82f6)', 'All distributions', "ClusterDetailView.switchTab('metadata')")}</div>
@@ -378,10 +396,9 @@
             cur = null;
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
-                <div class="cov-hub">${membersCard(c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
+                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
                 ${fn ? `<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
-            loadMembers(el, v, c);
             if (fn) loadLanes(el, v, c);
         },
 

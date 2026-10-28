@@ -288,16 +288,16 @@ const routes = {
         title: 'Files',
         api: '/api/file/search',
         headers: [
-            { label: 'Filename', width: '17%' },
-            { label: 'MD5 / Arch', width: '11%', extra: true },
-            { label: 'Inferred Tags', width: '14%' },
-            { label: 'Batch UUID', width: '9%', extra: true },
-            { label: 'Status', width: '7%' },
-            { label: 'Funcs', width: '7%', sort: 'function_count' },
-            { label: 'Notes', width: '3%' },
-            { label: 'Clusters', width: '12%' },
-            { label: 'Entry Date', width: '8%', sort: 'entry_date' },
-            { label: 'Tags', width: '16%' }
+            // File takes what the fixed columns leave. Type, arch, status and
+            // first seen ride in it as a meta line instead of their own columns.
+            { label: 'File', width: 'auto' },
+            { label: 'MD5', width: '118px', extra: true },
+            { label: 'Batch', width: '104px', extra: true },
+            { label: 'Funcs', width: '98px', sort: 'function_count' },
+            { label: 'Clusters', width: '172px' },
+            { label: 'Tags', width: '36%' },
+            { label: 'Notes', width: '96px' },
+            { label: 'Added', width: '104px', sort: 'entry_date' }
         ],
         renderer: renderFiles
     },
@@ -1917,33 +1917,24 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         </th>
                         <th></th>`;
                 } else if (path === 'files') {
+                    // Same order as routes.files.headers: the File column carries
+                    // the filters of the fields it now shows (lang, type, status).
                     headHtml += `
-                        <th><input type="text" id="flt-file-name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-${showExtraFileCols() ? `                        <th>
-                            <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-file-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                            </div>
-                        </th>` : ''}
-                        <th>
-                            <input type="text" id="flt-file-inf-tags" value="${escapeAttr(p.get('inferred_tags') || '')}" placeholder="Inf.Tags..." title="Namespace-aware inferred tags" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
-                        </th>
-${showExtraFileCols() ? `                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>` : ''}
-                        <th>
-                            <select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                        <th><div class="ft-flt-stack">
+                            <input type="text" id="flt-file-name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <div class="ft-flt-pair"><input type="text" id="flt-file-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
                                 ${['', 'pending', 'analyzing', 'failed', 'analyzed'].map(s => `<option value="${escapeAttr(s)}" ${(p.get('status') || '') === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All Statuses'}</option>`).join('')}
-                            </select>
-                        </th>
-                        <th>
-                            <div style="display:flex; align-items:center; gap:2px;">
+                            </select></div>
+                            <div class="ft-flt-pair"><input type="text" id="flt-file-inf-tags" value="${escapeAttr(p.get('inferred_tags') || '')}" placeholder="Inf.Tags..." title="Namespace-aware inferred tags" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);"><input type="text" id="flt-file-strings" placeholder="Has string..." value="${escapeAttr(p.get('strings') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div>
+                        </div></th>
+${showExtraFileCols() ? `                        <th><input type="text" id="flt-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>` : ''}
+                        <th><div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${escapeAttr(p.get('min_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
                                 <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${escapeAttr(p.get('max_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                            </div>
-                        </th>
-                        <th><div style="display:flex; flex-direction:column; gap:4px;"><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="text" id="flt-file-strings" placeholder="Has string..." value="${escapeAttr(p.get('strings') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
+                            </div></th>
+                        <th><div style="display:flex; flex-direction:column; gap:2px;">
                                 <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${escapeAttr(p.get('bin_cluster_uuid') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${escapeAttr(p.get('bin_cluster_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
@@ -1974,15 +1965,13 @@ ${showExtraFileCols() ? `                        <th><input type="text" id="flt-
                                         }).join('');
                                     })()}
                                 </div>
-                            </div>
-                        </th>
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
+                            </div></th>
+                        <th><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th><div style="display:flex; flex-direction:column; gap:2px;">
                                 <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${escapeAttr(p.get('min_entry_date') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${escapeAttr(p.get('max_entry_date') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                            </div>
-                        </th>
-                        <th><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>`;
+                            </div></th>`;
                 } else if (path === 'function-similarity' || path === 'functions') {
                     const values = {
                         function_name: p.get(path === 'function-similarity' ? 'name' : 'function_name') || '',

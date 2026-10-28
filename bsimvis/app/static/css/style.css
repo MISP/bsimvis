@@ -2375,61 +2375,125 @@ html.light-theme .analysis-tag-badge {
 
 .exp-badge { display:inline-block; margin-left:6px; padding:2px 5px; border-radius:4px; background:color-mix(in srgb, var(--warning, #d97706) 18%, transparent); color:var(--warning, #d97706); font-size:0.62rem; font-weight:bold; letter-spacing:.04em; text-transform:uppercase; vertical-align:middle; }
 
-/* --- File search tree (file_tree.js) ------------------------------------ */
+
+/* --- File search (file_tree.js, TableRenderers._fileRows) --------------- */
+
+/* Toolbar: segmented icon controls, same 30px height as the header buttons. */
+.ft-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.ft-tool-label { color:var(--dim); font-size:0.7rem; margin:0 -2px; }
+.ft-seg {
+    display:inline-flex; align-items:stretch; height:30px; box-sizing:border-box;
+    border:1px solid var(--border); border-radius:6px; overflow:hidden; background:var(--meta-header-bg);
+}
+.ft-seg-btn {
+    --ft-axis: var(--accent);
+    display:inline-flex; align-items:center; gap:6px; padding:0 10px;
+    background:none; border:none; border-right:1px solid var(--border);
+    color:var(--subtle); font-size:0.75rem; font-weight:600; cursor:pointer; transition:background .15s, color .15s;
+}
+.ft-seg-btn:last-child { border-right:none; }
+.ft-seg-btn i { font-size:0.75rem; }
+.ft-seg-btn:hover { color:var(--text); background:var(--hover); }
+.ft-seg-btn.active { color:var(--ft-axis); background:color-mix(in srgb, var(--ft-axis) 14%, transparent); }
+.ft-seg-btn:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+
+.ft-foldbox {
+    display:inline-flex; align-items:center; gap:4px; height:30px; box-sizing:border-box;
+    padding:0 6px; min-width:180px; max-width:420px; flex-wrap:nowrap; overflow:hidden;
+    border:1px solid var(--border); border-radius:6px; background:var(--meta-header-bg);
+}
+.ft-foldbox:focus-within { border-color:var(--accent); }
+.ft-fold-icon { color:var(--dim); font-size:0.7rem; margin-right:2px; }
+.ft-foldbox input {
+    flex:1; min-width:70px; background:none; border:none; outline:none;
+    color:var(--text); font-size:0.72rem; padding:0;
+}
+.ft-fold-chip {
+    display:inline-flex; align-items:center; gap:3px; white-space:nowrap;
+    font-family:monospace; font-size:0.66rem; padding:1px 2px 1px 7px; border-radius:10px;
+    background:color-mix(in srgb, var(--accent) 14%, transparent); color:var(--accent);
+}
+.ft-fold-chip button { background:none; border:none; color:inherit; cursor:pointer; padding:0 3px; font-size:0.6rem; opacity:.7; }
+.ft-fold-chip button:hover { opacity:1; }
+
+/* Filter row: the File column stacks the filters of the fields it shows. */
+.ft-flt-stack { display:flex; flex-direction:column; gap:3px; }
+.ft-flt-stack input, .ft-flt-stack select { font-size:0.62rem !important; width:100%; box-sizing:border-box; min-width:0; }
+.ft-flt-pair { display:flex; gap:3px; }
+.ft-flt-pair > * { flex:1 1 0; min-width:0; }
+
+/* Rows */
+#data-table tr.ft-row > td { padding-top:5px; padding-bottom:5px; vertical-align:middle; font-size:0.75rem; }
+#data-table tr.ft-row:hover > td { background:color-mix(in srgb, var(--accent) 4%, transparent); }
+.ft-file-cell { min-width:0; }
+.ft-name { min-width:0; }
+.ft-name-text { min-width:0; white-space:normal; overflow-wrap:anywhere; line-height:1.25; }
+.ft-prefix { color:var(--subtle); opacity:0.75; font-family:monospace; font-size:0.68rem; }
+.ft-chev { display:inline-block; width:16px; flex-shrink:0; color:var(--dim); cursor:pointer; font-size:0.62rem; text-align:center; }
+.ft-chev:hover { color:var(--accent); }
+.ft-ic-arc { color:var(--accent); font-size:0.75rem; }
+.ft-ic-packed { color:var(--info); font-size:0.75rem; }
+.ft-kind {
+    font-family:monospace; font-size:0.58rem; text-transform:uppercase; letter-spacing:0.04em;
+    padding:0 5px; border-radius:3px; flex-shrink:0;
+    border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); color:var(--accent);
+}
+.ft-kind-packed { border-color:color-mix(in srgb, var(--info) 45%, transparent); color:var(--info); }
+.ft-badge {
+    font-size:0.58rem; padding:0 6px; border-radius:9px; flex-shrink:0;
+    background:color-mix(in srgb, var(--info) 15%, transparent); color:var(--info);
+}
+
+.ft-meta {
+    display:flex; align-items:center; flex-wrap:wrap; gap:0 6px; margin-top:2px;
+    color:var(--dim); font-size:0.64rem; line-height:1.35; min-width:0;
+}
+.ft-meta > span { min-width:0; }
+.ft-meta-type { max-width:32ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ft-meta-arch { font-family:monospace; }
+.ft-meta-sub { color:var(--subtle); }
+.ft-meta-sep { opacity:0.5; }
+.ft-meta .job-status-badge { font-size:0.58rem; padding:0 6px; }
+
+.ft-num { text-align:right; font-family:monospace; font-variant-numeric:tabular-nums; font-weight:600; padding-right:14px !important; }
+.ft-date { font-family:monospace; font-size:0.68rem; white-space:nowrap; }
+
+/* Tags: at most two lines of chips; the editor's own "+N" holds the rest. */
+.ft-tags-cell { padding-top:4px; padding-bottom:4px; }
+.ft-tags-cell .entity-tags-editor { max-height:3.4em; overflow:hidden; }
+.ft-tags-cell .analysis-tag-badge {
+    max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;
+}
 
 /* Full value in the DOM, clipped on screen: selecting it copies all of it. */
 .ft-clip-cell { display:flex; align-items:center; gap:4px; min-width:0; }
 .ft-clip {
     display:inline-block; max-width:11ch; overflow:hidden; text-overflow:ellipsis;
-    white-space:nowrap; vertical-align:bottom; min-width:0;
+    white-space:nowrap; vertical-align:bottom; min-width:0; font-size:0.7rem;
 }
 .ft-clip .entity-md5 { display:inline; }
 .ft-copy {
     background:none; border:none; color:var(--dim); cursor:pointer; padding:0 2px;
-    font-size:0.7rem; opacity:0.5; flex-shrink:0;
+    font-size:0.68rem; opacity:0; flex-shrink:0; transition:opacity .15s;
 }
-.ft-copy:hover, .ft-copy.success { opacity:1; color:var(--accent); }
+tr:hover .ft-copy, .ft-copy:focus-visible { opacity:0.6; }
+.ft-copy:hover, .ft-copy.success { opacity:1 !important; color:var(--accent); }
 
-.ft-name-text { min-width:0; overflow-wrap:anywhere; }
-.ft-prefix { color:var(--subtle); opacity:0.8; font-family:monospace; font-size:0.7rem; }
-.ft-chev { display:inline-block; width:16px; flex-shrink:0; color:var(--dim); cursor:pointer; font-size:0.65rem; text-align:center; }
-.ft-chev:hover { color:var(--accent); }
-.ft-ic-arc { color:var(--accent); font-size:0.75rem; }
-.ft-ic-packed { color:var(--info); font-size:0.75rem; }
-.ft-kind {
-    font-family:monospace; font-size:0.6rem; text-transform:uppercase; letter-spacing:0.03em;
-    padding:0 5px; border-radius:3px; border:1px solid color-mix(in srgb, var(--accent) 50%, transparent);
-    color:var(--accent);
-}
-.ft-kind-packed { border-color:color-mix(in srgb, var(--info) 50%, transparent); color:var(--info); }
-.ft-badge {
-    font-size:0.6rem; padding:0 6px; border-radius:9px;
-    background:color-mix(in srgb, var(--info) 15%, transparent); color:var(--info);
-}
-.ft-sub { color:var(--dim); font-size:0.65rem; margin-top:1px; }
-
-tr.ft-band > td { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+/* Archive bands and cluster groups */
+#data-table tr.ft-band > td { background:color-mix(in srgb, var(--accent) 6%, transparent); border-top:1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); }
 tr.ft-band .ft-name-text .lineage-link { font-size:0.8rem; }
 
+tr.ft-group > td {
+    background:color-mix(in srgb, var(--accent) 6%, transparent);
+    border-top:1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); padding:6px 10px;
+}
+.ft-group-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.75rem; }
+.ft-group-head .cluster-cards-container { margin:0; padding:0; }
+
 tr.ft-fold > td, tr.ft-note > td {
-    font-size:0.7rem; color:var(--subtle); padding-top:4px; padding-bottom:4px; cursor:pointer;
+    font-size:0.7rem; color:var(--subtle); padding-top:3px; padding-bottom:3px; cursor:pointer;
     border-bottom:1px dashed var(--border);
 }
 tr.ft-note > td { cursor:default; font-style:italic; }
 tr.ft-fold:hover > td { background:var(--hover); color:var(--text); }
 tr.ft-fold b { color:var(--text); font-weight:500; }
-
-tr.ft-group > td {
-    background:color-mix(in srgb, var(--accent) 7%, transparent);
-    border-top:1px solid var(--border); padding:6px 10px;
-}
-.ft-group-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:0.75rem; }
-.ft-group-head .cluster-cards-container { margin:0; padding:0; }
-
-.ft-select, .ft-fold-input {
-    background:var(--window-tray); border:1px solid var(--border); color:var(--text);
-    font-size:0.7rem; padding:3px 6px; border-radius:4px;
-}
-.ft-fold-input { width:170px; }
-.ft-check { display:inline-flex; align-items:center; gap:4px; font-size:0.72rem; color:var(--text); cursor:pointer; white-space:nowrap; }
-.ft-name-text { white-space:normal; }

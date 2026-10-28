@@ -370,8 +370,6 @@ window.TableRenderers = {
                 <td class="sim-cell"></td>
                 <td class="sim-cell"></td>
                 <td class="sim-cell"></td>
-                <td class="sim-cell"></td>
-                <td class="sim-cell"></td>
                 ${renderCollectionCell(col)}
             </tr>`;
     },
@@ -426,8 +424,30 @@ window.TableRenderers = {
                     </div>
                     ${contextHtml}`;
 
+            // One meta line under the name instead of a column each: what the
+            // file is, where it runs, when it was first seen, and its status
+            // only while it is not simply analyzed.
+            const filetype = Array.isArray(f['filetype']) ? f['filetype'].join(', ') : (f['filetype'] || '');
+            const day = v => {
+                const d = new Date(toEpochMs(v));
+                return isNaN(d) ? String(v) : d.toISOString().slice(0, 10);
+            };
+            const seen = [].concat(f['first_seen'] || []).filter(Boolean).map(day).join(', ');
+            const busy = (f.status && f.status !== 'analyzed')
+                || (window.activeJobsByTarget && window.activeJobsByTarget[f['file_md5']]);
+            const meta = [
+                tree && tree.sub ? `<span class="ft-meta-sub">${escapeHtml(tree.sub)}</span>` : '',
+                filetype ? `<span class="ft-meta-type" title="${escapeAttr(filetype)}">${escapeHtml(filetype)}</span>` : '',
+                f['language_id'] ? `<span class="ft-meta-arch">${escapeHtml(f['language_id'])}</span>` : '',
+                seen ? `<span title="First seen">seen ${escapeHtml(seen)}</span>` : '',
+                busy ? fileStatusBadgeHtml(f) : '',
+            ].filter(Boolean).join('<span class="ft-meta-sep">·</span>');
+            const indent = tree ? depth * 18 + 22 : depth * 18;
+
+            const entryShort = f['entry_date'] ? day(f['entry_date']) : '---';
+
             return `
-            <tr class="sim-row${depth > 0 && !tree ? ' lineage-row' : ''}${tree && tree.band ? ' ft-band' : ''}" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
+            <tr class="sim-row ft-row${depth > 0 && !tree ? ' lineage-row' : ''}${tree && tree.band ? ' ft-band' : ''}" style="background: ${rowStyle};" data-id="${escapeAttr(fileId)}"
                 ${tree ? `data-ft-anc="${escapeAttr(tree.anc || '')}"` : ''}
                 data-lineage-depth="${depth}" data-lineage-md5="${escapeAttr(f['file_md5'])}"
                 data-lineage-parent="${escapeAttr(parentMd5 || f['parent_md5'] || '')}"
@@ -440,47 +460,27 @@ window.TableRenderers = {
                     collection: col
                 }))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
-                <td class="sim-cell">${nameCell}</td>
+                <td class="sim-cell ft-file-cell">
+                    ${nameCell}
+                    ${meta ? `<div class="ft-meta" style="padding-left:${indent}px;">${meta}</div>` : ''}
+                </td>
                 ${extraCols ? `<td class="sim-cell">
                     <div class="ft-clip-cell"><span class="ft-clip">${EntityRenderer.renderMd5(f['file_md5'], { full: true })}</span>${copyFullButton(f['file_md5'], 'MD5')}</div>
-                    <div class="dim" style="font-size:0.65rem">${escapeHtml(f['language_id'])}</div>
-                </td>` : ''}
-                <td class="sim-cell">
-                    <div style="display:flex; flex-direction:column; gap:2px; font-size:0.65rem;">
-                        ${(() => {
-                            // Plan D3.5/D5: yara/avtype/cc_ip retired -- the file's own tag
-                            // chips (Tags column) carry the av:/yara:/ip: evidence now.
-                            // filetype stays a plain field (Decision 5). Cluster
-                            // distributions were never sent on this listing (stripped
-                            // for payload size), so there was never a real inferred
-                            // fallback to preserve here.
-                            const val = f['filetype'];
-                            return (val && val.length)
-                                ? `<div class="dim">Type: <span style="color:var(--accent)">${escapeHtml(Array.isArray(val) ? val.join(', ') : val)}</span></div>`
-                                : '';
-                        })()}
-                        ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${escapeHtml(Array.isArray(f['first_seen']) ? f['first_seen'].join(', ') : f['first_seen'])}</span></div>` : ''}
-                    </div>
                 </td>
-                ${extraCols ? `<td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
-                    <div class="ft-clip-cell"><span class="ft-clip">${escapeHtml(batchUuid)}</span>${batchUuid !== '---' ? copyFullButton(batchUuid, 'batch UUID') : ''}</div>
+                <td class="sim-cell" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
+                    <div class="ft-clip-cell"><span class="ft-clip mono dim">${escapeHtml(batchUuid)}</span>${batchUuid !== '---' ? copyFullButton(batchUuid, 'batch UUID') : ''}</div>
                 </td>` : ''}
-                <td class="sim-cell">${fileStatusBadgeHtml(f)}</td>
-                <td class="sim-cell">
-                    <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
-                        <span style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</span>
-                    </div>
+                <td class="sim-cell ft-num">${Number(funcCount).toLocaleString()}</td>
+                <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
+                    ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}
+                </td>
+                <td class="ft-tags-cell">
+                    ${EntityRenderer.renderTag('file', fileId, tags, user_tags, { maxTags: 3 })}
                 </td>
                 <td class="sim-cell file-note-cell" style="text-align:center;">
                     ${EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f })}
                 </td>
-                <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
-                    ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}
-                </td>
-                <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
-                <td>
-                    ${EntityRenderer.renderTag('file', fileId, tags, user_tags, { maxTags: 4 })}
-                </td>
+                <td class="sim-cell dim ft-date" title="${escapeAttr(formatDate(f['entry_date']))}">${entryShort}</td>
                 ${renderCollectionCell(col)}
             </tr>
         `;

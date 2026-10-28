@@ -53,23 +53,93 @@ window.FileTree = {
         navigate(viewKey, params);
     },
 
+    _folds(params) {
+        return (params.get('fold_tag') || '').split(',').map(t => t.trim()).filter(Boolean);
+    },
+
+    addFold(tag) {
+        const { params } = getRoutingState();
+        const folds = this._folds(params);
+        tag = String(tag || '').trim();
+        if (tag && !folds.includes(tag)) this.setParam('fold_tag', [...folds, tag].join(','));
+    },
+
+    removeFold(tag) {
+        const { params } = getRoutingState();
+        this.setParam('fold_tag', this._folds(params).filter(t => t !== tag).join(','));
+    },
+
+    _foldKey(event, input) {
+        if (event.key === 'Enter') { event.preventDefault(); this.addFold(input.value); }
+        else if (event.key === 'Backspace' && !input.value) {
+            const folds = this._folds(getRoutingState().params);
+            if (folds.length) this.removeFold(folds[folds.length - 1]);
+        }
+    },
+
+    /** Open or close every archive band / cluster group at once. Folds stay as they are. */
+    setAllOpen(open) {
+        const tbody = document.getElementById('table-body');
+        if (!tbody) return;
+        if (open) this._collapsed.clear();
+        else tbody.querySelectorAll('[data-ft-toggle]').forEach(el => {
+            const id = el.dataset.ftToggle;
+            if (!id.startsWith('f:')) this._collapsed.add(id);
+        });
+        this.applyVisibility(tbody);
+    },
+
     toolbarHtml(params) {
         const mode = params.get('group') === 'cluster' ? 'cluster' : 'archive';
         const axis = params.get('group_axis') || 'code';
         const nodes = params.get('group_nodes') || 'file';
-        const sel = (id, key, cur, opts) => `<select id="${id}" class="ft-select" onchange="FileTree.setParam('${key}', this.value)">
-            ${opts.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
-        return `
-            <div class="view-toggle" title="How nested files are grouped">
-                <button class="view-btn ${mode === 'archive' ? 'active' : ''}" onclick="FileTree.setParam('group', '')">By archive</button>
-                <button class="view-btn ${mode === 'cluster' ? 'active' : ''}" onclick="FileTree.setParam('group', 'cluster')">By cluster</button>
-            </div>
-            ${mode === 'cluster' ? sel('ft-axis', 'group_axis', axis, this.AXES.map(a => [a, `${a[0].toUpperCase()}${a.slice(1)} clusters`]))
-                + sel('ft-nodes', 'group_nodes', nodes, [['file', 'Files'], ['container', 'Archives']]) : ''}
-            <input type="text" id="ft-fold-tag" class="ft-fold-input" placeholder="Fold tags: lib:*, stdlib" title="Fold the files carrying these tags into one line. A trailing * matches a prefix."
-                value="${escapeAttr(params.get('fold_tag') || '')}" onchange="FileTree.setParam('fold_tag', this.value.trim())">
-            <label class="ft-check" title="Show the MD5 and batch columns"><input type="checkbox" id="ft-extra-cols" ${this.extraCols() ? 'checked' : ''}
-                onchange="FileTree.setExtraCols(this.checked)"> MD5 &amp; batch</label>`;
+        const types = window.BinSimScoreTypes || {};
+        const seg = (items) => `<div class="ft-seg">${items.join('')}</div>`;
+        const btn = (on, onclick, icon, label, title, style = '') =>
+            `<button class="ft-seg-btn${on ? ' active' : ''}" onclick="${onclick}" title="${escapeAttr(title)}"${style ? ` style="${style}"` : ''}>
+                <i class="${icon}"></i>${label ? `<span>${label}</span>` : ''}</button>`;
+
+        const group = seg([
+            btn(mode === 'archive', "FileTree.setParam('group', '')", 'fa-solid fa-box-archive', 'Archives',
+                'Nest every result under the archives and packed binaries it came out of'),
+            btn(mode === 'cluster', "FileTree.setParam('group', 'cluster')", 'fa-solid fa-circle-nodes', 'Clusters',
+                'Group the loaded files by their best cluster'),
+        ]);
+
+        let modeControls;
+        if (mode === 'cluster') {
+            const axes = seg(['overall', 'code', 'library', 'content'].map(a => {
+                const meta = types[a === 'overall' ? 'score' : `score_${a}`] || {};
+                const color = meta.color || 'var(--accent)';
+                return btn(axis === a, `FileTree.setParam('group_axis', '${a}')`, meta.icon || 'fa-solid fa-layer-group', '',
+                    `Group by ${meta.label || a} clusters`, `--ft-axis:${color}`);
+            }));
+            const kind = seg([
+                btn(nodes === 'file', "FileTree.setParam('group_nodes', '')", 'fa-regular fa-file', '', 'Group files by their file clusters'),
+                btn(nodes === 'container', "FileTree.setParam('group_nodes', 'container')", 'fa-solid fa-box-archive', '', 'Group archives by their archive clusters'),
+            ]);
+            modeControls = `<span class="ft-tool-label">by</span>${axes}${kind}`;
+        } else {
+            modeControls = seg([
+                btn(false, 'FileTree.setAllOpen(true)', 'fa-solid fa-angles-down', '', 'Expand every archive'),
+                btn(false, 'FileTree.setAllOpen(false)', 'fa-solid fa-angles-up', '', 'Collapse every archive'),
+            ]);
+        }
+
+        const folds = this._folds(params);
+        const fold = `
+            <div class="ft-foldbox" title="Fold the files carrying these tags into one line per archive or cluster. A trailing * matches a prefix (lib:*).">
+                <i class="fa-solid fa-compress ft-fold-icon"></i>
+                ${folds.map(t => `<span class="ft-fold-chip">${escapeHtml(t)}<button title="Stop folding ${escapeAttr(t)}" onclick="FileTree.removeFold(${escapeAttr(jsString(t))})"><i class="fa-solid fa-xmark"></i></button></span>`).join('')}
+                <input type="text" id="ft-fold-tag" placeholder="${folds.length ? '' : 'Fold tag… lib:*'}" autocomplete="off"
+                    onkeydown="FileTree._foldKey(event, this)"
+                    onfocus="attachTagAutocomplete(this, (val) => FileTree.addFold(val))">
+            </div>`;
+
+        const extra = seg([btn(this.extraCols(), `FileTree.setExtraCols(${!this.extraCols()})`, 'fa-solid fa-hashtag', 'MD5',
+            this.extraCols() ? 'Hide the MD5 and batch columns' : 'Show the MD5 and batch columns')]);
+
+        return `<div class="ft-toolbar">${group}${modeControls}${fold}${extra}</div>`;
     },
 
     // --- entry point -----------------------------------------------------
@@ -205,8 +275,7 @@ window.FileTree = {
                 ${chev}${icon}${kind}
                 <span class="ft-name-text">${tree.prefix ? `<span class="ft-prefix" title="${escapeAttr(tree.prefix)}">${escapeHtml(tree.prefix)}</span>` : ''}${name}</span>
                 ${tree.unpacked ? '<span class="ft-badge">unpacked</span>' : ''}
-            </div>
-            ${tree.sub ? `<div class="ft-sub" style="padding-left:${depth * 18 + 22}px;">${tree.sub}</div>` : ''}`;
+            </div>`;
     },
 
     // --- by archive ------------------------------------------------------

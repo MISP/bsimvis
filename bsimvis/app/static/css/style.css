@@ -2641,7 +2641,6 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 .fb-grid tr.fb-li { cursor:pointer; }
 .fb-grid tr.fb-li.selected > td { background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); }
 .fb-grid tr.fb-li.selected > td:first-child { box-shadow:inset 3px 0 0 var(--accent); }
-.fb-grid td.selected-cell { background:color-mix(in srgb, var(--accent) 22%, var(--fb-surface)) !important; }
 .fb-tr-grouphead { display:flex; align-items:flex-start; gap:8px; }
 .fb-td-file { display:flex; align-items:center; gap:8px; min-width:0; padding-left:calc(var(--indent, 0) * 18px); }
 .fb-li-text { min-width:0; display:flex; flex-direction:column; gap:2px; }
@@ -2671,3 +2670,34 @@ tr:hover .ft-copy, .ft-copy:focus-visible { opacity:0.6; }
 .fb-grid tr.fb-gap > td { background:none !important; box-shadow:none !important; }
 .fb-detail { overflow-x:hidden; }
 .fb-crumbs span { min-width:0; overflow-wrap:anywhere; }
+
+/* Cell selection on the grid: a soft tint and a thin outline with rounded
+   corners, instead of the square 2px frame the plain tables use. Each edge
+   class only sets its own width; one box-shadow draws whichever are set.
+   A selection that crosses a card gap is closed at each card's edge, so it
+   reads as one rounded piece per card. */
+.fb-grid td.selected-cell {
+    --sel: color-mix(in srgb, var(--accent) 75%, transparent);
+    --st: 0px; --sb: 0px; --sl: 0px; --sr: 0px;
+    background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)) !important;
+    box-shadow:
+        inset 0 var(--st) 0 0 var(--sel), inset 0 calc(-1 * var(--sb)) 0 0 var(--sel),
+        inset var(--sl) 0 0 0 var(--sel), inset calc(-1 * var(--sr)) 0 0 0 var(--sel) !important;
+}
+.fb-grid td.focused-cell { background:color-mix(in srgb, var(--accent) 22%, var(--fb-surface)) !important; }
+.fb-grid td.selected-cell.sel-t, .fb-grid tr.fb-first > td.selected-cell { --st: 1.5px; }
+.fb-grid td.selected-cell.sel-b, .fb-grid tr.fb-last > td.selected-cell { --sb: 1.5px; }
+.fb-grid td.selected-cell.sel-l { --sl: 1.5px; }
+.fb-grid td.selected-cell.sel-r { --sr: 1.5px; }
+.fb-grid td.selected-cell.sel-t.sel-l, .fb-grid tr.fb-first > td.selected-cell.sel-l { border-top-left-radius: 8px; }
+.fb-grid td.selected-cell.sel-t.sel-r, .fb-grid tr.fb-first > td.selected-cell.sel-r { border-top-right-radius: 8px; }
+.fb-grid td.selected-cell.sel-b.sel-l, .fb-grid tr.fb-last > td.selected-cell.sel-l { border-bottom-left-radius: 8px; }
+.fb-grid td.selected-cell.sel-b.sel-r, .fb-grid tr.fb-last > td.selected-cell.sel-r { border-bottom-right-radius: 8px; }
+/* Where the selection reaches a card corner, it follows the card's curve. */
+.fb-grid tr.fb-first > td.selected-cell.sel-l:first-child { border-top-left-radius: var(--fb-radius); }
+.fb-grid tr.fb-first > td.selected-cell.sel-r:last-child { border-top-right-radius: var(--fb-radius); }
+.fb-grid tr.fb-last > td.selected-cell.sel-l:first-child { border-bottom-left-radius: var(--fb-radius); }
+.fb-grid tr.fb-last > td.selected-cell.sel-r:last-child { border-bottom-right-radius: var(--fb-radius); }
+.fb-grid tr.fb-gap > td.selected-cell { background:none !important; box-shadow:none !important; }
+/* No row divider inside a selection. */
+.fb-grid tr:not(.fb-first) > td.selected-cell:not(.sel-t) { border-top-color: color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); }

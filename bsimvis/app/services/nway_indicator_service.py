@@ -240,7 +240,8 @@ def _string_name(value):
 
 def name_by_strings(r, rows):
     """Name rows that have no name at all (FUN_xxx, no tag, no cluster name) after the
-    string their functions share that few other functions use, so `name_from` = string.
+    string their functions share that few other functions use (`str_dev_watchdog`),
+    so `name_from` = string.
     """
     todo = [
         row
@@ -269,7 +270,11 @@ def name_by_strings(r, rows):
         ):
             best[id(row)] = ((held, -len(name)), row, name)
     for _, row, name in best.values():
-        row["name_was"], row["name"], row["name_from"] = row["name"], name, "string"
+        row["name_was"], row["name"], row["name_from"] = (
+            row["name"],
+            f"str_{name}",
+            "string",
+        )
 
 
 def _fid_at(doc):
@@ -813,7 +818,7 @@ def demo():
         {"name": "main", "cells": {"a": "c:func:m:f2"}},
     ]
     name_by_strings(_R(), rows)
-    assert [r["name"] for r in rows] == ["dev_watchdog", "main"], rows
+    assert [r["name"] for r in rows] == ["str_dev_watchdog", "main"], rows
     assert rows[0]["name_from"] == "string" and rows[0]["name_was"] == "FUN_0001"
     ctx = {"family": {"a", "b"}, "contrast": {"c", "d", "e"}, "ignored": {"f"}}
     s = stats({"a", "b"}, ctx)

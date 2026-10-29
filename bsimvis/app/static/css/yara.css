@@ -199,3 +199,5 @@
 .yw-vchip[aria-pressed=true] { background: var(--hover); border-color: var(--accent); }
 .yw-vchip[aria-pressed=true] button { color: var(--text); font-weight: 600; }
 .yw-badge.in { color: #10b981; }
+
+.yw-cl { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-size: 0.66rem; border-radius: 4px; padding: 1px 6px; margin: 2px 4px 0 0; background: color-mix(in srgb, #6366f1 16%, transparent); color: #818cf8; }

@@ -355,6 +355,11 @@ window.YaraView = {
     },
 
     // Quick actions on a file row: move it to the other set, or drop it from the test.
+    // Names of the clusters a file or function belongs to.
+    _clBadges(cl) {
+        return (cl || []).map(c => `<span class="yw-cl" title="${escapeAttr(`${c.name} (${c.size})`)}"><i class="fa-solid fa-circle-nodes"></i> ${escapeHtml(c.name)}</span>`).join('');
+    },
+
     _pinBtns(f, role) {
         const acts = [['target', 'fa-circle-check', 'Move to Must match'], ['negative', 'fa-circle-xmark', 'Move to Must not match'], ['drop', 'fa-ban', 'Drop from the test sets']];
         const args = `${escapeAttr(jsString(f.id))}, ${escapeAttr(jsString(f.name || ''))}`;
@@ -550,14 +555,14 @@ window.YaraView = {
                 <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
             note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${res.strings_sampled ? ' String counts come from a sample of the hit files.' : ''}${m ? '' : ' No Must match set, so no precision or recall.'}`;
             const pre = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length]];
-            tabs = m ? [...pre, ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]] : [...pre, ['hits', 'Matches', res.hits]];
+            tabs = m ? [...pre, ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true], ['scope', 'Scope', '']] : [...pre, ['hits', 'Matches', res.hits]];
         } else {
             head = `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
                 <div class="yw-m"><small>F1</small><strong>${this._pct(m.f1)}</strong></div>`;
             note = (s.negatives_scanned ? (s.sampled ? `<b>Sampled:</b> ${s.negatives_scanned} of ${s.negatives_available} negatives. Full sweep gives exact numbers.` : `${s.negatives_scanned} negatives scanned.`) : 'No negatives: only recall is measured.') +
                 (s.targets_truncated ? ' Targets truncated.' : '') + (s.unreadable ? ` ${s.unreadable} files have no stored bytes.` : '');
-            tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length], ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true]];
+            tabs = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length], ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true], ['scope', 'Scope', ''], ['clusters', 'Clusters', '']];
         }
         if (!tabs.some(t => t[0] === this._tab)) this._tab = tabs[0][0];
         const conf = m ? `<div class="yw-conf"><span>TP <b>${m.tp}</b></span><span>FN <b>${m.fn}</b></span><span class="${m.fp ? 'bad' : ''}">FP <b>${m.fp}</b></span><span>TN <b>${m.tn}</b></span></div>` : '';
@@ -570,12 +575,75 @@ window.YaraView = {
     setTab(k) {
         this._tab = k;
         this._paint();
+        if (k === 'clusters') this._loadHitmap();
+        if (k === 'scope') this._loadScope();
+    },
+
+    // File clusters to focus on: pure clusters that hold the targets, and the ones hiding the misses.
+    async _loadScope() {
+        const body = this._body(), key = JSON.stringify(body);
+        if (this._sc && this._sc.key === key) return;
+        this._sc = { key, loading: true };
+        this._paint();
+        try {
+            const r = await fetch('/api/yara/scope', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            this._sc = { key, data: await r.json() };
+        } catch (e) { this._sc = { key, error: String(e) }; }
+        this._paint();
+    },
+
+    _scopePane() {
+        const h = this._sc;
+        if (!h || h.loading) return '<div class="yw-hint">clustering the target files&hellip;</div>';
+        const d = h.data;
+        if (h.error || !d || !d.ok) return `<div class="yw-hint">${escapeHtml(h.error || (d && (d.message || 'no scope')) || 'no scope')}</div>`;
+        const table = (rows, cum) => rows.length ? `<table class="yw-fixed"><colgroup><col><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:84px"></colgroup>
+            <thead><tr><th>File cluster</th><th title="Files in the cluster">Size</th><th title="Target files">Targets</th><th title="Negative files (whole sets)">Neg</th><th title="Targets the rule hits">Hit</th><th title="Targets the rule misses">Missed</th><th title="${cum}">Covered</th></tr></thead><tbody>${rows.map(c => `<tr>
+            <td><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div></td><td class="yw-mono">${c.size}</td><td class="yw-mono">${c.targets}</td>
+            <td class="yw-mono" style="color:${c.negatives ? '#ef4444' : 'var(--subtle)'};">${c.negatives}</td><td class="yw-mono">${c.hit}</td>
+            <td class="yw-mono" style="color:${c.missed ? '#f59e0b' : 'var(--subtle)'};">${c.missed}</td><td class="yw-mono">+${c.gain} (${c.covered})</td></tr>`).join('')}</tbody></table>` : '<div class="yw-hint">none</div>';
+        const loose = d.impure.length ? `<div class="yw-dim" style="padding:10px 0 6px;">Clusters with targets but under ${Math.round(d.min_purity * 100)}% pure (too many negatives to scope to)</div>
+            <table class="yw-fixed"><colgroup><col><col style="width:64px"><col style="width:64px"><col style="width:64px"></colgroup><thead><tr><th>File cluster</th><th>Size</th><th>Targets</th><th>Neg</th></tr></thead><tbody>${d.impure.map(c => `<tr><td><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div></td><td class="yw-mono">${c.size}</td><td class="yw-mono">${c.targets}</td><td class="yw-mono" style="color:#ef4444;">${c.negatives}</td></tr>`).join('')}</tbody></table>` : '';
+        const cov = d.scope.length ? d.scope[d.scope.length - 1].covered : 0;
+        return `<div class="yw-dim" style="padding:6px 0;">Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample. ${d.unclustered} of ${d.targets} targets sit in no cohesive cluster.</div>
+            <div class="yw-dim" style="padding:6px 0;"><b>Focus on the misses</b> &middot; ${d.missed} targets missed. Clusters that hold most of them, best first.</div>${table(d.focus, 'Misses newly covered (running total)')}
+            <div class="yw-dim" style="padding:10px 0 6px;"><b>Proposed scope</b> &middot; ${cov} of ${d.targets} targets covered by ${d.scope.length} pure clusters.</div>${table(d.scope, 'Targets newly covered (running total)')}${loose}`;
+    },
+
+
+    // Function clusters the rule's hits land in: one cluster in many groups is a shared capability, in one group a family marker.
+    async _loadHitmap() {
+        const body = { ...this._body(), cap: 60 }, key = JSON.stringify(body);
+        if (this._hm && this._hm.key === key) return;
+        this._hm = { key, loading: true };
+        this._paint();
+        try {
+            const r = await fetch('/api/yara/hitmap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            this._hm = { key, data: await r.json() };
+        } catch (e) { this._hm = { key, error: String(e) }; }
+        this._paint();
+    },
+
+    _clustersPane() {
+        const h = this._hm;
+        if (!h || h.loading) return '<div class="yw-hint">mapping hits to function clusters&hellip;</div>';
+        if (h.error || !h.data || !h.data.ok) return `<div class="yw-hint">${escapeHtml(h.error || (h.data && (h.data.message || 'no map')) || 'no map')}</div>`;
+        const rows = h.data.clusters.map(c => `<tr>
+            <td><div class="yw-cut">${escapeHtml(c.name || String(c.cluster_id))}</div></td>
+            <td class="yw-mono">${c.hit_files}/${c.span_files}</td>
+            <td class="yw-mono">${escapeHtml(Object.entries(c.groups).map(([g, n]) => `${g} ${n}`).join(', '))}</td>
+            <td class="yw-mono">${escapeHtml(c.strings.join(' '))}</td></tr>`).join('');
+        return `<div class="yw-dim" style="padding:6px 0;">Hit files / files the cluster spans, per group. ${h.data.unclustered_functions} hit functions have no cluster.</div>
+            <table class="yw-fixed"><colgroup><col><col style="width:80px"><col style="width:34%"><col style="width:20%"></colgroup>
+            <thead><tr><th>Cluster</th><th>Files</th><th>Groups</th><th>Strings</th></tr></thead><tbody>${rows}</tbody></table>`;
     },
 
     // Missed / matches: file rows. True / false hits: the evidence, one row per match, folded by file.
     _resultPane(res) {
         if (this._tab === 'strings') return this._stringsPane(res);
         if (this._tab === 'groups') return this._groupsPane(res);
+        if (this._tab === 'clusters') return this._clustersPane();
+        if (this._tab === 'scope') return this._scopePane();
         const m = res.metrics || {};
         const [rows, total, detail] = this._tab === 'hits' ? [res.hit_files || [], res.hits] : this._tab === 'false' ? [res.false_hits, m.fp, true] : this._tab === 'true' ? [res.true_hits || [], m.tp, true] : [res.missed, m.fn];
         if (!rows.length) return '<div class="yw-hint">none</div>';
@@ -585,9 +653,9 @@ window.YaraView = {
         if (detail) return this._hitsPane(rows, role, res.rules.length > 1) + more;
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
-            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td><td>${this._pinBtns(f, role)}</td></tr>`;
+            return `<tr><td><div class="yw-cut">${EntityRenderer.renderFileName(f.name, md5, coll)}</div></td><td><div class="yw-cut">${EntityRenderer.renderMd5(md5, { collection: coll })}</div></td><td>${this._clBadges(f.clusters)}</td><td>${this._pinBtns(f, role)}</td></tr>`;
         }).join('');
-        return `${lead}<table class="yw-fixed"><colgroup><col><col style="width:110px"><col style="width:96px"></colgroup><thead><tr><th>File</th><th>md5</th><th></th></tr></thead><tbody>${body}</tbody></table>${more}`;
+        return `${lead}<table class="yw-fixed"><colgroup><col><col style="width:110px"><col style="width:34%"><col style="width:96px"></colgroup><thead><tr><th>File</th><th>md5</th><th>Clusters</th><th></th></tr></thead><tbody>${body}</tbody></table>${more}`;
     },
 
     // Suggested strings the rule lacks that sit in the missed files: adding one may bring them back.
@@ -619,7 +687,7 @@ window.YaraView = {
     // One row per (string, place) in each file: repeat instances fold into a count.
     _hitsPane(rows, role, manyRules) {
         this._rowIds = rows.map(f => f.id);
-        const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}</div>`;
+        const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}${this._clBadges(f.clusters)}</div>`;
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
             const ms = f.matches || [];
@@ -633,7 +701,7 @@ window.YaraView = {
             const head = `<tr class="yw-fh" onclick="YaraView.toggleFile(${escapeAttr(jsString(f.id))}, event)"><td colspan="4"><div class="yw-fhb">
                 <i class="fa-solid fa-chevron-${open ? 'down' : 'right'} yw-chev"></i>
                 <span class="yw-fname">${EntityRenderer.renderFileName(f.name, md5, coll)}</span> ${EntityRenderer.renderMd5(md5, { collection: coll })}
-                <span class="yw-dim">${ms.length ? `${ms.length} match${ms.length > 1 ? 'es' : ''}` : 'no details (list limit)'}</span>${rules}
+                <span class="yw-dim">${ms.length ? `${ms.length} match${ms.length > 1 ? 'es' : ''}` : 'no details (list limit)'}</span>${rules}${this._clBadges(f.clusters)}
                 <span class="yw-sp"></span>${this._pinBtns(f, role)}</div></td></tr>`;
             if (!open) return head;
             return head + [...groups.values()].map(({ x, n }) => {

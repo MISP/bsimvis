@@ -2037,6 +2037,50 @@ def run_all_tests():
         str(sorted(insights.keys()) if isinstance(insights, dict) else insights),
     )
 
+    # ── YARA workbench: lint, hit map, cluster seeds ───────────────────────
+    print(_color("\n  [YARA workbench]", BOLD))
+    lint = test_endpoint(
+        "POST",
+        "/api/yara/lint",
+        data={"rule": 'rule t {\n strings:\n  $a = "ab"\n condition:\n  any of them\n}'},
+    )
+    msgs = [w["message"] for w in (lint or {}).get("warnings", [])]
+    check(
+        "yara lint flags missing meta, short string, no ELF check",
+        any("meta `description` missing" in m for m in msgs)
+        and any("only 2 chars" in m for m in msgs)
+        and any("ELF magic" in m for m in msgs),
+        str(msgs)[:200],
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/seed/cluster",
+        data={},
+        expected_status=400,
+        label="POST /api/yara/seed/cluster without ids -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/seed/cluster",
+        data={"fids": ["not-a-fid"]},
+        expected_status=400,
+        label="POST /api/yara/seed/cluster bad fid -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/hitmap",
+        data={"collection": COLLECTION, "rule": "rule x {", "targets": []},
+        expected_status=400,
+        label="POST /api/yara/hitmap bad rule -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/scope",
+        data={"collection": COLLECTION, "rule": "rule x {", "targets": []},
+        expected_status=400,
+        label="POST /api/yara/scope bad rule -> 400",
+    )
+
     # ── Unified search ─────────────────────────────────────────────────────
     print(_color("\n  [Unified search]", BOLD))
     # Scope the entity fanout; collection-name matching still searches globally.

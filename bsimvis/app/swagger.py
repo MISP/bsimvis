@@ -4240,6 +4240,49 @@ class YaraSuggest(Resource):
         return _yara("post_suggest")
 
 
+@ns_yara.route("/lint")
+class YaraLint(Resource):
+    def post(self):
+        """Missing meta, no ELF check, weak strings. Body: `{rule}`."""
+        return _yara("post_lint")
+
+
+@ns_yara.route("/hitmap")
+class YaraHitmap(Resource):
+    @ns_yara.doc(
+        description="Body: `rule`, `cap` (files per set, default 60), `min_cohesion`, "
+        "scope as /test. Maps each hit to its function and the function's clusters."
+    )
+    def post(self):
+        """Function clusters a rule's hits land in, with files and groups per cluster."""
+        return _yara("post_hitmap")
+
+
+@ns_yara.route("/scope")
+class YaraScope(Resource):
+    @ns_yara.doc(
+        description="Body: `rule`, `min_purity` (default 0.8), `min_cohesion`, scope as "
+        "/test. Binary clusters holding target files, with purity against the whole "
+        "negative sets and the rule's hit/missed/false counts inside; `scope` covers "
+        "all targets, `focus` the ones the rule misses."
+    )
+    def post(self):
+        """File clusters worth focusing on to raise recall."""
+        return _yara("post_scope")
+
+
+@ns_yara.route("/seed/cluster")
+class YaraSeedCluster(Resource):
+    @ns_yara.doc(
+        description="Body: `collection` + `cluster_id`, or `fids` (e.g. an N-way row), "
+        "optional `per_arch` (default 16). Per language: the stable byte window of the "
+        "members (differing bytes `??`) and the share of sampled files that hold it."
+    )
+    def post(self):
+        """Hex seeds aligned across the members of a function cluster."""
+        return _yara("post_seed_cluster")
+
+
 @ns_yara.route("/draft")
 class YaraDraft(Resource):
     def post(self):

@@ -155,6 +155,76 @@ def post_suggest():
     }
 
 
+def post_lint():
+    """Style and robustness warnings for the rule source."""
+    return {"warnings": ys.lint(_check_rule(_body()))}
+
+
+def post_hitmap():
+    """Function clusters the rule's hits land in (family marker vs shared capability)."""
+    body = _body()
+    text = _check_rule(body)
+    if ys.compile_source(text)[0] is None:
+        abort(400, "rule does not compile")
+    r = get_redis()
+    targets = resolve_sets(r, body, "targets", ys.cfg("target_cap_files", 2000))
+    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    cap = max(1, min(300, int(body.get("cap", 60))))
+    return ys.hitmap(
+        r,
+        get_raw_redis(),
+        text,
+        targets,
+        negatives,
+        cap,
+        float(body.get("min_cohesion", 0.5)),
+    )
+
+
+def post_scope():
+    """File clusters to focus on: purity, what the rule does inside, greedy covers."""
+    body = _body()
+    text = _check_rule(body)
+    if ys.compile_source(text)[0] is None:
+        abort(400, "rule does not compile")
+    r = get_redis()
+    targets = resolve_sets(r, body, "targets", ys.cfg("target_cap_files", 2000))
+    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    return ys.scope(
+        r,
+        get_raw_redis(),
+        text,
+        targets,
+        negatives,
+        float(body.get("min_cohesion", 0.5)),
+        max(0.0, min(1.0, float(body.get("min_purity", 0.8)))),
+    )
+
+
+def post_seed_cluster():
+    """Byte-pattern seeds from a function cluster (`cluster_id` + `collection`) or
+    any list of same-kind function ids (`fids`, e.g. an N-way row or lane)."""
+    body = _body()
+    r = get_redis()
+    fids = body.get("fids")
+    if not fids:
+        coll, cid = body.get("collection"), body.get("cluster_id")
+        if not coll or cid is None:
+            abort(400, "give fids, or collection + cluster_id")
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo = resolve_collection_algo(coll)
+        fids = [ys._txt(f) for f in r.smembers(f"{coll}:cluster:{algo}:{cid}:members")]
+    if not fids or len(fids) > 20000:
+        abort(400, "fids: 1 to 20000 function ids")
+    bad = [f for f in fids if f.count(":") != 3]
+    if bad:
+        abort(400, f"fids: want <collection>:func:<md5>:<addr>, got {bad[0]!r}")
+    return ys.seed_functions(
+        r, get_raw_redis(), fids, max(2, min(64, int(body.get("per_arch", 16))))
+    )
+
+
 def post_draft():
     """LLM draft of a rule from the ranked suggestions."""
     from bsimvis.app.services.llm_service import LLMService

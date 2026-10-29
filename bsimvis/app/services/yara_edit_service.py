@@ -74,6 +74,69 @@ def defined_strings(text):
     return out
 
 
+# --- lint ---------------------------------------------------------------------
+
+META_KEYS = ("description", "author", "date", "kind", "reference_md5")
+KINDS = {"family", "variant", "capability", "packer", "generic"}
+
+
+def lint(text):
+    """Style / robustness warnings for a rule, `[{rule, level, message}]`. Reads the
+    source text only; the measured side (P/R) is /test."""
+    out = []
+    for block in re.split(r"(?m)^(?=\s*(?:(?:private|global)\s+)*rule\s)", text):
+        m = _RULE_RE.match(block)
+        if not m:
+            continue
+        name = m.group(1)
+
+        def warn(level, msg):
+            out.append({"rule": name, "level": level, "message": msg})
+
+        meta = {}
+        for k, _q, v in re.findall(
+            r'(?m)^\s+(\w+)\s*=\s*("?)(.*?)\2\s*$', block.split("strings:")[0]
+        ):
+            meta[k] = v
+        for k in META_KEYS:
+            if k not in meta:
+                warn("warn", f"meta `{k}` missing")
+        if meta.get("kind") and meta["kind"] not in KINDS:
+            warn("warn", f"meta kind `{meta['kind']}` not one of {sorted(KINDS)}")
+        need = "capability" if meta.get("kind") == "capability" else "family"
+        if meta.get("kind") != "generic" and need not in meta:
+            warn("warn", f"meta `{need}` missing")
+        cond = block.split("condition:")[-1]
+        if not re.search(
+            r"uint32\(0\)\s*==\s*0x464c457f|uint32be\(0\)\s*==\s*0x7f454c46|elf\.", cond
+        ):
+            warn("warn", "condition does not check the ELF magic")
+        if "filesize" not in cond:
+            warn("info", "no filesize bound: scans huge files and matches in archives")
+        strings = re.findall(
+            r"(?m)^\s*(\$\w*)\s*=\s*(.+)$", block.split("condition:")[0]
+        )
+        if not strings:
+            warn("warn", "rule has no strings (module/filesize-only rule)")
+        if len(strings) == 1 and "any of them" in cond:
+            warn(
+                "warn", "one string decides the rule: add a second, independent anchor"
+            )
+        for sid, val in strings:
+            val = val.strip()
+            if val.startswith('"'):
+                lit = val[1:].split('"')[0]
+                if len(lit) < 6:
+                    warn("warn", f"{sid} is only {len(lit)} chars: too common")
+            elif val.startswith("{"):
+                fixed = len(re.findall(r"(?<![\w?])[0-9A-Fa-f]{2}(?![\w?])", val))
+                if fixed < 6:
+                    warn("warn", f"{sid} has only {fixed} fixed bytes")
+                if re.search(r"(?:\?\?\s*){6,}", val):
+                    warn("info", f"{sid} has a long wildcard run")
+    return out
+
+
 # --- scan --------------------------------------------------------------------
 
 
@@ -143,15 +206,9 @@ def string_score(pos, targets, neg, others):
     return round(pos / targets * clean, 4)
 
 
-def evaluate(r, r_raw, text, targets, negatives):
-    """Compile `text` and measure it. `targets` / `negatives` are lists of
-    `{label, members: [(coll, md5)]}`. Returns the report dict."""
-    t0 = time.time()
-    rules, errors = compile_source(text)
-    names = rule_names(text)
-    if rules is None:
-        return {"ok": False, "errors": errors, "rules": names}
-
+def _scan_sets(r_raw, rules, targets, negatives):
+    """Scan every target and a capped sample of the negatives.
+    Returns `(tmembers, nmembers, hits, truncated, n_total, unreadable)`."""
     t_cap = cfg("target_cap_files", 2000)
     tmembers = list(dict.fromkeys(m for g in targets for m in g["members"]))
     truncated = len(tmembers) > t_cap
@@ -182,6 +239,21 @@ def evaluate(r, r_raw, text, targets, negatives):
                 continue
             hits[m] = (role, scan_bytes(rules, data))
 
+    return tmembers, nmembers, hits, truncated, n_total, unreadable
+
+
+def evaluate(r, r_raw, text, targets, negatives):
+    """Compile `text` and measure it. `targets` / `negatives` are lists of
+    `{label, members: [(coll, md5)]}`. Returns the report dict."""
+    t0 = time.time()
+    rules, errors = compile_source(text)
+    names = rule_names(text)
+    if rules is None:
+        return {"ok": False, "errors": errors, "rules": names}
+
+    tmembers, nmembers, hits, truncated, n_total, unreadable = _scan_sets(
+        r_raw, rules, targets, negatives
+    )
     pos = [m for m in tmembers if m in hits]
     neg = [m for m in nmembers if m in hits]
     tp = [m for m in pos if hits[m][1]]
@@ -231,6 +303,17 @@ def evaluate(r, r_raw, text, targets, negatives):
         detail = explain_hits(r, r_raw, rules, members)
         for f in rows:
             f["matches"] = detail.get(f["id"], [])
+    shown = (
+        [m for m in pos if not hits[m][1]][:LIST_CAP] + fp[:LIST_CAP] + tp[:LIST_CAP]
+    )
+    cl = file_clusters(r, shown)
+    for rows, members in (
+        (missed, [m for m in pos if not hits[m][1]]),
+        (false_hits, fp),
+        (true_hits, tp),
+    ):
+        for f, m in zip(rows, members):
+            f["clusters"] = _slim(cl.get(m, []))
 
     landing = locate_hits(
         r, r_raw, [(m, hits[m][1]) for m in tp][: cfg("land_files", 20)]
@@ -431,6 +514,84 @@ class Locator:
         return None
 
 
+# --- file / function -> cluster names ---------------------------------------
+
+
+def _bin_ns(coll):
+    from bsimvis.app.services.cluster_utils import bin_cluster_ns
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    return bin_cluster_ns(resolve_collection_algo(coll), False)
+
+
+def file_clusters(r, members, min_cohesion=0.5):
+    """`{(coll, md5): [{coll, ns, cid, name, size, cohesion}]}`, smallest cluster
+    first. Overall axis only; clusters below `min_cohesion` are dropped."""
+    members = list(members)
+    ns = {c: _bin_ns(c) for c in {m[0] for m in members}}
+    pipe = r.pipeline(transaction=False)
+    for coll, md5 in members:
+        pipe.smembers(f"{_fid(coll, md5)}:bin_clusters:{ns[coll]}")
+    cids = [{_txt(c) for c in raw} for raw in pipe.execute()]
+    keys = sorted({(m[0], c) for m, cs in zip(members, cids) for c in cs})
+    pipe = r.pipeline(transaction=False)
+    for coll, c in keys:
+        pipe.get(f"{coll}:bin_cluster:{ns[coll]}:{c}:meta")
+    meta = {}
+    for k, raw in zip(keys, pipe.execute()):
+        try:
+            m = json.loads(raw) if raw else {}
+        except ValueError:
+            continue
+        if (m.get("cohesion_score") or 0) >= min_cohesion:
+            meta[k] = {
+                "coll": k[0],
+                "ns": ns[k[0]],
+                "cid": k[1],
+                "name": m.get("cluster_name") or f"Binary Cluster {k[1]}",
+                "size": m.get("member_count") or 0,
+                "cohesion": m.get("cohesion_score"),
+            }
+    return {
+        m: sorted(
+            (meta[(m[0], c)] for c in cs if (m[0], c) in meta), key=lambda x: x["size"]
+        )
+        for m, cs in zip(members, cids)
+    }
+
+
+def _slim(cl, cap=3):
+    return [{"name": c["name"], "size": c["size"]} for c in cl[:cap]]
+
+
+def fn_clusters(r, coll, md5, entry, min_cohesion=0.5, cap=2):
+    """Names of the function clusters one function belongs to, best score first."""
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    sc = r.hgetall(f"{coll}:func:{md5}:{entry}:cluster_scores")
+    if not sc:
+        return []
+    algo = resolve_collection_algo(coll)
+    top = sorted(((float(v), _txt(k)) for k, v in sc.items()), reverse=True)[: cap * 3]
+    pipe = r.pipeline(transaction=False)
+    for _, c in top:
+        pipe.get(f"{coll}:cluster:{algo}:{c}:meta")
+    out = []
+    for (_, c), raw in zip(top, pipe.execute()):
+        try:
+            m = json.loads(raw) if raw else {}
+        except ValueError:
+            continue
+        if (m.get("cohesion_score") or 0) >= min_cohesion:
+            out.append(
+                {
+                    "name": m.get("cluster_name") or f"Cluster {c}",
+                    "size": m.get("member_count") or 0,
+                }
+            )
+    return out[:cap]
+
+
 def function_doc(r, coll, md5, entry):
     """The function's own meta, shaped for the UI's function renderer."""
     fid = f"{coll}:func:{md5}:{entry}"
@@ -441,6 +602,7 @@ def function_doc(r, coll, md5, entry):
     keep = ("function_name", "namespace", "parameters", "return_type")
     return {
         "function_name": f"FUN_{entry}",
+        "clusters": fn_clusters(r, coll, md5, entry),
         **{k: meta[k] for k in keep if k in meta},
         "entrypoint_address": entry,
         "bsim_features_count": meta.get("bsim_features_count", 0),
@@ -606,7 +768,7 @@ def function_hex(r, r_raw, coll, md5, addr):
     import bisect
 
     i = bisect.bisect_right(loc.funcs, start)
-    approx = not (r.get(f"{fid}:source") or b"").__contains__(b'"cfg"')
+    approx = '"cfg"' not in _txt(r.get(f"{fid}:source") or "")
     if approx and i < len(loc.funcs):
         end = min(end, loc.funcs[i])  # the next function bounds the 15-byte ceiling
     base = loc.binary.imagebase
@@ -756,6 +918,372 @@ def suggest_consts(r, r_raw, groups_pos, members_neg, limit=100, scan=300, neg_c
         )
     out.sort(key=lambda s: (-s["score"], -s["pos"]))
     return out[:limit]
+
+
+# --- hit map: rule -> function clusters --------------------------------------
+
+
+def _spread(members, cap):
+    """Stable md5-hash-ordered sample of `cap` members."""
+    return sorted(members, key=lambda m: hashlib.md5("".join(m).encode()).digest())[
+        :cap
+    ]
+
+
+def _cluster_meta(r, coll, cids, min_cohesion):
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+
+    algo = resolve_collection_algo(coll)
+    pipe = r.pipeline(transaction=False)
+    for c in cids:
+        pipe.get(f"{coll}:cluster:{algo}:{c}:meta")
+    out = {}
+    for c, raw in zip(cids, pipe.execute()):
+        try:
+            m = json.loads(raw) if raw else {}
+        except ValueError:
+            m = {}
+        if (m.get("cohesion_score") or 0) >= min_cohesion:
+            out[c] = m
+    return algo, out
+
+
+def hitmap(r, r_raw, text, targets, negatives, cap=60, min_cohesion=0.5):
+    """Which function clusters do the rule's hits land in?
+    Scans up to `cap` files per set, maps every hit offset to its function and the
+    function to its (cohesive) clusters. A cluster hit in many groups is a shared
+    capability; one hit in a single group is a family marker."""
+    rules, errors = compile_source(text)
+    if rules is None:
+        return {"ok": False, "errors": errors}
+    sets = [("target", g) for g in targets] + [("negative", g) for g in negatives]
+    per_fn = {}  # (coll, md5, entry) -> {"strings": set, "groups": set}
+    scanned, hit_files, langs = {}, {}, {}
+    seen = set()
+    for role, g in sets:
+        label = g["label"]
+        for m in _spread([x for x in g["members"] if x not in seen], cap):
+            seen.add(m)
+            raw = r_raw.get(f"{_fid(*m)}:raw")
+            if not raw:
+                continue
+            scanned[label] = scanned.get(label, 0) + 1
+            found = scan_bytes(rules, raw)
+            meta = r.get(f"{_fid(*m)}:meta")
+            langs[m] = (json.loads(meta) if meta else {}).get("language_id", "")
+            if not found:
+                continue
+            hit_files.setdefault(label, set()).add(m)
+            loc = Locator(r, *m, raw)
+            loc._load()
+            for rule, strs in found.items():
+                for sid, offs in strs.items():
+                    for off in offs:
+                        va = loc.to_ghidra(off)
+                        fn = loc.function_at(va) if va is not None else None
+                        entries = [fn[0]] if fn else []
+                        if not fn:
+                            st = (
+                                loc.string_at(va) if va is not None else None
+                            ) or loc.string_near(off)
+                            entries = (
+                                [
+                                    int(a, 16)
+                                    for a in (st.get("funcs") or [])[:6]
+                                    if re.fullmatch(r"[0-9a-f]+", a)
+                                ]
+                                if st
+                                else []
+                            )
+                        for e in entries:
+                            slot = per_fn.setdefault(
+                                (m[0], m[1], e), {"strings": set(), "groups": set()}
+                            )
+                            slot["strings"].add(f"{rule}:{sid}")
+                            slot["groups"].add(label)
+
+    keys = list(per_fn)
+    pipe = r.pipeline(transaction=False)
+    for coll, md5, e in keys:
+        pipe.hgetall(f"{coll}:func:{md5}:{e:08x}:cluster_scores")
+    scores = pipe.execute()
+    cids_by_coll = {}
+    for (coll, _, _), sc in zip(keys, scores):
+        cids_by_coll.setdefault(coll, set()).update(_txt(k) for k in sc)
+    meta = {}
+    for coll, cids in cids_by_coll.items():
+        algo, ms = _cluster_meta(r, coll, sorted(cids), min_cohesion)
+        for c, m in ms.items():
+            meta[(coll, c)] = (algo, m)
+
+    clusters, unclustered = {}, 0
+    for (coll, md5, e), sc in zip(keys, scores):
+        slot = per_fn[(coll, md5, e)]
+        mine = [(float(v), _txt(k)) for k, v in sc.items() if (coll, _txt(k)) in meta]
+        if not mine:
+            unclustered += 1
+            continue
+        c = max(mine)[1]  # the tightest-scored cluster is the function's identity
+        row = clusters.setdefault(
+            (coll, c),
+            {"strings": set(), "fids": [], "files": set(), "groups": {}},
+        )
+        row["strings"] |= slot["strings"]
+        row["files"].add((coll, md5))
+        if len(row["fids"]) < 40:
+            row["fids"].append(f"{coll}:func:{md5}:{e:08x}")
+        for gl in slot["groups"]:
+            row["groups"].setdefault(gl, set()).add((coll, md5))
+
+    out = []
+    for (coll, c), row in clusters.items():
+        algo, m = meta[(coll, c)]
+        members = r.smembers(f"{coll}:cluster:{algo}:{c}:members")
+        span = {tuple(_txt(x).split(":")[0::2]) for x in members}
+        out.append(
+            {
+                "cluster_id": int(c),
+                "cluster_uuid": m.get("cluster_uuid"),
+                "name": m.get("cluster_name"),
+                "cohesion": m.get("cohesion_score"),
+                "members": len(members),
+                "span_files": len(span),
+                "hit_files": len(row["files"]),
+                "strings": sorted(row["strings"]),
+                "groups": {k: len(v) for k, v in row["groups"].items()},
+                "arches": sorted({langs.get(f, "") for f in row["files"]}),
+                "fids": row["fids"],
+            }
+        )
+    out.sort(key=lambda x: (-x["hit_files"], -x["members"]))
+    return {
+        "ok": True,
+        "scanned": scanned,
+        "hit_files": {k: len(v) for k, v in hit_files.items()},
+        "unclustered_functions": unclustered,
+        "clusters": out[:200],
+    }
+
+
+# --- scope: which file clusters to focus on ---------------------------------
+
+
+def _greedy(cands, universe, min_purity, limit):
+    """Pick clusters one by one, each covering the most still-uncovered files of
+    `universe`; clusters whose target share is under `min_purity` are skipped."""
+    left, out, done = set(universe), [], 0
+    pool = [c for c in cands if c["purity"] >= min_purity]
+    while left and len(out) < limit and pool:
+        best = max(pool, key=lambda c: (len(c["_t"] & left), c["purity"], -c["size"]))
+        gain = best["_t"] & left
+        if not gain:
+            break
+        pool.remove(best)
+        left -= gain
+        done += len(gain)
+        out.append({**best, "gain": len(gain), "covered": done})
+    return out
+
+
+def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
+    """File clusters worth focusing on. Every cluster that holds a target is scored
+    by how pure it is (targets / targets + negatives, over the whole sets, not the
+    scan sample) and by what the rule does inside it. `scope` is the greedy cover of
+    all targets, `focus` the greedy cover of the targets the rule misses."""
+    rules, errors = compile_source(text)
+    if rules is None:
+        return {"ok": False, "errors": errors}
+    tmem, nmem, hits, *_ = _scan_sets(r_raw, rules, targets, negatives)
+    tset = set(tmem)
+    allneg = {m for g in negatives for m in g["members"]} - tset
+    tp = {m for m in tmem if hits.get(m, (0, 0))[1]}
+    fp = {m for m in nmem if hits.get(m, (0, 0))[1]}
+    scanned = {m for m in tmem if m in hits}
+    cl = file_clusters(r, tmem, min_cohesion)
+    cands = {}
+    for m in tmem:
+        for c in cl[m]:
+            cands.setdefault((c["coll"], c["cid"]), c)
+    pipe = r.pipeline(transaction=False)
+    keys = list(cands)
+    for coll, cid in keys:
+        pipe.smembers(f"{coll}:bin_cluster:{cands[(coll, cid)]['ns']}:{cid}:members")
+    rows = []
+    for k, raw in zip(keys, pipe.execute()):
+        mem = set()
+        for x in raw:
+            _, _, md5 = _txt(x).rpartition(":")
+            mem.add((k[0], md5))
+        t, n = mem & tset, mem & allneg
+        c = cands[k]
+        rows.append(
+            {
+                "name": c["name"],
+                "cid": c["cid"],
+                "size": len(mem) or c["size"],
+                "cohesion": c["cohesion"],
+                "targets": len(t),
+                "negatives": len(n),
+                "purity": len(t) / (len(t) + len(n)) if t else 0,
+                "hit": len(t & tp),
+                "missed": len((t & scanned) - tp),
+                "false": len(mem & fp),
+                "_t": t,
+                "_miss": (t & scanned) - tp,
+            }
+        )
+    miss = scanned - tp
+
+    def clean(picks):
+        out = []
+        for p in picks:
+            p = {k: v for k, v in p.items() if not k.startswith("_")}
+            p["purity"] = round(p["purity"], 3)
+            out.append(p)
+        return out
+
+    focus_in = [{**c, "_t": c["_miss"]} for c in rows]
+    picks = _greedy(rows, tset, min_purity, 15)
+    fpicks = _greedy(focus_in, miss, min_purity, 15)
+    return {
+        "ok": True,
+        "targets": len(tset),
+        "scanned": len(scanned),
+        "hit": len(tp),
+        "missed": len(miss),
+        "min_purity": min_purity,
+        "unclustered": sum(1 for m in tmem if not cl[m]),
+        "scope": clean(picks),
+        "focus": clean(fpicks),
+        "impure": clean(
+            sorted(
+                (c for c in rows if c["purity"] < min_purity),
+                key=lambda c: -c["targets"],
+            )[:10]
+        ),
+    }
+
+
+# --- byte seeds from a function cluster / lane -------------------------------
+
+
+def function_body(r, r_raw, coll, md5, addr):
+    """`(bytes, approximate)` of one function, or None."""
+    raw = r_raw.get(f"{_fid(coll, md5)}:raw")
+    if not raw:
+        return None
+    loc = Locator(r, coll, md5, raw)
+    loc._load()
+    if loc.binary is None:
+        return None
+    import bisect
+
+    start = int(addr, 16)
+    fid = f"{coll}:func:{md5}:{start:08x}"
+    end = loc.function_end(fid, start)
+    i = bisect.bisect_right(loc.funcs, start)
+    approx = '"cfg"' not in _txt(r.get(f"{fid}:source") or "")
+    if approx and i < len(loc.funcs):
+        end = min(end, loc.funcs[i])
+    lief_va = start - (loc.ghidra_base or loc.binary.imagebase) + loc.binary.imagebase
+    try:
+        off = loc.binary.virtual_address_to_offset(lief_va)
+    except Exception:
+        return None
+    return raw[off : off + (end - start)], approx, raw
+
+
+def _hex_regex(hexs):
+    toks = hexs.strip("{} ").split()
+    return re.compile(
+        b"".join(b"." if t == "??" else re.escape(bytes.fromhex(t)) for t in toks),
+        re.S,
+    )
+
+
+def consensus_windows(bodies, widths=(16, 24, 32, 48), min_fixed=10):
+    """Same-length bodies -> per width, the window with the most bytes every body
+    agrees on, differing bytes as `??`. Edges are trimmed to fixed bytes."""
+    n = len(bodies[0])
+    fixed = [len({b[i] for b in bodies}) == 1 for i in range(n)]
+    out = []
+    for w in widths:
+        if w > n:
+            continue
+        best = max(range(n - w + 1), key=lambda s: sum(fixed[s : s + w]))
+        lo, hi = best, best + w
+        while lo < hi and not fixed[lo]:
+            lo += 1
+        while hi > lo and not fixed[hi - 1]:
+            hi -= 1
+        cnt = sum(fixed[lo:hi])
+        if cnt < min_fixed:
+            continue
+        hexs = (
+            "{ "
+            + " ".join(
+                f"{bodies[0][i]:02x}" if fixed[i] else "??" for i in range(lo, hi)
+            )
+            + " }"
+        )
+        out.append({"width": hi - lo, "offset": lo, "fixed": cnt, "hex": hexs})
+    return out
+
+
+def seed_functions(r, r_raw, fids, per_arch=16):
+    """Byte-pattern seeds from a set of functions that are 'the same' (a function
+    cluster, an N-way row or lane): per language, the same-length bodies are aligned
+    byte for byte and the stable window is returned, with the share of the sampled
+    files whose raw bytes contain it. ponytail: equal length only, no indel alignment.
+    """
+    by_lang = {}
+    for fid in fids:
+        coll, _, md5, addr = fid.split(":")
+        meta = r.get(f"{_fid(coll, md5)}:meta")
+        lang = (json.loads(meta) if meta else {}).get("language_id", "")
+        by_lang.setdefault(lang, {}).setdefault(md5, (coll, addr))
+    arches = []
+    for lang, files in sorted(by_lang.items()):
+        picks = sorted(
+            files.items(), key=lambda kv: hashlib.md5(kv[0].encode()).digest()
+        )
+        picks = picks[:per_arch]
+        bodies, raws = [], []
+        for md5, (coll, addr) in picks:
+            got = function_body(r, r_raw, coll, md5, addr)
+            if got and len(got[0]) >= 16:
+                bodies.append(got[0])
+                raws.append(got[2])
+        if len(bodies) < 2:
+            arches.append(
+                {
+                    "language_id": lang,
+                    "files": len(files),
+                    "sampled": len(bodies),
+                    "windows": [],
+                }
+            )
+            continue
+        sizes = {}
+        for b in bodies:
+            sizes[len(b)] = sizes.get(len(b), 0) + 1
+        L = max(sizes, key=lambda k: (sizes[k], k))
+        same = [b for b in bodies if len(b) == L]
+        wins = consensus_windows(same) if len(same) >= 2 else []
+        for w in wins:
+            rx = _hex_regex(w["hex"])
+            w["coverage"] = round(sum(1 for x in raws if rx.search(x)) / len(raws), 3)
+        arches.append(
+            {
+                "language_id": lang,
+                "files": len(files),
+                "sampled": len(bodies),
+                "same_length": len(same),
+                "length": L,
+                "windows": wins,
+            }
+        )
+    return {"arches": arches}
 
 
 # --- registry ----------------------------------------------------------------
@@ -939,6 +1467,15 @@ def demo():
     assert string_score(1, 0, 0, 5) is None
     bad, errs = compile_source("rule a { condition: $nope }")
     assert bad is None and errs[0]["line"] == 1 and "nope" in errs[0]["message"]
+    good = (
+        'rule g { meta:\n description = "d"\n author = "a"\n date = "2026-10-28"\n'
+        ' kind = "family"\n family = "mirai"\n reference_md5 = "x"\n strings:\n'
+        ' $a = "abcdefghij"\n $b = { 01 02 03 04 05 06 07 }\n condition:\n'
+        " uint32(0) == 0x464c457f and filesize < 2MB and all of them }"
+    )
+    assert lint(good) == [], lint(good)
+    bad = lint('rule b {\n strings:\n $a = "ab"\n condition:\n any of them\n}')
+    assert any("only 2 chars" in w["message"] for w in bad) and len(bad) >= 6
     print("yara_edit_service demo OK")
 
 

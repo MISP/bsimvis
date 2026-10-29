@@ -356,11 +356,8 @@ window.YaraView = {
 
     // Quick actions on a file row: move it to the other set, or drop it from the test.
     // Names of the clusters a file or function belongs to.
-    _clBadges(cl) {
-        return (cl || []).map(c => {
-            const u = c.uuid ? escapeAttr(jsString(c.uuid)) : '';
-            return `<span class="yw-cl" title="${escapeAttr(`${c.name} (${c.size} members)\n${c.uuid || ''}`)}"><i class="fa-solid fa-circle-nodes"></i> ${escapeHtml(c.name)}${c.uuid ? ` <code>${escapeHtml(c.uuid.slice(0, 8))}</code><button title="Test only this cluster" aria-label="Test only this cluster" onclick="event.stopPropagation(); YaraView.refocus(${u}, 'target')"><i class="fa-solid fa-crosshairs"></i></button>` : ''}</span>`;
-        }).join('');
+    _clBadges(cl, isBinary = true) {
+        return EntityRenderer.renderClusterCard(cl, isBinary);
     },
 
     _pinBtns(f, role) {
@@ -595,24 +592,20 @@ window.YaraView = {
         this._paint();
     },
 
-    // Cluster rows: name, uuid, a bar of what the rule does inside, and buttons to retarget the test sets.
+    // One table row per cluster, like the other result tabs; the pill is the shared cluster card.
     _scopeRows(rows, gainLabel) {
         if (!rows.length) return '<div class="yw-hint">none</div>';
-        return `<div class="yw-scl">${rows.map(c => {
-            const tot = Math.max(1, c.targets + c.negatives), w = n => (100 * n / tot).toFixed(1);
-            const u = escapeAttr(jsString(c.uuid || ''));
-            const act = c.uuid ? `<div class="yw-sca">
-                <button class="yw-btn" title="Test only this cluster: it becomes Must match" onclick="YaraView.refocus(${u}, 'target')"><i class="fa-solid fa-crosshairs"></i> Focus</button>
-                <button class="yw-btn ghost" title="Add this cluster to Must match" onclick="YaraView.refocus(${u}, 'add')"><i class="fa-solid fa-plus"></i> Match</button>
-                <button class="yw-btn ghost" title="Add this cluster to Must not match" onclick="YaraView.refocus(${u}, 'neg')"><i class="fa-solid fa-ban"></i> Not</button></div>` : '';
-            return `<div class="yw-sc">
-                <div class="yw-scn"><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div>
-                    <code class="yw-uuid" title="Cluster uuid (click to copy)" onclick="navigator.clipboard && navigator.clipboard.writeText(${u})">${escapeHtml(c.uuid || 'no uuid')}</code></div>
-                <div class="yw-scb"><div class="yw-sbar" title="${c.hit} hit, ${c.missed} missed, ${c.negatives} negatives">
-                    <i class="hit" style="width:${w(c.hit)}%"></i><i class="miss" style="width:${w(c.missed)}%"></i><i class="neg" style="width:${w(c.negatives)}%"></i></div>
-                    <div class="yw-scs"><span>${c.size} files</span><span class="ok">${c.hit} hit</span><span class="warn">${c.missed} missed</span><span class="${c.negatives ? 'bad' : ''}">${c.negatives} neg</span><span>${Math.round(c.purity * 100)}% pure</span></div></div>
-                <div class="yw-scg">${c.gain !== undefined ? `<b>+${c.gain}</b><small>${gainLabel}, ${c.covered} total</small>` : ''}</div>${act}</div>`;
-        }).join('')}</div>`;
+        const btn = (u, mode, icon, tip) => `<button class="yw-btn ghost icon" title="${tip}" aria-label="${tip}" onclick="YaraView.refocus(${escapeAttr(jsString(u))}, '${mode}')"><i class="fa-solid ${icon}"></i></button>`;
+        return `<table class="yw-fixed"><colgroup><col><col style="width:150px"><col style="width:56px"><col style="width:56px"><col style="width:56px"><col style="width:56px"><col style="width:60px"><col style="width:80px"><col style="width:116px"></colgroup>
+            <thead><tr><th>Cluster</th><th>UUID</th><th title="Files in the cluster">Files</th><th title="Targets the rule hits">Hit</th><th title="Targets the rule misses">Missed</th><th title="Negative files, over the whole sets">Neg</th><th>Pure</th><th title="Newly covered, running total">${gainLabel || 'Covered'}</th><th></th></tr></thead><tbody>${rows.map(c => `<tr>
+            <td><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div></td>
+            <td>${EntityRenderer.renderClusterCard([c.card], true, null, { showUuid: true })}</td>
+            <td class="yw-mono">${c.size}</td><td class="yw-mono">${c.hit}</td>
+            <td class="yw-mono" style="color:${c.missed ? '#f59e0b' : 'var(--subtle)'};">${c.missed}</td>
+            <td class="yw-mono" style="color:${c.negatives ? '#ef4444' : 'var(--subtle)'};">${c.negatives}</td>
+            <td class="yw-mono">${Math.round(c.purity * 100)}%</td>
+            <td class="yw-mono">${c.gain !== undefined ? `+${c.gain} (${c.covered})` : ''}</td>
+            <td>${c.uuid ? btn(c.uuid, 'target', 'fa-crosshairs', 'Test only this cluster: it becomes Must match') + btn(c.uuid, 'add', 'fa-plus', 'Add to Must match') + btn(c.uuid, 'neg', 'fa-ban', 'Add to Must not match') : ''}</td></tr>`).join('')}</tbody></table>`;
     },
 
     _scopePane() {
@@ -622,15 +615,15 @@ window.YaraView = {
         if (h.error || !d || !d.ok) return `<div class="yw-hint">${escapeHtml(h.error || (d && (d.message || 'no scope')) || 'no scope')}</div>`;
         const cov = d.scope.length ? d.scope[d.scope.length - 1].covered : 0, pc = n => Math.round(100 * n / Math.max(1, d.targets));
         const all = d.scope.filter(c => c.uuid).map(c => c.uuid);
-        return `<div class="yw-scsum"><div class="yw-m"><small>Targets</small><strong>${d.targets}</strong></div>
+        return `<div class="yw-metrics"><div class="yw-m"><small>Targets</small><strong>${d.targets}</strong></div>
             <div class="yw-m"><small>Missed</small><strong>${d.missed}</strong></div>
             <div class="yw-m"><small>Scope covers</small><strong>${pc(cov)}%</strong></div>
             <div class="yw-m"><small>No cluster</small><strong>${d.unclustered}</strong></div>
             <span class="yw-sp"></span>${all.length ? `<button class="yw-btn primary" title="Must match becomes the union of the proposed clusters" onclick='YaraView.refocus(${escapeAttr(JSON.stringify(all))}, "target")'><i class="fa-solid fa-crosshairs"></i> Use proposed scope</button>` : ''}</div>
-            <div class="yw-dim yw-schint">Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample. Bars: hit, missed, negative files of the cluster.</div>
-            <h4 class="yw-sch">Focus on the misses <small>${d.missed} targets missed; clusters holding most of them</small></h4>${this._scopeRows(d.focus, 'misses')}
-            <h4 class="yw-sch">Proposed scope <small>${cov} of ${d.targets} targets in ${d.scope.length} pure clusters</small></h4>${this._scopeRows(d.scope, 'targets')}
-            ${d.impure.length ? `<h4 class="yw-sch">Too impure to scope to <small>targets mixed with negatives</small></h4>${this._scopeRows(d.impure, '')}` : ''}`;
+            <div class="yw-dim" style="padding:6px 0;">Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample. </div>
+            <div class="yw-dim" style="padding:6px 0;"><b>Focus on the misses</b> &middot; ${d.missed} targets missed; clusters holding most of them</div>${this._scopeRows(d.focus, 'misses')}
+            <div class="yw-dim" style="padding:10px 0 6px;"><b>Proposed scope</b> &middot; ${cov} of ${d.targets} targets in ${d.scope.length} pure clusters</div>${this._scopeRows(d.scope, 'targets')}
+            ${d.impure.length ? `<div class="yw-dim" style="padding:10px 0 6px;"><b>Too impure to scope to</b> &middot; targets mixed with negatives</div>${this._scopeRows(d.impure, '')}` : ''}`;
     },
 
     // Point the test sets at file clusters (uuid or list): target = replace Must match, add = append, neg = Must not match.
@@ -667,7 +660,7 @@ window.YaraView = {
         if (!h || h.loading) return '<div class="yw-hint">mapping hits to function clusters&hellip;</div>';
         if (h.error || !h.data || !h.data.ok) return `<div class="yw-hint">${escapeHtml(h.error || (h.data && (h.data.message || 'no map')) || 'no map')}</div>`;
         const rows = h.data.clusters.map(c => `<tr>
-            <td><div class="yw-cut">${escapeHtml(c.name || String(c.cluster_id))}</div></td>
+            <td>${EntityRenderer.renderClusterCard([{ cluster_id: c.cluster_id, cluster_uuid: c.cluster_uuid, cluster_name: c.name, cohesion_score: c.cohesion, member_count: c.members }], false)}</td>
             <td class="yw-mono">${c.hit_files}/${c.span_files}</td>
             <td class="yw-mono">${escapeHtml(Object.entries(c.groups).map(([g, n]) => `${g} ${n}`).join(', '))}</td>
             <td class="yw-mono">${escapeHtml(c.strings.join(' '))}</td></tr>`).join('');
@@ -725,7 +718,7 @@ window.YaraView = {
     // One row per (string, place) in each file: repeat instances fold into a count.
     _hitsPane(rows, role, manyRules) {
         this._rowIds = rows.map(f => f.id);
-        const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}${this._clBadges(f.clusters)}</div>`;
+        const fnHtml = f => `<div class="yw-fn">${EntityRenderer.renderFunction({ ...f }, { showActions: false })}${this._clBadges(f.clusters, false)}</div>`;
         const body = rows.map(f => {
             const i = f.id.lastIndexOf(':'), coll = f.id.slice(0, i), md5 = f.id.slice(i + 1);
             const ms = f.matches || [];

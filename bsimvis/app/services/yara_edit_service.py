@@ -561,8 +561,20 @@ def file_clusters(r, members, min_cohesion=0.5):
     }
 
 
+def _card(c):
+    """A file cluster in the shape `renderClusterCards` takes."""
+    return {
+        "cluster_id": c["cid"],
+        "cluster_uuid": c["uuid"],
+        "cluster_name": c["name"],
+        "cohesion_score": c["cohesion"],
+        "member_count": c["size"],
+        "axis": "overall",
+    }
+
+
 def _slim(cl, cap=3):
-    return [{"name": c["name"], "size": c["size"], "uuid": c["uuid"]} for c in cl[:cap]]
+    return [_card(c) for c in cl[:cap]]
 
 
 def fn_clusters(r, coll, md5, entry, min_cohesion=0.5, cap=2):
@@ -586,9 +598,11 @@ def fn_clusters(r, coll, md5, entry, min_cohesion=0.5, cap=2):
         if (m.get("cohesion_score") or 0) >= min_cohesion:
             out.append(
                 {
-                    "name": m.get("cluster_name") or f"Cluster {c}",
-                    "size": m.get("member_count") or 0,
-                    "uuid": m.get("cluster_uuid"),
+                    "cluster_id": c,
+                    "cluster_uuid": m.get("cluster_uuid"),
+                    "cluster_name": m.get("cluster_name") or f"Cluster {c}",
+                    "cohesion_score": m.get("cohesion_score"),
+                    "member_count": m.get("member_count") or 0,
                 }
             )
     return out[:cap]
@@ -1123,6 +1137,7 @@ def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
                 "name": c["name"],
                 "cid": c["cid"],
                 "uuid": c["uuid"],
+                "card": _card({**c, "size": len(mem) or c["size"]}),
                 "size": len(mem) or c["size"],
                 "cohesion": c["cohesion"],
                 "targets": len(t),

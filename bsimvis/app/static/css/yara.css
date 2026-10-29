@@ -199,29 +199,3 @@
 .yw-vchip[aria-pressed=true] { background: var(--hover); border-color: var(--accent); }
 .yw-vchip[aria-pressed=true] button { color: var(--text); font-weight: 600; }
 .yw-badge.in { color: #10b981; }
-
-.yw-cl { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; font-size: 0.66rem; border-radius: 4px; padding: 1px 6px; margin: 2px 4px 0 0; background: color-mix(in srgb, #6366f1 16%, transparent); color: #818cf8; }
-
-.yw-cl code { font-size: 0.6rem; opacity: 0.75; margin-left: 2px; }
-.yw-cl button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 0 0 4px; font-size: 0.62rem; }
-.yw-cl button:hover { color: var(--accent); }
-.yw-scsum { display: flex; align-items: center; gap: 14px; padding: 6px 0; flex-wrap: wrap; }
-.yw-schint { padding: 2px 0 6px; }
-.yw-sch { margin: 14px 0 6px; font-size: 0.82rem; color: var(--text); }
-.yw-sch small { color: var(--subtle); font-weight: 400; margin-left: 8px; }
-.yw-scl { display: flex; flex-direction: column; gap: 6px; }
-.yw-sc { display: grid; grid-template-columns: minmax(150px, 28%) 1fr 96px auto; gap: 12px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--hover); }
-.yw-scn { min-width: 0; }
-.yw-uuid { display: block; font-size: 0.64rem; color: var(--subtle); cursor: copy; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.yw-sbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: color-mix(in srgb, var(--subtle) 18%, transparent); }
-.yw-sbar i { display: block; height: 100%; }
-.yw-sbar .hit { background: #10b981; }
-.yw-sbar .miss { background: #f59e0b; }
-.yw-sbar .neg { background: #ef4444; }
-.yw-scs { display: flex; gap: 10px; margin-top: 4px; font-size: 0.66rem; color: var(--subtle); flex-wrap: wrap; }
-.yw-scs .ok { color: #10b981; }
-.yw-scs .warn { color: #f59e0b; }
-.yw-scs .bad { color: #ef4444; }
-.yw-scg { display: flex; flex-direction: column; font-size: 0.8rem; }
-.yw-scg small { color: var(--subtle); font-size: 0.62rem; }
-.yw-sca { display: flex; gap: 2px; }

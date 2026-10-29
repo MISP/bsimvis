@@ -5518,6 +5518,27 @@ def test_nway_indicators():
                 for c in x["cells"].values()
             ),
         )
+    if hit:
+        # sub-rows are keyed by the columns of the same request, opened twin columns included
+        opened = {"columns": "twins", "col_open": '["*"]'}
+        cols = [
+            c["id"]
+            for c in requests.get(
+                f"{BASE_URL}/api/bin_sim/nway",
+                params={**base_ex, **opened, "limit": 1},
+                timeout=60,
+            ).json()["columns"]
+        ]
+        eb = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, **opened, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        ).json()
+        check(
+            "nway expand: cells follow the opened columns of the table",
+            eb["items"] and all(set(x["cells"]) == set(cols) for x in eb["items"]),
+            f"{cols} vs {[list(x['cells']) for x in eb['items'][:1]]}",
+        )
     resp = requests.get(
         f"{BASE_URL}/api/bin_sim/nway/expand",
         params={**base_ex, "kind": "bogus"},

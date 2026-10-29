@@ -2831,7 +2831,8 @@
             if (this._exp.has(key)) { this._exp.delete(key); mark(false); return drop(); }
             this._exp.set(key, null);
             mark(true);
-            const qs = this._docQs();
+            // the table's own params, col_open included: the sub-rows must use the columns the table shows
+            const qs = this._listQs();
             qs.set('kind', btn.dataset.xk === 'f' ? 'function' : 'string');
             qs.set(btn.dataset.xk === 'f' ? 'cells' : 'id', btn.dataset.xd);
             let body = null;

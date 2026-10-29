@@ -225,6 +225,12 @@ window.YaraView = {
                     })).json();
                     return (res.errors || []).map(e => ({ severity: 'error', message: e.message, line: e.line }));
                 }
+                async externalChecks(language, text) {
+                    const res = await fetch('/api/yara/external-checks', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: language, text }),
+                    });
+                    return res.ok ? (await res.json()).results || {} : {};
+                }
             })();
             this._editor = new lib.RulezetEditor(host, { language: 'yara', value: initial, host: adapter });
             this._editor.on('change', () => this.schedule());

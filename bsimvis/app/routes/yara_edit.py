@@ -155,6 +155,14 @@ def post_suggest():
     }
 
 
+def post_external_checks():
+    """YARA-X diagnostics and formatting for the editor's Checks panel."""
+    body = _body()
+    if body.get("format", "yara") != "yara":
+        return {"results": {}}
+    return {"results": ys.external_checks(str(body.get("text") or ""))}
+
+
 def post_lint():
     """Style and robustness warnings for the rule source."""
     return {"warnings": ys.lint(_check_rule(_body()))}

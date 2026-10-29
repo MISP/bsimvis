@@ -4240,6 +4240,18 @@ class YaraSuggest(Resource):
         return _yara("post_suggest")
 
 
+@ns_yara.route("/external-checks")
+class YaraExternalChecks(Resource):
+    @ns_yara.doc(
+        description="Body: `{format, text}`, the contract of the rulezet-editor "
+        "Checks panel. `results.yarax`: diagnostics with line/column and a formatted "
+        "`fixed_text`. A tool that is not installed answers `available: false`."
+    )
+    def post(self):
+        """Advice from external YARA tools (YARA-X)."""
+        return _yara("post_external_checks")
+
+
 @ns_yara.route("/lint")
 class YaraLint(Resource):
     def post(self):

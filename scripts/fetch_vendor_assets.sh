@@ -20,7 +20,7 @@ curl -fL https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js -o "$VENDOR/d3
 # rulezet-editor (AGPL-3.0): fetched at a pinned commit, never committed here.
 # /yara falls back to a plain textarea when it is missing.
 mkdir -p "$VENDOR/rulezet-editor"
-RZE=02b5c0fec51fa3d9b1d1f511261f0675bdb14f58
+RZE=2ac5f37004ab2a41a364adeb053579ba16da0974
 for f in rulezet-editor.css rulezet-editor.iife.js; do
   curl -fL "https://raw.githubusercontent.com/rulezet/rulezet-editor/$RZE/dist/$f" -o "$VENDOR/rulezet-editor/$f"
 done

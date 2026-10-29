@@ -2080,6 +2080,13 @@ def run_all_tests():
         expected_status=400,
         label="POST /api/yara/scope bad rule -> 400",
     )
+    test_endpoint(
+        "POST",
+        "/api/yara/external-checks",
+        data={"format": "yara", "text": "rule x { condition: true }"},
+        expected_status=200,
+        label="POST /api/yara/external-checks",
+    )
     for path in ("scope", "hitmap"):
         test_endpoint(
             "POST",

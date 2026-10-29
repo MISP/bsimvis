@@ -80,6 +80,74 @@ META_KEYS = ("description", "author", "date", "kind", "reference_md5")
 KINDS = {"family", "variant", "capability", "packer", "generic"}
 
 
+EXTERNAL_MAX = 200_000
+
+
+def _yarax_item(d, level):
+    return {
+        "message": d["title"],
+        "line": d.get("line"),
+        "column": d.get("column"),
+        "code": d.get("code"),
+        "level": level,
+        "detail": "\n".join(
+            [x["text"] for x in d.get("labels", []) if x.get("text")]
+            + [x["text"] for x in d.get("footers", [])]
+        )
+        or None,
+    }
+
+
+def _yarax(text):
+    import io
+
+    import yara_x
+
+    c = yara_x.Compiler()
+    c.enable_includes(False)  # a rule must never read a file of this machine
+    try:
+        c.add_source(text)
+    except yara_x.CompileError:
+        pass
+    errors = [_yarax_item(e, "error") for e in c.errors()]
+    warnings = [_yarax_item(w, "warning") for w in c.warnings()]
+    out = {
+        "available": True,
+        "ok": not errors,
+        "errors": errors,
+        "warnings": warnings,
+    }
+    try:
+        buf = io.BytesIO()
+        yara_x.Formatter().format(io.BytesIO(text.encode()), buf)
+        fixed = buf.getvalue().decode()
+        if fixed != text:
+            out["fixed_text"] = fixed
+    except Exception:  # not formattable: advice only
+        pass
+    return out
+
+
+def external_checks(text):
+    """Advice from tools outside libyara, for the editor's Checks panel:
+    `{tool: {available, ok, reason?, errors, warnings, fixed_text?}}`. A tool that
+    is missing or crashes says so instead of failing the call."""
+    if len(text) > EXTERNAL_MAX:
+        return {}
+    out = {}
+    try:
+        out["yarax"] = _yarax(text)
+    except Exception as e:
+        out["yarax"] = {
+            "available": False,
+            "ok": False,
+            "reason": f"YARA-X unavailable: {e}",
+            "errors": [],
+            "warnings": [],
+        }
+    return out
+
+
 def lint(text):
     """Style / robustness warnings for a rule, `[{rule, level, message}]`. Reads the
     source text only; the measured side (P/R) is /test."""

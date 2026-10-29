@@ -3650,13 +3650,12 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-table tr.nway-xrow.k-f td.nway-open, .nway-table tr.nway-xrow.k-in td.nway-open, .nway-table tr.nway-xrow.k-out td.nway-open, .nway-table tr.nway-xrow.k-k td.nway-open { box-shadow: inset 3px 0 0 var(--c); }
 .nway-table tr.nway-xline td { padding: 2px 10px 2px 28px; box-shadow: inset 3px 0 0 var(--c); }
 .nway-table tr.nway-xline .nway-schips { margin-top: 0; }
-.nway-table tr.nway-xline:hover td { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
-/* a function row, its lines and the rows they opened read as one card: one tint, no rules inside, a spine down the left */
-.nway-table tbody tr:has(+ tr.nway-xrow):nth-child(n) td, .nway-table tbody tr:has(+ tr.nway-xrow):nth-child(n) td:first-child, .nway-table tbody tr.nway-xline:nth-child(n) td, .nway-table tbody tr.nway-xline:nth-child(n) td:first-child { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
+/* a function row, its lines and the rows they opened read as one card: no rules inside, a spine down the left */
+.nway-table tbody tr:not(.nway-xrow):has(+ tr.nway-xrow):nth-child(n) td:first-child, .nway-table tbody tr.nway-xline.nway-xrow:nth-child(n) td:first-child { background: var(--bg); }
+.nway-table tbody tr.nway-xline.nway-xrow:nth-child(n) td:not(:first-child) { background: transparent; }
 .nway-table tbody tr:has(+ tr.nway-xrow) td, .nway-table tbody tr.nway-xrow:has(+ tr.nway-xrow) td { border-bottom-color: transparent; }
-.nway-table tbody tr:has(+ tr.nway-xrow) td:first-child { box-shadow: inset 3px 0 0 var(--border); }
-.nway-table tbody tr.nway-xrow:not(.nway-xline):nth-child(n) td, .nway-table tbody tr.nway-xrow:not(.nway-xline):nth-child(n) td:first-child { background: color-mix(in srgb, var(--card-bg) 90%, var(--text) 10%); }
-.nway-table tbody tr.nway-xrow:hover td, .nway-table tbody tr.nway-xrow:nth-child(n):hover td:first-child { background: var(--hover); }
+.nway-table tbody tr:not(.nway-xrow):has(+ tr.nway-xrow) td:first-child { box-shadow: inset 3px 0 0 var(--border); }
+.nway-table tbody tr.nway-xline:hover td, .nway-table tbody tr.nway-xline.nway-xrow:nth-child(n):hover td:first-child { background: var(--hover); }
 .nway-table tr.nway-xrow .nway-sq { width: 13px; height: 13px; }
 .nway-mark { display: inline-block; width: 7px; height: 7px; margin-right: 8px; background: var(--dim); vertical-align: middle; }
 .nway-mark.str { border-radius: 50%; }

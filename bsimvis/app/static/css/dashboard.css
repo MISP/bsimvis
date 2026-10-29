@@ -3666,6 +3666,12 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-table tr.nway-xline td:first-child { box-shadow: inset 3px 0 0 var(--border); }
 .nway-table tr.nway-xline:has(.nway-schips.open) td:first-child { box-shadow: inset 3px 0 0 var(--c); }
 .nway-table tr.nway-xline .nway-schips { margin-top: 0; }
+/* a lane reads as a card: a gap above its header */
+.nway-table tr.nway-grow.k-lane td { border-top: 10px solid var(--bg); box-shadow: inset 0 1px 0 var(--border); }
+.nway-table tr.nway-gmore td { padding: 2px 10px 2px 28px; font-size: 0.75rem; border-bottom: 1px solid var(--border); }
+.nway-table tr.nway-gmore td:first-child { box-shadow: inset 3px 0 0 var(--border); }
+.nway-table tr.nway-gmore:nth-child(n) td:first-child { background: var(--bg); }
+.nway-table tr[data-gx][hidden] { display: none; }
 /* a function row, its lines and the rows they opened read as one card: no rules inside, a spine down the left */
 .nway-table tbody tr:not(.nway-xrow):has(+ tr.nway-xrow):nth-child(n) td:first-child, .nway-table tbody tr.nway-xline.nway-xrow:nth-child(n) td:first-child { background: var(--bg); }
 .nway-table tbody tr.nway-xline.nway-xrow:nth-child(n) td:not(:first-child) { background: transparent; }

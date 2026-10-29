@@ -5431,6 +5431,16 @@ def test_nway_indicators():
         f"HTTP {resp.status_code} {str(gb)[:120]}",
     )
     check(
+        "nway strings: refs carry the functions and their metadata for the signature",
+        all(
+            f in gb.get("functions_metadata", {})
+            for x in gitems
+            if not x.get("header")
+            for d in x["refs"]["direct"]
+            for f in d["cells"].values()
+        ),
+    )
+    check(
         "nway strings: a string lane names the functions that use its strings",
         all("fids" in g for g in gb.get("groups", {}).values()),
     )

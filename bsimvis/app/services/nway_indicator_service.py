@@ -21,6 +21,7 @@ from bsimvis.app.services.nway_diff_service import BadParams
 REACH_SOFT = 25  # files outside the table at which the score halves
 MIN_STRING_LEN = 6
 LANE_FIDS = 6  # heaviest strings of a lane that name it
+REF_FIDS = 6  # functions of a row kept to draw its signature
 INLINE_MIN_LEN = 4  # strings shown inside a function row
 MAX_STRING_FILES = 200
 _STRINGS = OrderedDict()  # file set -> string table, newest last
@@ -250,21 +251,34 @@ def _referencing(r, doc, sids, fid_row):
     return out
 
 
-def _top(count, n):
-    return [{"name": k, "n": v} for k, v in count.most_common(n)]
-
-
 def string_refs(r, doc, rows, top=4):
     """Give each string row `refs`: the function rows whose functions reference it
-    (the links stored in the database) as `{name, n}`, and how many functions."""
+    (the links stored in the database) as `{name, n, cells}`, and how many functions.
+    `cells` = {file id: function id} of the referencing functions (a few), so the client
+    can draw the function like a table row. Returns their metadata `{function id: meta}`.
+    """
     fid_row = _fid_rows(doc)
+    file_of = {
+        f: k
+        for row in doc["rows"]
+        for k, f in (row.get("files") or row["cells"]).items()
+        if isinstance(f, str)
+    }
     direct = _referencing(r, doc, [row["id"] for row in rows], fid_row)
+    fids = set()
     for row in rows:
         fs = direct[row["id"]]
-        row["refs"] = {
-            "direct": _top(Counter(fid_row[f] for f in fs), top),
-            "functions": len(fs),
-        }
+        own, cells = Counter(fid_row[f] for f in fs), {}
+        for f in fs:
+            c = cells.setdefault(fid_row[f], {})
+            if len(c) < REF_FIDS:
+                c[file_of[f]] = f
+        top_rows = [
+            {"name": k, "n": n, "cells": cells[k]} for k, n in own.most_common(top)
+        ]
+        fids.update(f for x in top_rows for f in x["cells"].values())
+        row["refs"] = {"direct": top_rows, "functions": len(fs)}
+    return {f: doc["fmeta"][f] for f in fids if f in doc["fmeta"]}
 
 
 EXPAND_MAX = 300  # sub-rows returned for one expanded row
@@ -338,6 +352,7 @@ def expand_string(r, doc, sid):
             "id": f"row:{i}",
             "name": doc["rows"][i]["name"],
             "cells": cells,
+            "fcells": dict(list(cells.items())[:REF_FIDS]),
             "held": {
                 **{
                     k: v
@@ -352,7 +367,14 @@ def expand_string(r, doc, sid):
         for i, cells in held.items()
     ]
     base.sort(key=lambda x: (-len(x["held"]), x["name"]))
-    return _expanded(doc, base)
+    out = _expanded(doc, base)
+    out["functions_metadata"] = {
+        f: doc["fmeta"][f]
+        for x in out["items"]
+        for f in x["fcells"].values()
+        if f in doc["fmeta"]
+    }
+    return out
 
 
 def _expanded(doc, base):

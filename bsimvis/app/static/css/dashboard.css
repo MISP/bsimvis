@@ -3643,8 +3643,14 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-table tr.nway-xrow .nway-sq { width: 13px; height: 13px; }
 .nway-mark { display: inline-block; width: 7px; height: 7px; margin-right: 8px; background: var(--dim); vertical-align: middle; }
 .nway-mark.str { border-radius: 50%; }
-.nway-subfn { cursor: pointer; }
-.nway-subfn:hover { text-decoration: underline; }
 .nway-table tbody tr.nway-xrow:nth-child(n) td:first-child { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
 .nway-table tbody tr.nway-xrow:nth-child(n):hover td:first-child { background: var(--hover); }
 .nway-sq.ring { background: none; border: 2px solid hsl(var(--h, 195) 62% var(--l, 52%) / 0.6); }
+.nway-schip.fn { display: inline-flex; align-items: center; gap: 5px; max-width: 360px; font-family: inherit; font-size: 0.75rem; cursor: default; padding: 1px 6px; }
+.nway-schip.fn .entity-function { width: auto; min-width: 0; }
+.nway-fnq { font-size: 0.65rem; opacity: 0.45; cursor: pointer; flex-shrink: 0; }
+.nway-fnq:hover { opacity: 1; color: var(--success); }
+.nway-subfn { display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 18px); overflow: hidden; vertical-align: middle; cursor: default; }
+.nway-subfn .entity-function { width: auto; min-width: 0; }
+.nway-subfn .entity-name, .nway-schip.fn .entity-name { flex: 0 1 auto !important; }
+.nway-subfn .entity-function, .nway-schip.fn .entity-function { flex: 0 1 auto; }

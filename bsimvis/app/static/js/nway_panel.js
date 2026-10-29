@@ -348,7 +348,7 @@
                 if (offset !== undefined) return res.ok ? body : null;
                 this._str = res.ok ? body : { error: body.message || body.error || `HTTP ${res.status}` };
                 // Group headers and lane names read this.data.groups, as they do for functions.
-                if (res.ok) { this.data.groups = body.groups || {}; this.data.group_note = body.group_note || ''; }
+                if (res.ok) { this.data.groups = body.groups || {}; this.data.group_note = body.group_note || ''; Object.assign(this.data.functions_metadata, body.functions_metadata); }
             } catch (e) {
                 if (offset !== undefined) return null;
                 this._str = { error: String(e) };
@@ -367,6 +367,7 @@
                 this._strBusy = false;
                 if (!body || gen !== this._gen || this._str !== st) return;
                 Object.assign(this.data.groups, body.groups);
+                Object.assign(this.data.functions_metadata, body.functions_metadata);
                 const at = st.items.length;
                 st.items.push(...body.items);
                 st.total = body.total;
@@ -406,11 +407,17 @@
             return `<div class="nway-schips${on ? ' open' : ''}"><button type="button" class="nway-xp" data-xp="${escapeAttr(key)}" data-xk="${kind}" data-xd="${escapeAttr(data)}" aria-expanded="${on}" title="${kind === 'f' ? 'Show each string as a row, with the columns that use it' : 'Show each function row that uses this string, with the columns that have it'}"><i class="fa-solid fa-chevron-right"></i> ${Number(count)} ${label}</button>${chips}${more}</div>`;
         }
 
-        // Function rows that use a string; click a chip to show that function row.
+        // A function row drawn like in the Functions rows (highlighted signature, hover code preview, same menu),
+        // with a small button that shows the row in Functions.
+        _fnLabel(x) {
+            return `${this._fnSig({ name: x.name, cells: x.fcells || x.cells })}<i class="fa-solid fa-table-list nway-fnq" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions" role="button"></i>`;
+        }
+
+        // Function rows that use a string.
         _refChips(row) {
             const r = row.refs;
             if (!r || !r.direct.length) return '';
-            const chip = x => `<span class="nway-schip fn" data-fn-q="${escapeAttr(x.name)}" title="${escapeAttr(`${x.n} function${x.n === 1 ? '' : 's'} in this row reference it. Click: show this row in Functions`)}">${escapeHtml(x.name)}${x.n > 1 ? `<b>${Number(x.n)}</b>` : ''}</span>`;
+            const chip = x => `<span class="nway-schip fn">${this._fnLabel(x)}${x.n > 1 ? `<b title="${Number(x.n)} functions of this row use it">${Number(x.n)}</b>` : ''}</span>`;
             return this._linkLine(`s:${row.id}`, 's', row.id, r.functions, r.functions === 1 ? 'function' : 'functions', r.direct.map(chip).join(''), '');
         }
 
@@ -2813,7 +2820,7 @@
             const rows = body.items.map(x => {
                 const label = strs
                     ? `<code class="nway-str" title="${escapeAttr(x.name)}">${escapeHtml(x.name.slice(0, 160))}</code> <span class="dim">${escapeHtml([x.encoding, x.section].filter(Boolean).join(' · '))}</span>`
-                    : `<span class="nway-subfn" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions">${escapeHtml(x.name)}</span>`;
+                    : `<span class="nway-subfn">${this._fnLabel(x)}</span>`;
                 const pad = Array.from({ length: lead }, (_, i) => `<td class="num">${i === spanAt ? Number(x.span) : ''}</td>`).join('');
                 return `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="nway-mark ${cls}"></i>${label}</td>${pad}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs)).join('')}</tr>`;
             }).join('');
@@ -2842,6 +2849,7 @@
             } catch (e) { body = null; }
             if (!this._exp || !this._exp.has(key) || !tr.isConnected) return;
             if (!body) { this._exp.delete(key); mark(false); return showToast('Could not load the rows.', 'warning'); }
+            Object.assign(this.data.functions_metadata, body.functions_metadata);
             this._exp.set(key, body);
             drop();
             tr.insertAdjacentHTML('afterend', this._subRows(key, body));

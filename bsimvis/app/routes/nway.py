@@ -1115,8 +1115,9 @@ def _strings_page(doc, args, r):
         page = rows[offset : offset + limit]
         total = len(rows)
     real = [x for x in page if not x.get("header")]
+    meta = {}
     if args.get("refs") == "1":
-        nway_indicator_service.string_refs(r, doc, real)
+        meta = nway_indicator_service.string_refs(r, doc, real)
     if ctx:
         nway_indicator_service.page_reach(r, doc, real, ctx)
     return {
@@ -1124,6 +1125,7 @@ def _strings_page(doc, args, r):
         "total": total,
         "groups": groups,
         "group_note": note,
+        "functions_metadata": meta,
         "offset": offset,
         "limit": limit,
         "columns": doc["columns"],

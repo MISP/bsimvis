@@ -2646,7 +2646,7 @@ class BinSimNwayStrings(Resource):
             "leak_max": "Keep rows whose leak rate (0-1) is at most this",
             "min_length": "Shortest string kept (default 6)",
             "group": "lane, prefix or lane,prefix: group the strings like /nway rows (lane = same set of files; group_lane_* and group_open / group_flip work as there). Rows come back in group order with a group id `g`; `groups` describes the ones on the page. Lane groups carry `fids`: functions that use their heaviest strings, which the lane names (POST /nway/lane_names with kind=string) are read from",
-            "refs": "1 adds `refs` to each string row: {direct: [{name, n}], functions}, the N-way function rows whose functions reference the string (the links stored in the database) and how many functions do",
+            "refs": "1 adds `refs` to each string row: {direct: [{name, n}], functions}, the N-way function rows whose functions reference the string (the links stored in the database; `cells` = {file id: function id} of a few of them) and how many functions do. The response then carries `functions_metadata` for those function ids, as /nway does",
             "scope": "code (default), library (strings tagged origin:lib) or all",
             "q": "Substring of the string value",
             "sort_col": "score (default with family), cover, leak, reach, span, weight or name",

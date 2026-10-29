@@ -443,13 +443,17 @@ def _page(doc, args, r=None, pool_id=None):
     if q:
         # Full-text over the whole row: name, cluster names, and every function's text/tags.
         cards = _attach_clusters(r, filtered, fmeta, pool_id, args)
+        # a function also matches when it references a string containing the text
+        by_string = nway_indicator_service.fids_with_string(r, doc, q) if r else set()
 
         def hit(row):
             text = [row["name"]] + [
                 (cards[u].get("cluster_name") or "") for u in row["clusters"]
             ]
             text += [_fn_haystack(f, fmeta) for f in _row_fids(row)]
-            return q in " ".join(text).lower()
+            return q in " ".join(text).lower() or any(
+                f in by_string for f in _row_fids(row)
+            )
 
         filtered = [row for row in filtered if hit(row)]
         page_clusters = False

@@ -5439,6 +5439,25 @@ def test_nway_indicators():
         any(x["refs"]["direct"] for x in gitems if not x.get("header")),
         "no string with a referencing function row",
     )
+    sv = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/strings",
+        params={
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "columns": "files",
+            "refs": "1",
+        },
+        timeout=60,
+    ).json()
+    hit = next((x for x in sv.get("items", []) if x["refs"]["direct"]), None)
+    if hit:
+        st, qb = _nway(q=hit["name"], columns="files", tab="all", scope="all")
+        names = {x["name"] for x in hit["refs"]["direct"]}
+        check(
+            "nway q: a string finds the functions that reference it",
+            st == 200 and names <= {x.get("name") for x in qb["items"]},
+            f"{names} not in {[x.get('name') for x in qb.get('items', [])][:6]}",
+        )
     st, _ = _nway(family="nope:0", columns="files")
     check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
     st, ign = _nway(

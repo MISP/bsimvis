@@ -20,7 +20,6 @@ from bsimvis.app.services.nway_diff_service import BadParams
 
 REACH_SOFT = 25  # files outside the table at which the score halves
 MIN_STRING_LEN = 6
-XREF_CAP = 300  # functions whose callers one page of strings reads
 LANE_FIDS = 6  # heaviest strings of a lane that name it
 INLINE_MIN_LEN = 4  # strings shown inside a function row
 MAX_STRING_FILES = 200
@@ -257,29 +256,27 @@ def _top(count, n):
 
 def string_refs(r, doc, rows, top=4):
     """Give each string row `refs`: the function rows whose functions reference it
-    (`direct`) and the ones that call those (`xref`), as `{name, n}` plus the
-    number of functions that reference it."""
+    (the links stored in the database) as `{name, n}`, and how many functions."""
     fid_row = _fid_rows(doc)
     direct = _referencing(r, doc, [row["id"] for row in rows], fid_row)
-    fids = list(dict.fromkeys(f for fs in direct.values() for f in fs))[:XREF_CAP]
-    pipe = r.pipeline(transaction=False)
-    for f in fids:
-        pipe.smembers(f"{f}:callers")
-    callers = {f: {_txt(c) for c in got} for f, got in zip(fids, pipe.execute())}
     for row in rows:
         fs = direct[row["id"]]
-        own = Counter(fid_row[f] for f in fs)
-        far = Counter(
-            fid_row[c]
-            for f in fs
-            for c in callers.get(f, ())
-            if c in fid_row and fid_row[c] not in own
-        )
         row["refs"] = {
-            "direct": _top(own, top),
-            "xref": _top(far, top),
+            "direct": _top(Counter(fid_row[f] for f in fs), top),
             "functions": len(fs),
         }
+
+
+def fids_with_string(r, doc, text, cap=200):
+    """Function ids of the table that reference a string containing `text` (3+ characters)."""
+    q = text.lower()
+    files = [c["id"] for c in doc["file_columns"] or doc["columns"]]
+    if len(q) < 3 or len(files) > MAX_STRING_FILES:
+        return set()
+    table = _read_strings(r, files, INLINE_MIN_LEN)
+    sids = [sid for sid, s in table.items() if q in s["value"].lower()][:cap]
+    direct = _referencing(r, doc, sids, _fid_rows(doc))
+    return {f for fs in direct.values() for f in fs}
 
 
 def lane_fids(r, doc, rows, groups, top=LANE_FIDS):

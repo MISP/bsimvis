@@ -3630,5 +3630,4 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-schip { font: 0.7rem 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--card-bg); }
 .nway-schip b { margin-left: 4px; opacity: 0.7; font-weight: 600; }
 .nway-schip:hover { border-color: var(--success); }
-.nway-schip.xref { border-style: dashed; opacity: 0.8; }
 .nway-ref { font-size: 0.65rem; opacity: 0.55; align-self: center; }

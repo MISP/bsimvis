@@ -396,12 +396,12 @@
             return this._dd('Rows', opts, this.state.view, 'Functions: function groups. Strings: string values shared by the files. Both: function groups with the strings their functions reference shown inline, to see which strings go with which function cluster.', v => `data-set="view:${v}"`);
         }
 
-        // Function rows that use a string (solid) or call one that does (dashed); click shows that function row.
+        // Function rows that use a string; click shows that function row.
         _refChips(row) {
             const r = row.refs;
-            if (!r || !(r.direct.length || r.xref.length)) return '';
-            const chip = (x, cls, tip) => `<span class="nway-schip ${cls}" data-fn-q="${escapeAttr(x.name)}" title="${escapeAttr(`${x.n} function${x.n === 1 ? '' : 's'} ${tip}. Click: show this row in Functions`)}">${escapeHtml(x.name)}${x.n > 1 ? `<b>${Number(x.n)}</b>` : ''}</span>`;
-            return `<div class="nway-schips"><i class="fa-solid fa-arrow-right nway-ref" title="used by"></i>${r.direct.map(x => chip(x, 'fn', 'in this row use it')).join('')}${r.xref.length ? '<i class="fa-solid fa-turn-up nway-ref" title="reached through callers (xref)"></i>' : ''}${r.xref.map(x => chip(x, 'xref', 'in this row call a function that uses it')).join('')}</div>`;
+            if (!r || !r.direct.length) return '';
+            const chip = x => `<span class="nway-schip" data-fn-q="${escapeAttr(x.name)}" title="${escapeAttr(`${x.n} function${x.n === 1 ? '' : 's'} in this row reference it. Click: show this row in Functions`)}">${escapeHtml(x.name)}${x.n > 1 ? `<b>${Number(x.n)}</b>` : ''}</span>`;
+            return `<div class="nway-schips"><i class="fa-solid fa-arrow-right nway-ref" title="used by"></i>${r.direct.map(chip).join('')}</div>`;
         }
 
         // The strings the functions of a row reference, as chips; click shows them in the Strings rows.
@@ -467,7 +467,7 @@
                 : focus
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts follow the code axis.'
                 : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts follow the code axis.`;
-            const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster..." value="${escapeAttr(s.q)}"></div>`;
+            const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster, strings..." value="${escapeAttr(s.q)}"></div>`;
             const axisDd = this._dd('Code axis', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], s.scope, 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.', v => `data-set="scope:${v}"`);
             const tabIcons = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], partial: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
             const tabDd = this._dd('Functions', TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) => [key, label, tabIcons[key][0], tabIcons[key][1], this._count(key)]), s.tab, tabTip, v => `data-tab="${v}"`);

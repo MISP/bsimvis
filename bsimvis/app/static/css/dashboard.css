@@ -3065,6 +3065,11 @@ html.light-theme .nway-sw { background: hsl(var(--h) 62% 42%); }
 .nway-node.center { border-color: var(--accent); cursor: default; }
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
+/* a long signature wraps (three lines at most) instead of being cut to its return type and name */
+.nway-node .entity-function { align-items: flex-start !important; }
+.nway-node .entity-name { white-space: normal !important; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }
+.nway-rz { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: ew-resize; opacity: 0; border-radius: 3px; background: var(--accent); }
+.nway-node:hover > .nway-rz, .nway-rz:hover { opacity: 0.45; }
 .nway-node-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; min-width: 0; }
 .nway-pbar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .nway-pbar b { display: block; height: 100%; background: var(--rc); }

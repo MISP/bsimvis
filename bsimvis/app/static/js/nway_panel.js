@@ -43,8 +43,6 @@
     // Family stats columns: Cover, Leak, Score (+ Reach for strings).
     const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
     const STR_PAGE = 100;
-    // A group shows its first rows and a "+N more" line; Show all opens the rest.
-    const GROUP_PEEK = 3;
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
@@ -142,8 +140,6 @@
             // Groups start closed. `_gflip` holds the ids that differ from the `_gdef` default; the server drops closed groups' rows.
             this._gdef = 'none';
             this._gflip = new Set();
-            this._gall = new Set(); // groups showing every row
-            this._gcnt = {};
             // Auto depth: groups open when they fit the window, columns open as deep as the width allows.
             this._rowAuto = true;
             if (window.Paging.mode() === 'scroll') this.state.offset = 0;
@@ -2320,7 +2316,7 @@
                 while (i + 1 + n < items.length && under(items[i + 1 + n].g)) n++;
                 items.splice(i + 1, n);
                 // an opened line's sub-rows follow their row and carry no group id
-                while (head.nextElementSibling && (head.nextElementSibling.classList.contains('nway-xrow') || head.nextElementSibling.classList.contains('nway-gmore') || under(head.nextElementSibling.dataset.g || head.nextElementSibling.dataset.gtoggle))) head.nextElementSibling.remove();
+                while (head.nextElementSibling && (head.nextElementSibling.classList.contains('nway-xrow') || under(head.nextElementSibling.dataset.g || head.nextElementSibling.dataset.gtoggle))) head.nextElementSibling.remove();
             }
             qs.set('offset', (Number(d.offset) || 0) + (open ? i + 1 : items.length));
             qs.set('limit', open ? PAGE : Math.max(1, PAGE - items.length));
@@ -2340,7 +2336,6 @@
                 items.splice(i + 1, whole ? 0 : items.length, ...rows);
                 if (!whole) while (head.nextElementSibling) head.nextElementSibling.remove();
                 this._gprint = path;
-                for (const k of Object.keys(this._gcnt)) if (k === id || k.startsWith(`${id}/`)) delete this._gcnt[k];
                 head.insertAdjacentHTML('afterend', this._rows(rows, i + 1));
             } else if (items.length < PAGE && body.items.length) {
                 Object.assign(d.functions_metadata, body.functions_metadata);
@@ -2548,33 +2543,16 @@
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
         _rows(items, at) {
-            if (!at) { this._gprint = []; this._gcnt = {}; }
+            if (!at) this._gprint = [];
             const groups = this.data.groups || {};
-            return items.map((row, idx) => {
+            return items.map(row => {
                 const path = (row.g && groups[row.g] && groups[row.g].path) || [];
                 let k = 0, head = '';
                 while (k < path.length && this._gprint[k] === path[k]) k++;
                 for (let d = k; d < path.length; d++) head += this._groupHead(groups[path[d]], d);
                 this._gprint = path;
-                if (row.header) return head;
-                if (this.state.view === 'strings') return head + this._strRow(row);
-                return head + this._peek(row, items[idx + 1], groups);
+                return head + (row.header ? '' : this.state.view === 'strings' ? this._strRow(row) : this._row(row));
             }).join('');
-        }
-
-        // A group's rows past the first GROUP_PEEK are drawn hidden (tagged with the group), then one line says how many.
-        _peek(row, next, groups) {
-            let html = this._row(row);
-            const g = row.g, total = g && groups[g] ? Number(groups[g].rows) || 0 : 0;
-            if (!g || total <= GROUP_PEEK) return html;
-            const n = (this._gcnt[g] = (this._gcnt[g] || 0) + 1);
-            if (n > GROUP_PEEK) html = html.replace(/<tr\b/g, `<tr${this._gall.has(g) ? '' : ' hidden'} data-gx="${escapeAttr(g)}"`);
-            return html + (!next || next.g !== g ? this._moreRow(g, total) : '');
-        }
-
-        _moreRow(g, total) {
-            const all = this._gall.has(g), span = this._lead().length + this.data.columns.length;
-            return `<tr class="nway-gmore" data-g="${escapeAttr(g)}"><td class="nway-xlcell"><button type="button" class="nway-xp" data-gmore="${escapeAttr(g)}">${all ? 'Show less' : `+${total - GROUP_PEEK} more rows &middot; show all`}</button></td><td colspan="${span - 1}"></td></tr>`;
         }
 
         _row(row) {
@@ -3001,9 +2979,6 @@
             const at = d.items.length;
             d.items.push(...body.items);
             d.total = body.total;
-            // a group that goes on in this batch has no "more" line yet
-            const tail = this.el.querySelector('#nway-table tbody tr:last-child');
-            if (tail && tail.classList.contains('nway-gmore') && body.items[0] && body.items[0].g === tail.dataset.g) tail.remove();
             this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', this._rows(body.items, at));
             this._nameLanes();
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
@@ -3012,7 +2987,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-gmore],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
             if (!t) return;
             if (t.dataset.xp !== undefined) return this._expand(t);
             if (t.dataset.fnQ !== undefined) return this._set({ view: 'functions', q: t.dataset.fnQ, offset: 0, sort_col: '' });
@@ -3040,14 +3015,6 @@
                 this._applyHue();
                 this._scrollSave();
                 return this.render();
-            }
-            if (t.dataset.gmore) {
-                const g = t.dataset.gmore, all = !this._gall.delete(g);
-                if (all) this._gall.add(g);
-                this.el.querySelectorAll(`tr[data-gx="${CSS.escape(g)}"]`).forEach(r => { r.hidden = !all; });
-                const total = Number(((this.data.groups || {})[g] || {}).rows) || 0;
-                t.closest('tr').outerHTML = this._moreRow(g, total);
-                return;
             }
             if (t.dataset.inl) return this._set({ [t.dataset.inl]: this.state[t.dataset.inl] === '1' ? '' : '1' });
             if (t.dataset.statsToggle !== undefined) {

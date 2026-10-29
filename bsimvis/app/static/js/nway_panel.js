@@ -417,7 +417,7 @@
         _refChips(row) {
             const r = row.refs;
             if (!r || !r.direct.length) return '';
-            const chip = x => `<span class="nway-schip fn">${this._fnLabel(x)}${x.n > 1 ? `<b title="${Number(x.n)} functions of this row use it">${Number(x.n)}</b>` : ''}</span>`;
+            const chip = x => `<span class="nway-schip fn">${this._fnLabel(x)}</span>`;
             return this._linkLine(`s:${row.id}`, 's', row.id, r.functions, r.functions === 1 ? 'function' : 'functions', r.direct.map(chip).join(''), '');
         }
 
@@ -2239,7 +2239,8 @@
                 let n = 0;
                 while (i + 1 + n < items.length && under(items[i + 1 + n].g)) n++;
                 items.splice(i + 1, n);
-                while (head.nextElementSibling && under(head.nextElementSibling.dataset.g || head.nextElementSibling.dataset.gtoggle)) head.nextElementSibling.remove();
+                // an opened line's sub-rows follow their row and carry no group id
+                while (head.nextElementSibling && (head.nextElementSibling.classList.contains('nway-xrow') || under(head.nextElementSibling.dataset.g || head.nextElementSibling.dataset.gtoggle))) head.nextElementSibling.remove();
             }
             qs.set('offset', (Number(d.offset) || 0) + (open ? i + 1 : items.length));
             qs.set('limit', open ? PAGE : Math.max(1, PAGE - items.length));

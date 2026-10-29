@@ -255,7 +255,7 @@ def _referencing(r, doc, sids, fid_row):
 
 def string_refs(r, doc, rows, top=4):
     """Give each string row `refs`: the function rows whose functions reference it
-    (the links stored in the database) as `{name, n, cells}`, and how many functions.
+    (the links stored in the database) as `{name, n, cells}`, and how many function rows.
     `cells` = {file id: function id} of the referencing functions (a few), so the client
     can draw the function like a table row. Returns their metadata `{function id: meta}`.
     """
@@ -279,7 +279,8 @@ def string_refs(r, doc, rows, top=4):
             {"name": k, "n": n, "cells": cells[k]} for k, n in own.most_common(top)
         ]
         fids.update(f for x in top_rows for f in x["cells"].values())
-        row["refs"] = {"direct": top_rows, "functions": len(fs)}
+        # one function row (the same function in several files) counts once
+        row["refs"] = {"direct": top_rows, "functions": len(own)}
     return {f: doc["fmeta"][f] for f in fids if f in doc["fmeta"]}
 
 

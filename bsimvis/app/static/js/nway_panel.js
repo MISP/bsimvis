@@ -2894,11 +2894,19 @@
             tr.insertAdjacentHTML('afterend', this._subRows(key, body));
         }
 
+        // Under a string row: the line of function rows that use it, and the rows it opened.
+        _strLineRow(row, depth) {
+            const line = this._refChips(row);
+            if (!line) return '';
+            const span = this._lead().length + this.data.columns.length;
+            return `<tr class="nway-xrow nway-xline k-s"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-xlcell">${line}</td><td colspan="${span - 1}"></td></tr>${this._subHtml(`s:${row.id}`)}`;
+        }
+
         _strRow(row) {
             const cells = this.data.columns.map((c, ci) => this._shape(row.cells[c.id], c, ci, true)).join('');
             const meta = [row.encoding, row.section].filter(Boolean).join(' · ');
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
-            return `<tr class="${depth ? 'nway-in ' : ''}${this._ratioCls(Number(row.span) || 0)}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-open"><code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span>${this._refChips(row)}</td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>${this._subHtml(`s:${row.id}`)}`;
+            return `<tr class="${depth ? 'nway-in ' : ''}${this._ratioCls(Number(row.span) || 0)}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-open"><code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span></td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>${this._strLineRow(row, depth)}`;
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.

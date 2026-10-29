@@ -2639,15 +2639,15 @@ class BinSimNwayStrings(Resource):
     @ns_bin_sim.doc(
         params={
             "md5s": "Same file set / column params as /nway (cluster_uuid, col_set, col_by, columns, col_open, pool, ...)",
-            "lane": "Column ids describing the family (see /nway); rows get `stats` with cover, leak, reach and score. Without it rows carry no stats",
+            "family": "Column ids describing the family (see /nway); rows get `stats` with cover, leak, reach and score. Without it rows carry no stats",
             "ignore": "Column ids left out of the contrast",
-            "lane_only": "With lane: 1 (default) keeps strings some lane file holds, 0 keeps all",
+            "family_only": "With family: 1 (default) keeps strings some family file holds, 0 keeps all",
             "cover_min": "Keep rows whose cover (0-1) is at least this",
             "leak_max": "Keep rows whose leak rate (0-1) is at most this",
             "min_length": "Shortest string kept (default 6)",
             "scope": "code (default), library (strings tagged origin:lib) or all",
             "q": "Substring of the string value",
-            "sort_col": "score (default with lane), cover, leak, reach, span, weight or name",
+            "sort_col": "score (default with family), cover, leak, reach, span, weight or name",
             "sort_dir": "asc or desc",
             "offset": "Page offset",
             "limit": "Page size (default 100, max 1000)",
@@ -2664,7 +2664,7 @@ class BinSimNwayStrings(Resource):
 class BinSimNwayIndicators(Resource):
     @ns_bin_sim.doc(
         params={
-            "lane": "Required. Column ids describing the family (see /nway)",
+            "family": "Required. Column ids describing the family (see /nway)",
             "ignore": "Column ids left out of the contrast",
             "kinds": "string, function or both (default `string,function`)",
             "cover_min": "Keep indicators whose cover (0-1) is at least this",
@@ -2675,7 +2675,7 @@ class BinSimNwayIndicators(Resource):
         }
     )
     def get(self):
-        """Strings and function blocks of the table ranked by how well they single out the lane: `[{kind, id, preview, files, stats}]`, best score first."""
+        """Strings and function blocks of the table ranked by how well they single out the family: `[{kind, id, preview, files, stats}]`, best score first."""
         from bsimvis.app.routes.nway import get_nway_indicators
 
         return get_nway_indicators()
@@ -2835,11 +2835,11 @@ class BinSimNway(Resource):
             "feat_min": "Minimum row weight",
             "feat_max": "Maximum row weight",
             "support_min": "Minimum share of file pairs matched inside a row (0-1)",
-            "sort_col": "span, weight, support, cohesion or name; with lane also cover, leak or score",
-            "lane": "Comma-separated column ids (a file or a group) describing the family. Rows get `stats`: cover (share of lane files holding the row), leak (contrast files also holding it) and score. The response `lane` lists the lane, contrast and ignored file ids",
-            "ignore": "With lane: column ids left out of the contrast (a sibling variant you do not want counted as leak)",
-            "cover_min": "With lane: keep rows whose cover (0-1) is at least this",
-            "leak_max": "With lane: keep rows whose leak rate (share of contrast files, 0-1) is at most this",
+            "sort_col": "span, weight, support, cohesion or name; with family also cover, leak or score",
+            "family": "Comma-separated column ids (a file or a group) describing the family to single out. Rows get `stats`: cover (share of family files holding the row), leak (contrast files also holding it) and score. The response `family` lists the family, contrast and ignored file ids",
+            "ignore": "With family: column ids left out of the contrast (a sibling variant you do not want counted as leak)",
+            "cover_min": "With family: keep rows whose cover (0-1) is at least this",
+            "leak_max": "With family: keep rows whose leak rate (share of contrast files, 0-1) is at most this",
             "sort_dir": "asc or desc",
             "group": "Group the rows: prefix (first word of the function name, e.g. `attack_*`), lane (same file set) and/or tag (nest under one tag axis), comma separated, each once, up to three; each level splits every group of the previous one. Functions a level cannot place (no prefix, a prefix held by one function) go on to the next level beside its groups. Optional when group_merge is set. Rows come back in group order with a group id `g`; `groups` describes the ones on the page. sort_col orders rows inside a group",
             "group_merge": "Merge rows that are probably one function first: name, call or name,call (shared function name, shared caller row). Rows that share a file are never merged. With a group level, the merged function is what gets grouped (it sits in the lane of all its files together); merged functions show as `same` sub-groups holding their rows, and are ordered with the plain rows by sort_col as if each were one function (span: files covered, weight: heaviest row, support/cohesion: mean)",

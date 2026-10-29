@@ -3622,3 +3622,7 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-member { cursor: pointer; }
 .nway-member:hover, .nway-member:focus-visible { border-color: var(--accent); outline: none; }
 .nway-edge.lane { stroke-width: 2px; opacity: 0.8; }
+
+.nway-fam-in { box-shadow: inset 0 3px 0 var(--success); }
+.nway-fam-out { opacity: 0.45; }
+.nway-str { font: 0.78rem 'Consolas', monospace; display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }

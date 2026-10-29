@@ -620,7 +620,12 @@ def _graft(g, parent_id, parent_path):
     return g
 
 
-SORT_COLS = ("name", "span", "weight", "support", "cohesion")
+SORT_COLS = ("name", "span", "weight", "support", "cohesion", "cover", "leak", "score")
+
+
+def _stat(r, key):
+    """A row's family stat (`stats` is there only when `family=` is set)."""
+    return (r.get("stats") or {}).get(key) or 0
 
 
 def _unit_sortkey(u, ctx):
@@ -633,6 +638,14 @@ def _unit_sortkey(u, ctx):
             "weight": max(r["weight"] for r in rs),
             "support": sum(r.get("support", 1.0) for r in rs) / len(rs),
             "cohesion": sum(r.get("cohesion", 1.0) for r in rs) / len(rs),
+            **{
+                k: max(_stat(r, f) for r in rs)
+                for k, f in (
+                    ("cover", "cover"),
+                    ("leak", "leak_rate"),
+                    ("score", "score"),
+                )
+            },
         }
     else:
         vals = {
@@ -641,6 +654,9 @@ def _unit_sortkey(u, ctx):
             "weight": u["weight"],
             "support": u.get("support", 1.0),
             "cohesion": u.get("cohesion", 1.0),
+            "cover": _stat(u, "cover"),
+            "leak": _stat(u, "leak_rate"),
+            "score": _stat(u, "score"),
         }
     col = ctx["sort_col"]
     # the table's default order: most files first, then the heaviest

@@ -5371,54 +5371,56 @@ def _nway_rows(body):
 
 def test_nway_indicators():
     print(_color(f"\n{'='*60}", CYAN))
-    print(_color(" STEP 3c-sexies – N-way lane stats, strings table, indicators", BOLD))
+    print(
+        _color(" STEP 3c-sexies – N-way family stats, strings table, indicators", BOLD)
+    )
     print(_color(f"{'='*60}", CYAN))
     if not file_md5 or not file_md5_2:
         print(_color("\n[SKIP] Need two binaries – indicator checks skipped.", YELLOW))
         return
     lane = f"{COLLECTION}:{file_md5}"
-    st, body = _nway(lane=lane, tab="all", columns="files")
+    st, body = _nway(family=lane, tab="all", columns="files")
     rows = (body or {}).get("items", [])
     check(
-        "nway lane: rows carry stats",
+        "nway family: rows carry stats",
         st == 200 and rows and all("stats" in r for r in rows),
         f"HTTP {st}",
     )
     check(
-        "nway lane: lane and contrast are the two files",
+        "nway family: family and contrast are the two files",
         st == 200
-        and body["lane"]["lane"] == [lane]
-        and len(body["lane"]["contrast"]) == 1,
-        str((body or {}).get("lane")),
+        and body["family"]["family"] == [lane]
+        and len(body["family"]["contrast"]) == 1,
+        str((body or {}).get("family")),
     )
     check(
-        "nway lane: cover is a share of the lane",
+        "nway family: cover is a share of the family",
         all(
             0 <= r["stats"]["cover"] <= 1 and 0 <= r["stats"]["score"] <= 1
             for r in rows
         ),
     )
-    st, _ = _nway(lane="nope:0", columns="files")
-    check("nway lane: unknown column is rejected", st == 400, f"HTTP {st}")
+    st, _ = _nway(family="nope:0", columns="files")
+    check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
     st, ign = _nway(
-        lane=lane, ignore=f"{COLLECTION}:{file_md5_2}", columns="files", tab="all"
+        family=lane, ignore=f"{COLLECTION}:{file_md5_2}", columns="files", tab="all"
     )
     check(
-        "nway lane: ignored columns leave the contrast",
-        st == 200 and ign["lane"]["contrast"] == [] and ign["lane"]["ignored"],
-        str((ign or {}).get("lane")),
+        "nway family: ignored columns leave the contrast",
+        st == 200 and ign["family"]["contrast"] == [] and ign["family"]["ignored"],
+        str((ign or {}).get("family")),
     )
     base = {
         "collection": COLLECTION,
         "md5s": f"{file_md5},{file_md5_2}",
-        "lane": lane,
+        "family": lane,
         "columns": "files",
     }
     resp = requests.get(f"{BASE_URL}/api/bin_sim/nway/strings", params=base, timeout=60)
     sb = resp.json() if resp.status_code == 200 else {}
     check(
-        "nway strings: answers with rows and a lane",
-        resp.status_code == 200 and "items" in sb and "lane" in sb,
+        "nway strings: answers with rows and a family",
+        resp.status_code == 200 and "items" in sb and "family" in sb,
         f"HTTP {resp.status_code}",
     )
     check(
@@ -5439,11 +5441,11 @@ def test_nway_indicators():
     )
     resp = requests.get(
         f"{BASE_URL}/api/bin_sim/nway/indicators",
-        params={k: v for k, v in base.items() if k != "lane"},
+        params={k: v for k, v in base.items() if k != "family"},
         timeout=60,
     )
     check(
-        "nway indicators: lane is required",
+        "nway indicators: family is required",
         resp.status_code == 400,
         f"HTTP {resp.status_code}",
     )

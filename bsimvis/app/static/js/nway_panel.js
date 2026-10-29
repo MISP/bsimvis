@@ -35,10 +35,14 @@
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
+        family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '',
         group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max'];
+    // Family stats columns: Cover, Leak, Score (+ Reach for strings).
+    const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
+    const STR_PAGE = 100;
     // Group by: rows bundled by file set, nested under one tag axis, or joined as one probable function.
     const GROUPS = [
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
@@ -177,7 +181,7 @@
                 },
             });
             this._bindCmp(this.el);
-            window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.data && this.data.total) || 0, size: PAGE }), off => this._set({ offset: off }));
+            window.Paging.bind(this.el, () => ({ offset: Number(this.state.offset) || 0, total: Number(this.state.view === 'strings' ? this._str && this._str.total : this.data && this.data.total) || 0, size: this.state.view === 'strings' ? STR_PAGE : PAGE }), off => this._set({ offset: off }));
             this.el.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
@@ -245,7 +249,7 @@
         // `append` (scroll mode): fetch the next batch after the rows already shown.
         async load(append = false) {
             const scroll = window.Paging.mode() === 'scroll';
-            if (append && (this._loading || !this.data)) return;
+            if (append && (this._loading || !this.data || this.state.view === 'strings')) return;
             const gen = ++this._gen;
             this._loading = append;
             // The compare lives in the URL as `cmp`; its saved set (col_set) only caches it.
@@ -253,7 +257,7 @@
             if (gen !== this._gen) return;
             const qs = this._listQs();
             // After opening or closing a group, reload as many rows as were on screen.
-            qs.set('limit', this.cgInit ? 1 : (this._keep || PAGE));
+            qs.set('limit', this.cgInit || this.state.view === 'strings' ? 1 : (this._keep || PAGE));
             this._keep = 0;
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"></div>';
@@ -316,7 +320,27 @@
                 else this._cgStart(this.cgInit.name, this.cgInit.cells, this.cgInit, this.el);
                 return;
             }
+            if (this.state.view === 'strings' && !this.error) {
+                this._str = null;
+                this.render();
+                await this._loadStrings();
+                if (gen !== this._gen) return;
+            }
             this.render();
+        }
+
+        // The strings table: same files, columns and family as the function table.
+        async _loadStrings() {
+            const qs = this._listQs();
+            qs.set('limit', STR_PAGE);
+            if (!['name', 'span', 'weight', 'cover', 'leak', 'reach', 'score'].includes(this.state.sort_col)) qs.delete('sort_col');
+            try {
+                const res = await fetch(`/api/bin_sim/nway/strings?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
+                const body = await res.json().catch(() => ({}));
+                this._str = res.ok ? body : { error: body.message || body.error || `HTTP ${res.status}` };
+            } catch (e) {
+                this._str = { error: String(e) };
+            }
         }
 
         _renderError() {
@@ -334,6 +358,16 @@
             }
             const msg = e.missing ? `Unknown files: ${e.missing.join(', ')}` : (e.message || e.error || `HTTP ${e.status}`);
             return `<div class="nway-note err">${escapeHtml(msg)}</div>`;
+        }
+
+        _viewSeg() {
+            return this._seg('Show', 'view', [['functions', 'Functions', 'Rows are function groups'], ['strings', 'Strings', 'Rows are string values shared by the files']], 'Functions or strings of the same files and columns. The family and its stats follow.');
+        }
+
+        _famChip() {
+            if (!this._famOn()) return '<span class="nway-chip" title="Right-click a file or group column and choose Set as family: every row then shows Cover, Leak and Score for it."><i class="fa-solid fa-flag"></i> Family <span class="dim">right-click a column</span></span>';
+            const f = this.data.family;
+            return `<button type="button" class="nway-chip on" data-fam-clear title="Clear the family and its stats"><i class="fa-solid fa-flag-checkered"></i> Family <span class="dim">${f.family.length} files vs ${f.contrast.length}${f.ignored.length ? ` · ${f.ignored.length} ignored` : ''}</span> <i class="fa-solid fa-xmark"></i></button>`;
         }
 
         _count(tab) {
@@ -413,9 +447,9 @@
             const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
             const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
-                ${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
-            return `<div class="nway-tabrow">${search}${this._columnChip()}${moreBtn}</div>
-                <div class="nway-bar">${axisDd}${tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
+                ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
+            return `<div class="nway-tabrow">${search}${this._columnChip()}${this._viewSeg()}${this._famChip()}${moreBtn}</div>
+                <div class="nway-bar">${axisDd}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
         // The group controls in three parts: merge files (always shown), the metadata controls
@@ -621,7 +655,7 @@
             window.showGraphContextMenu(e, 'file', {
                 md5: f.md5, file_name: f.file_name, collection: f.collection,
                 fileId: `${f.collection}:file:${f.md5}`,
-                __nway: { id, focused: focus.includes(id), anyFocus: focus.length > 0, filtered: this.state.column === id },
+                __nway: { id, focused: focus.includes(id), anyFocus: focus.length > 0, filtered: this.state.column === id, ...this._famMenu(id) },
             });
         }
 
@@ -651,6 +685,11 @@
             return { ids, label };
         }
 
+        _famMenu(id) {
+            const fam = this._ids('family'), ign = this._ids('ignore');
+            return { fam: fam.includes(id), ign: ign.includes(id), anyFam: fam.length > 0 };
+        }
+
         _groupMenu(e, id) {
             e.preventDefault();
             e.stopPropagation();
@@ -663,6 +702,8 @@
                 ['fa-copy', 'Copy file names', () => copyToClipboard(files.map(f => f.file_name || f.md5).join('\n'))],
                 ...(n && (n.kids.length || n.expandable) ? [[n.kids.length ? 'fa-compress' : 'fa-expand', n.kids.length ? 'Fold' : 'Show files', () => this._colToggle(id)]] : []),
                 ['fa-bullseye', 'Focus on these files', () => this._setFocus(files.map(f => f.id), this._files().length)],
+                ...(files.length ? [[this._famMenu(id).fam ? 'fa-flag-checkered' : 'fa-flag', this._famMenu(id).fam ? 'Remove from family' : 'Set as family', () => this._famAct(this._famMenu(id).fam ? 'none' : 'family', id)]] : []),
+                ...(files.length && this._famMenu(id).anyFam && !this._famMenu(id).fam ? [['fa-ban', this._famMenu(id).ign ? 'Count in contrast' : 'Ignore in contrast', () => this._famAct(this._famMenu(id).ign ? 'none' : 'ignore', id)]] : []),
                 ['fa-arrow-up-right-from-square', 'Open as its own N-way', () => {
                     // A child cluster keeps its cluster context; any other group is a plain file set.
                     const col = this.data.columns.find(c => c.id === id && c.cluster_uuid);
@@ -683,6 +724,7 @@
 
         _act(act, id) {
             const focus = this._focusIds();
+            if (['family', 'ignore', 'none'].includes(act)) return this._famAct(act, id);
             if (act === 'column') return this._set({ column: this.state.column === id ? '' : id, offset: 0 });
             this._setFocus(act === 'add' ? [...focus, id] : focus.filter(f => f !== id), this._files().length);
         }
@@ -2380,8 +2422,46 @@
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
+                ${this._famCells(row.stats)}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
             </tr>`;
+        }
+
+        _ids(key) {
+            return String(this.state[key] || '').split(',').filter(Boolean);
+        }
+
+        _famOn() {
+            return this._ids('family').length > 0 && !!(this.data && this.data.family);
+        }
+
+        // A column is in the family (or ignored) when its id, or a group it was opened out of, is listed.
+        _famRole(c) {
+            const ids = [c.id, ...(c.path || []).map(g => g.id)];
+            if (ids.some(i => this._ids('family').includes(i))) return 'in';
+            return ids.some(i => this._ids('ignore').includes(i)) ? 'out' : '';
+        }
+
+        _famMark(c) {
+            const r = this._famOn() ? this._famRole(c) : '';
+            return r ? ` nway-fam-${r}` : '';
+        }
+
+        // Cover / Leak / Score cells of one row (strings add Reach).
+        _famCells(st, reach) {
+            if (!this._famOn() || !st) return '';
+            const cover = `<td class="num" title="${escapeAttr(`${st.tp} of ${st.family} family files`)}">${pct(st.cover)}</td>`;
+            const leak = `<td class="num" title="${escapeAttr(`${st.leak} of ${st.contrast} contrast files`)}">${Number(st.leak)}<span class="dim">/${Number(st.contrast)}</span></td>`;
+            const rch = reach ? `<td class="num" title="Files of the collection outside this table that hold it">${st.reach == null ? '-' : Number(st.reach)}</td>` : '';
+            return `${cover}${leak}${rch}<td class="num">${this._score(st.score)}</td>`;
+        }
+
+        // Set / unset the family or the ignored columns from a column's menu.
+        _famAct(act, id) {
+            const fam = this._ids('family').filter(i => i !== id), ign = this._ids('ignore').filter(i => i !== id);
+            if (act === 'family') fam.push(id);
+            if (act === 'ignore') ign.push(id);
+            this._set({ family: fam.join(','), ignore: fam.length ? ign.join(',') : '', offset: 0, sort_col: fam.length ? 'score' : '', sort_dir: 'desc' });
         }
 
         // Fixed column widths, so opening or closing a group never reflows the columns.
@@ -2417,8 +2497,9 @@
         }
 
         _lead() {
+            if (this.state.view === 'strings') return [this._fnW(), ...(this._famOn() ? [70, 80, 80, 70] : []), 64];
             const cols = [this._fnW(), ...DATA_COLS.slice(1)];
-            return this._statsOff() ? cols.slice(0, 1) : cols;
+            return (this._statsOff() ? cols.slice(0, 1) : cols).concat(this._famOn() ? [70, 80, 70] : []);
         }
 
         _fnGrip(e) {
@@ -2474,7 +2555,7 @@
                 const named = c.file_name && c.file_name !== c.md5;
                 const name = named ? window.EntityRenderer.renderFileName(c.file_name, c.md5, c.collection) : escapeHtml(c.md5.slice(0, 8));
                 const coverage = c.coverage == null ? '' : ` · ${(Number(c.coverage) * 100).toFixed(0)}% of the shared weight`;
-                return `<th class="col sq" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
+                return `<th class="col sq${this._famMark(c)}" data-col="${escapeAttr(c.id)}" title="${escapeAttr(`${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn${coverage}\nright-click: focus / filter`)}"><i class="nway-sq on" style="${this._sqStyle(ci)}"></i><div class="nway-vname">${name}</div></th>`;
             };
             // Fold or unfold every row group, from the head of the column they sit in.
             const foldBtns = s.group || s.group_merge
@@ -2482,7 +2563,10 @@
                 : '';
             const hdrBtns = `<span class="nway-fold"><button type="button" class="${this._statsOff() ? '' : 'on'}" data-stats-toggle title="${this._statsOff() ? 'Show' : 'Hide'} the Span, Features, Support, Cohesion and Cluster columns"><i class="fa-solid fa-table-columns"></i></button><button type="button" class="${this._sqLane() ? 'on' : ''}" data-sqmode title="${this._sqLane() ? 'Squares coloured by how many files have the function. Click for one colour per file or cluster.' : 'Squares coloured per file or cluster. Click to colour by how many files have the function.'}"><i class="fa-solid fa-palette"></i></button></span>`;
             const th0 = c => th(c).replace('</th>', `${hdrBtns}${foldBtns}<span class="nway-colgrip" title="Drag to resize the Function column (double-click to reset)"></span></th>`);
-            const lead = this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>';
+            const famTh = ([key, label, tip]) => th([key, label]).replace('<th ', `<th title="${escapeAttr(tip)}" `);
+            const lead = this.state.view === 'strings'
+                ? th(['name', 'String']) + (this._famOn() ? [...FAM_COLS.slice(0, 2), ['reach', 'Reach', 'Files of the collection outside this table that also hold the string'], FAM_COLS[2]].map(famTh).join('') : '') + th(['span', 'Files'])
+                : (this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>') + (this._famOn() ? FAM_COLS.map(famTh).join('') : '');
             if (this._tree().grouped) {
                 const bands = this._bands();
                 return `${bands.html}<tr style="--bt:${bands.n * BAND_H}px">${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
@@ -2534,7 +2618,7 @@
             } else {
                 tip = `${c.file_name} (${c.collection})\n${c.md5}\n${Number(c.functions)} fn\nright-click: focus / filter`;
             }
-            return `<th class="col sq nway-numcol${c.expandable ? ' expandable' : ''}" data-gid="${escapeAttr(c.id)}"${c.kind ? (this._colFile(c) ? ` data-lfile="${escapeAttr(this._colFile(c))}"` : '') : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num${Number(c.member_count) > 1 ? ' grp' : ''}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
+            return `<th class="col sq nway-numcol${this._famMark(c)}${c.expandable ? ' expandable' : ''}" data-gid="${escapeAttr(c.id)}"${c.kind ? (this._colFile(c) ? ` data-lfile="${escapeAttr(this._colFile(c))}"` : '') : ` data-col="${escapeAttr(c.id)}"`}${c.expandable ? ` data-colx="${escapeAttr(c.id)}"` : ''} title="${escapeAttr(tip)}"><i class="nway-num${Number(c.member_count) > 1 ? ' grp' : ''}" style="${this._sqStyle(ci)}">${ci + 1}</i></th>`;
         }
 
         // The column outline: every group and column with its number range, and the button that opens or folds it.
@@ -2576,6 +2660,7 @@
                 this.el.innerHTML = `<div class="nway-panel">${this._renderError()}</div>`;
                 return;
             }
+            if (this.state.view === 'strings') return this._renderStrings();
             const d = this.data;
             const rows = this._rows(d.items, 0);
             const off = Number(d.offset), total = Number(d.total);
@@ -2616,6 +2701,30 @@
             }, { passive: true });
         }
 
+        _renderStrings() {
+            const s = this._str, d = this.data;
+            let table;
+            if (!s) table = '<div class="nway-state"><i class="fa-solid fa-spinner fa-spin"></i> Reading the strings...</div>';
+            else if (s.error) table = `<div class="nway-note err">${escapeHtml(s.error)}</div>`;
+            else {
+                const rows = s.items.map(row => this._strRow(row)).join('');
+                table = `<table id="nway-table" class="nway-table${this._sqLane() ? ' nway-sqlane' : ''}" style="width:${this._tableWidth()}px">${this._colgroup()}<thead>${this._head()}</thead><tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No strings match. Strings exist only for files analysed with strings extraction.</td></tr>`}</tbody></table>`;
+            }
+            const foot = s && !s.error ? window.Paging.footer({ offset: Number(s.offset), total: Number(s.total), size: STR_PAGE, shown: s.items.length }) : '';
+            this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}
+                <div class="nway-card table-scope"><div class="nway-body">${this._legend()}<div class="nway-scroll">${table}</div></div>
+                <div class="table-footer"><div class="table-footer-left">${foot}</div></div></div></div>`;
+        }
+
+        _strRow(row) {
+            const cells = this.data.columns.map((c, ci) => {
+                const cell = row.cells[c.id] || { present: 0, total: 1 };
+                return `<td class="col sq"><i class="nway-sq${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(`${this._colLabel(c)}: ${cell.present} of ${cell.total}`)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i></td>`;
+            }).join('');
+            const meta = [row.encoding, row.section].filter(Boolean).join(' · ');
+            return `<tr class="${this._ratioCls(Number(row.span) || 0)}"><td class="nway-open"><code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span></td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>`;
+        }
+
         // Scroll mode: load the next batch when the sentinel nears the viewport.
         _watch() {
             if (this._io) this._io.disconnect();
@@ -2642,8 +2751,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear]');
             if (!t) return;
+            if (t.dataset.famClear !== undefined) return this._set({ family: '', ignore: '', cover_min: '', leak_max: '', offset: 0, sort_col: '' });
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
                 return window.Nav.openPath(`/diff/nway/lineage?${this._docQs().toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
@@ -2740,7 +2850,7 @@
                 const i = t.dataset.set.indexOf(':'), key = t.dataset.set.slice(0, i);
                 // leaving the metadata merge: the server keeps columns=by while col_by / col_set are set
                 if (key === 'columns') this._pin();
-                return this._set({ [key]: t.dataset.set.slice(i + 1), ...(key === 'columns' ? { col_by: '', col_set: '', cmp: '', col_pick: '', col_rest: '' } : {}), offset: 0 });
+                return this._set({ [key]: t.dataset.set.slice(i + 1), ...(key === 'view' ? { sort_col: '' } : {}), ...(key === 'columns' ? { col_by: '', col_set: '', cmp: '', col_pick: '', col_rest: '' } : {}), offset: 0 });
             }
             if (t.dataset.tab) return this._set({ tab: t.dataset.tab, offset: 0, sort_col: '' });
             if (t.dataset.sort) {
@@ -2810,7 +2920,9 @@
         return (n.focused
             ? item('remove', 'fa-eye-slash', 'Remove from focus')
             : item('add', 'fa-bullseye', n.anyFocus ? 'Add to focus' : 'Focus on this file'))
-            + item('column', 'fa-filter', n.filtered ? 'Show all files' : 'Only rows with this file');
+            + item('column', 'fa-filter', n.filtered ? 'Show all files' : 'Only rows with this file')
+            + item(n.fam ? 'none' : 'family', n.fam ? 'fa-flag-checkered' : 'fa-flag', n.fam ? 'Remove from family' : 'Set as family (indicators)')
+            + (n.anyFam && !n.fam ? item(n.ign ? 'none' : 'ignore', 'fa-ban', n.ign ? 'Count in contrast' : 'Ignore in contrast') : '');
     };
 
     // The N-way diff a graph URL (/diff/nway/graph?...) came from: the cluster's N-way tab, or /diff/nway for a file set.

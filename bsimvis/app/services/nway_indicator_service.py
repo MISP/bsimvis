@@ -1,10 +1,10 @@
-"""Indicators of an N-way table: how well a row singles out one lane.
+"""Indicators of an N-way table: how well a row singles out one family.
 
-A *lane* is the column(s) describing the family. The *contrast* is every other
+The *family* is the column(s) describing what you want to single out. The *contrast* is every other
 file of the table, minus the *ignored* columns (a sibling variant, say). For a row
 (a function block or a string) held by `held` files:
 
-    cover  share of lane files holding it
+    cover  share of family files holding it
     leak   share of contrast files also holding it
     reach  files outside the table holding it (strings always, functions opt-in)
     score  cover x (1 - leak), softened by reach
@@ -41,11 +41,14 @@ def ids(text):
     return [t.strip() for t in (text or "").split(",") if t.strip()]
 
 
-def context(doc, lane, ignore=()):
-    """File ids of the lane and the contrast. `lane` / `ignore` hold column ids
+def context(doc, family, ignore=()):
+    """File ids of the family and the contrast. `family` / `ignore` hold column ids
     (a file or a group of the table)."""
     cols = doc["file_columns"] or doc["columns"]
     members = {c["id"]: c.get("members") or [c["id"]] for c in doc["columns"]}
+    for c in doc["columns"]:
+        for p in c.get("path") or []:
+            members.setdefault(p["id"], []).extend(c.get("members") or [c["id"]])
     members.update({c["id"]: [c["id"]] for c in cols})
 
     def files(wanted):
@@ -56,27 +59,27 @@ def context(doc, lane, ignore=()):
             out.update(members[i])
         return out
 
-    lane_f, ignored = files(lane), files(ignore)
-    if not lane_f:
-        raise BadParams("lane needs at least one column")
-    contrast = {c["id"] for c in cols} - lane_f - ignored
-    return {"lane": lane_f, "contrast": contrast, "ignored": ignored - lane_f}
+    fam, ignored = files(family), files(ignore)
+    if not fam:
+        raise BadParams("family needs at least one column")
+    contrast = {c["id"] for c in cols} - fam - ignored
+    return {"family": fam, "contrast": contrast, "ignored": ignored - fam}
 
 
 def stats(held, ctx, reach=None):
     """Cover / leak / reach / score of a row held by the file ids `held`."""
-    tp = len(held & ctx["lane"])
+    tp = len(held & ctx["family"])
     leak = len(held & ctx["contrast"])
-    n_lane, n_con = len(ctx["lane"]), len(ctx["contrast"])
-    score = string_score(tp, n_lane, leak, n_con) or 0.0
+    n_fam, n_con = len(ctx["family"]), len(ctx["contrast"])
+    score = string_score(tp, n_fam, leak, n_con) or 0.0
     out = None
     if reach is not None:
         out = max(0, reach - tp - leak - len(held & ctx["ignored"]))
         score = round(score * REACH_SOFT / (REACH_SOFT + out), 4)
     return {
         "tp": tp,
-        "lane": n_lane,
-        "cover": round(tp / n_lane, 4),
+        "family": n_fam,
+        "cover": round(tp / n_fam, 4),
         "leak": leak,
         "contrast": n_con,
         "leak_rate": round(leak / n_con, 4) if n_con else 0.0,
@@ -156,7 +159,7 @@ def reach_of(r, sids, collections):
 
 def string_rows(r, doc, ctx=None, min_length=MIN_STRING_LEN):
     """The table's strings as N-way rows over the doc's columns, with `stats` when a
-    lane is set. Rows hold `cells` (per column `{present, total, on}`), `files` (file
+    family is set. Rows hold `cells` (per column `{present, total, on}`), `files` (file
     id -> address) and no reach yet (`page_reach`)."""
     cols = doc["file_columns"] or doc["columns"]
     files = [c["id"] for c in cols]
@@ -204,7 +207,7 @@ def page_reach(r, doc, rows, ctx):
 
 
 def demo():
-    ctx = {"lane": {"a", "b"}, "contrast": {"c", "d", "e"}, "ignored": {"f"}}
+    ctx = {"family": {"a", "b"}, "contrast": {"c", "d", "e"}, "ignored": {"f"}}
     s = stats({"a", "b"}, ctx)
     assert (s["cover"], s["leak"], s["score"]) == (1.0, 0, 1.0)
     s = stats({"a", "c", "f"}, ctx)

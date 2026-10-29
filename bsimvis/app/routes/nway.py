@@ -344,13 +344,13 @@ STAT_SORTS = {"cover": "cover", "leak": "leak_rate", "score": "score", "reach": 
 
 
 def _lane_ctx(doc, args):
-    """The lane / contrast file sets of `lane=` / `ignore=` (column ids), or None."""
-    lane = nway_indicator_service.ids(args.get("lane"))
-    if not lane:
+    """The family / contrast file sets of `family=` / `ignore=` (column ids), or None."""
+    family = nway_indicator_service.ids(args.get("family"))
+    if not family:
         return None
     try:
         return nway_indicator_service.context(
-            doc, lane, nway_indicator_service.ids(args.get("ignore"))
+            doc, family, nway_indicator_service.ids(args.get("ignore"))
         )
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
@@ -530,7 +530,7 @@ def _page(doc, args, r=None, pool_id=None):
         "mode": doc["mode"],
         "algo": doc["algo"],
         "warnings": doc["warnings"],
-        "lane": _lane_info(ctx),
+        "family": _lane_info(ctx),
     }
 
 
@@ -1060,13 +1060,13 @@ def _strings_page(doc, args, r):
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
     q = (args.get("q") or "").strip().lower()
-    only_lane = ctx and args.get("lane_only", "1") != "0"
+    only_fam = ctx and args.get("family_only", "1") != "0"
     rows = [
         row
         for row in rows
         if (scope == "all" or row["library"] == (scope == "library"))
         and (not q or q in row["name"].lower())
-        and (not only_lane or row["stats"]["tp"])
+        and (not only_fam or row["stats"]["tp"])
         and (not ctx or _stat_ok(row["stats"], args))
     ]
     sort_col = args.get("sort_col") or ("score" if ctx else "span")
@@ -1089,14 +1089,14 @@ def _strings_page(doc, args, r):
         "columns": doc["columns"],
         "columns_mode": doc["columns_mode"],
         "file_columns": doc["file_columns"],
-        "lane": _lane_info(ctx),
+        "family": _lane_info(ctx),
         "warnings": doc["warnings"],
     }
 
 
 def get_nway_strings():
     """The N-way table of strings: rows are string values, columns the same files or
-    groups as /nway, with Cover / Leak / Reach / Score for a `lane`."""
+    groups as /nway, with Cover / Leak / Reach / Score for a `family`."""
     try:
         doc, r, _ = _load_doc()
     except _Reply as e:
@@ -1105,9 +1105,9 @@ def get_nway_strings():
 
 
 def get_nway_indicators():
-    """Strings and function blocks ranked by how well they single out the `lane`."""
-    if not request.args.get("lane"):
-        abort(400, "lane is required")
+    """Strings and function blocks ranked by how well they single out the `family`."""
+    if not request.args.get("family"):
+        abort(400, "family is required")
     kinds = nway_indicator_service.ids(request.args.get("kinds", "string,function"))
     if not set(kinds) <= {"string", "function"}:
         abort(400, "kinds must be string and/or function")
@@ -1152,7 +1152,7 @@ def get_nway_indicators():
             )
     out = [x for x in out if _stat_ok(x["stats"], request.args)]
     out.sort(key=lambda x: (-x["stats"]["score"], -x["stats"]["tp"]))
-    return {"items": out[:limit], "total": len(out), "lane": _lane_info(ctx)}
+    return {"items": out[:limit], "total": len(out), "family": _lane_info(ctx)}
 
 
 NEIGHBOR_MAX_DEPTH = 5

@@ -664,11 +664,15 @@ def _label(cells, fmeta, weights):
 
 def _tag_name(tag):
     """A function name carried by a tag: `fid:libc:1.2.6#__toread` -> `__toread`,
-    `yara:botnet:generic:Rule` -> `Rule`. Bare `fid:libc` names no function."""
+    `yara:botnet:generic:Rule` -> `Rule`, `capa:a:host-interaction:software` -> `host-interaction:software`. Bare `fid:libc` names no function.
+    """
     if "#" in tag:
         name = tag.rsplit("#", 1)[1]
         return None if name in ("", "ambiguous") else name  # #ambiguous: FID multi-match marker
     parts = tag.split(":")
+    # capa / mbc / mitre: the last two fields after the prefix tell more than the last one
+    if parts[0] in ("capa", "mbc", "mitre"):
+        return ":".join(parts[1:][-2:]) or None
     return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
 
 
@@ -1042,6 +1046,10 @@ def demo():
 
     tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
     assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
+    assert _tag_name("capa:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("capa:communication/http/client") == "communication/http/client"
+    assert _tag_name("capa:a:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("yara:trojan:mirai:Mirai_ELF") == "Mirai_ELF"
     # tag-named rows take the tag the others lack (capa before yara); the rest are numbered
     vr = [
         {
@@ -1055,7 +1063,7 @@ def demo():
         {"name": "main", "tags": []},
     ]
     _variants(vr)
-    assert [r["name"] for r in vr[:3]] == ["xor", "Mirai_ELF", "Mirai_ELF"], vr
+    assert [r["name"] for r in vr[:3]] == ["x:xor", "Mirai_ELF", "Mirai_ELF"], vr
     assert vr[0]["name_was"] == "Mirai_ELF" and "variant" not in vr[0]
     assert [r["variant"]["n"] for r in vr[1:]] == [1, 2, 1, 2], vr
     cols = [{"id": i, "functions": 10} for i in "abcd"]

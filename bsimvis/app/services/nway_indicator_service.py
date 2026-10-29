@@ -232,9 +232,31 @@ def consts_in(raw):
     return out
 
 
+_NAME_MAX = 28  # a name is cut between words, never inside one
+_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+
+
+_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z]+|[a-z]+|[0-9]+")
+STRING_NAME_MAX = 28
+
+
 def _string_name(value):
-    """A string as an identifier: `/dev/watchdog` -> `dev_watchdog`; None when too thin."""
-    name = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_")[:40].strip("_")
+    """A string as a short identifier, cut between words (capitals, separators, digits)
+    so no word is chopped: `/dev/watchdog` -> `dev_watchdog`,
+    `vkEnumerateDeviceExtensionProperties_pLayerName` -> `vkEnumerateDeviceExtension`.
+    None when too thin."""
+    words = list(_WORD.finditer(value))
+    if not words:
+        return None
+    name = ""
+    for w in words:
+        cut = re.sub(r"[^A-Za-z0-9]+", "_", value[words[0].start() : w.end()]).strip(
+            "_"
+        )
+        if len(cut) > STRING_NAME_MAX and name:
+            break
+        name = cut
+    name = name[:STRING_NAME_MAX]
     return name if len(name) >= 5 and sum(c.isalpha() for c in name) >= 3 else None
 
 
@@ -809,6 +831,15 @@ def page_reach(r, doc, rows, ctx):
 def demo():
     # a nameless row is named after a string few others use
     assert _string_name("/dev/watchdog") == "dev_watchdog"
+    assert (
+        _string_name("vkEnumerateDeviceExtensionProperties_pLayerName")
+        == "vkEnumerateDeviceExtension"
+    )
+    assert (
+        _string_name("vkEnumerateDeviceExtensionProperties_pLa")
+        == "vkEnumerateDeviceExtension"
+    )
+    assert _string_name("HTTPServerStarted now") == "HTTPServerStarted_now"
     assert _string_name("%s %d") is None and _string_name("ab") is None
 
     class _P:

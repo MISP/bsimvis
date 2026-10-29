@@ -308,7 +308,11 @@ def name_by_strings(r, rows):
     if not todo:
         return
     pipe, order, best = r.pipeline(transaction=False), [], {}
-    for row, found in zip(todo, inline_strings(r, todo, top=20)):
+    # read in batches, so a row's strings do not depend on which other rows are shown
+    # (inline_strings stops at `cap` functions)
+    batches = [todo[i : i + 20] for i in range(0, len(todo), 20)]
+    found_all = [f for b in batches for f in inline_strings(r, b, top=20)]
+    for row, found in zip(todo, found_all):
         fids = _row_fid_lists([row])[0]
         if not fids:
             continue

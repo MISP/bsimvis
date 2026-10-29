@@ -326,7 +326,10 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
     for row, uuids in zip(rows, per_row):
         row["clusters"] = uuids
         # a tag-carried name is only a fallback: a real cluster name beats it
-        if _DEFAULT_NAME.match(row["name"]) or row.get("name_from") == "tag":
+        if _DEFAULT_NAME.match(row["name"]) or row.get("name_from") in (
+            "tag",
+            "string",
+        ):
             for u in uuids:
                 c = cards[u]
                 n = c.get("cluster_name") or ""
@@ -525,7 +528,8 @@ def _page(doc, args, r=None, pool_id=None):
     page_fids = {f for row in real for f in _row_fids(row)}
     if page_clusters:
         cards = _attach_clusters(r, real, fmeta, pool_id, args)
-        nway_indicator_service.name_by_strings(r, real)
+    # a search must not change a row's name: string names go on whatever rows are shown
+    nway_indicator_service.name_by_strings(r, real)
     if "tag_axis_counts" not in doc:
         doc["tag_axis_counts"] = _tag_axis_counts(fmeta)
     return {

@@ -273,8 +273,8 @@ def _common_token(values, need=3):
 
 def name_by_strings(r, rows):
     """Name rows that have no name at all (FUN_xxx, no tag, no cluster name) after the
-    word most of their strings share (`str_proc`), else the string their functions
-    share that few other functions use (`str_dev_watchdog`); `name_from` = string.
+    word most of their strings share (`uses_proc`), else the string their functions
+    share that few other functions use (`uses_dev_watchdog`); `name_from` = string.
     """
     todo = [
         row
@@ -307,7 +307,7 @@ def name_by_strings(r, rows):
     for _, row, name in best.values():
         row["name_was"], row["name"], row["name_from"] = (
             row["name"],
-            f"str_{name}",
+            f"uses_{name}",
             "string",
         )
 
@@ -853,7 +853,7 @@ def demo():
         {"name": "main", "cells": {"a": "c:func:m:f2"}},
     ]
     name_by_strings(_R(), rows)
-    assert [r["name"] for r in rows] == ["str_dev_watchdog", "main"], rows
+    assert [r["name"] for r in rows] == ["uses_dev_watchdog", "main"], rows
     assert (
         _common_token(["/proc/stat", "/proc/net/tcp", "/proc/cpuinfo", "ok"]) == "proc"
     )

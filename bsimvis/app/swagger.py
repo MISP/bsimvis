@@ -2662,23 +2662,6 @@ class BinSimNwayStrings(Resource):
         return get_nway_strings()
 
 
-@ns_bin_sim.route("/nway/expand")
-class BinSimNwayExpand(Resource):
-    @ns_bin_sim.doc(
-        params={
-            "kind": "function (sub-rows are the strings its functions reference) or string (sub-rows are the function rows that reference it)",
-            "cells": "kind=function: JSON object `{file column id: function id}`, the row's `files` / `cells`",
-            "id": "kind=string: the string id (`id` of a /nway/strings row)",
-            "md5s": "Same file set / column params as /nway (cluster_uuid, col_set, col_by, columns, col_open, pool, ...)",
-        }
-    )
-    def get(self):
-        """Sub-rows of one N-way row with presence per column: `{items, total}`, each item `{id, name, cells: {column id: {present, total, on}}, span}`."""
-        from bsimvis.app.routes.nway import get_nway_expand
-
-        return get_nway_expand()
-
-
 @ns_bin_sim.route("/nway/indicators")
 class BinSimNwayIndicators(Resource):
     @ns_bin_sim.doc(

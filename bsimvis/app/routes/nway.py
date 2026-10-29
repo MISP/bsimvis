@@ -1134,31 +1134,6 @@ def _strings_page(doc, args, r):
     }
 
 
-def get_nway_expand():
-    """Sub-rows of one row, with presence over the table's columns: `kind=function`
-    takes `cells` (JSON `{file id: function id}`) and gives the strings its functions
-    reference; `kind=string` takes `id` and gives the function rows that reference it.
-    """
-    kind = request.args.get("kind", "")
-    if kind not in ("function", "string"):
-        abort(400, "kind must be function or string")
-    try:
-        cells = json.loads(request.args.get("cells") or "{}")
-    except ValueError:
-        cells = None
-    if kind == "function" and not (isinstance(cells, dict) and cells):
-        abort(400, "kind=function needs cells, a JSON object of file id -> function id")
-    if kind == "string" and not request.args.get("id"):
-        abort(400, "kind=string needs id")
-    try:
-        doc, r, _ = _load_doc()
-    except _Reply as e:
-        return e.args[0]
-    if kind == "function":
-        return nway_indicator_service.expand_function(r, doc, cells)
-    return nway_indicator_service.expand_string(r, doc, request.args["id"])
-
-
 def get_nway_strings():
     """The N-way table of strings: rows are string values, columns the same files or
     groups as /nway, with Cover / Leak / Reach / Score for a `family`."""

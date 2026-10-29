@@ -35,11 +35,11 @@
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
-        family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '',
+        family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '',
         group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts'];
     // Family stats columns: Cover, Leak, Score (+ Reach for strings).
     const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
     const STR_PAGE = 100;
@@ -243,7 +243,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            if (this.state.view !== 'strings') { qs.set('strings', '1'); qs.set('calls', '1'); qs.set('consts', '1'); }
+            if (this.state.view !== 'strings') qs.set('strings', '1');
             if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
@@ -535,13 +535,15 @@
             const lv = (s.group || '').split(',').filter(Boolean);
             const moreSum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, lv.length ? lv.join(' > ') : '', d.columns_mode === 'focus' ? 'focus' : ''].filter(Boolean).join(' · ');
             const stats = `<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button>`;
+            const inl = [['calls', 'Calls', 'fa-solid fa-diagram-project', 'Show the rows each function calls and is called by, under it'], ['consts', 'Constants', 'fa-solid fa-hashtag', 'Show the constants each function uses, under it']]
+                .map(([k, label, icon, tip]) => `<button type="button" class="nway-chip${s[k] === '1' ? ' on' : ''}" data-inl="${k}" title="${tip}"><i class="${icon}"></i> ${label}</button>`).join('');
             const lineage = `<button type="button" class="nway-chip" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
             const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
                 ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
             return `<div class="nway-tabrow">${search}${this._columnChip()}${this._famChip()}${moreBtn}</div>
-                <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
+                <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${s.view === 'strings' ? '' : inl}${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
         // The group controls in three parts: merge files (always shown), the metadata controls
@@ -2935,7 +2937,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
             if (!t) return;
             if (t.dataset.xp !== undefined) return this._expand(t);
             if (t.dataset.fnQ !== undefined) return this._set({ view: 'functions', q: t.dataset.fnQ, offset: 0, sort_col: '' });
@@ -2964,6 +2966,7 @@
                 this._scrollSave();
                 return this.render();
             }
+            if (t.dataset.inl) return this._set({ [t.dataset.inl]: this.state[t.dataset.inl] === '1' ? '' : '1' });
             if (t.dataset.statsToggle !== undefined) {
                 this._so = !this._statsOff();
                 try { localStorage.setItem('nway.stats', this._so ? '0' : '1'); } catch (err) { /* storage blocked */ }

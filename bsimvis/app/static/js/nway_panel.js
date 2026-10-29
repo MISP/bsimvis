@@ -221,6 +221,7 @@
         }
 
         _set(patch) {
+            if (Object.keys(patch).some(k => !['offset', 'sort_col', 'sort_dir', 'q', 'tab', 'scope', 'family', 'ignore', 'cover_min', 'leak_max'].includes(k))) this._exp = null;
             if (Object.keys(patch).some(k => k.startsWith('group'))) { this._gdef = 'none'; this._gflip.clear(); this._rowAuto = true; }
             Object.assign(this.state, patch);
             const s = { ...this.state };
@@ -393,23 +394,32 @@
 
         _viewDd() {
             const opts = [['functions', 'Functions', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['strings', 'Strings', 'fa-solid fa-quote-left', 'var(--success)'], ['both', 'Both', 'fa-solid fa-link', 'var(--warning, #d97706)']];
-            return this._dd('Rows', opts, this.state.view, 'Functions: function groups. Strings: string values shared by the files. Both: function groups with the strings their functions reference shown inline, to see which strings go with which function cluster.', v => `data-set="view:${v}"`);
+            return this._dd('Rows', opts, this.state.view, 'Functions: function groups. Strings: string values shared by the files. Both: function groups with the strings their functions reference shown inline, to see which strings go with which function cluster. Open the arrow of a row to get its strings (circles) or functions (squares) as rows with their own presence in each column.', v => `data-set="view:${v}"`);
         }
 
-        // Function rows that use a string; click shows that function row.
+        // The line of linked items under a row's name: a toggle that opens them as rows (with its count),
+        // then the quick chips. `kind` f: strings of a function row; s: functions of a string row.
+        _linkLine(key, kind, data, count, label, chips, more) {
+            const on = !!(this._exp && this._exp.has(key));
+            return `<div class="nway-schips${on ? ' open' : ''}"><button type="button" class="nway-xp" data-xp="${escapeAttr(key)}" data-xk="${kind}" data-xd="${escapeAttr(data)}" aria-expanded="${on}" title="${kind === 'f' ? 'Show each string as a row, with the columns that use it' : 'Show each function row that uses this string, with the columns that have it'}"><i class="fa-solid fa-chevron-right"></i> ${Number(count)} ${label}</button>${chips}${more}</div>`;
+        }
+
+        // Function rows that use a string; click a chip to show that function row.
         _refChips(row) {
             const r = row.refs;
             if (!r || !r.direct.length) return '';
-            const chip = x => `<span class="nway-schip" data-fn-q="${escapeAttr(x.name)}" title="${escapeAttr(`${x.n} function${x.n === 1 ? '' : 's'} in this row reference it. Click: show this row in Functions`)}">${escapeHtml(x.name)}${x.n > 1 ? `<b>${Number(x.n)}</b>` : ''}</span>`;
-            return `<div class="nway-schips"><i class="fa-solid fa-arrow-right nway-ref" title="used by"></i>${r.direct.map(chip).join('')}</div>`;
+            const chip = x => `<span class="nway-schip fn" data-fn-q="${escapeAttr(x.name)}" title="${escapeAttr(`${x.n} function${x.n === 1 ? '' : 's'} in this row reference it. Click: show this row in Functions`)}">${escapeHtml(x.name)}${x.n > 1 ? `<b>${Number(x.n)}</b>` : ''}</span>`;
+            return this._linkLine(`s:${row.id}`, 's', row.id, r.functions, r.functions === 1 ? 'function' : 'functions', r.direct.map(chip).join(''), '');
         }
 
-        // The strings the functions of a row reference, as chips; click shows them in the Strings rows.
+        // The strings the functions of a row reference, as chips; click one to show it in the Strings rows.
         _strChips(row) {
             const st = row.strings;
             if (this.state.view !== 'both' || !st || !st.total) return '';
+            const cells = {};
+            for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
             const chips = st.top.map(x => `<span class="nway-schip" data-str-q="${escapeAttr(x.value)}" title="${escapeAttr(`${x.n} of ${x.of} functions of this row reference it. Click: show it in Strings`)}">${escapeHtml(x.value)}${x.of > 1 ? `<b>${Number(x.n)}/${Number(x.of)}</b>` : ''}</span>`).join('');
-            return `<div class="nway-schips">${chips}${st.total > st.top.length ? `<span class="dim">+${st.total - st.top.length}</span>` : ''}</div>`;
+            return this._linkLine(this._fnKey(row), 'f', JSON.stringify(cells), st.total, st.total === 1 ? 'string' : 'strings', chips, st.total > st.top.length ? `<span class="dim">+${st.total - st.top.length}</span>` : '');
         }
 
         _famChip() {
@@ -2476,7 +2486,12 @@
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
                 ${this._famCells(row.stats)}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
-            </tr>`;
+            </tr>${this._subHtml(this._fnKey(row))}`;
+        }
+
+        _fnKey(row) {
+            const f = Object.values(row.files || row.cells || {}).find(v => typeof v === 'string');
+            return f ? `f:${f}` : '';
         }
 
         _ids(key) {
@@ -2769,14 +2784,64 @@
             this._watchStr();
         }
 
-        _strRow(row) {
-            const cells = this.data.columns.map((c, ci) => {
-                const cell = row.cells[c.id] || { present: 0, total: 1 };
-                return `<td class="col sq"><i class="nway-sq${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(`${this._colLabel(c)}: ${cell.present} of ${cell.total}`)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i></td>`;
+        // Presence of a sub-row in one column. Strings are circles, functions squares.
+        _shape(cell, c, ci, circle) {
+            cell = cell || { present: 0, total: 1 };
+            return `<td class="col sq"><i class="nway-sq${circle ? ' s' : ''}${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(`${this._colLabel(c)}: ${cell.present} of ${cell.total}`)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i></td>`;
+        }
+
+        _subHtml(key) {
+            const body = this._exp && this._exp.get(key);
+            return body ? this._subRows(key, body) : '';
+        }
+
+        // The rows of an opened line, in the table's own columns: the name cell holds the item, the
+        // count of files goes under Span / Files, the shape of each column cell is the item's presence there.
+        _subRows(key, body) {
+            const strs = key[0] === 'f', cols = this.data.columns, lead = this._lead().length - 1;
+            const spanAt = this.state.view === 'strings' ? lead - 1 : this._statsOff() ? -1 : 0;
+            const cls = strs ? 'str' : 'fn';
+            const rows = body.items.map(x => {
+                const label = strs
+                    ? `<code class="nway-str" title="${escapeAttr(x.name)}">${escapeHtml(x.name.slice(0, 160))}</code> <span class="dim">${escapeHtml([x.encoding, x.section].filter(Boolean).join(' · '))}</span>`
+                    : `<span class="nway-subfn" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions">${escapeHtml(x.name)}</span>`;
+                const pad = Array.from({ length: lead }, (_, i) => `<td class="num">${i === spanAt ? Number(x.span) : ''}</td>`).join('');
+                return `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="nway-mark ${cls}"></i>${label}</td>${pad}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs)).join('')}</tr>`;
             }).join('');
+            const span = lead + 1 + cols.length;
+            const more = body.total > body.items.length ? `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td colspan="${span}" class="dim">+${body.total - body.items.length} more</td></tr>` : '';
+            return rows + more || `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td colspan="${span}" class="dim">Nothing linked in the database.</td></tr>`;
+        }
+
+        async _expand(btn) {
+            const key = btn.dataset.xp, tr = btn.closest('tr');
+            this._exp = this._exp || new Map();
+            const line = btn.closest('.nway-schips');
+            const drop = () => this.el.querySelectorAll(`tr[data-sub="${CSS.escape(key)}"]`).forEach(x => x.remove());
+            const mark = open => { line.classList.toggle('open', open); btn.setAttribute('aria-expanded', String(open)); };
+            if (this._exp.has(key)) { this._exp.delete(key); mark(false); return drop(); }
+            this._exp.set(key, null);
+            mark(true);
+            const qs = this._docQs();
+            qs.set('kind', btn.dataset.xk === 'f' ? 'function' : 'string');
+            qs.set(btn.dataset.xk === 'f' ? 'cells' : 'id', btn.dataset.xd);
+            let body = null;
+            try {
+                const res = await fetch(`/api/bin_sim/nway/expand?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
+                body = res.ok ? await res.json() : null;
+            } catch (e) { body = null; }
+            if (!this._exp || !this._exp.has(key) || !tr.isConnected) return;
+            if (!body) { this._exp.delete(key); mark(false); return showToast('Could not load the rows.', 'warning'); }
+            this._exp.set(key, body);
+            drop();
+            tr.insertAdjacentHTML('afterend', this._subRows(key, body));
+        }
+
+        _strRow(row) {
+            const cells = this.data.columns.map((c, ci) => this._shape(row.cells[c.id], c, ci, true)).join('');
             const meta = [row.encoding, row.section].filter(Boolean).join(' · ');
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
-            return `<tr class="${depth ? 'nway-in ' : ''}${this._ratioCls(Number(row.span) || 0)}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-open"><code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span>${this._refChips(row)}</td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>`;
+            return `<tr class="${depth ? 'nway-in ' : ''}${this._ratioCls(Number(row.span) || 0)}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-open"><code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span>${this._refChips(row)}</td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>${this._subHtml(`s:${row.id}`)}`;
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.
@@ -2805,8 +2870,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
             if (!t) return;
+            if (t.dataset.xp !== undefined) return this._expand(t);
             if (t.dataset.fnQ !== undefined) return this._set({ view: 'functions', q: t.dataset.fnQ, offset: 0, sort_col: '' });
             if (t.dataset.strQ !== undefined) return this._set({ view: 'strings', q: t.dataset.strQ, offset: 0, sort_col: '' });
             if (t.dataset.famClear !== undefined) return this._set({ family: '', ignore: '', cover_min: '', leak_max: '', offset: 0, sort_col: '' });

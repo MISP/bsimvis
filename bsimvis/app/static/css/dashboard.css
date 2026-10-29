@@ -3626,8 +3626,24 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-fam-in { box-shadow: inset 0 3px 0 var(--success); }
 .nway-fam-out { opacity: 0.45; }
 .nway-str { font: 0.78rem 'Consolas', monospace; display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-.nway-schips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+.nway-schips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 4px; }
 .nway-schip { font: 0.7rem 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--card-bg); }
+.nway-schip.fn { border-radius: 3px; }
 .nway-schip b { margin-left: 4px; opacity: 0.7; font-weight: 600; }
 .nway-schip:hover { border-color: var(--success); }
-.nway-ref { font-size: 0.65rem; opacity: 0.55; align-self: center; }
+.nway-sq.s { border-radius: 50%; }
+.nway-xp { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px 0 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font-size: 0.7rem; cursor: pointer; }
+.nway-xp i { font-size: 0.6rem; transition: transform 0.12s; }
+.nway-xp:hover { border-color: var(--success); }
+.nway-schips.open .nway-xp i { transform: rotate(90deg); }
+.nway-schips.open .nway-schip, .nway-schips.open .dim { display: none; }
+.nway-table tr.nway-xrow td { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); border-top: 0; padding-top: 3px; padding-bottom: 3px; font-size: 0.8rem; }
+.nway-table tr.nway-xrow td.nway-open { padding-left: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 3px 0 0 var(--border); cursor: default; }
+.nway-table tr.nway-xrow:hover td { background: var(--hover); }
+.nway-table tr.nway-xrow .nway-sq { width: 13px; height: 13px; }
+.nway-mark { display: inline-block; width: 7px; height: 7px; margin-right: 8px; background: var(--dim); vertical-align: middle; }
+.nway-mark.str { border-radius: 50%; }
+.nway-subfn { cursor: pointer; }
+.nway-subfn:hover { text-decoration: underline; }
+.nway-table tbody tr.nway-xrow:nth-child(n) td:first-child { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
+.nway-table tbody tr.nway-xrow:nth-child(n):hover td:first-child { background: var(--hover); }

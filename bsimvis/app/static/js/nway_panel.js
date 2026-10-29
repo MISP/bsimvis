@@ -2533,7 +2533,7 @@
             const span = this._lead().length + this.data.columns.length;
             const depth = row.g && (this.data.groups || {})[row.g] ? this.data.groups[row.g].path.length : 0;
             return ['f', 'in', 'out', 'k'].map(k => lines[k]
-                ? `<tr class="nway-xrow nway-xline k-${k}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td colspan="${span}">${lines[k]}</td></tr>${this._subHtml(`${k}:${key}`)}`
+                ? `<tr class="nway-xrow nway-xline k-${k}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-xlcell">${lines[k]}</td><td colspan="${span - 1}"></td></tr>${this._subHtml(`${k}:${key}`)}`
                 : '').join('');
         }
 

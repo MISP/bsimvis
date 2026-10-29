@@ -357,7 +357,10 @@ window.YaraView = {
     // Quick actions on a file row: move it to the other set, or drop it from the test.
     // Names of the clusters a file or function belongs to.
     _clBadges(cl) {
-        return (cl || []).map(c => `<span class="yw-cl" title="${escapeAttr(`${c.name} (${c.size})`)}"><i class="fa-solid fa-circle-nodes"></i> ${escapeHtml(c.name)}</span>`).join('');
+        return (cl || []).map(c => {
+            const u = c.uuid ? escapeAttr(jsString(c.uuid)) : '';
+            return `<span class="yw-cl" title="${escapeAttr(`${c.name} (${c.size} members)\n${c.uuid || ''}`)}"><i class="fa-solid fa-circle-nodes"></i> ${escapeHtml(c.name)}${c.uuid ? ` <code>${escapeHtml(c.uuid.slice(0, 8))}</code><button title="Test only this cluster" aria-label="Test only this cluster" onclick="event.stopPropagation(); YaraView.refocus(${u}, 'target')"><i class="fa-solid fa-crosshairs"></i></button>` : ''}</span>`;
+        }).join('');
     },
 
     _pinBtns(f, role) {
@@ -592,22 +595,57 @@ window.YaraView = {
         this._paint();
     },
 
+    // Cluster rows: name, uuid, a bar of what the rule does inside, and buttons to retarget the test sets.
+    _scopeRows(rows, gainLabel) {
+        if (!rows.length) return '<div class="yw-hint">none</div>';
+        return `<div class="yw-scl">${rows.map(c => {
+            const tot = Math.max(1, c.targets + c.negatives), w = n => (100 * n / tot).toFixed(1);
+            const u = escapeAttr(jsString(c.uuid || ''));
+            const act = c.uuid ? `<div class="yw-sca">
+                <button class="yw-btn" title="Test only this cluster: it becomes Must match" onclick="YaraView.refocus(${u}, 'target')"><i class="fa-solid fa-crosshairs"></i> Focus</button>
+                <button class="yw-btn ghost" title="Add this cluster to Must match" onclick="YaraView.refocus(${u}, 'add')"><i class="fa-solid fa-plus"></i> Match</button>
+                <button class="yw-btn ghost" title="Add this cluster to Must not match" onclick="YaraView.refocus(${u}, 'neg')"><i class="fa-solid fa-ban"></i> Not</button></div>` : '';
+            return `<div class="yw-sc">
+                <div class="yw-scn"><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div>
+                    <code class="yw-uuid" title="Cluster uuid (click to copy)" onclick="navigator.clipboard && navigator.clipboard.writeText(${u})">${escapeHtml(c.uuid || 'no uuid')}</code></div>
+                <div class="yw-scb"><div class="yw-sbar" title="${c.hit} hit, ${c.missed} missed, ${c.negatives} negatives">
+                    <i class="hit" style="width:${w(c.hit)}%"></i><i class="miss" style="width:${w(c.missed)}%"></i><i class="neg" style="width:${w(c.negatives)}%"></i></div>
+                    <div class="yw-scs"><span>${c.size} files</span><span class="ok">${c.hit} hit</span><span class="warn">${c.missed} missed</span><span class="${c.negatives ? 'bad' : ''}">${c.negatives} neg</span><span>${Math.round(c.purity * 100)}% pure</span></div></div>
+                <div class="yw-scg">${c.gain !== undefined ? `<b>+${c.gain}</b><small>${gainLabel}, ${c.covered} total</small>` : ''}</div>${act}</div>`;
+        }).join('')}</div>`;
+    },
+
     _scopePane() {
         const h = this._sc;
         if (!h || h.loading) return '<div class="yw-hint">clustering the target files&hellip;</div>';
         const d = h.data;
         if (h.error || !d || !d.ok) return `<div class="yw-hint">${escapeHtml(h.error || (d && (d.message || 'no scope')) || 'no scope')}</div>`;
-        const table = (rows, cum) => rows.length ? `<table class="yw-fixed"><colgroup><col><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:64px"><col style="width:84px"></colgroup>
-            <thead><tr><th>File cluster</th><th title="Files in the cluster">Size</th><th title="Target files">Targets</th><th title="Negative files (whole sets)">Neg</th><th title="Targets the rule hits">Hit</th><th title="Targets the rule misses">Missed</th><th title="${cum}">Covered</th></tr></thead><tbody>${rows.map(c => `<tr>
-            <td><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div></td><td class="yw-mono">${c.size}</td><td class="yw-mono">${c.targets}</td>
-            <td class="yw-mono" style="color:${c.negatives ? '#ef4444' : 'var(--subtle)'};">${c.negatives}</td><td class="yw-mono">${c.hit}</td>
-            <td class="yw-mono" style="color:${c.missed ? '#f59e0b' : 'var(--subtle)'};">${c.missed}</td><td class="yw-mono">+${c.gain} (${c.covered})</td></tr>`).join('')}</tbody></table>` : '<div class="yw-hint">none</div>';
-        const loose = d.impure.length ? `<div class="yw-dim" style="padding:10px 0 6px;">Clusters with targets but under ${Math.round(d.min_purity * 100)}% pure (too many negatives to scope to)</div>
-            <table class="yw-fixed"><colgroup><col><col style="width:64px"><col style="width:64px"><col style="width:64px"></colgroup><thead><tr><th>File cluster</th><th>Size</th><th>Targets</th><th>Neg</th></tr></thead><tbody>${d.impure.map(c => `<tr><td><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div></td><td class="yw-mono">${c.size}</td><td class="yw-mono">${c.targets}</td><td class="yw-mono" style="color:#ef4444;">${c.negatives}</td></tr>`).join('')}</tbody></table>` : '';
-        const cov = d.scope.length ? d.scope[d.scope.length - 1].covered : 0;
-        return `<div class="yw-dim" style="padding:6px 0;">Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample. ${d.unclustered} of ${d.targets} targets sit in no cohesive cluster.</div>
-            <div class="yw-dim" style="padding:6px 0;"><b>Focus on the misses</b> &middot; ${d.missed} targets missed. Clusters that hold most of them, best first.</div>${table(d.focus, 'Misses newly covered (running total)')}
-            <div class="yw-dim" style="padding:10px 0 6px;"><b>Proposed scope</b> &middot; ${cov} of ${d.targets} targets covered by ${d.scope.length} pure clusters.</div>${table(d.scope, 'Targets newly covered (running total)')}${loose}`;
+        const cov = d.scope.length ? d.scope[d.scope.length - 1].covered : 0, pc = n => Math.round(100 * n / Math.max(1, d.targets));
+        const all = d.scope.filter(c => c.uuid).map(c => c.uuid);
+        return `<div class="yw-scsum"><div class="yw-m"><small>Targets</small><strong>${d.targets}</strong></div>
+            <div class="yw-m"><small>Missed</small><strong>${d.missed}</strong></div>
+            <div class="yw-m"><small>Scope covers</small><strong>${pc(cov)}%</strong></div>
+            <div class="yw-m"><small>No cluster</small><strong>${d.unclustered}</strong></div>
+            <span class="yw-sp"></span>${all.length ? `<button class="yw-btn primary" title="Must match becomes the union of the proposed clusters" onclick='YaraView.refocus(${escapeAttr(JSON.stringify(all))}, "target")'><i class="fa-solid fa-crosshairs"></i> Use proposed scope</button>` : ''}</div>
+            <div class="yw-dim yw-schint">Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample. Bars: hit, missed, negative files of the cluster.</div>
+            <h4 class="yw-sch">Focus on the misses <small>${d.missed} targets missed; clusters holding most of them</small></h4>${this._scopeRows(d.focus, 'misses')}
+            <h4 class="yw-sch">Proposed scope <small>${cov} of ${d.targets} targets in ${d.scope.length} pure clusters</small></h4>${this._scopeRows(d.scope, 'targets')}
+            ${d.impure.length ? `<h4 class="yw-sch">Too impure to scope to <small>targets mixed with negatives</small></h4>${this._scopeRows(d.impure, '')}` : ''}`;
+    },
+
+    // Point the test sets at file clusters (uuid or list): target = replace Must match, add = append, neg = Must not match.
+    refocus(uuids, mode) {
+        const qs = [].concat(uuids).map(u => `cluster_uuid=${encodeURIComponent(u)}`);
+        const cmp = this._cmp.cmp();
+        const g = cmp.groups;
+        const merge = (list, add) => [...new Set([...list, ...add])];
+        if (mode === 'target') g[0].queries = qs;
+        else if (mode === 'add') g[0].queries = merge(g[0].queries, qs);
+        else if (g[1]) g[1].queries = merge(g[1].queries, qs);
+        this._cmp.load(cmp);
+        this._sum(null);
+        this._persist();
+        this.schedule(0);
     },
 
 

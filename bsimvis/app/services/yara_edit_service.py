@@ -548,6 +548,7 @@ def file_clusters(r, members, min_cohesion=0.5):
                 "coll": k[0],
                 "ns": ns[k[0]],
                 "cid": k[1],
+                "uuid": m.get("cluster_uuid"),
                 "name": m.get("cluster_name") or f"Binary Cluster {k[1]}",
                 "size": m.get("member_count") or 0,
                 "cohesion": m.get("cohesion_score"),
@@ -561,7 +562,7 @@ def file_clusters(r, members, min_cohesion=0.5):
 
 
 def _slim(cl, cap=3):
-    return [{"name": c["name"], "size": c["size"]} for c in cl[:cap]]
+    return [{"name": c["name"], "size": c["size"], "uuid": c["uuid"]} for c in cl[:cap]]
 
 
 def fn_clusters(r, coll, md5, entry, min_cohesion=0.5, cap=2):
@@ -587,6 +588,7 @@ def fn_clusters(r, coll, md5, entry, min_cohesion=0.5, cap=2):
                 {
                     "name": m.get("cluster_name") or f"Cluster {c}",
                     "size": m.get("member_count") or 0,
+                    "uuid": m.get("cluster_uuid"),
                 }
             )
     return out[:cap]
@@ -1120,6 +1122,7 @@ def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
             {
                 "name": c["name"],
                 "cid": c["cid"],
+                "uuid": c["uuid"],
                 "size": len(mem) or c["size"],
                 "cohesion": c["cohesion"],
                 "targets": len(t),

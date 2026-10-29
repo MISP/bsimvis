@@ -402,7 +402,11 @@ def _summary(nd, n):
 def name_key(row):
     """The row's name without compiler suffixes, or None for an auto name."""
     name = (row.get("name") or "").strip()
-    if not name or _DEFAULT_NAME.match(name) or row.get("name_from") == "cluster":
+    if (
+        not name
+        or _DEFAULT_NAME.match(name)
+        or row.get("name_from") in ("cluster", "string")
+    ):
         return None
     while m := _SUFFIX.search(name):
         name = name[: m.start()]

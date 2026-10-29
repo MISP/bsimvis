@@ -232,6 +232,46 @@ def consts_in(raw):
     return out
 
 
+def _string_name(value):
+    """A string as an identifier: `/dev/watchdog` -> `dev_watchdog`; None when too thin."""
+    name = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_")[:40].strip("_")
+    return name if len(name) >= 5 and sum(c.isalpha() for c in name) >= 3 else None
+
+
+def name_by_strings(r, rows):
+    """Name rows that have no name at all (FUN_xxx, no tag, no cluster name) after the
+    string their functions share that few other functions use, so `name_from` = string.
+    """
+    todo = [
+        row
+        for row in rows
+        if nway_diff_service._DEFAULT_NAME.match(row["name"])
+        and row.get("name_from") not in ("tag", "cluster")
+        and not row.get("user_named")
+    ]
+    if not todo:
+        return
+    pipe, order = r.pipeline(transaction=False), []
+    for row, found in zip(todo, inline_strings(r, todo, top=6)):
+        fids = _row_fid_lists([row])[0]
+        if not fids:
+            continue
+        coll = fids[0].split(":func:", 1)[0]
+        for s in found["top"]:
+            if name := _string_name(s["value"]):
+                pipe.scard(f"{coll}:idx:string:value:{s['id']}")
+                order.append((row, name, len(fids)))
+    best = {}
+    for (row, name, mine), held in zip(order, pipe.execute()):
+        # discriminating: the string is (almost) only used by this row's own functions
+        if held <= 2 * mine and (
+            id(row) not in best or (held, -len(name)) < best[id(row)][0]
+        ):
+            best[id(row)] = ((held, -len(name)), row, name)
+    for _, row, name in best.values():
+        row["name_was"], row["name"], row["name_from"] = row["name"], name, "string"
+
+
 def _fid_at(doc):
     """Function id -> index of the table row holding it (kept on the cached doc)."""
     if "_fid_at" not in doc:
@@ -727,6 +767,54 @@ def page_reach(r, doc, rows, ctx):
 
 
 def demo():
+    # a nameless row is named after a string few others use
+    assert _string_name("/dev/watchdog") == "dev_watchdog"
+    assert _string_name("%s %d") is None and _string_name("ab") is None
+
+    class _P:
+        def __init__(self):
+            self.q = []
+
+        def smembers(self, k):
+            self.q.append(("s", k))
+
+        def hmget(self, k, f):
+            self.q.append(("h",))
+
+        def scard(self, k):
+            self.q.append(("c",))
+
+        def execute(self):
+            out = [
+                (
+                    {b"0x10"}
+                    if q[0] == "s" and "f1:" in q[1]
+                    else (
+                        [
+                            json.dumps(
+                                {"id": "s1", "value": "/dev/watchdog", "length": 13}
+                            )
+                        ]
+                        if q[0] == "h"
+                        else (2 if q[0] == "c" else set())
+                    )
+                )
+                for q in self.q
+            ]
+            self.q = []
+            return out
+
+    class _R:
+        def pipeline(self, transaction=False):
+            return _P()
+
+    rows = [
+        {"name": "FUN_0001", "cells": {"a": "c:func:m:f1"}},
+        {"name": "main", "cells": {"a": "c:func:m:f2"}},
+    ]
+    name_by_strings(_R(), rows)
+    assert [r["name"] for r in rows] == ["dev_watchdog", "main"], rows
+    assert rows[0]["name_from"] == "string" and rows[0]["name_was"] == "FUN_0001"
     ctx = {"family": {"a", "b"}, "contrast": {"c", "d", "e"}, "ignored": {"f"}}
     s = stats({"a", "b"}, ctx)
     assert (s["cover"], s["leak"], s["score"]) == (1.0, 0, 1.0)

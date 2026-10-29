@@ -525,6 +525,7 @@ def _page(doc, args, r=None, pool_id=None):
     page_fids = {f for row in real for f in _row_fids(row)}
     if page_clusters:
         cards = _attach_clusters(r, real, fmeta, pool_id, args)
+        nway_indicator_service.name_by_strings(r, real)
     if "tag_axis_counts" not in doc:
         doc["tag_axis_counts"] = _tag_axis_counts(fmeta)
     return {

@@ -735,11 +735,16 @@ def seriate(columns, edges, min_edge):
     return [by[i] for i in order]
 
 
+_TAG_PREFERENCE = {"capa": 0, "mbc": 0, "yara": 1}
+
+
 def _variants(rows):
-    """Rows that share a name are told apart: `variant = {n, of, hint}`. `n` numbers
-    them in table order (span, then weight); `hint` is a tag the row's functions carry
-    and none of the other rows of that name do (a capa rule, a second yara rule, a lib tag...). The name
-    itself stays: merging by name needs it."""
+    """Rows that share a name are told apart.
+
+    A row named only by a tag (every function is FUN_xxx) takes the name of the tag the
+    other rows of that name lack, capa / mbc first: its old name stays in `name_was`.
+    Rows that still share a name, tag-named or not, are numbered `variant = {n, of}`
+    in table order (span, then weight)."""
     by = {}
     for row in rows:
         by.setdefault(row["name"], []).append(row)
@@ -747,17 +752,24 @@ def _variants(rows):
         if len(group) < 2:
             continue
         sets = [set(r["tags"]) for r in group]
-        for n, (row, own) in enumerate(zip(group, sets), 1):
+        for row, own in zip(group, sets):
+            if row.get("name_from") != "tag":
+                continue
             seen = set().union(*(s for s in sets if s is not own))
-            hint = next(
-                (
-                    short
-                    for t in row["tags"]
-                    if t not in seen and (short := _tag_name(t)) and short != name
-                ),
-                None,
-            )
-            row["variant"] = {"n": n, "of": len(group), "hint": hint}
+            fresh = [
+                (_TAG_PREFERENCE.get(t.split(":")[0], 2), i, short)
+                for i, t in enumerate(row["tags"])
+                if t not in seen and (short := _tag_name(t)) and short != name
+            ]
+            if fresh:
+                row["name_was"], row["name"] = name, min(fresh)[2]
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for group in by.values():
+        if len(group) > 1:
+            for n, row in enumerate(group, 1):
+                row["variant"] = {"n": n, "of": len(group)}
 
 
 def _match(base, min_edge):
@@ -1030,18 +1042,22 @@ def demo():
 
     tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
     assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
-    # same-named rows are numbered; a tag only one of them holds becomes its hint
+    # tag-named rows take the tag the others lack (capa before yara); the rest are numbered
     vr = [
-        {"name": "Mirai_ELF", "tags": ["yara:a:Mirai_ELF", "capa:x:xor"], "cells": {}},
-        {"name": "Mirai_ELF", "tags": ["yara:a:Mirai_ELF"], "cells": {}},
-        {"name": "main", "tags": [], "cells": {}},
+        {
+            "name": "Mirai_ELF",
+            "name_from": "tag",
+            "tags": ["yara:a:Mirai_ELF", "yara:b:Other", "capa:x:xor"],
+        },
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "main", "tags": []},
+        {"name": "main", "tags": []},
     ]
     _variants(vr)
-    assert [r.get("variant") for r in vr] == [
-        {"n": 1, "of": 2, "hint": "xor"},
-        {"n": 2, "of": 2, "hint": None},
-        None,
-    ], vr
+    assert [r["name"] for r in vr[:3]] == ["xor", "Mirai_ELF", "Mirai_ELF"], vr
+    assert vr[0]["name_was"] == "Mirai_ELF" and "variant" not in vr[0]
+    assert [r["variant"]["n"] for r in vr[1:]] == [1, 2, 1, 2], vr
     cols = [{"id": i, "functions": 10} for i in "abcd"]
     ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
     got = [c["id"] for c in seriate(cols, ed, 0.5)]

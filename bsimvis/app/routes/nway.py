@@ -336,6 +336,7 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
                     and not re.fullmatch(r"Cluster \d+", n)
                 ):
                     row["name"], row["name_from"] = n, "cluster"
+                    row.pop("variant", None)  # named by its cluster now
                     break
     return cards
 
@@ -448,10 +449,10 @@ def _page(doc, args, r=None, pool_id=None):
 
         def hit(row):
             var = row.get("variant")
-            # the chip text is searchable: "name #2", "#2 kill"
+            # the chip is searchable too: "name #2"
             text = [
                 row["name"],
-                f"{row['name']} #{var['n']} {var['hint'] or ''}" if var else "",
+                f"{row['name']} #{var['n']}" if var else "",
             ] + [(cards[u].get("cluster_name") or "") for u in row["clusters"]]
             text += [_fn_haystack(f, fmeta) for f in _row_fids(row)]
             return q in " ".join(text).lower() or any(

@@ -411,11 +411,9 @@
 
         // A function row drawn like in the Functions rows (highlighted signature, hover code preview, same menu),
         // with a small button that shows the row in Functions.
-        // Rows that share a name carry `variant`: a small label with the row's number and the tag that tells it apart.
+        // Rows that still share a name carry `variant`: a small number to tell them apart.
         _varChip(v) {
-            if (!v) return '';
-            const tip = `Variant ${Number(v.n)} of ${Number(v.of)} rows named alike${v.hint ? `; tagged ${v.hint}` : ''}`;
-            return `<i class="nway-var" title="${escapeAttr(tip)}">#${Number(v.n)}${v.hint ? ` ${escapeHtml(v.hint)}` : ''}</i>`;
+            return v ? `<i class="nway-var" title="${escapeAttr(`${Number(v.n)} of ${Number(v.of)} rows with this name`)}">#${Number(v.n)}</i>` : '';
         }
 
         _fnLabel(x) {

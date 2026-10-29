@@ -434,7 +434,8 @@
         _famChip() {
             if (!this._famOn()) return '<span class="nway-chip" title="Right-click a file or group column and choose Set as family: every row then shows Cover, Leak and Score for it."><i class="fa-solid fa-flag"></i> Family <span class="dim">right-click a column</span></span>';
             const f = this.data.family;
-            return `<button type="button" class="nway-chip on" data-fam-clear title="Clear the family and its stats"><i class="fa-solid fa-flag-checkered"></i> Family <span class="dim">${f.family.length} files vs ${f.contrast.length}${f.ignored.length ? ` · ${f.ignored.length} ignored` : ''}</span> <i class="fa-solid fa-xmark"></i></button>`;
+            const yara = new URLSearchParams({ collection: this.source.collection || f.family[0].split(':')[0], family: f.family.join(','), contrast: f.contrast.join(','), nway: this._listQs().toString() });
+            return `<button type="button" class="nway-chip on" data-fam-clear title="Clear the family and its stats"><i class="fa-solid fa-flag-checkered"></i> Family <span class="dim">${f.family.length} files vs ${f.contrast.length}${f.ignored.length ? ` · ${f.ignored.length} ignored` : ''}</span> <i class="fa-solid fa-xmark"></i></button><a class="nway-chip" title="Write a YARA rule: the family files must match, its contrast must not" href="/yara?${escapeAttr(yara.toString())}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-wand-magic-sparkles"></i> Write YARA</a>`;
         }
 
         _count(tab) {

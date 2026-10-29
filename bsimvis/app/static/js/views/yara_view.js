@@ -139,6 +139,15 @@ window.YaraView = {
         this._rest = saved.rest !== false;
         this._size = saved.size || {};
         this._pins = saved.pins || {};
+        this._nway = null;
+        if (params.family) {
+            // Opened from an N-way family: its files are the targets, its contrast the negatives.
+            const pin = (ids, role) => Object.fromEntries(String(ids || '').split(',').filter(Boolean).map(id => [id, { role, name: id.split(':').pop().slice(0, 8) }]));
+            this._pins = { ...pin(params.family, 'target'), ...pin(params.contrast, 'negative') };
+            this._rest = false;
+            this._savedCmp = null;
+            try { this._nway = params.nway ? Object.fromEntries(new URLSearchParams(params.nway)) : null; } catch (e) { /* no function seeds */ }
+        }
     },
 
     _persist() {
@@ -867,7 +876,7 @@ window.YaraView = {
 
     // A suggestion's value in the same form as the `_ruleStrings` keys.
     _vkey(v) {
-        return /^\{ [0-9a-f]{2}( [0-9a-f]{2})* \}$/.test(v) ? v : `"${v}`;
+        return /^\{ [0-9a-f?]{2}( [0-9a-f?]{2})* \}$/.test(v) ? v : `"${v}`;
     },
 
     // key -> [{rule, id}] for the rule in the editor.
@@ -888,7 +897,7 @@ window.YaraView = {
         const sel = list ? [...this._sel].filter(i => list[i]) : [];
         const nAdd = sel.filter(i => !has(i)).length, nDel = sel.length - nAdd;
         const n = this._sel.size;
-        const head = `<h3 class="yw-h">Suggested strings and constants${list ? `<em class="yw-count">${list.length}</em>` : ''}</h3>`;
+        const head = `<h3 class="yw-h">Suggested strings, constants and functions${list ? `<em class="yw-count">${list.length}</em>` : ''}</h3>`;
         if (!list) return `${head}<div class="yw-hint">Ranking strings...</div>`;
         if (!list.length) return `${head}<div class="yw-hint">No stored strings for the target files.</div>`;
         const order = this._sorted('sug', list.map((x, i) => ({ ...x, i })), { value: x => x.value, pos: x => x.pos, neg: x => x.neg, score: x => x.score });
@@ -914,7 +923,7 @@ window.YaraView = {
 
     // Suggestions depend on the sets only, so refetch when those change, not per keystroke.
     async _loadSuggest(body) {
-        const key = JSON.stringify([body.collection, body.targets, body.negatives, body.pins]);
+        const key = JSON.stringify([body.collection, body.targets, body.negatives, body.pins, this._nway]);
         if (key === this._suggKey) return;
         this._suggKey = key;
         this._suggested = null;
@@ -927,6 +936,12 @@ window.YaraView = {
         this._suggested = [...(res.strings || []), ...(res.consts || [])];
         this._sel = new Set();
         this._paint();
+        if (!this._nway) return;
+        // The function seeds read raw bytes of many files: they join the table when ready.
+        try {
+            const f = await fetch('/api/yara/suggest/functions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, nway: this._nway }) });
+            if (f.ok && key === this._suggKey) { this._suggested = [...this._suggested, ...((await f.json()).functions || [])]; this._paint(); }
+        } catch (e) { /* strings and constants stay */ }
     },
 
     toggleSug(i) {
@@ -988,7 +1003,7 @@ window.YaraView = {
     addStrings(values) {
         const text = this.getRule();
         let n = Math.max(0, ...[...text.matchAll(/\$s(\d+)\b/g)].map(m => +m[1]));
-        const hex = v => /^\{ [0-9a-f]{2}( [0-9a-f]{2})* \}$/.test(v);
+        const hex = v => /^\{ [0-9a-f?]{2}( [0-9a-f?]{2})* \}$/.test(v);
         const def = (v, n) => `$s${n} = ${hex(v) ? v : `"${esc(v)}" ascii wide`}`;
         const esc = v => v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
         const cond = /^([ \t]*)condition[ \t]*:/m.exec(text);

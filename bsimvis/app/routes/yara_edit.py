@@ -155,6 +155,33 @@ def post_suggest():
     }
 
 
+def post_suggest_functions():
+    """Function-byte hex strings for the functions an N-way table says single out the
+    family. `nway` is that table's query (its `family` included); the sets are as /suggest.
+    """
+    from bsimvis.app.routes.home import _call
+    from bsimvis.app.routes.nway import get_nway_indicators
+
+    body = _body()
+    nway = body.get("nway")
+    if not isinstance(nway, dict) or not nway.get("family"):
+        abort(400, "nway: the N-way query, with a family")
+    r = get_redis()
+    targets = resolve_sets(r, body, "targets", 200)
+    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    args = {k: str(v) for k, v in nway.items() if v not in (None, "")}
+    rows = _call(get_nway_indicators, **{**args, "kinds": "function", "limit": "40"})
+    return {
+        "functions": ys.suggest_functions(
+            r,
+            get_raw_redis(),
+            rows.get("items", []),
+            [m for g in targets for m in g["members"]],
+            [m for g in negatives for m in g["members"]],
+        )
+    }
+
+
 def post_external_checks():
     """YARA-X diagnostics and formatting for the editor's Checks panel."""
     body = _body()

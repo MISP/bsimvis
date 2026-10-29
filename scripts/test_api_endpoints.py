@@ -3519,6 +3519,31 @@ def test_yara_editor():
         "suggest answers with a strings list",
         isinstance(sug and sug.get("strings"), list),
     )
+    fsug = test_endpoint(
+        "POST",
+        "/api/yara/suggest/functions",
+        data={
+            **sets,
+            "nway": {
+                "collection": COLLECTION,
+                "md5s": f"{file_md5},{file_md5_2}",
+                "columns": "files",
+                "family": f"{COLLECTION}:{file_md5}",
+            },
+        },
+        label="POST /api/yara/suggest/functions",
+    )
+    check(
+        "suggest/functions answers with a functions list",
+        isinstance(fsug and fsug.get("functions"), list),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/suggest/functions",
+        data={**sets, "nway": {"collection": COLLECTION}},
+        expected_status=400,
+        label="POST /api/yara/suggest/functions (no family -> 400)",
+    )
 
     # registry: versions, export, apply, sweep
     saved = test_endpoint(

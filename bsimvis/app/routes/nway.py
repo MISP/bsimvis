@@ -1201,6 +1201,7 @@ def get_nway_indicators():
                         "id": fids[0] if fids else row["name"],
                         "preview": row["name"],
                         "files": len(fids),
+                        "fids": fids,
                         "stats": row["stats"],
                     }
                 )

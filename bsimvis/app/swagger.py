@@ -4311,6 +4311,17 @@ class YaraSuggest(Resource):
         return _yara("post_suggest")
 
 
+@ns_yara.route("/suggest/functions")
+class YaraSuggestFunctions(Resource):
+    @ns_yara.doc(
+        description="Body: `nway` (the N-way table's query, with `family`), `targets`, "
+        "`negatives`, scope as /test."
+    )
+    def post(self):
+        """Hex strings of the functions that single out an N-way family."""
+        return _yara("post_suggest_functions")
+
+
 @ns_yara.route("/external-checks")
 class YaraExternalChecks(Resource):
     @ns_yara.doc(

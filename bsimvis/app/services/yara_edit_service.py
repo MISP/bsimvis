@@ -1456,6 +1456,59 @@ def seed_functions(r, r_raw, fids, per_arch=16):
     return {"arches": arches}
 
 
+def suggest_functions(r, r_raw, rows, targets, members_neg, per_arch=8, neg_cap=30):
+    """Function-byte suggestions from N-way indicator rows (`fids` of a function
+    that singles out the family). Per row and architecture the aligned stable window
+    becomes a hex string; counts are taken on the raw bytes, like the constants."""
+    targets = list(dict.fromkeys(targets))[:30]
+    tset = set(targets)
+    pos_raw = [r_raw.get(f"{_fid(*m)}:raw") or b"" for m in targets]
+    neg = [m for m in dict.fromkeys(members_neg) if m not in tset]
+    neg = sorted(neg, key=lambda m: hashlib.md5("".join(m).encode()).digest())[:neg_cap]
+    neg_raw = [r_raw.get(f"{_fid(*m)}:raw") or b"" for m in neg]
+    out, seen = [], set()
+    for row in rows:
+        fids = [
+            f for f in row.get("fids", []) if (f.split(":")[0], f.split(":")[2]) in tset
+        ]
+        if len(fids) < 2:
+            continue
+        for arch in seed_functions(r, r_raw, fids, per_arch)["arches"]:
+            if not arch["windows"]:
+                continue
+            best = None
+            for w in arch["windows"]:
+                if w["hex"] in seen:
+                    continue
+                rx = _hex_regex(w["hex"])
+                held = [m for m, raw in zip(targets, pos_raw) if rx.search(raw)]
+                if not held:
+                    continue
+                n = sum(1 for raw in neg_raw if rx.search(raw))
+                sc = string_score(len(held), len(targets), n, len(neg_raw))
+                # the widest window is often generic code: keep the one that separates best
+                if best is None or (sc, w["fixed"]) > best[:2]:
+                    best = (sc, w["fixed"], w["hex"], held, n)
+            if best is None:
+                continue
+            sc, _, hexs, held, n = best
+            seen.add(hexs)
+            out.append(
+                {
+                    "kind": "function",
+                    "value": hexs,
+                    "label": f"{row.get('preview', '')} ({arch['language_id'].split(':')[0]})",
+                    "pos": len(held),
+                    "of": len(targets),
+                    "neg": n,
+                    "files": [f"{c}:{md5}" for c, md5 in held],
+                    "score": sc,
+                }
+            )
+    out.sort(key=lambda s: (-s["score"], -s["pos"]))
+    return out
+
+
 # --- registry ----------------------------------------------------------------
 
 KEY = "global:yara_rule:{}"

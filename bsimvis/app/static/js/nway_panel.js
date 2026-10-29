@@ -121,6 +121,8 @@
             this.source = opts.source || {};
             this.onSource = opts.onSource;
             this.state = { ...DEFAULTS, ...(opts.state || {}) };
+            // the old Both mode is the Functions rows now
+            if (this.state.view === 'both') this.state.view = 'functions';
             this.onState = opts.onState || null;
             this.onOpenCluster = opts.onOpenCluster || null;
             this.cgInit = opts.cg || null;
@@ -239,7 +241,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            if (this.state.view === 'both') qs.set('strings', '1');
+            if (this.state.view !== 'strings') qs.set('strings', '1');
             if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
@@ -393,8 +395,8 @@
         }
 
         _viewDd() {
-            const opts = [['functions', 'Functions', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['strings', 'Strings', 'fa-solid fa-quote-left', 'var(--success)'], ['both', 'Both', 'fa-solid fa-link', 'var(--warning, #d97706)']];
-            return this._dd('Rows', opts, this.state.view, 'Functions: function groups. Strings: string values shared by the files. Both: function groups with the strings their functions reference shown inline, to see which strings go with which function cluster. Open the arrow of a row to get its strings (circles) or functions (squares) as rows with their own presence in each column.', v => `data-set="view:${v}"`);
+            const opts = [['functions', 'Functions', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['strings', 'Strings', 'fa-solid fa-quote-left', 'var(--success)']];
+            return this._dd('Rows', opts, this.state.view, 'Functions: function groups, each with the strings its functions reference (open the toggle for them as rows). Strings: string values shared by the files, each with the functions that use it.', v => `data-set="view:${v}"`);
         }
 
         // The line of linked items under a row's name: a toggle that opens them as rows (with its count),
@@ -415,7 +417,7 @@
         // The strings the functions of a row reference, as chips; click one to show it in the Strings rows.
         _strChips(row) {
             const st = row.strings;
-            if (this.state.view !== 'both' || !st || !st.total) return '';
+            if (this.state.view === 'strings' || !st || !st.total) return '';
             const cells = {};
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
             const chips = st.top.map(x => `<span class="nway-schip" data-str-q="${escapeAttr(x.value)}" title="${escapeAttr(`${x.n} of ${x.of} functions of this row reference it. Click: show it in Strings`)}">${escapeHtml(x.value)}${x.of > 1 ? `<b>${Number(x.n)}/${Number(x.of)}</b>` : ''}</span>`).join('');

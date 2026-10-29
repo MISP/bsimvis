@@ -1128,7 +1128,7 @@
             host.onpointerdown = e => (e.target.closest('.nway-rz') ? this._cgResize(e) : this._cgPan(e));
             host.ondblclick = e => {
                 const rz = e.target.closest('.nway-rz'), card = rz && rz.closest('.nway-node');
-                if (card && this._cg.w) { delete this._cg.w[`${card.dataset.side}|${card.dataset.key}`]; this._cgShow(); }
+                if (card && this._cg.sz) { delete this._cg.sz[`${card.dataset.side}|${card.dataset.key}`]; this._cgShow(); }
             };
             host.onmouseover = e => { const l = e.target.closest('.nway-lane-lbl'); if (l) this._cgLaneTip(l); };
             host.onmouseout = e => { if (e.target.closest('.nway-lane-lbl')) this._cgTipLater(); };
@@ -1186,20 +1186,45 @@
         }
 
         // Drag the graph background to pan; cards, buttons and inputs keep their clicks.
-        // Drag the grip on a card's right edge to widen that card only (its long signature shows), the
-        // edges are drawn again on release. Double-click the grip to put the card back.
+        // A card's own size, kept per card while the graph is open.
+        _cgSizeAttr(st, key) {
+            const z = st.sz && st.sz[key];
+            return z ? ` style="${z.w ? `width:${Number(z.w)}px;` : ''}${z.h ? `height:${Number(z.h)}px;` : ''}" data-sized="1"` : '';
+        }
+
+        // Grips: right edge (wider), bottom edge (taller) and the corner (both). Double-click one to reset the card.
+        _cgGrips() {
+            return '<i class="nway-rz x" data-rz="x" title="Drag to widen this card; double-click to reset"></i><i class="nway-rz y" data-rz="y" title="Drag to make this card taller; double-click to reset"></i><i class="nway-rz xy" data-rz="xy" title="Drag to resize this card; double-click to reset"></i>';
+        }
+
+        // Resizing is live: the card pushes its neighbours and the edges follow it (one redraw per frame).
         _cgResize(e) {
-            const card = e.target.closest('.nway-node');
+            const grip = e.target.closest('.nway-rz'), card = grip && grip.closest('.nway-node');
             if (!card || e.button !== 0) return;
             e.preventDefault();
             e.stopPropagation();
-            const x0 = e.clientX, w0 = card.offsetWidth, key = `${card.dataset.side}|${card.dataset.key}`;
-            let w = w0;
-            const move = ev => { w = Math.max(160, Math.min(640, w0 + ev.clientX - x0)); card.style.width = `${w}px`; };
+            const mode = grip.dataset.rz, x0 = e.clientX, y0 = e.clientY, w0 = card.offsetWidth, h0 = card.offsetHeight;
+            const key = `${card.dataset.side}|${card.dataset.key}`;
+            let w = w0, h = h0, frame = 0, moved = false;
+            card.dataset.sized = '1';
+            const move = ev => {
+                moved = true;
+                if (mode !== 'y') { w = Math.max(160, Math.min(900, w0 + ev.clientX - x0)); card.style.width = `${w}px`; }
+                if (mode !== 'x') { h = Math.max(48, Math.min(700, h0 + ev.clientY - y0)); card.style.height = `${h}px`; }
+                if (!frame) frame = requestAnimationFrame(() => { frame = 0; this._cgEdges(); });
+            };
             const up = () => {
                 document.removeEventListener('pointermove', move);
                 document.removeEventListener('pointerup', up);
-                if (w !== w0) { (this._cg.w = this._cg.w || {})[key] = w; this._cgSwallow = true; setTimeout(() => { this._cgSwallow = false; }, 60); this._cgShow(); }
+                if (frame) cancelAnimationFrame(frame);
+                if (!moved) return;
+                const z = ((this._cg.sz = this._cg.sz || {})[key] = { ...this._cg.sz[key] });
+                if (mode !== 'y') z.w = w;
+                if (mode !== 'x') z.h = h;
+                this._cgEdges();
+                // the click that ends a drag must not open the card
+                this._cgSwallow = true;
+                setTimeout(() => { this._cgSwallow = false; }, 60);
             };
             document.addEventListener('pointermove', move);
             document.addEventListener('pointerup', up);
@@ -1743,8 +1768,8 @@
                 const hub = role === 'callees' && nb.cocallers && nb.cocallers.hub_keys[it.key];
                 if (hub) twin += `<span class="nway-hub" title="Called by ${hub} functions: too widely called to say anything about similarity, so its other callers are not listed"><i class="fa-solid fa-triangle-exclamation"></i> hub &middot; ${hub} callers not shown</span>`;
                 if (it.kind === 'row') this._cgItems[`${role}|${it.key}`] = it;
-                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-sel="${escapeAttr(role + '|' + it.key)}" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}"${st.w && st.w[`${role}|${it.key}`] ? ` style="width:${Number(st.w[`${role}|${it.key}`])}px"` : ''}>
-                    <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}<i class="nway-rz" title="Drag to widen this card, double-click to reset"></i></div>`;
+                return `<div class="nway-node${it.kind === 'row' ? '' : ' static'}${out ? ' out' : ''}${lv ? ' deep' : ''}" ${it.kind === 'row' ? `tabindex="0" data-sel="${escapeAttr(role + '|' + it.key)}" data-cg-go="${role}:${lv}:${i}"` : ''} data-side="${role}"${beyond}${other}${back} data-key="${escapeAttr(it.key)}" data-parents="${escapeAttr((it.parents || ['focus']).join(' '))}" data-n="${m.ne}"${this._cgSizeAttr(st, `${role}|${it.key}`)}>
+                    <div class="nway-node-name">${this._cgName(it)}</div><div class="nway-node-sub">${this._cgReach(it, focus, files)}</div>${twin}${this._cgGrips()}</div>`;
             };
             // Groups form over all `entries`, then `cap` counts a group as one card; the
             // entries past it come back in `rest` for the "+N more" card.
@@ -1974,6 +1999,8 @@
             // Columns are centered, so slide each hop beyond the first toward its parents
             // (nearest the focus first), within the room the graph has.
             const cols = [...g.children].filter(e => e.classList.contains('nway-gcol'));
+            // drawn again after a resize: measure the columns where they sit before any slide
+            cols.forEach(c => { c.style.transform = ''; });
             const mid = Number(g.dataset.mid);
             const midY = r => r.top + r.height / 2;
             const slide = [];

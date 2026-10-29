@@ -2836,6 +2836,7 @@ class BinSimNway(Resource):
             "feat_max": "Maximum row weight",
             "support_min": "Minimum share of file pairs matched inside a row (0-1)",
             "sort_col": "span, weight, support, cohesion or name; with family also cover, leak or score",
+            "strings": "1 adds `strings` to each row: `{total, top: [{id, value, n, of}]}`, the strings its functions reference (n = functions of the row referencing it)",
             "family": "Comma-separated column ids (a file or a group) describing the family to single out. Rows get `stats`: cover (share of family files holding the row), leak (contrast files also holding it) and score. The response `family` lists the family, contrast and ignored file ids",
             "ignore": "With family: column ids left out of the contrast (a sibling variant you do not want counted as leak)",
             "cover_min": "With family: keep rows whose cover (0-1) is at least this",

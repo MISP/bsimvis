@@ -20,6 +20,7 @@ from bsimvis.app.services.nway_diff_service import BadParams
 
 REACH_SOFT = 25  # files outside the table at which the score halves
 MIN_STRING_LEN = 6
+INLINE_MIN_LEN = 4  # strings shown inside a function row
 MAX_STRING_FILES = 200
 _STRINGS = OrderedDict()  # file set -> string table, newest last
 _STRINGS_KEPT = 6
@@ -144,6 +145,67 @@ def _read_strings(r, files, min_length):
     while len(_STRINGS) > _STRINGS_KEPT:
         _STRINGS.popitem(last=False)
     return table
+
+
+def inline_strings(r, rows, top=6, cap=600):
+    """Per row, the strings its functions reference: `{total, top: [{id, value, n, of}]}`
+    with `n` the functions of the row that reference it and `of` the functions read."""
+    fid_rows = [
+        list(
+            dict.fromkeys(
+                f
+                for f in (row.get("files") or row["cells"]).values()
+                if isinstance(f, str)
+            )
+        )
+        for row in rows
+    ]
+    fids = list(dict.fromkeys(f for fs in fid_rows for f in fs))[:cap]
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.smembers(f"{f}:strings")
+    addrs = [
+        sorted(a.decode() if isinstance(a, bytes) else str(a) for a in got)
+        for got in pipe.execute()
+    ]
+    pipe = r.pipeline(transaction=False)
+    for f, a in zip(fids, addrs):
+        coll, rest = f.split(":func:", 1)
+        if a:
+            pipe.hmget(string_service.file_key(coll, rest.split(":")[0]), a)
+    got = iter(pipe.execute())
+    recs = {}
+    for f, a in zip(fids, addrs):
+        recs[f] = {}
+        for raw in next(got) if a else []:
+            try:
+                rec = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if (
+                rec.get("id")
+                and rec.get("length", len(rec.get("value", ""))) >= INLINE_MIN_LEN
+            ):
+                recs[f][rec["id"]] = rec["value"]
+    out = []
+    for fs in fid_rows:
+        fs = [f for f in fs if f in recs]
+        count, value = {}, {}
+        for f in fs:
+            for sid, v in recs[f].items():
+                count[sid] = count.get(sid, 0) + 1
+                value[sid] = v
+        best = sorted(count, key=lambda s: (-count[s], -len(value[s])))[:top]
+        out.append(
+            {
+                "total": len(count),
+                "top": [
+                    {"id": s, "value": value[s][:80], "n": count[s], "of": len(fs)}
+                    for s in best
+                ],
+            }
+        )
+    return out
 
 
 def reach_of(r, sids, collections):

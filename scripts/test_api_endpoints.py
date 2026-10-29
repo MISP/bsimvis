@@ -5400,6 +5400,14 @@ def test_nway_indicators():
             for r in rows
         ),
     )
+    st, sb = _nway(strings="1", columns="files", tab="all")
+    check(
+        "nway strings=1: every row carries its inline strings",
+        st == 200
+        and sb["items"]
+        and all({"total", "top"} <= set(r.get("strings", {})) for r in sb["items"]),
+        f"HTTP {st}",
+    )
     st, _ = _nway(family="nope:0", columns="files")
     check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
     st, ign = _nway(

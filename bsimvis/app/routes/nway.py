@@ -447,9 +447,12 @@ def _page(doc, args, r=None, pool_id=None):
         by_string = nway_indicator_service.fids_with_string(r, doc, q) if r else set()
 
         def hit(row):
-            text = [row["name"]] + [
-                (cards[u].get("cluster_name") or "") for u in row["clusters"]
-            ]
+            var = row.get("variant")
+            # the chip text is searchable: "name #2", "#2 kill"
+            text = [
+                row["name"],
+                f"{row['name']} #{var['n']} {var['hint'] or ''}" if var else "",
+            ] + [(cards[u].get("cluster_name") or "") for u in row["clusters"]]
             text += [_fn_haystack(f, fmeta) for f in _row_fids(row)]
             return q in " ".join(text).lower() or any(
                 f in by_string for f in _row_fids(row)

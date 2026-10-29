@@ -71,6 +71,8 @@
     // Keys the metadata column merge offers when the server cannot count values.
     const BY_KEYS = ['collection', 'batch_uuid', 'architecture', 'executable_format'];
     // Merge files options: icon, and the colour the dropdown form uses.
+    const LINK_TIPS = { f: 'Show each string as a row, with the columns that use it', s: 'Show each function row that uses this string, with the columns that have it', in: 'Show each row that calls this one, with the columns that have it', out: 'Show each row this one calls, with the columns that have it (dashed: out of the binary)', k: 'Show each constant as a row, with the columns that use it' };
+    const EXPAND_KINDS = { f: 'function', s: 'string', in: 'callers', out: 'callees', k: 'consts' };
     const FILE_ICONS = { files: 'fa-regular fa-square', children: 'fa-solid fa-sitemap', twins: 'fa-solid fa-clone', by: 'fa-solid fa-tags' };
 
     function fnParts(fid) {
@@ -404,7 +406,7 @@
         // then the quick chips. `kind` f: strings of a function row; s: functions of a string row.
         _linkLine(key, kind, data, count, label, chips, more) {
             const on = !!(this._exp && this._exp.has(key));
-            return `<div class="nway-schips${on ? ' open' : ''}"><button type="button" class="nway-xp" data-xp="${escapeAttr(key)}" data-xk="${kind}" data-xd="${escapeAttr(data)}" aria-expanded="${on}" title="${kind === 'f' ? 'Show each string as a row, with the columns that use it' : 'Show each function row that uses this string, with the columns that have it'}"><i class="fa-solid fa-chevron-right"></i> ${Number(count)} ${label}</button>${chips}${more}</div>`;
+            return `<div class="nway-schips${on ? ' open' : ''}"><button type="button" class="nway-xp" data-xp="${escapeAttr(key)}" data-xk="${kind}" data-xd="${escapeAttr(data)}" aria-expanded="${on}" title="${LINK_TIPS[kind]}"><i class="fa-solid fa-chevron-right"></i> ${Number(count)} ${label}</button>${chips}${more}</div>`;
         }
 
         // A function row drawn like in the Functions rows (highlighted signature, hover code preview, same menu),
@@ -436,13 +438,16 @@
         _sigChips(row) {
             if (this.state.view === 'strings') return '';
             const c = row.calls || {}, k = row.consts;
+            const key = this._fnKey(row).slice(2), cells = {};
+            for (const [f, v] of Object.entries(row.files || row.cells || {})) if (typeof v === 'string') cells[f] = v;
+            if (!key) return '';
             const part = x => x.of > 1 && x.n < x.of ? `<b>${Number(x.n)}/${Number(x.of)}</b>` : '';
-            const line = (label, tip, side, chip) => side && side.total
-                ? `<div class="nway-schips nway-sig"><span class="dim nway-siglbl" title="${escapeAttr(tip)}">${label} ${Number(side.total)}</span>${side.top.map(chip).join('')}${side.total > side.top.length ? `<span class="dim">+${side.total - side.top.length}</span>` : ''}</div>`
+            const line = (kind, label, side, chip) => side && side.total
+                ? this._linkLine(`${kind}:${key}`, kind, JSON.stringify(cells), side.total, label, side.top.map(chip).join(''), side.total > side.top.length ? `<span class="dim">+${side.total - side.top.length}</span>` : '')
                 : '';
             const fn = x => `<span class="nway-schip fn${x.ext ? ' ext' : ''}" ${x.ext ? '' : `data-fn-q="${escapeAttr(x.name)}"`} title="${escapeAttr(`${x.ext ? 'Call out of the binary: ' : ''}${x.name}: ${x.n} of ${x.of} functions of this row`)}">${escapeHtml(x.name)}${part(x)}</span>`;
             const cst = x => `<span class="nway-schip" title="${escapeAttr(`${x.n} of ${x.of} functions of this row use it`)}">${escapeHtml(x.value)}${part(x)}</span>`;
-            return line('&larr; callers', 'Rows that call this one', c.callers, fn) + line('&rarr; calls', 'Rows this one calls; dashed = calls out of the binary', c.callees, fn) + line('# constants', 'Constants in the functions of this row', k, cst);
+            return line('in', 'callers', c.callers, fn) + line('out', 'calls', c.callees, fn) + line('k', 'constants', k, cst);
         }
 
         _famChip() {
@@ -2511,7 +2516,13 @@
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
                 ${this._famCells(row.stats)}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
-            </tr>${this._subHtml(this._fnKey(row))}`;
+            </tr>${this._fnSubs(row)}`;
+        }
+
+        // The opened lines of a function row, in the order of the chips.
+        _fnSubs(row) {
+            const key = this._fnKey(row).slice(2);
+            return key ? ['f', 'in', 'out', 'k'].map(k => this._subHtml(`${k}:${key}`)).join('') : '';
         }
 
         _fnKey(row) {
@@ -2830,15 +2841,15 @@
         // The rows of an opened line, in the table's own columns: the name cell holds the item, the
         // count of files goes under Span / Files, the shape of each column cell is the item's presence there.
         _subRows(key, body) {
-            const strs = key[0] === 'f', cols = this.data.columns, lead = this._lead().length - 1;
+            const kind = key.slice(0, key.indexOf(':')), strs = kind === 'f', cols = this.data.columns, lead = this._lead().length - 1;
             const spanAt = this.state.view === 'strings' ? lead - 1 : this._statsOff() ? -1 : 0;
-            const cls = strs ? 'str' : 'fn';
+            const cls = strs || kind === 'k' ? 'str' : 'fn';
             const rows = body.items.map(x => {
-                const label = strs
+                const label = strs || kind === 'k'
                     ? `<code class="nway-str" title="${escapeAttr(x.name)}">${escapeHtml(x.name.slice(0, 160))}</code> <span class="dim">${escapeHtml([x.encoding, x.section].filter(Boolean).join(' · '))}</span>`
-                    : `<span class="nway-subfn">${this._fnLabel(x)}</span>`;
+                    : x.ext ? `<span class="nway-schip fn ext">${escapeHtml(x.name)}</span>` : `<span class="nway-subfn">${this._fnLabel(x)}</span>`;
                 const pad = Array.from({ length: lead }, (_, i) => `<td class="num">${i === spanAt ? Number(x.span) : ''}</td>`).join('');
-                return `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="nway-mark ${cls}"></i>${label}</td>${pad}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs)).join('')}</tr>`;
+                return `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="nway-mark ${cls}"></i>${label}</td>${pad}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs || kind === 'k')).join('')}</tr>`;
             }).join('');
             const span = lead + 1 + cols.length;
             const more = body.total > body.items.length ? `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td colspan="${span}" class="dim">+${body.total - body.items.length} more</td></tr>` : '';
@@ -2856,8 +2867,8 @@
             mark(true);
             // the table's own params, col_open included: the sub-rows must use the columns the table shows
             const qs = this._listQs();
-            qs.set('kind', btn.dataset.xk === 'f' ? 'function' : 'string');
-            qs.set(btn.dataset.xk === 'f' ? 'cells' : 'id', btn.dataset.xd);
+            qs.set('kind', EXPAND_KINDS[btn.dataset.xk] || 'string');
+            qs.set(btn.dataset.xk === 's' ? 'id' : 'cells', btn.dataset.xd);
             let body = null;
             try {
                 const res = await fetch(`/api/bin_sim/nway/expand?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });

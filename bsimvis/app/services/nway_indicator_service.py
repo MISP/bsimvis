@@ -455,6 +455,94 @@ def expand_function(r, doc, cells):
     return _expanded(doc, base)
 
 
+def _fid_file(doc):
+    """Function id -> the column key of the file it is in (kept on the cached doc)."""
+    if "_fid_file" not in doc:
+        doc["_fid_file"] = {
+            f: k
+            for row in doc["rows"]
+            for k, f in (row.get("files") or row["cells"]).items()
+            if isinstance(f, str)
+        }
+    return doc["_fid_file"]
+
+
+def _with_meta(doc, out):
+    out["functions_metadata"] = {
+        f: doc["fmeta"][f]
+        for x in out["items"]
+        for f in x["fcells"].values()
+        if f in doc["fmeta"]
+    }
+    return out
+
+
+def expand_links(r, doc, cells, role):
+    """Sub-rows of one function row: the table rows it is called by (`role=callers`) or
+    calls (`callees`), with presence over the columns. A row is shown in every file it is
+    in; `via` marks the files where it is linked to the row opened. Calls out of the
+    binary are `ext` rows, present only where they are called."""
+    at, file_of = _fid_at(doc), _fid_file(doc)
+    fids = {k: v for k, v in cells.items() if isinstance(v, str)}
+    me = at.get(next(iter(fids.values()), None))
+    pipe = r.pipeline(transaction=False)
+    for f in fids.values():
+        pipe.smembers(f"{f}:{role}")
+    table = {}
+    for (file, _), got in zip(fids.items(), pipe.execute()):
+        for m in map(_txt, got):
+            if m.startswith("ext:"):
+                key, name, ext = m, m[4:], True
+            elif (i := at.get(m)) is not None and i != me:
+                key, name, ext = f"row:{i}", doc["rows"][i]["name"], False
+            else:
+                continue
+            x = table.setdefault(
+                key, {"id": key, "name": name, "ext": ext, "cells": {}}
+            )
+            x["cells"].setdefault(file_of.get(m, file), m)
+    for key, x in table.items():
+        rowcells = {} if x["ext"] else _row_cells(doc, int(key[4:]))
+        x["held"] = {**rowcells, **x["cells"]}
+        x["fcells"] = dict(list(x["cells"].items())[:REF_FIDS])
+    base = sorted(table.values(), key=lambda x: (-len(x["held"]), x["name"]))
+    return _with_meta(doc, _expanded(doc, base))
+
+
+def _row_cells(doc, i):
+    row = doc["rows"][i]
+    return {
+        k: v
+        for k, v in (row.get("files") or row["cells"]).items()
+        if isinstance(v, str)
+    }
+
+
+def expand_consts(r, doc, cells):
+    """Sub-rows of one function row: the constants at least half of its functions use,
+    with presence over the columns."""
+    fids = {k: v for k, v in cells.items() if isinstance(v, str)}
+    pipe = r.pipeline(transaction=False)
+    for f in fids.values():
+        pipe.get(f"{f}:vec:meta")
+    table = {}
+    for (file, f), raw in zip(fids.items(), pipe.execute()):
+        for v, size in consts_in(_txt(raw) if raw else ""):
+            x = table.setdefault(
+                (v, size), {"id": f"const:0x{v:x}", "name": f"0x{v:x}", "cells": {}}
+            )
+            x["cells"][file] = f
+    base = []
+    for x in table.values():
+        if len(x["cells"]) * 2 >= len(fids):
+            x["held"], x["fcells"] = x["cells"], dict(
+                list(x["cells"].items())[:REF_FIDS]
+            )
+            base.append(x)
+    base.sort(key=lambda x: (-len(x["held"]), x["name"]))
+    return _with_meta(doc, _expanded(doc, base))
+
+
 def expand_string(r, doc, sid):
     """Sub-rows of one string: the function rows whose functions reference it, with
     presence over the table's columns."""

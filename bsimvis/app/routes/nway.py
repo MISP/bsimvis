@@ -1146,17 +1146,19 @@ def _strings_page(doc, args, r):
 def get_nway_expand():
     """Sub-rows of one row, with presence over the table's columns: `kind=function`
     takes `cells` (JSON `{file id: function id}`) and gives the strings its functions
-    reference; `kind=string` takes `id` and gives the function rows that reference it.
+    reference; `kind=callers` / `callees` take `cells` and give the rows that call it / it calls;
+    `kind=consts` takes `cells` and gives its constants; `kind=string` takes `id` and gives
+    the function rows that reference it.
     """
     kind = request.args.get("kind", "")
-    if kind not in ("function", "string"):
-        abort(400, "kind must be function or string")
+    if kind not in ("function", "string", "callers", "callees", "consts"):
+        abort(400, "kind must be function, string, callers, callees or consts")
     try:
         cells = json.loads(request.args.get("cells") or "{}")
     except ValueError:
         cells = None
-    if kind == "function" and not (isinstance(cells, dict) and cells):
-        abort(400, "kind=function needs cells, a JSON object of file id -> function id")
+    if kind != "string" and not (isinstance(cells, dict) and cells):
+        abort(400, f"kind={kind} needs cells, a JSON object of file id -> function id")
     if kind == "string" and not request.args.get("id"):
         abort(400, "kind=string needs id")
     try:
@@ -1165,6 +1167,10 @@ def get_nway_expand():
         return e.args[0]
     if kind == "function":
         return nway_indicator_service.expand_function(r, doc, cells)
+    if kind == "consts":
+        return nway_indicator_service.expand_consts(r, doc, cells)
+    if kind in ("callers", "callees"):
+        return nway_indicator_service.expand_links(r, doc, cells, kind)
     return nway_indicator_service.expand_string(r, doc, request.args["id"])
 
 

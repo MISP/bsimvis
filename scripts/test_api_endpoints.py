@@ -5559,6 +5559,27 @@ def test_nway_indicators():
                 and hit["name"] in {x["name"] for x in resp.json()["items"]},
                 f"HTTP {resp.status_code}",
             )
+            for kind in ("callers", "callees", "consts"):
+                resp = requests.get(
+                    f"{BASE_URL}/api/bin_sim/nway/expand",
+                    params={
+                        **base_ex,
+                        "kind": kind,
+                        "cells": json.dumps(fn.get("files") or fn["cells"]),
+                    },
+                    timeout=60,
+                )
+                body = resp.json() if resp.status_code == 200 else {}
+                check(
+                    f"nway expand: kind={kind} gives rows with per-column presence",
+                    resp.status_code == 200
+                    and all(
+                        0 <= c["via"] <= c["present"] <= c["total"]
+                        for x in body.get("items", [])
+                        for c in x["cells"].values()
+                    ),
+                    f"HTTP {resp.status_code}",
+                )
     if hit:
         eb = requests.get(
             f"{BASE_URL}/api/bin_sim/nway/expand",

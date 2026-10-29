@@ -2666,8 +2666,8 @@ class BinSimNwayStrings(Resource):
 class BinSimNwayExpand(Resource):
     @ns_bin_sim.doc(
         params={
-            "kind": "function (sub-rows are the strings its functions reference) or string (sub-rows are the function rows that reference it)",
-            "cells": "kind=function: JSON object `{file column id: function id}`, the row's `files` / `cells`",
+            "kind": "function (sub-rows are the strings its functions reference), callers / callees (the rows that call it / it calls), consts (its constants) or string (sub-rows are the function rows that reference it)",
+            "cells": "kind=function, callers, callees, consts: JSON object `{file column id: function id}`, the row's `files` / `cells`",
             "id": "kind=string: the string id (`id` of a /nway/strings row)",
             "md5s": "Same file set / column params as /nway (cluster_uuid, col_set, col_by, columns, col_open, pool, ...)",
         }

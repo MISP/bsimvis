@@ -526,6 +526,13 @@ def _page(doc, args, r=None, pool_id=None):
                 p["consts"] = st
     real = [row for row in page if not row.get("header")]
     page_fids = {f for row in real for f in _row_fids(row)}
+    # a merged group draws its signature from its fids, even while collapsed
+    page_fids |= {
+        f
+        for g in shown_groups.values()
+        if g.get("kind") == "same"
+        for f in g.get("fids", [])
+    }
     if page_clusters:
         cards = _attach_clusters(r, real, fmeta, pool_id, args)
     # a search must not change a row's name: string names go on whatever rows are shown

@@ -572,7 +572,7 @@
             const laneFold = lv.includes('lane') ? this._slider('Fold small lanes', 'group_lane_fold', Number(s.group_lane_fold), 0, 10, 1, 'Sibling lanes holding fewer rows than this are folded into one closed group, so a lane of two functions does not cost a header each. 0 turns the fold off; it needs two such lanes.') : '';
             const laneNames = lv.includes('lane') && d.llm_names !== false ? `<span class="nway-ctlwrap"><label class="nway-gtog${s.lane_names !== 'off' ? ' on' : ''}" title="Ask the language model to name each lane by what its functions have in common (needs the LLM set in the config; names are cached)."><input type="checkbox" data-lnames${s.lane_names !== 'off' ? ' checked' : ''}> Lane names</label></span>` : '';
             const axes = lv.includes('tag') ? tagAxes.length ? `${sel('group_axis', axis, tagAxes)}<span class="nway-lbl">&times;</span>${sel('group_axis_b', s.group_axis_b, tagAxes.filter(([k]) => k !== axis), true)}` : '<span class="nway-lbl">No tags in these functions</span>' : '';
-            const minLink = merge.has('call') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Call position only joins rows when an edge between them scores at least this. 0 joins on a shared caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
+            const minLink = merge.has('call') || merge.has('name') ? this._slider('Min link', 'group_min_link', s.group_min_link === '' ? 0.3 : Number(s.group_min_link), 0, 0.9, 0.05, 'Rows only join when an edge between them scores at least this, so a shared name or caller alone is not enough. 0 joins on the name or caller alone. Edges below Min edge only exist when Min edge is above the pair floor.') : '';
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
             const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."], ['by', 'Metadata', 'One column per value of a file field or tag namespace (collection, batch, architecture, a tag family...). Click a column to show its files.']];
             const fileColors = { files: 'var(--dim, #888)', children: 'var(--info, #3b82f6)', twins: 'var(--success)', by: 'var(--warning, #d97706)' };
@@ -2505,8 +2505,9 @@
 
         _groupHead(g, depth) {
             const n = g.union.length, closed = !this._gOpen(g.id);
+            const chevBtn = `<button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button>`;
             const chip = (cls, text, tip) => `<span class="nway-gchip ${cls}" title="${escapeAttr(tip)}">${escapeHtml(text)}</span>`;
-            let title, note = '';
+            let title, note = '', sameVers = '', sameSig = '';
             if (g.kind === 'prefix') {
                 title = `<span class="nway-gname">${escapeHtml(g.label)}</span>`;
             } else if (g.kind === 'tag') {
@@ -2525,8 +2526,13 @@
             } else if (g.kind === 'same') {
                 const ev = (g.evidence || []).map(k => k === 'name' ? chip('ev-n', 'name', 'The rows share a function name') : chip('ev-c', 'call position', 'The rows share a caller and a weak edge links them')).join('');
                 const more = `${this._missChip(g.sub, g.miss)}${g.also > 1 ? chip('also', `\u00d7${Number(g.also)}`, 'Listed under several tags on this axis.') : ''}`;
-                const by = g.name_from ? `<span class="nway-by auto" title="Name recovered from a ${escapeAttr(g.name_from)} by automated analysis"><i class="fa-solid ${g.name_from === 'tag' ? 'fa-tag' : 'fa-diagram-project'}"></i></span>` : '';
-                title = `${(g.names || []).map((x, i) => `<span class="nway-gname">${escapeHtml(x)}${i ? '' : by}</span>`).join(' + ')}${ev}${more}`;
+                // Drawn like a plain row: the voted return type + highlighted signature of the versions, the other names as a dim count.
+                const cells = {};
+                for (const c of this._cgFiles()) { const f = (g.fids || []).find(x => x.includes(`:func:${c.md5}:`)); if (f) cells[c.id] = f; }
+                const alt = (g.names || []).length - 1;
+                const sig = this._nameSig({ name: g.name || (g.names || [])[0] || '', cells, name_from: g.name_from }, { noClick: true });
+                const vers = `<div class="nway-schips${closed ? '' : ' open'}${Number(g.cohesion) < 0.5 ? ' lowc' : ''}"><button type="button" class="nway-xp" data-gtoggle="${escapeAttr(g.id)}" aria-expanded="${!closed}" title="Show each version of this function"><i class="fa-solid fa-chevron-right"></i> ${Number(g.rows)} versions</button>${alt > 0 ? `<span class="nway-gchip also" title="${escapeAttr(g.names.slice(1).join(', '))}">+${alt} names</span>` : ''}${ev}${more}</div>`;
+                sameVers = vers; sameSig = sig;
                 note = `${g.files} of ${n} files together${g.link ? ` &middot; best link ${Number(g.link).toFixed(2)}, under the edge` : ''}`;
             }
             // The files the group covers, one square per file column: the same grid as the rows below.
@@ -2536,9 +2542,10 @@
                 const full = all ? have === all : b === '1', some = all ? have > 0 : b === '1';
                 return `<td class="col sq"><i class="nway-sq${some ? (full ? ' on' : ' part') : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (some ? (all > 1 ? `: ${have} of ${all} files` : '') : ': not in this group'))}">${all > 1 && some && !full ? have : ''}</i></td>`;
             }).join('');
+            const same = g.kind === 'same';
             const diff = g.kind === 'same' && g.fids?.length >= 2
-                ? `<button class="nway-gchip ev-n nway-merge-diff" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><button class="nway-gchev" data-gtoggle="${escapeAttr(g.id)}" aria-label="${closed ? 'Expand' : 'Collapse'} group" aria-expanded="${!closed}">${closed ? '&#9656;' : '&#9662;'}</button><span class="nway-gt" data-gmask="${escapeAttr(files)}">${title}${diff}</span><span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} ${this.state.view === 'strings' ? 'chars' : 'feat'}</span><span class="nway-gnote">${note}</span>${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
+                ? `<button class="nway-gchip ev-n nway-merge-diff${Number(g.cohesion) < 0.5 ? ' lowc' : ''}" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px">${g.kind === 'same' ? '' : chevBtn}<span class="nway-gt" data-gmask="${escapeAttr(files)}">${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}<span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} ${this.state.view === 'strings' ? 'chars' : 'feat'}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff}</span>${same ? '' : `<span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} ${this.state.view === 'strings' ? 'chars' : 'feat'}</span><span class="nway-gnote">${note}</span>`}${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2564,7 +2571,7 @@
             // Rows are indented one step past the header of the group they sit in, so a row with no partner lines up with the merged functions beside it.
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
-            return `<tr class="${depth ? 'nway-in ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
+            return `<tr class="${depth ? 'nway-in ' : ''}${g && g.kind === 'same' ? 'nway-ver ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
                 <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>

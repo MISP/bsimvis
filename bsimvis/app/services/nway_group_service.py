@@ -533,7 +533,9 @@ def merge_units(rows, doc, r, evidence, min_link):
                 byname[key].append(i)
         for ids in byname.values():
             for a, b in combinations(ids[:NAME_BUCKET], 2):
-                add(a, b, "name", 0.0)
+                sim = best.get((min(a, b), max(a, b)), 0.0)
+                if sim >= min_link:
+                    add(a, b, "name", sim)
     if "call" in evidence:
         if sum(len(_fids(row)) for _, row in cand) > CALL_MAX_FIDS:
             note = "Call position skipped: too many functions. Filter the rows first."
@@ -589,6 +591,7 @@ def merge_units(rows, doc, r, evidence, min_link):
             units.append(byrow[i])
             continue
         members = [byrow[j] for j in sorted(g["rows"])]
+        pairs = list(combinations(sorted(g["rows"]), 2))
         cells = {
             f"{k}:{c}": f
             for k, row in enumerate(members)
@@ -603,6 +606,8 @@ def merge_units(rows, doc, r, evidence, min_link):
                 "_rows": members,
                 "_kinds": g["kinds"],
                 "_sim": g["sim"],
+                # how alike the joined rows are: the mean best edge over row pairs, 0 where the matcher found none
+                "_xcoh": sum(best.get(k, 0.0) for k in pairs) / len(pairs),
                 "_idx": min(g["rows"]),
                 "_fspan": _pop(g["fmask"]),
             }
@@ -648,7 +653,7 @@ def _unit_sortkey(u, ctx):
             "span": u["_fspan"],
             "weight": max(r["weight"] for r in rs),
             "support": sum(r.get("support", 1.0) for r in rs) / len(rs),
-            "cohesion": sum(r.get("cohesion", 1.0) for r in rs) / len(rs),
+            "cohesion": u["_xcoh"],
             **{
                 k: max(_stat(r, f) for r in rs)
                 for k, f in (
@@ -706,8 +711,7 @@ def _expand(units, ctx, parent_id, parent_path, carried):
                 link=round(u["_sim"], 3),
                 names=list(dict.fromkeys(row["name"] for row in members))[:4],
                 fids=list(dict.fromkeys(f for row in members for f in _fids(row))),
-                cohesion=sum(row.get("cohesion", 1.0) for row in members)
-                / len(members),
+                cohesion=u["_xcoh"],
             )
             best, m["name_from"] = best_name(members, ctx["fmeta"])
             m["names"] = [best] + [x for x in m["names"] if x != best][:3]
@@ -1476,13 +1480,13 @@ def demo():
             row(1, 6, "other", {"A": "a2"}),
         ],
     }
-    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.3)
+    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.0)
     merged = [u for u in units if "_rows" in u]
     assert len(units) == 3 and len(merged) == 1 and note == ""
     assert merged[0]["mask"] == 15 and merged[0]["_kinds"] == {"name"}
     # annotated copies (family=) merge too: they match back by `_at`, not identity
     copies = [{**rw, "_at": i} for i, rw in enumerate(doc["rows"])]
-    assert len(merge_units(copies, doc, None, {"name"}, 0.3)[0]) == 3
+    assert len(merge_units(copies, doc, None, {"name"}, 0.0)[0]) == 3
 
     # a merged function is grouped by the lane of ALL its files, with its rows under it
     ctx = {
@@ -1506,7 +1510,7 @@ def demo():
     merged_pair = next(p for p in got if p[0]["id"] == "lane:1111/same:0")
     assert merged_pair[0]["path"] == ["lane:1111", "lane:1111/same:0"]
     assert merged_pair[0]["fids"] == ["a1", "b1", "c1", "d1"]
-    assert merged_pair[0]["cohesion"] == 1.0
+    assert merged_pair[0]["cohesion"] == 0.0  # same name, no edge between the rows
     assert len(merged_pair[1]) == 2 and got[0][1] == []
     # no levels: the merged function and the plain rows are ordered together, like functions
     top = _nest(units, [], ctx, "", [], {})

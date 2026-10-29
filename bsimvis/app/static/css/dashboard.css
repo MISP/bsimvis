@@ -3131,6 +3131,9 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-table tr.nway-grow td { padding: 0; background: var(--meta-bg, var(--card-bg)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .nway-table tr.nway-grow.d1 td { background: var(--card-bg); }.nway-gh { all: unset; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; width: 100%; padding: 6px 10px; cursor: pointer; color: var(--text); }
 .nway-merge-diff { appearance: none; flex: none; background: transparent; font-family: inherit; cursor: pointer; }
+.nway-merge-diff.lowc, .nway-schips.lowc .nway-xp { border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); font-weight: 700; }
+.nway-merge-diff.lowc { font-size: 0.85rem; padding: 1px 8px; }
+.nway-table tr.nway-grow.k-same:has(.lowc) td:first-child { box-shadow: inset 3px 0 0 var(--danger, #dc2626); }
 .nway-merge-diff:hover { background: var(--hover); }
 .nway-merge-diff:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .nway-gh:hover { background: var(--hover); }
@@ -3141,6 +3144,15 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-gt { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 600; }
 .nway-gtag { font-family: 'Consolas', monospace; }
 .nway-gname { font-family: 'Consolas', monospace; }
+.nway-gsig { display: inline-block; min-width: 0; max-width: 520px; font-weight: 400; }
+.nway-gsig .nway-schips { margin-top: 4px; }
+.nway-gmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; font-size: 0.72rem; font-weight: 400; color: var(--subtle); }
+.nway-grow.k-same .nway-gt, .nway-gsig { display: block; width: 100%; max-width: none; }
+/* a merged function and its versions read as one card: a green spine down the left, no rules inside */
+.nway-table tr.nway-grow.k-same { --c: var(--success); }
+.nway-table tr.nway-grow.k-same.gopen td:first-child, .nway-table tr.nway-ver td.nway-open { box-shadow: inset 3px 0 0 var(--success); }
+.nway-table tr.nway-grow.k-same.gopen td, .nway-table tr.nway-ver td { border-bottom-color: transparent; }
+.nway-table tr.nway-grow.k-same.gopen + tr.nway-ver td, .nway-table tr.nway-ver + tr.nway-ver td { border-top: 0; }
 .nway-gst { color: var(--dim); font: 0.72rem 'Consolas', monospace; }
 .nway-gnote { flex: 1 1 200px; min-width: 0; color: var(--dim); font-size: 0.76rem; }
 /* Presence squares: the file columns of the rows, the column headers and the group headers share them.

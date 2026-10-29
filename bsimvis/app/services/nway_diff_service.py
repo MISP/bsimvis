@@ -735,6 +735,31 @@ def seriate(columns, edges, min_edge):
     return [by[i] for i in order]
 
 
+def _variants(rows):
+    """Rows that share a name are told apart: `variant = {n, of, hint}`. `n` numbers
+    them in table order (span, then weight); `hint` is a tag the row's functions carry
+    and none of the other rows of that name do (a capa rule, a second yara rule, a lib tag...). The name
+    itself stays: merging by name needs it."""
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for name, group in by.items():
+        if len(group) < 2:
+            continue
+        sets = [set(r["tags"]) for r in group]
+        for n, (row, own) in enumerate(zip(group, sets), 1):
+            seen = set().union(*(s for s in sets if s is not own))
+            hint = next(
+                (
+                    short
+                    for t in row["tags"]
+                    if t not in seen and (short := _tag_name(t)) and short != name
+                ),
+                None,
+            )
+            row["variant"] = {"n": n, "of": len(group), "hint": hint}
+
+
 def _match(base, min_edge):
     weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
     rows = nway_match(base["edges"], base["funcs"], min_edge)
@@ -742,6 +767,7 @@ def _match(base, min_edge):
         fids = list(row["cells"].values())
         row.update(_name_row(fids, base["fmeta"], weights))
         row["library"] = any(base["library"].get(f) for f in fids)
+    _variants(rows)
     return rows
 
 
@@ -1004,6 +1030,18 @@ def demo():
 
     tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
     assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
+    # same-named rows are numbered; a tag only one of them holds becomes its hint
+    vr = [
+        {"name": "Mirai_ELF", "tags": ["yara:a:Mirai_ELF", "capa:x:xor"], "cells": {}},
+        {"name": "Mirai_ELF", "tags": ["yara:a:Mirai_ELF"], "cells": {}},
+        {"name": "main", "tags": [], "cells": {}},
+    ]
+    _variants(vr)
+    assert [r.get("variant") for r in vr] == [
+        {"n": 1, "of": 2, "hint": "xor"},
+        {"n": 2, "of": 2, "hint": None},
+        None,
+    ], vr
     cols = [{"id": i, "functions": 10} for i in "abcd"]
     ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
     got = [c["id"] for c in seriate(cols, ed, 0.5)]

@@ -411,8 +411,15 @@
 
         // A function row drawn like in the Functions rows (highlighted signature, hover code preview, same menu),
         // with a small button that shows the row in Functions.
+        // Rows that share a name carry `variant`: a small label with the row's number and the tag that tells it apart.
+        _varChip(v) {
+            if (!v) return '';
+            const tip = `Variant ${Number(v.n)} of ${Number(v.of)} rows named alike${v.hint ? `; tagged ${v.hint}` : ''}`;
+            return `<i class="nway-var" title="${escapeAttr(tip)}">#${Number(v.n)}${v.hint ? ` ${escapeHtml(v.hint)}` : ''}</i>`;
+        }
+
         _fnLabel(x) {
-            return `${this._fnSig({ name: x.name, cells: x.fcells || x.cells })}<i class="fa-solid fa-table-list nway-fnq" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions" role="button"></i>`;
+            return `${this._fnSig({ name: x.name, cells: x.fcells || x.cells })}${this._varChip(x.variant)}<i class="fa-solid fa-table-list nway-fnq" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions" role="button"></i>`;
         }
 
         // Function rows that use a string.
@@ -445,7 +452,7 @@
             const line = (kind, label, side, chip) => side && side.total
                 ? this._linkLine(`${kind}:${key}`, kind, JSON.stringify(cells), side.total, label, side.top.map(chip).join(''), side.total > side.top.length ? `<span class="dim">+${side.total - side.top.length}</span>` : '')
                 : '';
-            const fn = x => `<span class="nway-schip fn${x.ext ? ' ext' : ''}" ${x.ext ? '' : `data-fn-q="${escapeAttr(x.name)}"`} title="${escapeAttr(`${x.ext ? 'Call out of the binary: ' : ''}${x.name}: ${x.n} of ${x.of} functions of this row`)}">${escapeHtml(x.name)}${part(x)}</span>`;
+            const fn = x => `<span class="nway-schip fn${x.ext ? ' ext' : ''}" ${x.ext ? '' : `data-fn-q="${escapeAttr(x.name)}"`} title="${escapeAttr(`${x.ext ? 'Call out of the binary: ' : ''}${x.name}: ${x.n} of ${x.of} functions of this row`)}">${escapeHtml(x.name)}${this._varChip(x.variant)}${part(x)}</span>`;
             const cst = x => `<span class="nway-schip" title="${escapeAttr(`${x.n} of ${x.of} functions of this row use it`)}">${escapeHtml(x.value)}${part(x)}</span>`;
             return line('in', 'callers', c.callers, fn) + line('out', 'calls', c.callees, fn) + line('k', 'constants', k, cst);
         }
@@ -978,7 +985,7 @@
         _nameSig(row, opts = {}) {
             const sig = this._rowSig(row);
             const name = escapeHtml(row.name);
-            if (!sig) return `<div class="nway-namerow"><span>${name}</span>${this._renameBtn(row)}</div>`;
+            if (!sig) return `<div class="nway-namerow"><span>${name}</span>${this._varChip(row.variant)}${this._renameBtn(row)}</div>`;
             const f = this._fnData(sig.best.fid, sig.best.col);
             const fn = this._fnSig(row, opts);
             // Tags land on the best candidate, the function the preview shows.
@@ -988,7 +995,7 @@
                 row.tags ? row.tags.filter(t => !bareUser(t)) : f.tags,
                 row.tags ? row.tags.filter(bareUser).map(t => t.slice(5)) : f.user_tags,
                 { maxTags: 4 });
-            return `<div class="nway-namerow">${fn}${this._renameBtn(row)}</div><div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
+            return `<div class="nway-namerow">${fn}${this._varChip(row.variant)}${this._renameBtn(row)}</div><div class="nway-tags" title="${row.tags ? 'tags pooled over the row' : 'tags of the best candidate'}: ${escapeAttr(f.entrypoint_address)}">${tags}</div>`;
         }
 
         // ---- Call-graph drawer: callers / callees of one row, as a list or a graph ----

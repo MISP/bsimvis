@@ -277,7 +277,7 @@ def inline_links(r, doc, rows, top=4, cap=600):
         me = at.get(fs[0]) if fs else None
         res = {}
         for side, role in enumerate(("callers", "callees")):
-            count, name, ext = Counter(), {}, set()
+            count, name, ext, var = Counter(), {}, set(), {}
             read = [f for f in fs if f in links]
             for f in read:
                 keys = set()
@@ -288,6 +288,7 @@ def inline_links(r, doc, rows, top=4, cap=600):
                         ext.add(key)
                     elif (i := at.get(m)) is not None and i != me:
                         key, name[key] = f"row:{i}", doc["rows"][i]["name"]
+                        var[key] = doc["rows"][i].get("variant")
                     else:
                         continue
                     keys.add(key)
@@ -296,7 +297,13 @@ def inline_links(r, doc, rows, top=4, cap=600):
             res[role] = {
                 "total": len(count),
                 "top": [
-                    {"name": name[k], "n": count[k], "of": len(read), "ext": k in ext}
+                    {
+                        "name": name[k],
+                        "n": count[k],
+                        "of": len(read),
+                        "ext": k in ext,
+                        "variant": var.get(k),
+                    }
                     for k in best
                 ],
             }
@@ -393,7 +400,12 @@ def string_refs(r, doc, rows, top=4):
             if len(c) < REF_FIDS:
                 c[file_of[f]] = f
         top_rows = [
-            {"name": doc["rows"][i]["name"], "n": n, "cells": cells[i]}
+            {
+                "name": doc["rows"][i]["name"],
+                "variant": doc["rows"][i].get("variant"),
+                "n": n,
+                "cells": cells[i],
+            }
             for i, n in own.most_common(top)
         ]
         fids.update(f for x in top_rows for f in x["cells"].values())
@@ -498,7 +510,16 @@ def expand_links(r, doc, cells, role):
             else:
                 continue
             x = table.setdefault(
-                key, {"id": key, "name": name, "ext": ext, "cells": {}}
+                key,
+                {
+                    "id": key,
+                    "name": name,
+                    "ext": ext,
+                    "variant": (
+                        None if ext else doc["rows"][int(key[4:])].get("variant")
+                    ),
+                    "cells": {},
+                },
             )
             x["cells"].setdefault(file_of.get(m, file), m)
     for key, x in table.items():
@@ -560,6 +581,7 @@ def expand_string(r, doc, sid):
         {
             "id": f"row:{i}",
             "name": doc["rows"][i]["name"],
+            "variant": doc["rows"][i].get("variant"),
             "cells": cells,
             "fcells": dict(list(cells.items())[:REF_FIDS]),
             "held": {

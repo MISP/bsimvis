@@ -3647,3 +3647,4 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-subfn:hover { text-decoration: underline; }
 .nway-table tbody tr.nway-xrow:nth-child(n) td:first-child { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
 .nway-table tbody tr.nway-xrow:nth-child(n):hover td:first-child { background: var(--hover); }
+.nway-sq.ring { background: none; border: 2px solid hsl(var(--h, 195) 62% var(--l, 52%) / 0.6); }

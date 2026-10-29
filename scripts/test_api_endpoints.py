@@ -5504,6 +5504,20 @@ def test_nway_indicators():
                 and hit["name"] in {x["name"] for x in resp.json()["items"]},
                 f"HTTP {resp.status_code}",
             )
+    if hit:
+        eb = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        ).json()
+        check(
+            "nway expand: via <= present <= total in every cell",
+            all(
+                0 <= c["via"] <= c["present"] <= c["total"]
+                for x in eb["items"]
+                for c in x["cells"].values()
+            ),
+        )
     resp = requests.get(
         f"{BASE_URL}/api/bin_sim/nway/expand",
         params={**base_ex, "kind": "bogus"},

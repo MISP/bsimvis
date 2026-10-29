@@ -306,8 +306,17 @@ def expand_function(r, doc, cells):
                 },
             )
             row["cells"].setdefault(file, rec.get("addr", ""))
-    base = [dict(x, span=len(x["cells"])) for x in table.values()]
-    base.sort(key=lambda x: (-x["span"], -len(x["name"])))
+    # the string is shown in every file that holds it, not only through this row's functions
+    files = [c["id"] for c in doc["file_columns"] or doc["columns"]]
+    full = (
+        _read_strings(r, files, INLINE_MIN_LEN)
+        if len(files) <= MAX_STRING_FILES
+        else {}
+    )
+    for sid, x in table.items():
+        x["held"] = {**full.get(sid, {}).get("files", {}), **x["cells"]}
+    base = list(table.values())
+    base.sort(key=lambda x: (-len(x["held"]), -len(x["name"])))
     return _expanded(doc, base)
 
 
@@ -323,22 +332,49 @@ def expand_string(r, doc, sid):
     for f in _referencing(r, doc, [sid], where)[sid]:
         i, file = where[f]
         held.setdefault(i, {})[file] = f
+    # the function row is shown in every file it is in, with or without the string linked there
     base = [
         {
             "id": f"row:{i}",
             "name": doc["rows"][i]["name"],
             "cells": cells,
-            "span": len(cells),
+            "held": {
+                **{
+                    k: v
+                    for k, v in (
+                        doc["rows"][i].get("files") or doc["rows"][i]["cells"]
+                    ).items()
+                    if isinstance(v, str)
+                },
+                **cells,
+            },
         }
         for i, cells in held.items()
     ]
-    base.sort(key=lambda x: (-x["span"], x["name"]))
+    base.sort(key=lambda x: (-len(x["held"]), x["name"]))
     return _expanded(doc, base)
 
 
 def _expanded(doc, base):
-    rows = nway_diff_service.project_rows(base[:EXPAND_MAX], _groups(doc), 0.5)
-    return {"items": rows, "total": len(base)}
+    """Sub-rows over the columns. Each item has `cells[column] = {present, total, on, via}`:
+    `present` = files of the column that hold the item, `via` = those where it is linked
+    to the row it was opened from (via <= present)."""
+    shown, groups = base[:EXPAND_MAX], _groups(doc)
+    linked = nway_diff_service.project_rows(
+        [dict(x, span=len(x["cells"])) for x in shown], groups, 0.5
+    )
+    held = nway_diff_service.project_rows(
+        [dict(x, cells=x["held"], span=len(x["held"])) for x in shown], groups, 0.5
+    )
+    items = []
+    for x, v, h in zip(shown, linked, held):
+        item = {k: x[k] for k in x if k not in ("cells", "held")}
+        item["span"] = len(x["held"])
+        item["cells"] = {
+            g: dict(c, via=v["cells"][g]["present"]) for g, c in h["cells"].items()
+        }
+        items.append(item)
+    return {"items": items, "total": len(base)}
 
 
 def fids_with_string(r, doc, text, cap=200):
@@ -445,6 +481,20 @@ def demo():
     assert (s["cover"], s["leak"], s["score"]) == (0.5, 1, round(0.5 * (1 - 1 / 3), 4))
     assert stats({"a", "b"}, ctx, reach=2 + 25)["score"] == 0.5
     assert string_score(1, 0, 0, 5) is None
+    # a string held by 3 files but linked to the row's function in 2: the third shows as present, not linked
+    doc = {"file_columns": None, "columns": [{"id": i} for i in "ABC"]}
+    item = {
+        "id": "s",
+        "name": "x",
+        "cells": {"A": 1, "B": 2},
+        "held": {"A": 1, "B": 2, "C": 3},
+    }
+    cells = _expanded(doc, [item])["items"][0]["cells"]
+    assert [(cells[i]["present"], cells[i]["via"]) for i in "ABC"] == [
+        (1, 1),
+        (1, 1),
+        (1, 0),
+    ]
 
 
 if __name__ == "__main__":

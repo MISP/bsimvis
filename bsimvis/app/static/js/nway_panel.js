@@ -2785,9 +2785,16 @@
         }
 
         // Presence of a sub-row in one column. Strings are circles, functions squares.
+        // A sub-row (`via` set) is filled where it is linked to the row it opened from, and a ring where
+        // the file holds it without that link (the string is in the file but no function of the row uses it).
         _shape(cell, c, ci, circle) {
             cell = cell || { present: 0, total: 1 };
-            return `<td class="col sq"><i class="nway-sq${circle ? ' s' : ''}${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(`${this._colLabel(c)}: ${cell.present} of ${cell.total}`)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i></td>`;
+            const sub = cell.via !== undefined, n = sub ? cell.via : cell.present;
+            const state = n ? (n === cell.total ? ' on' : ' part') : sub && cell.present ? ' ring' : '';
+            const tip = sub
+                ? `${this._colLabel(c)}: ${cell.via} of ${cell.total} linked here` + (cell.present > cell.via ? `, ${cell.present - cell.via} more hold it without the link` : '')
+                : `${this._colLabel(c)}: ${cell.present} of ${cell.total}`;
+            return `<td class="col sq"><i class="nway-sq${circle ? ' s' : ''}${state}" style="${this._sqStyle(ci)}" title="${escapeAttr(tip)}">${cell.total > 1 && n ? Number(n) : ''}</i></td>`;
         }
 
         _subHtml(key) {

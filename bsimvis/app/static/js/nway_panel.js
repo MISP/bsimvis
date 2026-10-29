@@ -332,8 +332,9 @@
         }
 
         // The strings table: same files, columns and family as the function table.
-        async _loadStrings() {
+        async _loadStrings(offset) {
             const qs = this._listQs();
+            if (offset !== undefined) qs.set('offset', offset);
             qs.set('limit', STR_PAGE);
             qs.set('refs', '1');
             qs.delete('group_merge');
@@ -341,12 +342,36 @@
             try {
                 const res = await fetch(`/api/bin_sim/nway/strings?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
                 const body = await res.json().catch(() => ({}));
+                if (offset !== undefined) return res.ok ? body : null;
                 this._str = res.ok ? body : { error: body.message || body.error || `HTTP ${res.status}` };
                 // Group headers and lane names read this.data.groups, as they do for functions.
                 if (res.ok) { this.data.groups = body.groups || {}; this.data.group_note = body.group_note || ''; }
             } catch (e) {
+                if (offset !== undefined) return null;
                 this._str = { error: String(e) };
             }
+        }
+
+        // Scroll mode: the next batch of strings after the ones shown.
+        _watchStr() {
+            if (this._io) this._io.disconnect();
+            const sentinel = this.el.querySelector('.nway-sentinel'), st = this._str;
+            if (!sentinel || !st || st.error || st.items.length >= Number(st.total)) return;
+            this._io = window.Paging.observe(sentinel, async () => {
+                if (this._strBusy) return;
+                this._strBusy = true;
+                const gen = this._gen, body = await this._loadStrings(st.items.length);
+                this._strBusy = false;
+                if (!body || gen !== this._gen || this._str !== st) return;
+                Object.assign(this.data.groups, body.groups);
+                const at = st.items.length;
+                st.items.push(...body.items);
+                st.total = body.total;
+                this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', this._rows(body.items, at));
+                this._nameLanes();
+                this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(st.total), size: STR_PAGE, shown: st.items.length });
+                this._watchStr();
+            });
         }
 
         _renderError() {
@@ -2735,12 +2760,13 @@
             else if (s.error) table = `<div class="nway-note err">${escapeHtml(s.error)}</div>`;
             else {
                 const rows = this._rows(s.items, 0);
-                table = `<table id="nway-table" class="nway-table${this._sqLane() ? ' nway-sqlane' : ''}" style="width:${this._tableWidth()}px">${this._colgroup()}<thead>${this._head()}</thead><tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No strings match. Strings exist only for files analysed with strings extraction.</td></tr>`}</tbody></table>`;
+                table = `<table id="nway-table" class="nway-table${this._sqLane() ? ' nway-sqlane' : ''}" style="width:${this._tableWidth()}px">${this._colgroup()}<thead>${this._head()}</thead><tbody>${rows || `<tr><td colspan="${d.columns.length + 7}" class="gap">No strings match. Strings exist only for files analysed with strings extraction.</td></tr>`}</tbody>${window.Paging.mode() === 'scroll' ? `<tfoot><tr><td class="nway-sentinel" colspan="${d.columns.length + 7}"></td></tr></tfoot>` : ''}</table>`;
             }
-            const foot = s && !s.error ? window.Paging.footer({ offset: Number(s.offset), total: Number(s.total), size: STR_PAGE, shown: s.items.length }) : '';
+            const foot = s && !s.error ? window.Paging.footer({ offset: window.Paging.mode() === 'scroll' ? 0 : Number(s.offset), total: Number(s.total), size: STR_PAGE, shown: s.items.length }) : '';
             this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}
                 <div class="nway-card table-scope"><div class="nway-body">${this._legend()}<div class="nway-scroll">${table}</div></div>
                 <div class="table-footer"><div class="table-footer-left">${foot}</div></div></div></div>`;
+            this._watchStr();
         }
 
         _strRow(row) {

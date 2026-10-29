@@ -666,7 +666,8 @@ def _tag_name(tag):
     """A function name carried by a tag: `fid:libc:1.2.6#__toread` -> `__toread`,
     `yara:botnet:generic:Rule` -> `Rule`. Bare `fid:libc` names no function."""
     if "#" in tag:
-        return tag.rsplit("#", 1)[1] or None
+        name = tag.rsplit("#", 1)[1]
+        return None if name in ("", "ambiguous") else name  # #ambiguous: FID multi-match marker
     parts = tag.split(":")
     return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
 

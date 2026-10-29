@@ -12,6 +12,7 @@ from bsimvis.app.services.cluster_utils import (
     cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
+    default_func_cluster_name,
     function_cluster_stats,
     set_tag_distribution_score,
     function_count_stats,
@@ -847,6 +848,8 @@ class ClusterService:
                     "function_name": name,
                     "user_name": m.get("user_name"),
                     "user_name_source": m.get("user_name_source"),
+                    "tags": m.get("tags"),
+                    "user_tags": m.get("user_tags"),
                     "bsim_features_count": feat_count,
                     "file_name": file_name,
                     "entrypoint_address": addr,
@@ -885,8 +888,8 @@ class ClusterService:
                 if "bsim_features_count" in m:
                     feature_counts.append(m.get("bsim_features_count", 0))
 
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            default_name = default_func_cluster_name(
+                members, all_member_meta, f"Cluster {label}"
             )
             avg_features = np.mean(feature_counts) if feature_counts else 0
 
@@ -1928,8 +1931,8 @@ class ClusterService:
                 all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                 for fid in members
             ]
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            default_name = default_func_cluster_name(
+                members, all_member_meta, f"Cluster {label}"
             )
             avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
             cohesion_score = node_cohesion.get(label, 1.0)
@@ -2127,6 +2130,8 @@ class ClusterService:
                     "function_name": m.get("function_name"),
                     "user_name": m.get("user_name"),
                     "user_name_source": m.get("user_name_source"),
+                    "tags": m.get("tags"),
+                    "user_tags": m.get("user_tags"),
                     "bsim_features_count": m.get("bsim_features_count", 0),
                     "file_name": m.get("file_name"),
                     "entrypoint_address": m.get("entrypoint_address"),
@@ -2145,8 +2150,8 @@ class ClusterService:
                 all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                 for fid in members
             ]
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            default_name = default_func_cluster_name(
+                members, all_member_meta, f"Cluster {label}"
             )
             avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 
@@ -2389,8 +2394,8 @@ class ClusterService:
                     all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                     for fid in members
                 ]
-                default_name = (
-                    Counter(names).most_common(1)[0][0] if names else f"Cluster {root}"
+                default_name = default_func_cluster_name(
+                    members, all_member_meta, f"Cluster {root}"
                 )
                 avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 

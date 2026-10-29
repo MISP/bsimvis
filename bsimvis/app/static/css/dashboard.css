@@ -3643,6 +3643,14 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-table tr.nway-xrow td { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); border-top: 0; padding-top: 3px; padding-bottom: 3px; font-size: 0.8rem; }
 .nway-table tr.nway-xrow td.nway-open { padding-left: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 3px 0 0 var(--border); cursor: default; }
 .nway-table tr.nway-xrow:hover td { background: var(--hover); }
+.nway-table tr.k-f { --c: var(--success); }
+.nway-table tr.k-in { --c: var(--info, #3b82f6); }
+.nway-table tr.k-out { --c: #8b5cf6; }
+.nway-table tr.k-k { --c: var(--warning, #d97706); }
+.nway-table tr.nway-xrow.k-f td.nway-open, .nway-table tr.nway-xrow.k-in td.nway-open, .nway-table tr.nway-xrow.k-out td.nway-open, .nway-table tr.nway-xrow.k-k td.nway-open { box-shadow: inset 3px 0 0 var(--c); }
+.nway-table tr.nway-xline td { padding: 2px 10px 2px 28px; box-shadow: inset 3px 0 0 var(--c); }
+.nway-table tr.nway-xline .nway-schips { margin-top: 0; }
+.nway-table tr.nway-xline:hover td { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
 .nway-table tr.nway-xrow .nway-sq { width: 13px; height: 13px; }
 .nway-mark { display: inline-block; width: 7px; height: 7px; margin-right: 8px; background: var(--dim); vertical-align: middle; }
 .nway-mark.str { border-radius: 50%; }

@@ -440,19 +440,19 @@
 
         // Under a function row: the other rows it is called by / calls, and the constants it uses.
         // A neighbor is a whole row, so the same call in every file reads as one chip.
-        _sigChips(row) {
-            if (this.state.view === 'strings') return '';
+        _sigLines(row) {
+            if (this.state.view === 'strings') return {};
             const c = row.calls || {}, k = row.consts;
             const key = this._fnKey(row).slice(2), cells = {};
             for (const [f, v] of Object.entries(row.files || row.cells || {})) if (typeof v === 'string') cells[f] = v;
-            if (!key) return '';
+            if (!key) return {};
             const part = x => x.of > 1 && x.n < x.of ? `<b>${Number(x.n)}/${Number(x.of)}</b>` : '';
             const line = (kind, label, side, chip) => side && side.total
                 ? this._linkLine(`${kind}:${key}`, kind, JSON.stringify(cells), side.total, label, side.top.map(chip).join(''), side.total > side.top.length ? `<span class="dim">+${side.total - side.top.length}</span>` : '')
                 : '';
             const fn = x => `<span class="nway-schip fn${x.ext ? ' ext' : ''}" ${x.ext ? '' : `data-fn-q="${escapeAttr(x.name)}"`} title="${escapeAttr(`${x.ext ? 'Call out of the binary: ' : ''}${x.name}: ${x.n} of ${x.of} functions of this row`)}">${escapeHtml(x.name)}${this._varChip(x.variant)}${part(x)}</span>`;
             const cst = x => `<span class="nway-schip" title="${escapeAttr(`${x.n} of ${x.of} functions of this row use it`)}">${escapeHtml(x.value)}${part(x)}</span>`;
-            return line('in', 'callers', c.callers, fn) + line('out', 'calls', c.callees, fn) + line('k', 'constants', k, cst);
+            return { in: line('in', 'callers', c.callers, fn), out: line('out', 'calls', c.callees, fn), k: line('k', 'constants', k, cst) };
         }
 
         _famChip() {
@@ -2513,7 +2513,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span>${this._strChips(row)}${this._sigChips(row)}</td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -2521,13 +2521,20 @@
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
                 ${this._famCells(row.stats)}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
-            </tr>${this._fnSubs(row)}`;
+            </tr>${this._fnLineRows(row)}`;
         }
 
-        // The opened lines of a function row, in the order of the chips.
-        _fnSubs(row) {
+        // Under a function row, one row per line (strings, callers, calls, constants) and, right below it,
+        // the rows that line opened: an opened row always sits with the line it came from.
+        _fnLineRows(row) {
             const key = this._fnKey(row).slice(2);
-            return key ? ['f', 'in', 'out', 'k'].map(k => this._subHtml(`${k}:${key}`)).join('') : '';
+            if (!key) return '';
+            const lines = { f: this._strChips(row), ...this._sigLines(row) };
+            const span = this._lead().length + this.data.columns.length;
+            const depth = row.g && (this.data.groups || {})[row.g] ? this.data.groups[row.g].path.length : 0;
+            return ['f', 'in', 'out', 'k'].map(k => lines[k]
+                ? `<tr class="nway-xrow nway-xline k-${k}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td colspan="${span}">${lines[k]}</td></tr>${this._subHtml(`${k}:${key}`)}`
+                : '').join('');
         }
 
         _fnKey(row) {
@@ -2854,7 +2861,7 @@
                     ? `<code class="nway-str" title="${escapeAttr(x.name)}">${escapeHtml(x.name.slice(0, 160))}</code> <span class="dim">${escapeHtml([x.encoding, x.section].filter(Boolean).join(' · '))}</span>`
                     : x.ext ? `<span class="nway-schip fn ext">${escapeHtml(x.name)}</span>` : `<span class="nway-subfn">${this._fnLabel(x)}</span>`;
                 const pad = Array.from({ length: lead }, (_, i) => `<td class="num">${i === spanAt ? Number(x.span) : ''}</td>`).join('');
-                return `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="nway-mark ${cls}"></i>${label}</td>${pad}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs || kind === 'k')).join('')}</tr>`;
+                return `<tr class="nway-xrow ${cls} k-${kind}" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="nway-mark ${cls}"></i>${label}</td>${pad}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs || kind === 'k')).join('')}</tr>`;
             }).join('');
             const span = lead + 1 + cols.length;
             const more = body.total > body.items.length ? `<tr class="nway-xrow ${cls}" data-sub="${escapeAttr(key)}"><td colspan="${span}" class="dim">+${body.total - body.items.length} more</td></tr>` : '';

@@ -259,24 +259,24 @@ def string_refs(r, doc, rows, top=4):
     `cells` = {file id: function id} of the referencing functions (a few), so the client
     can draw the function like a table row. Returns their metadata `{function id: meta}`.
     """
-    fid_row = _fid_rows(doc)
-    file_of = {
-        f: k
-        for row in doc["rows"]
-        for k, f in (row.get("files") or row["cells"]).items()
-        if isinstance(f, str)
-    }
-    direct = _referencing(r, doc, [row["id"] for row in rows], fid_row)
+    # by table row, not by name: two rows may share a name
+    at, file_of = {}, {}
+    for i, row in enumerate(doc["rows"]):
+        for k, f in (row.get("files") or row["cells"]).items():
+            if isinstance(f, str):
+                at[f], file_of[f] = i, k
+    direct = _referencing(r, doc, [row["id"] for row in rows], at)
     fids = set()
     for row in rows:
         fs = direct[row["id"]]
-        own, cells = Counter(fid_row[f] for f in fs), {}
+        own, cells = Counter(at[f] for f in fs), {}
         for f in fs:
-            c = cells.setdefault(fid_row[f], {})
+            c = cells.setdefault(at[f], {})
             if len(c) < REF_FIDS:
                 c[file_of[f]] = f
         top_rows = [
-            {"name": k, "n": n, "cells": cells[k]} for k, n in own.most_common(top)
+            {"name": doc["rows"][i]["name"], "n": n, "cells": cells[i]}
+            for i, n in own.most_common(top)
         ]
         fids.update(f for x in top_rows for f in x["cells"].values())
         # one function row (the same function in several files) counts once

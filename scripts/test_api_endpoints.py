@@ -2042,7 +2042,9 @@ def run_all_tests():
     lint = test_endpoint(
         "POST",
         "/api/yara/lint",
-        data={"rule": 'rule t {\n strings:\n  $a = "ab"\n condition:\n  any of them\n}'},
+        data={
+            "rule": 'rule t {\n strings:\n  $a = "ab"\n condition:\n  any of them\n}'
+        },
     )
     msgs = [w["message"] for w in (lint or {}).get("warnings", [])]
     check(
@@ -5365,6 +5367,86 @@ def _nway_rows(body):
     """A page of N-way rows as a set of function-id sets, comparable across modes."""
     rows = (body or {}).get("items", [])
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
+
+
+def test_nway_indicators():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-sexies – N-way lane stats, strings table, indicators", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – indicator checks skipped.", YELLOW))
+        return
+    lane = f"{COLLECTION}:{file_md5}"
+    st, body = _nway(lane=lane, tab="all", columns="files")
+    rows = (body or {}).get("items", [])
+    check(
+        "nway lane: rows carry stats",
+        st == 200 and rows and all("stats" in r for r in rows),
+        f"HTTP {st}",
+    )
+    check(
+        "nway lane: lane and contrast are the two files",
+        st == 200
+        and body["lane"]["lane"] == [lane]
+        and len(body["lane"]["contrast"]) == 1,
+        str((body or {}).get("lane")),
+    )
+    check(
+        "nway lane: cover is a share of the lane",
+        all(
+            0 <= r["stats"]["cover"] <= 1 and 0 <= r["stats"]["score"] <= 1
+            for r in rows
+        ),
+    )
+    st, _ = _nway(lane="nope:0", columns="files")
+    check("nway lane: unknown column is rejected", st == 400, f"HTTP {st}")
+    st, ign = _nway(
+        lane=lane, ignore=f"{COLLECTION}:{file_md5_2}", columns="files", tab="all"
+    )
+    check(
+        "nway lane: ignored columns leave the contrast",
+        st == 200 and ign["lane"]["contrast"] == [] and ign["lane"]["ignored"],
+        str((ign or {}).get("lane")),
+    )
+    base = {
+        "collection": COLLECTION,
+        "md5s": f"{file_md5},{file_md5_2}",
+        "lane": lane,
+        "columns": "files",
+    }
+    resp = requests.get(f"{BASE_URL}/api/bin_sim/nway/strings", params=base, timeout=60)
+    sb = resp.json() if resp.status_code == 200 else {}
+    check(
+        "nway strings: answers with rows and a lane",
+        resp.status_code == 200 and "items" in sb and "lane" in sb,
+        f"HTTP {resp.status_code}",
+    )
+    check(
+        "nway strings: stats carry reach for each shown row",
+        all(r["stats"]["reach"] is not None for r in sb.get("items", [])),
+    )
+    sc = [r["stats"]["score"] for r in sb.get("items", [])]
+    check("nway strings: best score first", sc == sorted(sc, reverse=True), str(sc[:5]))
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/indicators", params=base, timeout=60
+    )
+    ib = resp.json() if resp.status_code == 200 else {}
+    sc = [x["stats"]["score"] for x in ib.get("items", [])]
+    check(
+        "nway indicators: ranked list",
+        resp.status_code == 200 and sc == sorted(sc, reverse=True),
+        f"HTTP {resp.status_code}",
+    )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/indicators",
+        params={k: v for k, v in base.items() if k != "lane"},
+        timeout=60,
+    )
+    check(
+        "nway indicators: lane is required",
+        resp.status_code == 400,
+        f"HTTP {resp.status_code}",
+    )
 
 
 def test_nway_column_groups():
@@ -10452,6 +10534,7 @@ if __name__ == "__main__":
         test_bin_sim_diff_cache,
         test_nway_diff,
         test_nway_column_groups,
+        test_nway_indicators,
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
@@ -10485,6 +10568,7 @@ if __name__ == "__main__":
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_nway_column_groups": ["test_search_filters_and_sorting"],
+        "test_nway_indicators": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],

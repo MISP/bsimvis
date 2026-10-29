@@ -21,6 +21,7 @@ import time
 import uuid as uuidlib
 
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.nway_indicator_service import string_score  # noqa: F401
 
 MAX_OFFSETS = 8  # offsets kept per string instance list
 LIST_CAP = 50  # missed / false-hit files returned
@@ -261,17 +262,6 @@ def file_label(r, m):
 
 def _ratio(a, b):
     return round(a / b, 4) if b else None
-
-
-def string_score(pos, targets, neg, others):
-    """How well one string separates the sets: the share of target files that hold
-    it times the share of other files that do not. Rates on both sides, so a small
-    or sampled set weighs the same as a big one. 1.0 = every target and no other;
-    0 = in no target, or in every other file."""
-    if not targets:
-        return None
-    clean = 1 - min(1, neg / others) if others else 1
-    return round(pos / targets * clean, 4)
 
 
 def _scan_sets(r_raw, rules, targets, negatives):

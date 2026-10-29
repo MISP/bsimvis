@@ -13,6 +13,7 @@ from bsimvis.app.services import (
     nway_diff_service,
     nway_facets_service,
     nway_group_service,
+    nway_indicator_service,
     nway_lineage_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
@@ -339,10 +340,39 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
     return cards
 
 
+STAT_SORTS = {"cover": "cover", "leak": "leak_rate", "score": "score", "reach": "reach"}
+
+
+def _lane_ctx(doc, args):
+    """The lane / contrast file sets of `lane=` / `ignore=` (column ids), or None."""
+    lane = nway_indicator_service.ids(args.get("lane"))
+    if not lane:
+        return None
+    try:
+        return nway_indicator_service.context(
+            doc, lane, nway_indicator_service.ids(args.get("ignore"))
+        )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+
+
+def _lane_info(ctx):
+    return ctx and {k: sorted(v) for k, v in ctx.items()}
+
+
+def _stat_ok(st, args):
+    """`cover_min` (0-1) and `leak_max` (share of contrast files, 0-1) filters."""
+    cmin, lmax = fnum("cover_min", args), fnum("leak_max", args)
+    return in_bounds(st["cover"], cmin, None) and in_bounds(st["leak_rate"], None, lmax)
+
+
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
     cols = doc["columns"]
+    ctx = _lane_ctx(doc, args)
+    if ctx:
+        rows = nway_indicator_service.annotate(rows, ctx)
     # two top-level `by` groups compare like Focus / Rest (side a = first group)
     focus = doc["columns_mode"] == "focus" or (
         doc["columns_mode"] == "by"
@@ -397,6 +427,8 @@ def _page(doc, args, r=None, pool_id=None):
                 return False
         if not in_bounds(row["weight"], feat_min, feat_max):
             return False
+        if ctx and not _stat_ok(row["stats"], args):
+            return False
         if sup_min is not None and row["support"] < sup_min:
             return False
         fids = list(_row_fids(row))
@@ -423,7 +455,13 @@ def _page(doc, args, r=None, pool_id=None):
         page_clusters = False
 
     sort_col = args.get("sort_col")
-    if sort_col in ("span", "weight", "support", "cohesion", "name"):
+    if ctx and sort_col in STAT_SORTS:
+        filtered = sorted(
+            filtered,
+            key=lambda r: r["stats"][STAT_SORTS[sort_col]] or 0,
+            reverse=args.get("sort_dir", "desc") != "asc",
+        )
+    elif sort_col in ("span", "weight", "support", "cohesion", "name"):
         filtered = sorted(
             filtered,
             key=lambda r: (
@@ -492,6 +530,7 @@ def _page(doc, args, r=None, pool_id=None):
         "mode": doc["mode"],
         "algo": doc["algo"],
         "warnings": doc["warnings"],
+        "lane": _lane_info(ctx),
     }
 
 
@@ -1000,6 +1039,120 @@ def get_nway():
             request.args,
         )
     return page
+
+
+def _strings_page(doc, args, r):
+    """Filter, sort and slice the string rows; `reach` is read for the shown page only."""
+    ctx = _lane_ctx(doc, args)
+    try:
+        min_len = max(
+            1, int(args.get("min_length", nway_indicator_service.MIN_STRING_LEN))
+        )
+        offset = max(0, int(args.get("offset", 0)))
+        limit = max(1, min(int(args.get("limit", 100)), 1000))
+    except ValueError:
+        abort(400, "min_length, offset and limit must be integers")
+    scope = args.get("scope", "code")
+    if scope not in ("code", "library", "all"):
+        abort(400, "scope must be code, library or all")
+    try:
+        rows = nway_indicator_service.string_rows(r, doc, ctx, min_len)
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+    q = (args.get("q") or "").strip().lower()
+    only_lane = ctx and args.get("lane_only", "1") != "0"
+    rows = [
+        row
+        for row in rows
+        if (scope == "all" or row["library"] == (scope == "library"))
+        and (not q or q in row["name"].lower())
+        and (not only_lane or row["stats"]["tp"])
+        and (not ctx or _stat_ok(row["stats"], args))
+    ]
+    sort_col = args.get("sort_col") or ("score" if ctx else "span")
+    rev = args.get("sort_dir", "desc") != "asc"
+    if sort_col in STAT_SORTS and ctx:
+        key = lambda x: (x["stats"][STAT_SORTS[sort_col]] or 0, x["span"])
+    elif sort_col in ("span", "weight"):
+        key = lambda x: x[sort_col]
+    else:
+        key = lambda x: x["name"].lower()
+    rows.sort(key=key, reverse=rev)
+    page = rows[offset : offset + limit]
+    if ctx:
+        nway_indicator_service.page_reach(r, doc, page, ctx)
+    return {
+        "items": page,
+        "total": len(rows),
+        "offset": offset,
+        "limit": limit,
+        "columns": doc["columns"],
+        "columns_mode": doc["columns_mode"],
+        "file_columns": doc["file_columns"],
+        "lane": _lane_info(ctx),
+        "warnings": doc["warnings"],
+    }
+
+
+def get_nway_strings():
+    """The N-way table of strings: rows are string values, columns the same files or
+    groups as /nway, with Cover / Leak / Reach / Score for a `lane`."""
+    try:
+        doc, r, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    return _strings_page(doc, request.args, r)
+
+
+def get_nway_indicators():
+    """Strings and function blocks ranked by how well they single out the `lane`."""
+    if not request.args.get("lane"):
+        abort(400, "lane is required")
+    kinds = nway_indicator_service.ids(request.args.get("kinds", "string,function"))
+    if not set(kinds) <= {"string", "function"}:
+        abort(400, "kinds must be string and/or function")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 50)), 500))
+    except ValueError:
+        abort(400, "limit must be an integer")
+    try:
+        doc, r, pool_id = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    ctx = _lane_ctx(doc, request.args)
+    out = []
+    if "function" in kinds:
+        for row in nway_indicator_service.annotate(doc["rows"], ctx):
+            if (
+                request.args.get("scope", "code") == "all"
+                or row["library"] == (request.args.get("scope") == "library")
+            ) and row["stats"]["tp"]:
+                fids = list(_row_fids(row))
+                out.append(
+                    {
+                        "kind": "function",
+                        "id": fids[0] if fids else row["name"],
+                        "preview": row["name"],
+                        "files": len(fids),
+                        "stats": row["stats"],
+                    }
+                )
+    if "string" in kinds:
+        a = request.args.to_dict()
+        a.update(limit="1000", sort_col="score", sort_dir="desc")
+        for row in _strings_page(doc, a, r)["items"]:
+            out.append(
+                {
+                    "kind": "string",
+                    "id": row["id"],
+                    "preview": row["name"][:200],
+                    "files": row["span"],
+                    "stats": row["stats"],
+                }
+            )
+    out = [x for x in out if _stat_ok(x["stats"], request.args)]
+    out.sort(key=lambda x: (-x["stats"]["score"], -x["stats"]["tp"]))
+    return {"items": out[:limit], "total": len(out), "lane": _lane_info(ctx)}
 
 
 NEIGHBOR_MAX_DEPTH = 5

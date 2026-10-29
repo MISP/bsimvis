@@ -13,13 +13,15 @@ file of the table, minus the *ignored* columns (a sibling variant, say). For a r
 """
 
 import json
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 
 from bsimvis.app.services import nway_diff_service, string_service
 from bsimvis.app.services.nway_diff_service import BadParams
 
 REACH_SOFT = 25  # files outside the table at which the score halves
 MIN_STRING_LEN = 6
+XREF_CAP = 300  # functions whose callers one page of strings reads
+LANE_FIDS = 6  # heaviest strings of a lane that name it
 INLINE_MIN_LEN = 4  # strings shown inside a function row
 MAX_STRING_FILES = 200
 _STRINGS = OrderedDict()  # file set -> string table, newest last
@@ -208,6 +210,101 @@ def inline_strings(r, rows, top=6, cap=600):
     return out
 
 
+def _txt(v):
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
+def _collections(doc):
+    return sorted(
+        {
+            c["collection"]
+            for c in doc["file_columns"] or doc["columns"]
+            if c.get("collection")
+        }
+    )
+
+
+def _fid_rows(doc):
+    """Function id -> name of the function row holding it."""
+    return {
+        f: row["name"]
+        for row in doc["rows"]
+        for f in (row.get("files") or row["cells"]).values()
+        if isinstance(f, str)
+    }
+
+
+def _referencing(r, doc, sids, fid_row):
+    """`{string id: [function ids of the table that reference it]}`."""
+    colls = _collections(doc)
+    pipe = r.pipeline(transaction=False)
+    for sid in sids:
+        for coll in colls:
+            pipe.smembers(f"{coll}:idx:string:value:{sid}")
+    got = iter(pipe.execute())
+    out = {}
+    for sid in sids:
+        fns = set()
+        for _ in colls:
+            fns |= {_txt(f) for f in next(got)}
+        out[sid] = sorted(f for f in fns if f in fid_row)
+    return out
+
+
+def _top(count, n):
+    return [{"name": k, "n": v} for k, v in count.most_common(n)]
+
+
+def string_refs(r, doc, rows, top=4):
+    """Give each string row `refs`: the function rows whose functions reference it
+    (`direct`) and the ones that call those (`xref`), as `{name, n}` plus the
+    number of functions that reference it."""
+    fid_row = _fid_rows(doc)
+    direct = _referencing(r, doc, [row["id"] for row in rows], fid_row)
+    fids = list(dict.fromkeys(f for fs in direct.values() for f in fs))[:XREF_CAP]
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.smembers(f"{f}:callers")
+    callers = {f: {_txt(c) for c in got} for f, got in zip(fids, pipe.execute())}
+    for row in rows:
+        fs = direct[row["id"]]
+        own = Counter(fid_row[f] for f in fs)
+        far = Counter(
+            fid_row[c]
+            for f in fs
+            for c in callers.get(f, ())
+            if c in fid_row and fid_row[c] not in own
+        )
+        row["refs"] = {
+            "direct": _top(own, top),
+            "xref": _top(far, top),
+            "functions": len(fs),
+        }
+
+
+def lane_fids(r, doc, rows, groups, top=LANE_FIDS):
+    """Name the string lanes from code: `fids` of a lane = a function using each of its
+    heaviest strings. Tags and the name hint do not apply to strings."""
+    fid_row = _fid_rows(doc)
+    lanes = {}
+    for g in groups.values():
+        if g.get("kind") not in ("lane", "tier", "fold") or not g.get("mask"):
+            continue
+        m = sum(1 << i for i, ch in enumerate(g["mask"]) if ch == "1")
+        best = sorted(
+            (x for x in rows if not x["mask"] & ~m), key=lambda x: -x["weight"]
+        )
+        lanes[g["id"]] = [x["id"] for x in best[:top]]
+    sids = list(dict.fromkeys(s for ss in lanes.values() for s in ss))
+    direct = _referencing(r, doc, sids, fid_row)
+    for g in groups.values():
+        g["fids"] = list(
+            dict.fromkeys(direct[s][0] for s in lanes.get(g["id"], []) if direct[s])
+        )
+        g["tags"] = []
+        g.pop("hint", None)
+
+
 def reach_of(r, sids, collections):
     """Files holding each string id, over the collections the table's files come from."""
     pipe = r.pipeline(transaction=False)
@@ -241,6 +338,7 @@ def string_rows(r, doc, ctx=None, min_length=MIN_STRING_LEN):
             "span": len(s["files"]),
             "weight": len(s["value"]),
             "library": "origin:lib" in s["tags"],
+            "is_string": True,
         }
         for sid, s in table.items()
     ]

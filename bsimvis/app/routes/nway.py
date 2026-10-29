@@ -1083,12 +1083,43 @@ def _strings_page(doc, args, r):
     else:
         key = lambda x: x["name"].lower()
     rows.sort(key=key, reverse=rev)
-    page = rows[offset : offset + limit]
+    groups, note = {}, ""
+    if args.get("group"):
+        if set(args["group"].split(",")) - {"lane", "prefix"}:
+            abort(400, "strings group by lane and/or prefix")
+        try:
+            entries, groups, note = nway_group_service.group_rows(
+                rows,
+                {**doc, "key": None},
+                r,
+                args["group"],
+                {**args, "group_merge": ""},
+            )
+        except nway_diff_service.BadParams as e:
+            abort(400, str(e))
+        part = entries[offset : offset + limit]
+        page = [
+            {**row, "g": gid, **extra} if row else {"g": gid, "header": True}
+            for gid, row, extra in part
+        ]
+        needed = {p for gid, _, _ in part if gid in groups for p in groups[gid]["path"]}
+        needed |= {groups[gid].get("under_id") for gid, _, _ in part if gid in groups}
+        groups = {g: m for g, m in groups.items() if g in needed}
+        nway_indicator_service.lane_fids(r, doc, rows, groups)
+        total = len(entries)
+    else:
+        page = rows[offset : offset + limit]
+        total = len(rows)
+    real = [x for x in page if not x.get("header")]
+    if args.get("refs") == "1":
+        nway_indicator_service.string_refs(r, doc, real)
     if ctx:
-        nway_indicator_service.page_reach(r, doc, page, ctx)
+        nway_indicator_service.page_reach(r, doc, real, ctx)
     return {
         "items": page,
-        "total": len(rows),
+        "total": total,
+        "groups": groups,
+        "group_note": note,
         "offset": offset,
         "limit": limit,
         "columns": doc["columns"],

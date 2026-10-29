@@ -67,6 +67,8 @@ def _pop(mask):
 
 
 def _fids(row):
+    if row.get("is_string"):
+        return []
     return [
         f for f in (row.get("files") or row["cells"]).values() if isinstance(f, str)
     ]
@@ -996,12 +998,19 @@ def _lane_evidence(l):
     from bsimvis.app.services.function_service import fetch_function_data
     from bsimvis.app.services.redis_client import get_redis
 
+    by_string = l.get("kind") == "string"
     out = [
-        f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+        (
+            f"{l['rows']} strings found together in {l['files']} of {l['total']} files of a malware family. The evidence below comes from the functions that use them."
+            if by_string
+            else f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+        )
     ]
-    if l["sample"]:
+    if l["sample"] and not by_string:
         out.append("Function names: " + ", ".join(l["sample"]))
     tags, strings, code = list(l["tags"]), [], []
+    if by_string:
+        strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
     libs, inner, callers = Counter(), Counter(), Counter()
     for fid in l["fids"][:LANE_FIDS]:
         try:
@@ -1107,6 +1116,8 @@ def lane_names(lanes):
             "fids": fids,
             "v": 6,  # bump when the prompt changes, so cached names are redone
         }
+        if l.get("kind") == "string":
+            item["kind"] = "string"
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()

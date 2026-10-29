@@ -5408,6 +5408,37 @@ def test_nway_indicators():
         and all({"total", "top"} <= set(r.get("strings", {})) for r in sb["items"]),
         f"HTTP {st}",
     )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/strings",
+        params={
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "columns": "files",
+            "group": "lane",
+            "refs": "1",
+            "group_open": "all",
+        },
+        timeout=60,
+    )
+    gb = resp.json() if resp.status_code == 200 else {}
+    gitems = gb.get("items", [])
+    check(
+        "nway strings: group=lane gives headers, lane groups and refs",
+        resp.status_code == 200
+        and gb.get("groups")
+        and any(x.get("header") for x in gitems)
+        and all("refs" in x for x in gitems if not x.get("header")),
+        f"HTTP {resp.status_code} {str(gb)[:120]}",
+    )
+    check(
+        "nway strings: a string lane names the functions that use its strings",
+        all("fids" in g for g in gb.get("groups", {}).values()),
+    )
+    check(
+        "nway strings: refs name the function rows using the string",
+        any(x["refs"]["direct"] for x in gitems if not x.get("header")),
+        "no string with a referencing function row",
+    )
     st, _ = _nway(family="nope:0", columns="files")
     check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
     st, ign = _nway(

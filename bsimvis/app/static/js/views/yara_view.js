@@ -555,7 +555,7 @@ window.YaraView = {
                 <div class="yw-m"><small>Rate</small><strong>${this._pct(res.seen ? res.hits / res.seen : null)}</strong></div>`;
             note = `<b>Exact:</b> all ${res.seen} files scanned${res.mode === 'apply' ? `, ${res.tagged} retagged` : ''}.${res.strings_sampled ? ' String counts come from a sample of the hit files.' : ''}${m ? '' : ' No Must match set, so no precision or recall.'}`;
             const pre = [['strings', 'Strings', res.strings.length], ['groups', 'Groups', res.groups.length]];
-            tabs = m ? [...pre, ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true], ['scope', 'Scope', '']] : [...pre, ['hits', 'Matches', res.hits]];
+            tabs = m ? [...pre, ['true', 'True hits', m.tp], ['missed', 'Missed', m.fn], ['false', 'False hits', m.fp, true], ['scope', 'Scope', '']] : [...pre, ['hits', 'Matches', res.hits], ['scope', 'Scope', ''], ['clusters', 'Clusters', '']];
         } else {
             head = `<div class="yw-m"><small>Precision</small><strong class="${good(m.precision)}">${this._pct(m.precision)}</strong></div>
                 <div class="yw-m"><small>Recall</small><strong class="${good(m.recall)}">${this._pct(m.recall)}</strong></div>
@@ -579,9 +579,15 @@ window.YaraView = {
         if (k === 'scope') this._loadScope();
     },
 
+    // Viewing a full sweep that had no Must match set: the sweep's hit files are the set to map.
+    _mapBody() {
+        const sw = this._view === 'sweep' && this._sweep && this._sweep.exact && !this._sweep.metrics ? this._sweep : null;
+        return sw ? { run_id: sw.run_id, collection: document.getElementById('yara-collection').value } : this._body();
+    },
+
     // File clusters to focus on: pure clusters that hold the targets, and the ones hiding the misses.
     async _loadScope() {
-        const body = this._body(), key = JSON.stringify(body);
+        const body = this._mapBody(), key = JSON.stringify(body);
         if (this._sc && this._sc.key === key) return;
         this._sc = { key, loading: true };
         this._paint();
@@ -597,7 +603,7 @@ window.YaraView = {
         if (!rows.length) return '<div class="yw-hint">none</div>';
         const btn = (u, mode, icon, tip) => `<button class="yw-btn ghost icon" title="${tip}" aria-label="${tip}" onclick="YaraView.refocus(${escapeAttr(jsString(u))}, '${mode}')"><i class="fa-solid ${icon}"></i></button>`;
         return `<table class="yw-fixed"><colgroup><col><col style="width:150px"><col style="width:56px"><col style="width:56px"><col style="width:56px"><col style="width:56px"><col style="width:60px"><col style="width:80px"><col style="width:116px"></colgroup>
-            <thead><tr><th>Cluster</th><th>UUID</th><th title="Files in the cluster">Files</th><th title="Targets the rule hits">Hit</th><th title="Targets the rule misses">Missed</th><th title="Negative files, over the whole sets">Neg</th><th>Pure</th><th title="Newly covered, running total">${gainLabel || 'Covered'}</th><th></th></tr></thead><tbody>${rows.map(c => `<tr>
+            <thead><tr><th>Cluster</th><th>UUID</th><th title="Files in the cluster">Files</th><th title="Targets the rule hits">Hit</th><th title="Targets the rule misses (a sweep without targets: cluster-mates it does not match)">Missed</th><th title="Negative files, over the whole sets">Neg</th><th>Pure</th><th title="Newly covered, running total">${gainLabel || 'Covered'}</th><th></th></tr></thead><tbody>${rows.map(c => `<tr>
             <td><div class="yw-cut" title="${escapeAttr(c.name)}">${escapeHtml(c.name)}</div></td>
             <td>${EntityRenderer.renderClusterCard([c.card], true, null, { showUuid: true })}</td>
             <td class="yw-mono">${c.size}</td><td class="yw-mono">${c.hit}</td>
@@ -613,16 +619,17 @@ window.YaraView = {
         if (!h || h.loading) return '<div class="yw-hint">clustering the target files&hellip;</div>';
         const d = h.data;
         if (h.error || !d || !d.ok) return `<div class="yw-hint">${escapeHtml(h.error || (d && (d.message || 'no scope')) || 'no scope')}</div>`;
+        const hits = d.mode === 'hits';
         const cov = d.scope.length ? d.scope[d.scope.length - 1].covered : 0, pc = n => Math.round(100 * n / Math.max(1, d.targets));
         const all = d.scope.filter(c => c.uuid).map(c => c.uuid);
-        return `<div class="yw-metrics"><div class="yw-m"><small>Targets</small><strong>${d.targets}</strong></div>
-            <div class="yw-m"><small>Missed</small><strong>${d.missed}</strong></div>
+        return `<div class="yw-metrics"><div class="yw-m"><small>${hits ? 'Hit files' : 'Targets'}</small><strong>${d.targets}</strong></div>
+            <div class="yw-m"><small>${hits ? 'Unmatched mates' : 'Missed'}</small><strong>${d.missed}</strong></div>
             <div class="yw-m"><small>Scope covers</small><strong>${pc(cov)}%</strong></div>
             <div class="yw-m"><small>No cluster</small><strong>${d.unclustered}</strong></div>
             <span class="yw-sp"></span>${all.length ? `<button class="yw-btn primary" title="Must match becomes the union of the proposed clusters" onclick='YaraView.refocus(${escapeAttr(JSON.stringify(all))}, "target")'><i class="fa-solid fa-crosshairs"></i> Use proposed scope</button>` : ''}</div>
-            <div class="yw-dim" style="padding:6px 0;">Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample. </div>
-            <div class="yw-dim" style="padding:6px 0;"><b>Focus on the misses</b> &middot; ${d.missed} targets missed; clusters holding most of them</div>${this._scopeRows(d.focus, 'misses')}
-            <div class="yw-dim" style="padding:10px 0 6px;"><b>Proposed scope</b> &middot; ${cov} of ${d.targets} targets in ${d.scope.length} pure clusters</div>${this._scopeRows(d.scope, 'targets')}
+            <div class="yw-dim" style="padding:6px 0;">${hits ? `No Must match set: the rule's hits stand in for the targets. Pure = the rule matches at least ${Math.round(d.min_purity * 100)}% of the cluster.${d.truncated ? ' Hit list truncated.' : ''}` : `Pure = at least ${Math.round(d.min_purity * 100)}% targets, counted over all negatives, not the scan sample.`} </div>
+            <div class="yw-dim" style="padding:6px 0;">${hits ? `<b>Look for misses</b> &middot; ${d.missed} files sit in clusters the rule only partly matches; the unmatched mates, by cluster` : `<b>Focus on the misses</b> &middot; ${d.missed} targets missed; clusters holding most of them`}</div>${this._scopeRows(d.focus, 'misses')}
+            <div class="yw-dim" style="padding:10px 0 6px;"><b>Proposed scope</b> &middot; ${cov} of ${d.targets} ${hits ? 'hit files' : 'targets'} in ${d.scope.length} ${hits ? 'clusters the rule matches' : 'pure clusters'}</div>${this._scopeRows(d.scope, 'targets')}
             ${d.impure.length ? `<div class="yw-dim" style="padding:10px 0 6px;"><b>Too impure to scope to</b> &middot; targets mixed with negatives</div>${this._scopeRows(d.impure, '')}` : ''}`;
     },
 
@@ -644,7 +651,7 @@ window.YaraView = {
 
     // Function clusters the rule's hits land in: one cluster in many groups is a shared capability, in one group a family marker.
     async _loadHitmap() {
-        const body = { ...this._body(), cap: 60 }, key = JSON.stringify(body);
+        const body = { ...this._mapBody(), cap: 60 }, key = JSON.stringify(body);
         if (this._hm && this._hm.key === key) return;
         this._hm = { key, loading: true };
         this._paint();
@@ -660,7 +667,7 @@ window.YaraView = {
         if (!h || h.loading) return '<div class="yw-hint">mapping hits to function clusters&hellip;</div>';
         if (h.error || !h.data || !h.data.ok) return `<div class="yw-hint">${escapeHtml(h.error || (h.data && (h.data.message || 'no map')) || 'no map')}</div>`;
         const rows = h.data.clusters.map(c => `<tr>
-            <td>${EntityRenderer.renderClusterCard([{ cluster_id: c.cluster_id, cluster_uuid: c.cluster_uuid, cluster_name: c.name, cohesion_score: c.cohesion, member_count: c.members }], false)}</td>
+            <td>${EntityRenderer.renderClusterCard([c.card], false)}</td>
             <td class="yw-mono">${c.hit_files}/${c.span_files}</td>
             <td class="yw-mono">${escapeHtml(Object.entries(c.groups).map(([g, n]) => `${g} ${n}`).join(', '))}</td>
             <td class="yw-mono">${escapeHtml(c.strings.join(' '))}</td></tr>`).join('');
@@ -1094,7 +1101,7 @@ window.YaraView = {
         }
         this._run = null;
         this._busy(false);
-        this._sweep = { ok: true, exact: true, ...res, _rule: this._sweepRule };
+        this._sweep = { ok: true, exact: true, run_id: id, ...res, _rule: this._sweepRule };
         this._status(`${mode === 'apply' ? 'applied' : 'swept'}: ${res.seen} files, ${res.hits} hit`);
         this._paint();
         this._syncSweep();

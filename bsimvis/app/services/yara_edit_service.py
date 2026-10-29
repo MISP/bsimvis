@@ -1063,6 +1063,13 @@ def hitmap(r, r_raw, text, targets, negatives, cap=60, min_cohesion=0.5):
                 "name": m.get("cluster_name"),
                 "cohesion": m.get("cohesion_score"),
                 "members": len(members),
+                "card": {
+                    "cluster_id": c,
+                    "cluster_uuid": m.get("cluster_uuid"),
+                    "cluster_name": m.get("cluster_name") or f"Cluster {c}",
+                    "cohesion_score": m.get("cohesion_score"),
+                    "member_count": len(members),
+                },
                 "span_files": len(span),
                 "hit_files": len(row["files"]),
                 "strings": sorted(row["strings"]),
@@ -1101,6 +1108,82 @@ def _greedy(cands, universe, min_purity, limit):
     return out
 
 
+def _cluster_members(r, cands):
+    """`{(coll, cid): {(coll, md5)}}` for every candidate cluster."""
+    keys = list(cands)
+    pipe = r.pipeline(transaction=False)
+    for coll, cid in keys:
+        pipe.smembers(f"{coll}:bin_cluster:{cands[(coll, cid)]['ns']}:{cid}:members")
+    return {
+        k: {(k[0], _txt(x).rpartition(":")[2]) for x in raw}
+        for k, raw in zip(keys, pipe.execute())
+    }
+
+
+def _clean(picks):
+    out = []
+    for p in picks:
+        p = {k: v for k, v in p.items() if not k.startswith("_")}
+        p["purity"] = round(p["purity"], 3)
+        out.append(p)
+    return out
+
+
+def scope_hits(r, hits, min_cohesion=0.5, min_purity=0.8, partial=0.3, cap=5000):
+    """Scope without a Must match set: the rule's own hits stand in for the targets.
+    Same row shape as `scope`; here `purity` is the share of the cluster the rule
+    matches, `missed` the cluster-mates it does not. `scope` is the greedy cover of
+    the hits by clusters it matches at least `min_purity` of; `focus` the greedy cover
+    of the unmatched cluster-mates of clusters it matches at least `partial` of."""
+    hits = list(hits)
+    hset = set(hits[:cap])
+    cl = file_clusters(r, hits[:cap], min_cohesion)
+    cands = {}
+    for m in hset:
+        for c in cl[m]:
+            cands.setdefault((c["coll"], c["cid"]), c)
+    rows = []
+    for k, mem in _cluster_members(r, cands).items():
+        c, h = cands[k], mem & hset
+        size = len(mem) or c["size"]
+        rows.append(
+            {
+                "name": c["name"],
+                "cid": c["cid"],
+                "uuid": c["uuid"],
+                "card": _card({**c, "size": size}),
+                "size": size,
+                "cohesion": c["cohesion"],
+                "targets": len(h),
+                "negatives": 0,
+                "purity": len(h) / size if size else 0,
+                "hit": len(h),
+                "missed": size - len(h),
+                "false": 0,
+                "_t": h,
+                "_miss": mem - hset,
+            }
+        )
+    unmatched = set().union(
+        *(c["_miss"] for c in rows if c["purity"] >= partial), set()
+    )
+    return {
+        "ok": True,
+        "mode": "hits",
+        "targets": len(hset),
+        "truncated": len(hits) > cap,
+        "hit": len(hset),
+        "missed": len(unmatched),
+        "min_purity": min_purity,
+        "unclustered": sum(1 for m in hset if not cl[m]),
+        "scope": _clean(_greedy(rows, hset, min_purity, 15)),
+        "focus": _clean(
+            _greedy([{**c, "_t": c["_miss"]} for c in rows], unmatched, partial, 15)
+        ),
+        "impure": [],
+    }
+
+
 def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
     """File clusters worth focusing on. Every cluster that holds a target is scored
     by how pure it is (targets / targets + negatives, over the whole sets, not the
@@ -1120,16 +1203,8 @@ def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
     for m in tmem:
         for c in cl[m]:
             cands.setdefault((c["coll"], c["cid"]), c)
-    pipe = r.pipeline(transaction=False)
-    keys = list(cands)
-    for coll, cid in keys:
-        pipe.smembers(f"{coll}:bin_cluster:{cands[(coll, cid)]['ns']}:{cid}:members")
     rows = []
-    for k, raw in zip(keys, pipe.execute()):
-        mem = set()
-        for x in raw:
-            _, _, md5 = _txt(x).rpartition(":")
-            mem.add((k[0], md5))
+    for k, mem in _cluster_members(r, cands).items():
         t, n = mem & tset, mem & allneg
         c = cands[k]
         rows.append(
@@ -1151,14 +1226,7 @@ def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
             }
         )
     miss = scanned - tp
-
-    def clean(picks):
-        out = []
-        for p in picks:
-            p = {k: v for k, v in p.items() if not k.startswith("_")}
-            p["purity"] = round(p["purity"], 3)
-            out.append(p)
-        return out
+    clean = _clean
 
     focus_in = [{**c, "_t": c["_miss"]} for c in rows]
     picks = _greedy(rows, tset, min_purity, 15)

@@ -2080,6 +2080,14 @@ def run_all_tests():
         expected_status=400,
         label="POST /api/yara/scope bad rule -> 400",
     )
+    for path in ("scope", "hitmap"):
+        test_endpoint(
+            "POST",
+            f"/api/yara/{path}",
+            data={"collection": COLLECTION, "run_id": "000000000000"},
+            expected_status=404,
+            label=f"POST /api/yara/{path} unknown run_id -> 404",
+        )
 
     # ── Unified search ─────────────────────────────────────────────────────
     print(_color("\n  [Unified search]", BOLD))

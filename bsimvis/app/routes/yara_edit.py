@@ -160,15 +160,38 @@ def post_lint():
     return {"warnings": ys.lint(_check_rule(_body()))}
 
 
+def _sweep_hits(body):
+    """A finished sweep's rule and hit files, for views that need no Must match set."""
+    run_id = str(body.get("run_id", ""))
+    if not re.match(r"^[0-9a-f]{12}$", run_id):
+        abort(400, "bad run id")
+    q = get_queue_redis()
+    spec = q.get(f"yara:sweep:{run_id}:spec")
+    if not spec:
+        abort(404, "unknown or expired run")
+    hits = sorted(ys._txt(h) for h in q.smembers(f"yara:sweep:{run_id}:hits"))
+    members = []
+    for fid in hits:
+        coll, _, md5 = fid.rpartition(":file:")
+        members.append((_origin_coll(coll), md5))
+    return json.loads(spec).get("rule") or "", members
+
+
 def post_hitmap():
     """Function clusters the rule's hits land in (family marker vs shared capability)."""
     body = _body()
-    text = _check_rule(body)
+    if body.get("run_id"):
+        text, members = _sweep_hits(body)
+        body = {**body, "rule": text}
+        targets, negatives = [{"label": "Hit files", "members": members}], []
+    else:
+        text = _check_rule(body)
     if ys.compile_source(text)[0] is None:
         abort(400, "rule does not compile")
     r = get_redis()
-    targets = resolve_sets(r, body, "targets", ys.cfg("target_cap_files", 2000))
-    negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
+    if not body.get("run_id"):
+        targets = resolve_sets(r, body, "targets", ys.cfg("target_cap_files", 2000))
+        negatives = resolve_sets(r, body, "negatives", ys.cfg("neg_pool_cap", 20000))
     cap = max(1, min(300, int(body.get("cap", 60))))
     return ys.hitmap(
         r,
@@ -184,6 +207,13 @@ def post_hitmap():
 def post_scope():
     """File clusters to focus on: purity, what the rule does inside, greedy covers."""
     body = _body()
+    if body.get("run_id"):
+        return ys.scope_hits(
+            get_redis(),
+            _sweep_hits(body)[1],
+            float(body.get("min_cohesion", 0.5)),
+            max(0.0, min(1.0, float(body.get("min_purity", 0.8)))),
+        )
     text = _check_rule(body)
     if ys.compile_source(text)[0] is None:
         abort(400, "rule does not compile")

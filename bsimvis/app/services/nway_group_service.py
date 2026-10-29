@@ -499,7 +499,12 @@ def merge_units(rows, doc, r, evidence, min_link):
         doc["_links"] = (row_of, _best_links(doc["edges"], row_of))
     row_of, best = doc["_links"]
     at = {id(row): i for i, row in enumerate(all_rows)}
-    cand = [(at[id(row)], row) for row in rows if id(row) in at]
+    # annotated copies (`family=`) carry their index instead of their identity
+    cand = [
+        (row["_at"] if "_at" in row else at[id(row)], row)
+        for row in rows
+        if "_at" in row or id(row) in at
+    ]
     link = {}  # (row, row) -> {"kinds", "sim"}
     # Rows are joined on files, lanes group on columns: with twin or child columns
     # one column holds several files, and two rows in one column may sit in different files.
@@ -1181,6 +1186,9 @@ def group_rows(rows, doc, r, mode, params):
             )
         ),
         tuple(map(id, rows)),
+        # annotated copies are fresh objects, so an id can come back for another family
+        params.get("family"),
+        params.get("ignore"),
     )
     hit = key and _CACHE.get(key)
     if hit:
@@ -1468,6 +1476,9 @@ def demo():
     merged = [u for u in units if "_rows" in u]
     assert len(units) == 3 and len(merged) == 1 and note == ""
     assert merged[0]["mask"] == 15 and merged[0]["_kinds"] == {"name"}
+    # annotated copies (family=) merge too: they match back by `_at`, not identity
+    copies = [{**rw, "_at": i} for i, rw in enumerate(doc["rows"])]
+    assert len(merge_units(copies, doc, None, {"name"}, 0.3)[0]) == 3
 
     # a merged function is grouped by the lane of ALL its files, with its rows under it
     ctx = {

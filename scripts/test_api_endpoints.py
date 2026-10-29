@@ -5393,6 +5393,14 @@ def test_nway_indicators():
         and len(body["family"]["contrast"]) == 1,
         str((body or {}).get("family")),
     )
+    st, gb = _nway(
+        family=lane, tab="all", columns="files", group_merge="name,call", limit=500
+    )
+    check(
+        "nway family: group_merge keeps the rows",
+        st == 200 and gb["total"] > 0,
+        f"HTTP {st} total {(gb or {}).get('total')} vs {len(rows)}",
+    )
     check(
         "nway family: cover is a share of the family",
         all(

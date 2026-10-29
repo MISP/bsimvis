@@ -92,15 +92,17 @@ def stats(held, ctx, reach=None):
 
 
 def annotate(rows, ctx):
-    """Copies of function rows carrying `stats` (the cached doc stays untouched)."""
+    """Copies of function rows carrying `stats` (the cached doc stays untouched).
+    `_at` is the row's index in `doc["rows"]`, for code that matches copies back."""
     return [
         {
             **row,
+            "_at": i,
             "stats": stats(
                 {k for k, v in (row.get("files") or row["cells"]).items() if v}, ctx
             ),
         }
-        for row in rows
+        for i, row in enumerate(rows)
     ]
 
 

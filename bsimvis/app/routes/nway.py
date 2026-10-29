@@ -505,11 +505,18 @@ def _page(doc, args, r=None, pool_id=None):
         total = len(entries)
     else:
         page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
-    if args.get("strings") == "1":
+    if "1" in (args.get("strings"), args.get("calls"), args.get("consts")):
         page = [dict(p) for p in page]
         shown = [p for p in page if not p.get("header")]
-        for p, st in zip(shown, nway_indicator_service.inline_strings(r, shown)):
-            p["strings"] = st
+        if args.get("strings") == "1":
+            for p, st in zip(shown, nway_indicator_service.inline_strings(r, shown)):
+                p["strings"] = st
+        if args.get("calls") == "1":
+            for p, st in zip(shown, nway_indicator_service.inline_links(r, doc, shown)):
+                p["calls"] = st
+        if args.get("consts") == "1":
+            for p, st in zip(shown, nway_indicator_service.inline_consts(r, shown)):
+                p["consts"] = st
     real = [row for row in page if not row.get("header")]
     page_fids = {f for row in real for f in _row_fids(row)}
     if page_clusters:

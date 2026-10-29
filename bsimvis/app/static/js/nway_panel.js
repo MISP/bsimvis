@@ -241,7 +241,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            if (this.state.view !== 'strings') qs.set('strings', '1');
+            if (this.state.view !== 'strings') { qs.set('strings', '1'); qs.set('calls', '1'); qs.set('consts', '1'); }
             if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
@@ -429,6 +429,20 @@
             for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
             const chips = st.top.map(x => `<span class="nway-schip" data-str-q="${escapeAttr(x.value)}" title="${escapeAttr(`${x.n} of ${x.of} functions of this row reference it. Click: show it in Strings`)}">${escapeHtml(x.value)}${x.of > 1 ? `<b>${Number(x.n)}/${Number(x.of)}</b>` : ''}</span>`).join('');
             return this._linkLine(this._fnKey(row), 'f', JSON.stringify(cells), st.total, st.total === 1 ? 'string' : 'strings', chips, st.total > st.top.length ? `<span class="dim">+${st.total - st.top.length}</span>` : '');
+        }
+
+        // Under a function row: the other rows it is called by / calls, and the constants it uses.
+        // A neighbor is a whole row, so the same call in every file reads as one chip.
+        _sigChips(row) {
+            if (this.state.view === 'strings') return '';
+            const c = row.calls || {}, k = row.consts;
+            const part = x => x.of > 1 && x.n < x.of ? `<b>${Number(x.n)}/${Number(x.of)}</b>` : '';
+            const line = (label, tip, side, chip) => side && side.total
+                ? `<div class="nway-schips nway-sig"><span class="dim nway-siglbl" title="${escapeAttr(tip)}">${label} ${Number(side.total)}</span>${side.top.map(chip).join('')}${side.total > side.top.length ? `<span class="dim">+${side.total - side.top.length}</span>` : ''}</div>`
+                : '';
+            const fn = x => `<span class="nway-schip fn${x.ext ? ' ext' : ''}" ${x.ext ? '' : `data-fn-q="${escapeAttr(x.name)}"`} title="${escapeAttr(`${x.ext ? 'Call out of the binary: ' : ''}${x.name}: ${x.n} of ${x.of} functions of this row`)}">${escapeHtml(x.name)}${part(x)}</span>`;
+            const cst = x => `<span class="nway-schip" title="${escapeAttr(`${x.n} of ${x.of} functions of this row use it`)}">${escapeHtml(x.value)}${part(x)}</span>`;
+            return line('&larr; callers', 'Rows that call this one', c.callers, fn) + line('&rarr; calls', 'Rows this one calls; dashed = calls out of the binary', c.callees, fn) + line('# constants', 'Constants in the functions of this row', k, cst);
         }
 
         _famChip() {
@@ -2489,7 +2503,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span>${this._strChips(row)}</td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span>${this._strChips(row)}${this._sigChips(row)}</td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>

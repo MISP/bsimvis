@@ -13,6 +13,7 @@ file of the table, minus the *ignored* columns (a sibling variant, say). For a r
 """
 
 import json
+import re
 from collections import Counter, OrderedDict
 
 from bsimvis.app.services import nway_diff_service, string_service
@@ -214,6 +215,123 @@ def inline_strings(r, rows, top=6, cap=600):
 
 def _txt(v):
     return v.decode() if isinstance(v, bytes) else str(v)
+
+
+_CONST_RE = re.compile(r"\(const, 0x([0-9a-f]+), ([1248])\)")
+_TRIVIAL = {0xFFFFFFFF, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFFFFFFFFFF}
+
+
+def consts_in(raw):
+    """Non-trivial `(value, size)` constants of one function's stored pcode (`vec:meta`)."""
+    out = set()
+    for v, size in _CONST_RE.findall(raw or ""):
+        v, size = int(v, 16), int(size)
+        # small negative offsets (0xfffffff8) are stack/struct noise
+        if 0xFFFF < v < (1 << 8 * size) - 0xFFFF and v not in _TRIVIAL:
+            out.add((v, size))
+    return out
+
+
+def _fid_at(doc):
+    """Function id -> index of the table row holding it (kept on the cached doc)."""
+    if "_fid_at" not in doc:
+        doc["_fid_at"] = {
+            f: i
+            for i, row in enumerate(doc["rows"])
+            for f in (row.get("files") or row["cells"]).values()
+            if isinstance(f, str)
+        }
+    return doc["_fid_at"]
+
+
+def _row_fid_lists(rows):
+    return [
+        list(
+            dict.fromkeys(
+                f
+                for f in (row.get("files") or row["cells"]).values()
+                if isinstance(f, str)
+            )
+        )
+        for row in rows
+    ]
+
+
+def inline_links(r, doc, rows, top=4, cap=600):
+    """Per row, the other table rows it calls and is called by:
+    `{callers, callees}`, each `{total, top: [{name, n, of, ext}]}`. A neighbor is a
+    whole row (the same function in several files counts once), `n` the functions of
+    this row linked to it and `of` the functions read. Calls out of the binary are
+    `ext` callees, named by what they call."""
+    at = _fid_at(doc)
+    fid_rows = _row_fid_lists(rows)
+    fids = list(dict.fromkeys(f for fs in fid_rows for f in fs))[:cap]
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.smembers(f"{f}:callers")
+        pipe.smembers(f"{f}:callees")
+    got = iter(pipe.execute())
+    links = {f: (next(got), next(got)) for f in fids}
+    out = []
+    for fs in fid_rows:
+        me = at.get(fs[0]) if fs else None
+        res = {}
+        for side, role in enumerate(("callers", "callees")):
+            count, name, ext = Counter(), {}, set()
+            read = [f for f in fs if f in links]
+            for f in read:
+                keys = set()
+                for m in links[f][side]:
+                    m = _txt(m)
+                    if m.startswith("ext:"):
+                        key, name[key] = m, m[4:]
+                        ext.add(key)
+                    elif (i := at.get(m)) is not None and i != me:
+                        key, name[key] = f"row:{i}", doc["rows"][i]["name"]
+                    else:
+                        continue
+                    keys.add(key)
+                count.update(keys)
+            best = sorted(count, key=lambda k: (-count[k], name[k]))[:top]
+            res[role] = {
+                "total": len(count),
+                "top": [
+                    {"name": name[k], "n": count[k], "of": len(read), "ext": k in ext}
+                    for k in best
+                ],
+            }
+        out.append(res)
+    return out
+
+
+def inline_consts(r, rows, top=4, cap=600):
+    """Per row, the pcode constants at least half of its functions use:
+    `{total, top: [{value, n, of}]}` (`n` = functions of the row that use it)."""
+    fid_rows = _row_fid_lists(rows)
+    fids = list(dict.fromkeys(f for fs in fid_rows for f in fs))[:cap]
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{f}:vec:meta")
+    found = {
+        f: consts_in(_txt(raw) if raw else "") for f, raw in zip(fids, pipe.execute())
+    }
+    out = []
+    for fs in fid_rows:
+        read = [f for f in fs if f in found]
+        count = Counter(c for f in read for c in found[f])
+        # a constant one file holds alone is an address, not an indicator
+        count = Counter({c: n for c, n in count.items() if n * 2 >= len(read)})
+        best = sorted(count, key=lambda c: (-count[c], -c[0]))[:top]
+        out.append(
+            {
+                "total": len(count),
+                "top": [
+                    {"value": f"0x{v:x}", "n": count[(v, s)], "of": len(read)}
+                    for v, s in best
+                ],
+            }
+        )
+    return out
 
 
 def _collections(doc):

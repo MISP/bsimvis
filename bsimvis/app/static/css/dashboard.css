@@ -3629,6 +3629,8 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-schips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 4px; }
 .nway-schip { font: 0.7rem 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--card-bg); }
 .nway-schip.fn { border-radius: 3px; }
+.nway-schip.ext { border-style: dashed; font-style: italic; cursor: default; }
+.nway-siglbl { font-size: 0.7rem; min-width: 74px; }
 .nway-schip b { margin-left: 4px; opacity: 0.7; font-weight: 600; }
 .nway-schip:hover { border-color: var(--success); }
 .nway-sq.s { border-radius: 50%; }

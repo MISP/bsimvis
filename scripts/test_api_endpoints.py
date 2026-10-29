@@ -5418,6 +5418,18 @@ def test_nway_indicators():
         and len(body["family"]["contrast"]) == 1,
         str((body or {}).get("family")),
     )
+    st, cb = _nway(calls="1", consts="1", columns="files", tab="all")
+    crow = (cb or {}).get("items", [])
+    check(
+        "nway calls/consts: rows carry callers, callees and constants",
+        st == 200
+        and crow
+        and all(
+            {"callers", "callees"} <= set(x["calls"]) and "total" in x["consts"]
+            for x in crow
+        ),
+        f"HTTP {st}",
+    )
     st, gb = _nway(
         family=lane, tab="all", columns="files", group_merge="name,call", limit=500
     )

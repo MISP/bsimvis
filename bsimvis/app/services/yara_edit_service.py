@@ -21,7 +21,10 @@ import time
 import uuid as uuidlib
 
 from bsimvis.app.services.config_service import config_service
-from bsimvis.app.services.nway_indicator_service import string_score  # noqa: F401
+from bsimvis.app.services.nway_indicator_service import (  # noqa: F401
+    consts_in,
+    string_score,
+)
 
 MAX_OFFSETS = 8  # offsets kept per string instance list
 LIST_CAP = 50  # missed / false-hit files returned
@@ -940,10 +943,6 @@ def suggest(r, groups_pos, members_neg, min_frac=0, limit=500, scan=1500):
     return out[:limit]
 
 
-_CONST_RE = re.compile(r"\(const, 0x([0-9a-f]+), ([1248])\)")
-_TRIVIAL = {0xFFFFFFFF, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFFFFFFFFFF}
-
-
 def _target_consts(r, coll, md5, cap=3000):
     """Non-trivial `(value, size)` constants in the stored pcode of one file."""
     fids = [
@@ -956,12 +955,7 @@ def _target_consts(r, coll, md5, cap=3000):
         for f in fids[i : i + 200]:
             pipe.get(f"{f}:vec:meta")
         for raw in pipe.execute():
-            for v, size in _CONST_RE.findall(raw or ""):
-                v = int(v, 16)
-                size = int(size)
-                # small negative offsets (0xfffffff8) are stack/struct noise
-                if 0xFFFF < v < (1 << 8 * size) - 0xFFFF and v not in _TRIVIAL:
-                    found.add((v, size))
+            found |= consts_in(raw)
     return found
 
 

@@ -517,47 +517,61 @@ class Locator:
 # --- file / function -> cluster names ---------------------------------------
 
 
-def _bin_ns(coll):
+AXES = ("overall", "code", "library", "content")
+
+
+def _bin_ns(coll, axis="overall"):
     from bsimvis.app.services.cluster_utils import bin_cluster_ns
     from bsimvis.app.services.collection_config import resolve_collection_algo
 
-    return bin_cluster_ns(resolve_collection_algo(coll), False)
+    algo = resolve_collection_algo(coll)
+    return bin_cluster_ns(algo if axis == "overall" else f"{algo}:{axis}", False)
 
 
-def file_clusters(r, members, min_cohesion=0.5):
-    """`{(coll, md5): [{coll, ns, cid, name, size, cohesion}]}`, smallest cluster
-    first. Overall axis only; clusters below `min_cohesion` are dropped."""
+def file_clusters(r, members, min_cohesion=0.5, axes=AXES):
+    """`{(coll, md5): [{coll, ns, axis, cid, name, size, cohesion}]}`, axes in order
+    and the smallest cluster first within one; clusters below `min_cohesion` drop."""
     members = list(members)
-    ns = {c: _bin_ns(c) for c in {m[0] for m in members}}
+    ns = {(c, a): _bin_ns(c, a) for c in {m[0] for m in members} for a in axes}
     pipe = r.pipeline(transaction=False)
     for coll, md5 in members:
-        pipe.smembers(f"{_fid(coll, md5)}:bin_clusters:{ns[coll]}")
-    cids = [{_txt(c) for c in raw} for raw in pipe.execute()]
-    keys = sorted({(m[0], c) for m, cs in zip(members, cids) for c in cs})
+        for a in axes:
+            pipe.smembers(f"{_fid(coll, md5)}:bin_clusters:{ns[(coll, a)]}")
+    raw = iter(pipe.execute())
+    cids = [{a: {_txt(c) for c in next(raw)} for a in axes} for _ in members]
+    keys = sorted(
+        {(m[0], a, c) for m, d in zip(members, cids) for a in axes for c in d[a]}
+    )
     pipe = r.pipeline(transaction=False)
-    for coll, c in keys:
-        pipe.get(f"{coll}:bin_cluster:{ns[coll]}:{c}:meta")
+    for coll, a, c in keys:
+        pipe.get(f"{coll}:bin_cluster:{ns[(coll, a)]}:{c}:meta")
     meta = {}
-    for k, raw in zip(keys, pipe.execute()):
+    for k, blob in zip(keys, pipe.execute()):
         try:
-            m = json.loads(raw) if raw else {}
+            m = json.loads(blob) if blob else {}
         except ValueError:
             continue
         if (m.get("cohesion_score") or 0) >= min_cohesion:
             meta[k] = {
                 "coll": k[0],
-                "ns": ns[k[0]],
-                "cid": k[1],
+                "ns": ns[(k[0], k[1])],
+                "axis": k[1],
+                "cid": k[2],
                 "uuid": m.get("cluster_uuid"),
-                "name": m.get("cluster_name") or f"Binary Cluster {k[1]}",
+                "name": m.get("cluster_name") or f"Binary Cluster {k[2]}",
                 "size": m.get("member_count") or 0,
                 "cohesion": m.get("cohesion_score"),
             }
     return {
-        m: sorted(
-            (meta[(m[0], c)] for c in cs if (m[0], c) in meta), key=lambda x: x["size"]
-        )
-        for m, cs in zip(members, cids)
+        m: [
+            c
+            for a in axes
+            for c in sorted(
+                (meta[(m[0], a, x)] for x in d[a] if (m[0], a, x) in meta),
+                key=lambda c: c["size"],
+            )
+        ]
+        for m, d in zip(members, cids)
     }
 
 
@@ -569,12 +583,18 @@ def _card(c):
         "cluster_name": c["name"],
         "cohesion_score": c["cohesion"],
         "member_count": c["size"],
-        "axis": "overall",
+        "axis": c["axis"],
     }
 
 
-def _slim(cl, cap=3):
-    return [_card(c) for c in cl[:cap]]
+def _slim(cl):
+    """The tightest cluster of each axis."""
+    seen, out = set(), []
+    for c in cl:
+        if c["axis"] not in seen:
+            seen.add(c["axis"])
+            out.append(_card(c))
+    return out
 
 
 def fn_clusters(r, coll, md5, entry, min_cohesion=0.5, cap=2):
@@ -1129,7 +1149,9 @@ def _clean(picks):
     return out
 
 
-def scope_hits(r, hits, min_cohesion=0.5, min_purity=0.8, partial=0.3, cap=5000):
+def scope_hits(
+    r, hits, min_cohesion=0.5, min_purity=0.8, partial=0.3, cap=5000, axis="code"
+):
     """Scope without a Must match set: the rule's own hits stand in for the targets.
     Same row shape as `scope`; here `purity` is the share of the cluster the rule
     matches, `missed` the cluster-mates it does not. `scope` is the greedy cover of
@@ -1137,7 +1159,7 @@ def scope_hits(r, hits, min_cohesion=0.5, min_purity=0.8, partial=0.3, cap=5000)
     of the unmatched cluster-mates of clusters it matches at least `partial` of."""
     hits = list(hits)
     hset = set(hits[:cap])
-    cl = file_clusters(r, hits[:cap], min_cohesion)
+    cl = file_clusters(r, hits[:cap], min_cohesion, (axis,))
     cands = {}
     for m in hset:
         for c in cl[m]:
@@ -1170,6 +1192,7 @@ def scope_hits(r, hits, min_cohesion=0.5, min_purity=0.8, partial=0.3, cap=5000)
     return {
         "ok": True,
         "mode": "hits",
+        "axis": axis,
         "targets": len(hset),
         "truncated": len(hits) > cap,
         "hit": len(hset),
@@ -1184,7 +1207,9 @@ def scope_hits(r, hits, min_cohesion=0.5, min_purity=0.8, partial=0.3, cap=5000)
     }
 
 
-def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
+def scope(
+    r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8, axis="code"
+):
     """File clusters worth focusing on. Every cluster that holds a target is scored
     by how pure it is (targets / targets + negatives, over the whole sets, not the
     scan sample) and by what the rule does inside it. `scope` is the greedy cover of
@@ -1198,7 +1223,7 @@ def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
     tp = {m for m in tmem if hits.get(m, (0, 0))[1]}
     fp = {m for m in nmem if hits.get(m, (0, 0))[1]}
     scanned = {m for m in tmem if m in hits}
-    cl = file_clusters(r, tmem, min_cohesion)
+    cl = file_clusters(r, tmem, min_cohesion, (axis,))
     cands = {}
     for m in tmem:
         for c in cl[m]:
@@ -1233,6 +1258,7 @@ def scope(r, r_raw, text, targets, negatives, min_cohesion=0.5, min_purity=0.8):
     fpicks = _greedy(focus_in, miss, min_purity, 15)
     return {
         "ok": True,
+        "axis": axis,
         "targets": len(tset),
         "scanned": len(scanned),
         "hit": len(tp),

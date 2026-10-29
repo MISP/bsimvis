@@ -4261,7 +4261,7 @@ class YaraHitmap(Resource):
 @ns_yara.route("/scope")
 class YaraScope(Resource):
     @ns_yara.doc(
-        description="Body: `rule`, `min_purity` (default 0.8), `min_cohesion`, scope as "
+        description="Body: `rule`, `axis` (code, default; or overall, library, content), `min_purity` (default 0.8), `min_cohesion`, scope as "
         "/test. Binary clusters holding target files, with purity against the whole "
         "negative sets and the rule's hit/missed/false counts inside; `scope` covers "
         "all targets, `focus` the ones the rule misses."

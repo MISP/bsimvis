@@ -160,6 +160,13 @@ def post_lint():
     return {"warnings": ys.lint(_check_rule(_body()))}
 
 
+def _axis(body):
+    axis = body.get("axis", "code")
+    if axis not in ys.AXES:
+        abort(400, f"axis: one of {', '.join(ys.AXES)}")
+    return axis
+
+
 def _sweep_hits(body):
     """A finished sweep's rule and hit files, for views that need no Must match set."""
     run_id = str(body.get("run_id", ""))
@@ -213,6 +220,7 @@ def post_scope():
             _sweep_hits(body)[1],
             float(body.get("min_cohesion", 0.5)),
             max(0.0, min(1.0, float(body.get("min_purity", 0.8)))),
+            axis=_axis(body),
         )
     text = _check_rule(body)
     if ys.compile_source(text)[0] is None:
@@ -228,6 +236,7 @@ def post_scope():
         negatives,
         float(body.get("min_cohesion", 0.5)),
         max(0.0, min(1.0, float(body.get("min_purity", 0.8)))),
+        axis=_axis(body),
     )
 
 

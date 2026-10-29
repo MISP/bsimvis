@@ -37,6 +37,7 @@ window.YaraView = {
     _timer: null,
     _seq: 0,
     _tab: 'strings', // result tab
+    _axis: 'code', // file cluster axis of the Scope tab
     _sel: new Set(), // picked suggestion rows
     _fold: new Set(), // files folded in the hit tables
     _rowIds: [],
@@ -587,7 +588,7 @@ window.YaraView = {
 
     // File clusters to focus on: pure clusters that hold the targets, and the ones hiding the misses.
     async _loadScope() {
-        const body = this._mapBody(), key = JSON.stringify(body);
+        const body = { ...this._mapBody(), axis: this._axis }, key = JSON.stringify(body);
         if (this._sc && this._sc.key === key) return;
         this._sc = { key, loading: true };
         this._paint();
@@ -614,15 +615,25 @@ window.YaraView = {
             <td>${c.uuid ? btn(c.uuid, 'target', 'fa-crosshairs', 'Test only this cluster: it becomes Must match') + btn(c.uuid, 'add', 'fa-plus', 'Add to Must match') + btn(c.uuid, 'neg', 'fa-ban', 'Add to Must not match') : ''}</td></tr>`).join('')}</tbody></table>`;
     },
 
+    setAxis(a) {
+        this._axis = a;
+        this._loadScope();
+    },
+
+    _axisChips() {
+        const names = { code: 'Code', library: 'Library', content: 'Content', overall: 'Overall' };
+        return `<span class="yw-dim">Cluster axis</span> ${Object.entries(names).map(([k, l]) => `<button class="yw-btn${this._axis === k ? '' : ' ghost'}" onclick="YaraView.setAxis('${k}')">${l}</button>`).join(' ')}`;
+    },
+
     _scopePane() {
-        const h = this._sc;
-        if (!h || h.loading) return '<div class="yw-hint">clustering the target files&hellip;</div>';
-        const d = h.data;
-        if (h.error || !d || !d.ok) return `<div class="yw-hint">${escapeHtml(h.error || (d && (d.message || 'no scope')) || 'no scope')}</div>`;
+        const h = this._sc, d = h && h.data;
+        const axes = `<div style="padding:6px 0;display:flex;gap:6px;align-items:center;">${this._axisChips()}</div>`;
+        if (!h || h.loading) return `${axes}<div class="yw-hint">clustering the files&hellip;</div>`;
+        if (h.error || !d || !d.ok) return `${axes}<div class="yw-hint">${escapeHtml(h.error || (d && (d.message || 'no scope')) || 'no scope')}</div>`;
         const hits = d.mode === 'hits';
         const cov = d.scope.length ? d.scope[d.scope.length - 1].covered : 0, pc = n => Math.round(100 * n / Math.max(1, d.targets));
         const all = d.scope.filter(c => c.uuid).map(c => c.uuid);
-        return `<div class="yw-metrics"><div class="yw-m"><small>${hits ? 'Hit files' : 'Targets'}</small><strong>${d.targets}</strong></div>
+        return `${axes}<div class="yw-metrics"><div class="yw-m"><small>${hits ? 'Hit files' : 'Targets'}</small><strong>${d.targets}</strong></div>
             <div class="yw-m"><small>${hits ? 'Unmatched mates' : 'Missed'}</small><strong>${d.missed}</strong></div>
             <div class="yw-m"><small>Scope covers</small><strong>${pc(cov)}%</strong></div>
             <div class="yw-m"><small>No cluster</small><strong>${d.unclustered}</strong></div>
@@ -635,7 +646,8 @@ window.YaraView = {
 
     // Point the test sets at file clusters (uuid or list): target = replace Must match, add = append, neg = Must not match.
     refocus(uuids, mode) {
-        const qs = [].concat(uuids).map(u => `cluster_uuid=${encodeURIComponent(u)}`);
+        const axis = (this._sc && this._sc.data && this._sc.data.axis) || 'overall';
+        const qs = [].concat(uuids).map(u => `cluster_uuid=${encodeURIComponent(u)}${axis === 'overall' ? '' : `&axis=${axis}`}`);
         const cmp = this._cmp.cmp();
         const g = cmp.groups;
         const merge = (list, add) => [...new Set([...list, ...add])];

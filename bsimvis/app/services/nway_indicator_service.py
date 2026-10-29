@@ -238,10 +238,43 @@ def _string_name(value):
     return name if len(name) >= 5 and sum(c.isalpha() for c in name) >= 3 else None
 
 
+_PATH_NOISE = {
+    "usr",
+    "bin",
+    "etc",
+    "lib",
+    "var",
+    "tmp",
+    "www",
+    "com",
+    "org",
+    "http",
+    "https",
+}
+
+
+def _common_token(values, need=3):
+    """The word most of a row's strings share (`/proc/stat`, `/proc/net/tcp` -> `proc`):
+    in at least `need` strings and half of them, or None."""
+    count = Counter()
+    for v in values:
+        count.update(
+            {
+                t.lower()
+                for t in re.findall(r"[A-Za-z]{3,}", v)
+                if t.lower() not in _PATH_NOISE
+            }
+        )
+    if not count:
+        return None
+    token, n = max(count.items(), key=lambda kv: (kv[1], len(kv[0])))
+    return token if n >= need and n * 2 >= len(values) else None
+
+
 def name_by_strings(r, rows):
     """Name rows that have no name at all (FUN_xxx, no tag, no cluster name) after the
-    string their functions share that few other functions use (`str_dev_watchdog`),
-    so `name_from` = string.
+    word most of their strings share (`str_proc`), else the string their functions
+    share that few other functions use (`str_dev_watchdog`); `name_from` = string.
     """
     todo = [
         row
@@ -252,17 +285,19 @@ def name_by_strings(r, rows):
     ]
     if not todo:
         return
-    pipe, order = r.pipeline(transaction=False), []
-    for row, found in zip(todo, inline_strings(r, todo, top=6)):
+    pipe, order, best = r.pipeline(transaction=False), [], {}
+    for row, found in zip(todo, inline_strings(r, todo, top=20)):
         fids = _row_fid_lists([row])[0]
         if not fids:
+            continue
+        if token := _common_token([s["value"] for s in found["top"]]):
+            best[id(row)] = ((0, 0), row, token)
             continue
         coll = fids[0].split(":func:", 1)[0]
         for s in found["top"]:
             if name := _string_name(s["value"]):
                 pipe.scard(f"{coll}:idx:string:value:{s['id']}")
                 order.append((row, name, len(fids)))
-    best = {}
     for (row, name, mine), held in zip(order, pipe.execute()):
         # discriminating: the string is (almost) only used by this row's own functions
         if held <= 2 * mine and (
@@ -819,6 +854,10 @@ def demo():
     ]
     name_by_strings(_R(), rows)
     assert [r["name"] for r in rows] == ["str_dev_watchdog", "main"], rows
+    assert (
+        _common_token(["/proc/stat", "/proc/net/tcp", "/proc/cpuinfo", "ok"]) == "proc"
+    )
+    assert _common_token(["/proc/stat", "kill -9", "hello"]) is None
     assert rows[0]["name_from"] == "string" and rows[0]["name_was"] == "FUN_0001"
     ctx = {"family": {"a", "b"}, "contrast": {"c", "d", "e"}, "ignored": {"f"}}
     s = stats({"a", "b"}, ctx)

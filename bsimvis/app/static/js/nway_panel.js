@@ -2550,60 +2550,31 @@
         _rows(items, at) {
             if (!at) { this._gprint = []; this._gcnt = {}; }
             const groups = this.data.groups || {};
-            // a lane card shows its first GROUP_PEEK rows; the rest are drawn hidden, tagged with the card
-            const hide = (html, lane) => (groups[lane] && Number(groups[lane].rows) > GROUP_PEEK && (this._gcnt[lane] || 0) >= GROUP_PEEK
-                ? html.replace(/<tr\b/g, `<tr${this._gall.has(lane) ? '' : ' hidden'} data-gx="${escapeAttr(lane)}"`) : html);
             return items.map((row, idx) => {
                 const path = (row.g && groups[row.g] && groups[row.g].path) || [];
                 let k = 0, head = '';
                 while (k < path.length && this._gprint[k] === path[k]) k++;
-                for (let d = k; d < path.length; d++) {
-                    const gk = groups[path[d]], h = this._groupHead(gk, d);
-                    // a lane header opens a card; other headers inside a lane are part of its body
-                    if (gk.kind === 'lane') head += `<tr class="nway-cgap" aria-hidden="true"><td colspan="${this._lead().length + this.data.columns.length}"></td></tr>${h}`;
-                    else if (gk.kind === 'tier') head += h;
-                    else { const l = this._laneOf(path[d], groups); head += this._cb(l ? hide(h, l) : h, l); }
-                }
+                for (let d = k; d < path.length; d++) head += this._groupHead(groups[path[d]], d);
                 this._gprint = path;
                 if (row.header) return head;
-                const lane = this._laneOf(row.g, groups), next = items[idx + 1];
-                let html = this.state.view === 'strings' ? this._strRow(row) : this._row(row);
-                if (lane) {
-                    html = this._cb(hide(html, lane), lane);
-                    this._gcnt[lane] = (this._gcnt[lane] || 0) + 1;
-                    if (this._laneOf(next && next.g, groups) !== lane) {
-                        const total = Number((groups[lane] || {}).rows) || 0;
-                        html = total > GROUP_PEEK ? html + this._cb(this._moreRow(lane, total), lane) : html;
-                        html = this._cardEnd(html);
-                    }
-                }
-                return head + html;
+                if (this.state.view === 'strings') return head + this._strRow(row);
+                return head + this._peek(row, items[idx + 1], groups);
             }).join('');
+        }
+
+        // A group's rows past the first GROUP_PEEK are drawn hidden (tagged with the group), then one line says how many.
+        _peek(row, next, groups) {
+            let html = this._row(row);
+            const g = row.g, total = g && groups[g] ? Number(groups[g].rows) || 0 : 0;
+            if (!g || total <= GROUP_PEEK) return html;
+            const n = (this._gcnt[g] = (this._gcnt[g] || 0) + 1);
+            if (n > GROUP_PEEK) html = html.replace(/<tr\b/g, `<tr${this._gall.has(g) ? '' : ' hidden'} data-gx="${escapeAttr(g)}"`);
+            return html + (!next || next.g !== g ? this._moreRow(g, total) : '');
         }
 
         _moreRow(g, total) {
             const all = this._gall.has(g), span = this._lead().length + this.data.columns.length;
             return `<tr class="nway-gmore" data-g="${escapeAttr(g)}"><td class="nway-xlcell"><button type="button" class="nway-xp" data-gmore="${escapeAttr(g)}">${all ? 'Show less' : `+${total - GROUP_PEEK} more rows &middot; show all`}</button></td><td colspan="${span - 1}"></td></tr>`;
-        }
-
-        // Lanes are drawn as cards: every row of a lane is tagged `data-cb` (card body) and the last one `data-cbl`.
-        _laneOf(gid, groups) {
-            const g = gid && groups[gid];
-            if (!g) return null;
-            for (let i = g.path.length - 1; i >= 0; i--) {
-                const a = groups[g.path[i]];
-                if (a && a.kind === 'lane') return a.id;
-            }
-            return null;
-        }
-
-        _cb(html, lane) {
-            return lane ? html.replace(/<tr\b/g, `<tr data-cb data-card="${escapeAttr(lane)}"`) : html;
-        }
-
-        _cardEnd(html) {
-            const i = html.lastIndexOf('<tr');
-            return i < 0 ? html : `${html.slice(0, i)}<tr data-cbl${html.slice(i + 3)}`;
         }
 
         _row(row) {
@@ -3030,11 +3001,9 @@
             const at = d.items.length;
             d.items.push(...body.items);
             d.total = body.total;
-            // a group that goes on in this batch has no "more" line yet, and a lane no bottom edge
+            // a group that goes on in this batch has no "more" line yet
             const tail = this.el.querySelector('#nway-table tbody tr:last-child');
-            if (tail && tail.classList.contains('nway-gmore') && body.items[0] && this._laneOf(body.items[0].g, d.groups) === tail.dataset.g) tail.remove();
-            const end = [...this.el.querySelectorAll('#nway-table tbody tr[data-cbl]')].pop();
-            if (end && body.items[0] && this._laneOf(body.items[0].g, d.groups) === end.dataset.card) end.removeAttribute('data-cbl');
+            if (tail && tail.classList.contains('nway-gmore') && body.items[0] && body.items[0].g === tail.dataset.g) tail.remove();
             this.el.querySelector('#nway-table tbody').insertAdjacentHTML('beforeend', this._rows(body.items, at));
             this._nameLanes();
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
@@ -3077,7 +3046,7 @@
                 if (all) this._gall.add(g);
                 this.el.querySelectorAll(`tr[data-gx="${CSS.escape(g)}"]`).forEach(r => { r.hidden = !all; });
                 const total = Number(((this.data.groups || {})[g] || {}).rows) || 0;
-                t.textContent = all ? 'Show less' : `+${total - GROUP_PEEK} more rows \u00b7 show all`;
+                t.closest('tr').outerHTML = this._moreRow(g, total);
                 return;
             }
             if (t.dataset.inl) return this._set({ [t.dataset.inl]: this.state[t.dataset.inl] === '1' ? '' : '1' });

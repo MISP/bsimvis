@@ -3631,3 +3631,12 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-schip b { margin-left: 4px; opacity: 0.7; font-weight: 600; }
 .nway-schip:hover { border-color: var(--success); }
 .nway-ref { font-size: 0.65rem; opacity: 0.55; align-self: center; }
+.nway-sq.s { border-radius: 50%; }
+.nway-xp { border: 0; background: none; color: var(--dim); cursor: pointer; padding: 0 4px 0 0; font-size: 0.7rem; }
+.nway-xp i { transition: transform 0.12s; }
+.nway-xp.on i { transform: rotate(90deg); }
+.nway-table tr.nway-sub td { background: color-mix(in srgb, var(--card-bg) 92%, var(--text) 8%); font-size: 0.85em; }
+.nway-table tr.nway-sub td.nway-open { padding-left: 34px; }
+.nway-sub-ic { font-size: 0.65rem; opacity: 0.6; }
+.nway-subfn { cursor: pointer; }
+.nway-subfn:hover { text-decoration: underline; }

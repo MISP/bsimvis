@@ -5458,6 +5458,62 @@ def test_nway_indicators():
             st == 200 and names <= {x.get("name") for x in qb["items"]},
             f"{names} not in {[x.get('name') for x in qb.get('items', [])][:6]}",
         )
+    base_ex = {
+        "collection": COLLECTION,
+        "md5s": f"{file_md5},{file_md5_2}",
+        "columns": "files",
+    }
+    if hit:
+        resp = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        )
+        eb = resp.json() if resp.status_code == 200 else {}
+        check(
+            "nway expand: a string gives the function rows that reference it, with presence",
+            resp.status_code == 200
+            and eb["items"]
+            and all(
+                {"present", "total", "on"} <= set(c)
+                for c in eb["items"][0]["cells"].values()
+            ),
+            f"HTTP {resp.status_code}",
+        )
+        fn = next(
+            (
+                x
+                for x in _nway(columns="files", tab="all", scope="all")[1]["items"]
+                if x["name"] in {d["name"] for d in hit["refs"]["direct"]}
+            ),
+            None,
+        )
+        if fn:
+            resp = requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/expand",
+                params={
+                    **base_ex,
+                    "kind": "function",
+                    "cells": json.dumps(fn.get("files") or fn["cells"]),
+                },
+                timeout=60,
+            )
+            check(
+                "nway expand: a function row gives the strings its functions reference",
+                resp.status_code == 200
+                and hit["name"] in {x["name"] for x in resp.json()["items"]},
+                f"HTTP {resp.status_code}",
+            )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/expand",
+        params={**base_ex, "kind": "bogus"},
+        timeout=60,
+    )
+    check(
+        "nway expand: bad kind is a 400",
+        resp.status_code == 400,
+        f"HTTP {resp.status_code}",
+    )
     st, _ = _nway(family="nope:0", columns="files")
     check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
     st, ign = _nway(

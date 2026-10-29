@@ -221,6 +221,7 @@
         }
 
         _set(patch) {
+            if (Object.keys(patch).some(k => !['offset', 'sort_col', 'sort_dir', 'q', 'tab', 'scope', 'family', 'ignore', 'cover_min', 'leak_max'].includes(k))) this._exp = null;
             if (Object.keys(patch).some(k => k.startsWith('group'))) { this._gdef = 'none'; this._gflip.clear(); this._rowAuto = true; }
             Object.assign(this.state, patch);
             const s = { ...this.state };
@@ -393,7 +394,7 @@
 
         _viewDd() {
             const opts = [['functions', 'Functions', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['strings', 'Strings', 'fa-solid fa-quote-left', 'var(--success)'], ['both', 'Both', 'fa-solid fa-link', 'var(--warning, #d97706)']];
-            return this._dd('Rows', opts, this.state.view, 'Functions: function groups. Strings: string values shared by the files. Both: function groups with the strings their functions reference shown inline, to see which strings go with which function cluster.', v => `data-set="view:${v}"`);
+            return this._dd('Rows', opts, this.state.view, 'Functions: function groups. Strings: string values shared by the files. Both: function groups with the strings their functions reference shown inline, to see which strings go with which function cluster. Open the arrow of a row to get its strings (circles) or functions (squares) as rows with their own presence in each column.', v => `data-set="view:${v}"`);
         }
 
         // Function rows that use a string; click shows that function row.
@@ -2468,7 +2469,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span>${this._strChips(row)}</td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._fnXp(row)}${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span>${this._strChips(row)}</td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -2476,7 +2477,19 @@
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
                 ${this._famCells(row.stats)}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
-            </tr>`;
+            </tr>${this._subHtml(this._fnKey(row))}`;
+        }
+
+        _fnKey(row) {
+            const f = Object.values(row.files || row.cells || {}).find(v => typeof v === 'string');
+            return f ? `f:${f}` : '';
+        }
+
+        _fnXp(row) {
+            if (this.state.view !== 'both' || !row.strings || !row.strings.total) return '';
+            const cells = {};
+            for (const [k, v] of Object.entries(row.files || row.cells)) if (typeof v === 'string') cells[k] = v;
+            return this._xpBtn(this._fnKey(row), 'f', JSON.stringify(cells));
         }
 
         _ids(key) {
@@ -2769,14 +2782,63 @@
             this._watchStr();
         }
 
-        _strRow(row) {
-            const cells = this.data.columns.map((c, ci) => {
-                const cell = row.cells[c.id] || { present: 0, total: 1 };
-                return `<td class="col sq"><i class="nway-sq${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(`${this._colLabel(c)}: ${cell.present} of ${cell.total}`)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i></td>`;
+        // Presence of a sub-row in one column. Strings are circles, functions squares.
+        _shape(cell, c, ci, circle) {
+            cell = cell || { present: 0, total: 1 };
+            return `<td class="col sq"><i class="nway-sq${circle ? ' s' : ''}${cell.present ? (cell.present === cell.total ? ' on' : ' part') : ''}" style="${this._sqStyle(ci)}" title="${escapeAttr(`${this._colLabel(c)}: ${cell.present} of ${cell.total}`)}">${cell.total > 1 && cell.present ? Number(cell.present) : ''}</i></td>`;
+        }
+
+        // The expand button of a row: its strings (function row) or its functions (string row) as rows below it.
+        _xpBtn(key, kind, data) {
+            const on = this._exp && this._exp.has(key);
+            return `<button type="button" class="nway-xp${on ? ' on' : ''}" data-xp="${escapeAttr(key)}" data-xk="${kind}" data-xd="${escapeAttr(data)}" title="${kind === 'f' ? 'Show the strings of this row as rows' : 'Show the functions that use this string as rows'}" aria-expanded="${!!on}"><i class="fa-solid fa-chevron-right"></i></button>`;
+        }
+
+        _subHtml(key) {
+            const body = this._exp && this._exp.get(key);
+            return body ? this._subRows(key, body) : '';
+        }
+
+        _subRows(key, body) {
+            const strs = key[0] === 'f', cols = this.data.columns, lead = this._lead().length - 1;
+            const rows = body.items.map(x => {
+                const label = strs
+                    ? `<code class="nway-str" title="${escapeAttr(x.name)}">${escapeHtml(x.name.slice(0, 160))}</code> <span class="dim">${escapeHtml([x.encoding, x.section].filter(Boolean).join(' · '))}</span>`
+                    : `<span class="nway-subfn" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions">${escapeHtml(x.name)}</span>`;
+                return `<tr class="nway-sub" data-sub="${escapeAttr(key)}"><td class="nway-open"><i class="fa-solid ${strs ? 'fa-quote-left' : 'fa-code'} nway-sub-ic"></i> ${label}</td>${'<td></td>'.repeat(lead)}${cols.map((c, ci) => this._shape(x.cells[c.id], c, ci, strs)).join('')}</tr>`;
             }).join('');
+            const more = body.total > body.items.length ? `<tr class="nway-sub" data-sub="${escapeAttr(key)}"><td colspan="${lead + 1 + cols.length}" class="dim">+${body.total - body.items.length} more</td></tr>` : '';
+            return rows + more || `<tr class="nway-sub" data-sub="${escapeAttr(key)}"><td colspan="${lead + 1 + cols.length}" class="dim">Nothing linked in the database.</td></tr>`;
+        }
+
+        async _expand(btn) {
+            const key = btn.dataset.xp, tr = btn.closest('tr');
+            this._exp = this._exp || new Map();
+            const drop = () => this.el.querySelectorAll(`tr[data-sub="${CSS.escape(key)}"]`).forEach(x => x.remove());
+            if (this._exp.has(key)) { this._exp.delete(key); btn.classList.remove('on'); btn.setAttribute('aria-expanded', 'false'); return drop(); }
+            this._exp.set(key, null);
+            btn.classList.add('on');
+            btn.setAttribute('aria-expanded', 'true');
+            const qs = this._docQs();
+            qs.set('kind', btn.dataset.xk === 'f' ? 'function' : 'string');
+            qs.set(btn.dataset.xk === 'f' ? 'cells' : 'id', btn.dataset.xd);
+            let body = null;
+            try {
+                const res = await fetch(`/api/bin_sim/nway/expand?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
+                body = res.ok ? await res.json() : null;
+            } catch (e) { body = null; }
+            if (!this._exp || !this._exp.has(key) || !tr.isConnected) return;
+            if (!body) { this._exp.delete(key); btn.classList.remove('on'); return showToast('Could not load the rows.', 'warning'); }
+            this._exp.set(key, body);
+            drop();
+            tr.insertAdjacentHTML('afterend', this._subRows(key, body));
+        }
+
+        _strRow(row) {
+            const cells = this.data.columns.map((c, ci) => this._shape(row.cells[c.id], c, ci, true)).join('');
             const meta = [row.encoding, row.section].filter(Boolean).join(' · ');
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
-            return `<tr class="${depth ? 'nway-in ' : ''}${this._ratioCls(Number(row.span) || 0)}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-open"><code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span>${this._refChips(row)}</td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>`;
+            return `<tr class="${depth ? 'nway-in ' : ''}${this._ratioCls(Number(row.span) || 0)}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-open">${row.refs && row.refs.functions ? this._xpBtn(`s:${row.id}`, 's', row.id) : ''}<code class="nway-str" title="${escapeAttr(`${row.name}\n${meta}`)}">${escapeHtml(row.name.slice(0, 160))}</code> <span class="dim">${escapeHtml(meta)}</span>${this._refChips(row)}</td>${this._famCells(row.stats, true)}<td class="num">${Number(row.span)}</td>${cells}</tr>${this._subHtml(`s:${row.id}`)}`;
         }
 
         // Scroll mode: load the next batch when the sentinel nears the viewport.
@@ -2805,8 +2867,9 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
             if (!t) return;
+            if (t.dataset.xp !== undefined) return this._expand(t);
             if (t.dataset.fnQ !== undefined) return this._set({ view: 'functions', q: t.dataset.fnQ, offset: 0, sort_col: '' });
             if (t.dataset.strQ !== undefined) return this._set({ view: 'strings', q: t.dataset.strQ, offset: 0, sort_col: '' });
             if (t.dataset.famClear !== undefined) return this._set({ family: '', ignore: '', cover_min: '', leak_max: '', offset: 0, sort_col: '' });

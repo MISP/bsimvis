@@ -267,6 +267,80 @@ def string_refs(r, doc, rows, top=4):
         }
 
 
+EXPAND_MAX = 300  # sub-rows returned for one expanded row
+
+
+def expand_function(r, doc, cells):
+    """Sub-rows of one function row: every string its functions reference, with
+    presence over the table's columns. `cells` = {file id: function id}."""
+    fids = {k: v for k, v in cells.items() if isinstance(v, str)}
+    pipe = r.pipeline(transaction=False)
+    for f in fids.values():
+        pipe.smembers(f"{f}:strings")
+    addrs = [sorted(_txt(a) for a in got) for got in pipe.execute()]
+    pipe = r.pipeline(transaction=False)
+    todo = [(k, f, a) for (k, f), a in zip(fids.items(), addrs) if a]
+    for _, f, a in todo:
+        coll, rest = f.split(":func:", 1)
+        pipe.hmget(string_service.file_key(coll, rest.split(":")[0]), a)
+    table = {}
+    for (file, _, _), got in zip(todo, pipe.execute()):
+        for raw in got:
+            try:
+                rec = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if (
+                not rec.get("id")
+                or rec.get("length", len(rec.get("value", ""))) < INLINE_MIN_LEN
+            ):
+                continue
+            row = table.setdefault(
+                rec["id"],
+                {
+                    "id": rec["id"],
+                    "name": rec["value"],
+                    "encoding": rec.get("encoding", ""),
+                    "section": rec.get("section", ""),
+                    "cells": {},
+                },
+            )
+            row["cells"].setdefault(file, rec.get("addr", ""))
+    base = [dict(x, span=len(x["cells"])) for x in table.values()]
+    base.sort(key=lambda x: (-x["span"], -len(x["name"])))
+    return _expanded(doc, base)
+
+
+def expand_string(r, doc, sid):
+    """Sub-rows of one string: the function rows whose functions reference it, with
+    presence over the table's columns."""
+    where = {}  # function id -> (row index, file id)
+    for i, row in enumerate(doc["rows"]):
+        for file, f in (row.get("files") or row["cells"]).items():
+            if isinstance(f, str):
+                where[f] = (i, file)
+    held = {}
+    for f in _referencing(r, doc, [sid], where)[sid]:
+        i, file = where[f]
+        held.setdefault(i, {})[file] = f
+    base = [
+        {
+            "id": f"row:{i}",
+            "name": doc["rows"][i]["name"],
+            "cells": cells,
+            "span": len(cells),
+        }
+        for i, cells in held.items()
+    ]
+    base.sort(key=lambda x: (-x["span"], x["name"]))
+    return _expanded(doc, base)
+
+
+def _expanded(doc, base):
+    rows = nway_diff_service.project_rows(base[:EXPAND_MAX], _groups(doc), 0.5)
+    return {"items": rows, "total": len(base)}
+
+
 def fids_with_string(r, doc, text, cap=200):
     """Function ids of the table that reference a string containing `text` (3+ characters)."""
     q = text.lower()

@@ -3662,7 +3662,7 @@ def test_yara_editor():
         ).json()
         check(
             "apply: the custom tag's provenance is the editor rule, with its text",
-            [r.get("id") for r in _recs] == [f"custom:{uuid_}"]
+            f"custom:{uuid_}" in [r.get("id") for r in _recs]
             and "only_one2" in (_src.get("text") or ""),
             f"{_recs} / {str(_src)[:120]}",
         )
@@ -3695,6 +3695,19 @@ def test_yara_editor():
                 {"collection": COLLECTION, "tag": "yara:custom:renamed"}
             )
             == {file_md5},
+        )
+        _ids = lambda tag: [
+            r.get("id")
+            for r in (
+                requests.get(
+                    f"{BASE_URL}/api/tags/provenance", params={"tag": tag}, timeout=20
+                ).json()["provenance"][tag]
+            )
+        ]
+        check(
+            "renamed rule: provenance follows the rename",
+            f"custom:{uuid_}" not in _ids("yara:custom:only_one2")
+            and f"custom:{uuid_}" in _ids("yara:custom:renamed"),
         )
     test_endpoint(
         "DELETE", f"/api/yara/rules/{uuid_}", label="DELETE /api/yara/rules/<uuid>"

@@ -1647,21 +1647,25 @@ def run_chunk(
         changed += 1
     pipe.execute()
     if mode == "apply" and rule_uuid:
-        from bsimvis.app.services.tag_provenance import put_rules
+        from bsimvis.app.services.tag_provenance import RULE_META_KEY, TAG_RULES_PREFIX
 
         r.sadd(f"{KEY.format(rule_uuid)}:tags", *tags)
-        # a click on the tag names this rule; tag_provenance.rule_text reads its text back
-        put_rules(
-            {
-                f"custom:{rule_uuid}": {
-                    "source": "yara-editor",
-                    "title": ", ".join(rule_names(text)),
-                    "upstream": f"/yara?rule={rule_uuid}",
-                    "tags": sorted(tags),
-                }
-            },
-            r,
-        )
+        # a click on the tag names this rule (tag_provenance.rule_text reads its
+        # text back); a renamed rule stops naming its old tags
+        rid = f"custom:{rule_uuid}"
+        row = {
+            "source": "yara-editor",
+            "title": ", ".join(rule_names(text)),
+            "upstream": f"/yara?rule={rule_uuid}",
+            "tags": sorted(tags),
+        }
+        pipe = r.pipeline(transaction=False)
+        pipe.hset(RULE_META_KEY, rid, json.dumps(row))
+        for t in tags:
+            pipe.sadd(TAG_RULES_PREFIX + t, rid)
+        for t in previous - tags:
+            pipe.srem(TAG_RULES_PREFIX + t, rid)
+        pipe.execute()
     base = f"yara:sweep:{run_id}"
     if hit_ids:
         q.sadd(f"{base}:hits", *hit_ids)

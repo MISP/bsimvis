@@ -13,6 +13,7 @@ from bsimvis.app.services import (
     nway_diff_service,
     nway_facets_service,
     nway_group_service,
+    nway_indicator_service,
     nway_lineage_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
@@ -325,7 +326,10 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
     for row, uuids in zip(rows, per_row):
         row["clusters"] = uuids
         # a tag-carried name is only a fallback: a real cluster name beats it
-        if _DEFAULT_NAME.match(row["name"]) or row.get("name_from") == "tag":
+        if _DEFAULT_NAME.match(row["name"]) or row.get("name_from") in (
+            "tag",
+            "string",
+        ):
             for u in uuids:
                 c = cards[u]
                 n = c.get("cluster_name") or ""
@@ -335,14 +339,44 @@ def _attach_clusters(r, rows, fmeta, pool_id, args):
                     and not re.fullmatch(r"Cluster \d+", n)
                 ):
                     row["name"], row["name_from"] = n, "cluster"
+                    row.pop("variant", None)  # named by its cluster now
                     break
     return cards
+
+
+STAT_SORTS = {"cover": "cover", "leak": "leak_rate", "score": "score", "reach": "reach"}
+
+
+def _lane_ctx(doc, args):
+    """The family / contrast file sets of `family=` / `ignore=` (column ids), or None."""
+    family = nway_indicator_service.ids(args.get("family"))
+    if not family:
+        return None
+    try:
+        return nway_indicator_service.context(
+            doc, family, nway_indicator_service.ids(args.get("ignore"))
+        )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+
+
+def _lane_info(ctx):
+    return ctx and {k: sorted(v) for k, v in ctx.items()}
+
+
+def _stat_ok(st, args):
+    """`cover_min` (0-1) and `leak_max` (share of contrast files, 0-1) filters."""
+    cmin, lmax = fnum("cover_min", args), fnum("leak_max", args)
+    return in_bounds(st["cover"], cmin, None) and in_bounds(st["leak_rate"], None, lmax)
 
 
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     rows, fmeta = doc["rows"], doc["fmeta"]
     cols = doc["columns"]
+    ctx = _lane_ctx(doc, args)
+    if ctx:
+        rows = nway_indicator_service.annotate(rows, ctx)
     # two top-level `by` groups compare like Focus / Rest (side a = first group)
     focus = doc["columns_mode"] == "focus" or (
         doc["columns_mode"] == "by"
@@ -397,6 +431,8 @@ def _page(doc, args, r=None, pool_id=None):
                 return False
         if not in_bounds(row["weight"], feat_min, feat_max):
             return False
+        if ctx and not _stat_ok(row["stats"], args):
+            return False
         if sup_min is not None and row["support"] < sup_min:
             return False
         fids = list(_row_fids(row))
@@ -411,19 +447,32 @@ def _page(doc, args, r=None, pool_id=None):
     if q:
         # Full-text over the whole row: name, cluster names, and every function's text/tags.
         cards = _attach_clusters(r, filtered, fmeta, pool_id, args)
+        # a function also matches when it references a string containing the text
+        by_string = nway_indicator_service.fids_with_string(r, doc, q) if r else set()
 
         def hit(row):
-            text = [row["name"]] + [
-                (cards[u].get("cluster_name") or "") for u in row["clusters"]
-            ]
+            var = row.get("variant")
+            # the chip is searchable too: "name #2"
+            text = [
+                row["name"],
+                f"{row['name']} #{var['n']}" if var else "",
+            ] + [(cards[u].get("cluster_name") or "") for u in row["clusters"]]
             text += [_fn_haystack(f, fmeta) for f in _row_fids(row)]
-            return q in " ".join(text).lower()
+            return q in " ".join(text).lower() or any(
+                f in by_string for f in _row_fids(row)
+            )
 
         filtered = [row for row in filtered if hit(row)]
         page_clusters = False
 
     sort_col = args.get("sort_col")
-    if sort_col in ("span", "weight", "support", "cohesion", "name"):
+    if ctx and sort_col in STAT_SORTS:
+        filtered = sorted(
+            filtered,
+            key=lambda r: r["stats"][STAT_SORTS[sort_col]] or 0,
+            reverse=args.get("sort_dir", "desc") != "asc",
+        )
+    elif sort_col in ("span", "weight", "support", "cohesion", "name"):
         filtered = sorted(
             filtered,
             key=lambda r: (
@@ -463,10 +512,31 @@ def _page(doc, args, r=None, pool_id=None):
         total = len(entries)
     else:
         page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
+    if "1" in (args.get("strings"), args.get("calls"), args.get("consts")):
+        page = [dict(p) for p in page]
+        shown = [p for p in page if not p.get("header")]
+        if args.get("strings") == "1":
+            for p, st in zip(shown, nway_indicator_service.inline_strings(r, shown)):
+                p["strings"] = st
+        if args.get("calls") == "1":
+            for p, st in zip(shown, nway_indicator_service.inline_links(r, doc, shown)):
+                p["calls"] = st
+        if args.get("consts") == "1":
+            for p, st in zip(shown, nway_indicator_service.inline_consts(r, shown)):
+                p["consts"] = st
     real = [row for row in page if not row.get("header")]
     page_fids = {f for row in real for f in _row_fids(row)}
+    # a merged group draws its signature from its fids, even while collapsed
+    page_fids |= {
+        f
+        for g in shown_groups.values()
+        if g.get("kind") == "same"
+        for f in g.get("fids", [])
+    }
     if page_clusters:
         cards = _attach_clusters(r, real, fmeta, pool_id, args)
+    # a search must not change a row's name: string names go on whatever rows are shown
+    nway_indicator_service.name_by_strings(r, real)
     if "tag_axis_counts" not in doc:
         doc["tag_axis_counts"] = _tag_axis_counts(fmeta)
     return {
@@ -492,6 +562,7 @@ def _page(doc, args, r=None, pool_id=None):
         "mode": doc["mode"],
         "algo": doc["algo"],
         "warnings": doc["warnings"],
+        "family": _lane_info(ctx),
     }
 
 
@@ -629,6 +700,67 @@ def get_filter_values():
     }
 
 
+def _cluster_files(scope, uuid, axis):
+    """The files of one binary cluster node, read from its member set (the same
+    namespace `_cluster_node` uses), so a parent cluster resolves as well as a leaf."""
+    from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.config_service import config_service
+
+    coll = scope.get("collection")
+    if not coll:
+        abort(400, "cluster_uuid needs a collection")
+    axis = (axis or "overall").strip().lower()
+    algo = resolve_collection_algo(coll, None)
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    if (
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
+        == "hierarchical_snn"
+    ):
+        algo = f"{algo}:snn"
+    r = get_redis()
+    cid = resolve_cluster_id_by_uuid(
+        r, coll, algo, str(uuid).strip().lower(), "bin_cluster"
+    )
+    if cid is None:
+        abort(404, "unknown cluster_uuid")
+    members = r.smembers(f"{coll}:bin_cluster:{algo}:{cid}:members")
+    return [
+        (
+            _origin_coll(coll),
+            (m.decode() if isinstance(m, bytes) else m).rsplit(":", 1)[-1],
+        )
+        for m in members
+    ]
+
+
+def resolve_group(scope, spec, label, cap, meta):
+    """A group spec's searches -> [(origin coll, md5)], filling `meta` (id -> search row)."""
+    from bsimvis.app.routes.home import _call
+    from bsimvis.app.routes.search_file import search_files
+
+    found = []
+    # an empty search would list the whole collection: a group needs a filter
+    for query in filter(None, _group_queries(spec)):
+        if query.get("cluster_uuid"):
+            found += _cluster_files(scope, query["cluster_uuid"], query.get("axis"))
+            continue
+        try:
+            res = _call(search_files, **{**scope, **query, "limit": cap + 1})
+        except (TypeError, ValueError):
+            abort(400, f"{label}: query must be search_files parameters")
+        if res.get("error"):
+            abort(400, f"{label}: {res['error']}")
+        for f in res.get("files") or []:
+            key = (
+                _origin_coll(f["file_id"].split(":file:")[0]),
+                f["file_id"].rsplit(":", 1)[1],
+            )
+            found.append(key)
+            meta[nway_diff_service._col_id(*key)] = f
+    return found
+
+
 def post_column_set():
     """Resolve file queries into column groups: one saved set, read back by `col_set`.
 
@@ -636,9 +768,6 @@ def post_column_set():
     `<collection>:<md5>`) keeps only matches inside that set. With `preview` nothing
     is saved and empty groups are fine: it only reports the counts.
     """
-    from bsimvis.app.routes.home import _call
-    from bsimvis.app.routes.search_file import search_files
-
     body = request.get_json(silent=True) or {}
     specs, preview = body.get("groups"), bool(body.get("preview"))
     low = 1 if preview else 2
@@ -659,23 +788,7 @@ def post_column_set():
     groups, members, meta = [], [], {}
     for i, spec in enumerate(specs):
         label = str(spec.get("label") or f"Group {i + 1}")[:60]
-        found = []
-        # an empty search would list the whole collection: a group needs a filter
-        for query in filter(None, _group_queries(spec)):
-            try:
-                res = _call(search_files, **{**scope, **query, "limit": cap + 1})
-            except (TypeError, ValueError):
-                abort(400, f"{label}: query must be search_files parameters")
-            if res.get("error"):
-                abort(400, f"{label}: {res['error']}")
-            for f in res.get("files") or []:
-                key = (
-                    _origin_coll(f["file_id"].split(":file:")[0]),
-                    f["file_id"].rsplit(":", 1)[1],
-                )
-                found.append(key)
-                meta[nway_diff_service._col_id(*key)] = f
-        found = list(dict.fromkeys(found))
+        found = list(dict.fromkeys(resolve_group(scope, spec, label, cap, meta)))
         if within is not None:
             found = [m for m in found if m in within]
         if not found and not preview:
@@ -1063,6 +1176,185 @@ def get_nway():
             request.args,
         )
     return page
+
+
+def _strings_page(doc, args, r):
+    """Filter, sort and slice the string rows; `reach` is read for the shown page only."""
+    ctx = _lane_ctx(doc, args)
+    try:
+        min_len = max(
+            1, int(args.get("min_length", nway_indicator_service.MIN_STRING_LEN))
+        )
+        offset = max(0, int(args.get("offset", 0)))
+        limit = max(1, min(int(args.get("limit", 100)), 1000))
+    except ValueError:
+        abort(400, "min_length, offset and limit must be integers")
+    scope = args.get("scope", "code")
+    if scope not in ("code", "library", "all"):
+        abort(400, "scope must be code, library or all")
+    try:
+        rows = nway_indicator_service.string_rows(r, doc, ctx, min_len)
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+    q = (args.get("q") or "").strip().lower()
+    only_fam = ctx and args.get("family_only", "1") != "0"
+    rows = [
+        row
+        for row in rows
+        if (scope == "all" or row["library"] == (scope == "library"))
+        and (not q or q in row["name"].lower())
+        and (not only_fam or row["stats"]["tp"])
+        and (not ctx or _stat_ok(row["stats"], args))
+    ]
+    sort_col = args.get("sort_col") or ("score" if ctx else "span")
+    rev = args.get("sort_dir", "desc") != "asc"
+    if sort_col in STAT_SORTS and ctx:
+        key = lambda x: (x["stats"][STAT_SORTS[sort_col]] or 0, x["span"])
+    elif sort_col in ("span", "weight"):
+        key = lambda x: x[sort_col]
+    else:
+        key = lambda x: x["name"].lower()
+    rows.sort(key=key, reverse=rev)
+    groups, note = {}, ""
+    if args.get("group"):
+        if set(args["group"].split(",")) - {"lane", "prefix"}:
+            abort(400, "strings group by lane and/or prefix")
+        try:
+            entries, groups, note = nway_group_service.group_rows(
+                rows,
+                {**doc, "key": None},
+                r,
+                args["group"],
+                {**args, "group_merge": ""},
+            )
+        except nway_diff_service.BadParams as e:
+            abort(400, str(e))
+        part = entries[offset : offset + limit]
+        page = [
+            {**row, "g": gid, **extra} if row else {"g": gid, "header": True}
+            for gid, row, extra in part
+        ]
+        needed = {p for gid, _, _ in part if gid in groups for p in groups[gid]["path"]}
+        needed |= {groups[gid].get("under_id") for gid, _, _ in part if gid in groups}
+        groups = {g: m for g, m in groups.items() if g in needed}
+        nway_indicator_service.lane_fids(r, doc, rows, groups)
+        total = len(entries)
+    else:
+        page = rows[offset : offset + limit]
+        total = len(rows)
+    real = [x for x in page if not x.get("header")]
+    meta = {}
+    if args.get("refs") == "1":
+        meta = nway_indicator_service.string_refs(r, doc, real)
+    if ctx:
+        nway_indicator_service.page_reach(r, doc, real, ctx)
+    return {
+        "items": page,
+        "total": total,
+        "groups": groups,
+        "group_note": note,
+        "functions_metadata": meta,
+        "offset": offset,
+        "limit": limit,
+        "columns": doc["columns"],
+        "columns_mode": doc["columns_mode"],
+        "file_columns": doc["file_columns"],
+        "family": _lane_info(ctx),
+        "warnings": doc["warnings"],
+    }
+
+
+def get_nway_expand():
+    """Sub-rows of one row, with presence over the table's columns: `kind=function`
+    takes `cells` (JSON `{file id: function id}`) and gives the strings its functions
+    reference; `kind=callers` / `callees` take `cells` and give the rows that call it / it calls;
+    `kind=consts` takes `cells` and gives its constants; `kind=string` takes `id` and gives
+    the function rows that reference it.
+    """
+    kind = request.args.get("kind", "")
+    if kind not in ("function", "string", "callers", "callees", "consts"):
+        abort(400, "kind must be function, string, callers, callees or consts")
+    try:
+        cells = json.loads(request.args.get("cells") or "{}")
+    except ValueError:
+        cells = None
+    if kind != "string" and not (isinstance(cells, dict) and cells):
+        abort(400, f"kind={kind} needs cells, a JSON object of file id -> function id")
+    if kind == "string" and not request.args.get("id"):
+        abort(400, "kind=string needs id")
+    try:
+        doc, r, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    if kind == "function":
+        return nway_indicator_service.expand_function(r, doc, cells)
+    if kind == "consts":
+        return nway_indicator_service.expand_consts(r, doc, cells)
+    if kind in ("callers", "callees"):
+        return nway_indicator_service.expand_links(r, doc, cells, kind)
+    return nway_indicator_service.expand_string(r, doc, request.args["id"])
+
+
+def get_nway_strings():
+    """The N-way table of strings: rows are string values, columns the same files or
+    groups as /nway, with Cover / Leak / Reach / Score for a `family`."""
+    try:
+        doc, r, _ = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    return _strings_page(doc, request.args, r)
+
+
+def get_nway_indicators():
+    """Strings and function blocks ranked by how well they single out the `family`."""
+    if not request.args.get("family"):
+        abort(400, "family is required")
+    kinds = nway_indicator_service.ids(request.args.get("kinds", "string,function"))
+    if not set(kinds) <= {"string", "function"}:
+        abort(400, "kinds must be string and/or function")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 50)), 500))
+    except ValueError:
+        abort(400, "limit must be an integer")
+    try:
+        doc, r, pool_id = _load_doc()
+    except _Reply as e:
+        return e.args[0]
+    ctx = _lane_ctx(doc, request.args)
+    out = []
+    if "function" in kinds:
+        for row in nway_indicator_service.annotate(doc["rows"], ctx):
+            if (
+                request.args.get("scope", "code") == "all"
+                or row["library"] == (request.args.get("scope") == "library")
+            ) and row["stats"]["tp"]:
+                fids = list(_row_fids(row))
+                out.append(
+                    {
+                        "kind": "function",
+                        "id": fids[0] if fids else row["name"],
+                        "preview": row["name"],
+                        "files": len(fids),
+                        "fids": fids,
+                        "stats": row["stats"],
+                    }
+                )
+    if "string" in kinds:
+        a = request.args.to_dict()
+        a.update(limit="1000", sort_col="score", sort_dir="desc")
+        for row in _strings_page(doc, a, r)["items"]:
+            out.append(
+                {
+                    "kind": "string",
+                    "id": row["id"],
+                    "preview": row["name"][:200],
+                    "files": row["span"],
+                    "stats": row["stats"],
+                }
+            )
+    out = [x for x in out if _stat_ok(x["stats"], request.args)]
+    out.sort(key=lambda x: (-x["stats"]["score"], -x["stats"]["tp"]))
+    return {"items": out[:limit], "total": len(out), "family": _lane_info(ctx)}
 
 
 NEIGHBOR_MAX_DEPTH = 5

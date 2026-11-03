@@ -108,6 +108,8 @@ def search_files():
             ("note_owners", "note_owners"),
             # Every file extracted out of one upload, at any depth.
             ("root_md5", "root_md5"),
+            # exactly this file, unlike md5 which also matches its parent / related files
+            ("only_md5", "file_md5"),
             ("strings", "strings"),
         ]:
             val = request.args.get(arg)
@@ -575,6 +577,7 @@ def query_files_advanced(r, collection, filters):
             "inferred_tags",
             "note_owners",
             "root_md5",
+            "file_md5",
         ]:
             candidates &= get_field_matches(field, val)
         elif field == "strings":

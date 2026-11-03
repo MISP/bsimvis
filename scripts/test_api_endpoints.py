@@ -2037,6 +2037,67 @@ def run_all_tests():
         str(sorted(insights.keys()) if isinstance(insights, dict) else insights),
     )
 
+    # ── YARA workbench: lint, hit map, cluster seeds ───────────────────────
+    print(_color("\n  [YARA workbench]", BOLD))
+    lint = test_endpoint(
+        "POST",
+        "/api/yara/lint",
+        data={
+            "rule": 'rule t {\n strings:\n  $a = "ab"\n condition:\n  any of them\n}'
+        },
+    )
+    msgs = [w["message"] for w in (lint or {}).get("warnings", [])]
+    check(
+        "yara lint flags missing meta, short string, no ELF check",
+        any("meta `description` missing" in m for m in msgs)
+        and any("only 2 chars" in m for m in msgs)
+        and any("ELF magic" in m for m in msgs),
+        str(msgs)[:200],
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/seed/cluster",
+        data={},
+        expected_status=400,
+        label="POST /api/yara/seed/cluster without ids -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/seed/cluster",
+        data={"fids": ["not-a-fid"]},
+        expected_status=400,
+        label="POST /api/yara/seed/cluster bad fid -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/hitmap",
+        data={"collection": COLLECTION, "rule": "rule x {", "targets": []},
+        expected_status=400,
+        label="POST /api/yara/hitmap bad rule -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/scope",
+        data={"collection": COLLECTION, "rule": "rule x {", "targets": []},
+        expected_status=400,
+        label="POST /api/yara/scope bad rule -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/external-checks",
+        data={"format": "yara", "text": "rule x { condition: true }"},
+        expected_status=200,
+        label="POST /api/yara/external-checks",
+    )
+    for path in ("scope", "hitmap"):
+        test_endpoint(
+            "POST",
+            f"/api/yara/{path}",
+            data={"collection": COLLECTION, "run_id": "000000000000"},
+            expected_status=404,
+            label=f"POST /api/yara/{path} unknown run_id -> 404",
+        )
+
     # ── Unified search ─────────────────────────────────────────────────────
     print(_color("\n  [Unified search]", BOLD))
     # Scope the entity fanout; collection-name matching still searches globally.
@@ -3293,6 +3354,338 @@ def test_call_edge_id_dedup():
         "_call_edge_ids: empty and None are both empty sets",
         _call_edge_ids([], "c", "m") == set()
         and _call_edge_ids(None, "c", "m") == set(),
+    )
+
+
+def test_yara_editor():
+    """Live YARA workbench: validate, test (P/R), seeds, registry, sweep, apply."""
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP – YARA workbench", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5_2:
+        print(_color("\n[SKIP] No second analysed test binary.", YELLOW))
+        return
+
+    size1 = os.path.getsize(TEST_BINARY)
+    ids = [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]
+    sets = {
+        "collection": COLLECTION,
+        "targets": [{"label": "one", "files": [ids[0]]}],
+        "negatives": [{"label": "two", "files": [ids[1]]}],
+    }
+    exact = f"rule only_one {{ condition: filesize == {size1} }}"
+    both = "rule any_elf { condition: uint32(0) == 0x464c457f }"
+
+    one = requests.get(
+        f"{BASE_URL}/api/file/search",
+        params={"collection": COLLECTION, "only_md5": file_md5},
+        timeout=30,
+    ).json()
+    check(
+        "only_md5 selects exactly one file",
+        [f["file_md5"] for f in one.get("files", [])] == [file_md5],
+        str(one.get("files")),
+    )
+    fh = requests.post(
+        f"{BASE_URL}/api/yara/test", json={**sets, "rule": both}, timeout=60
+    ).json()
+    check(
+        "a false hit carries its match evidence",
+        bool((fh.get("false_hits") or [{}])[0].get("matches")),
+        str(fh.get("false_hits")),
+    )
+    check(
+        "a true hit carries its match evidence",
+        bool((fh.get("true_hits") or [{}])[0].get("matches")),
+        str(fh.get("true_hits")),
+    )
+
+    bad = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": "rule a { condition: $nope }"},
+        label="POST /api/yara/validate (bad rule)",
+    )
+    check(
+        "validate maps the error to a line",
+        bad and not bad["ok"] and bad["errors"][0]["line"] == 1,
+        str(bad),
+    )
+    good = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": exact},
+        label="POST /api/yara/validate",
+    )
+    check("validate accepts a good rule", good and good["ok"])
+    inc = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": 'include "/etc/passwd"\nrule a { condition: true }'},
+        label="POST /api/yara/validate (include is refused)",
+    )
+    check("include directive is not honoured", inc and not inc["ok"], str(inc))
+
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": exact},
+        label="POST /api/yara/test (separates)",
+    )
+    m = (res or {}).get("metrics") or {}
+    check(
+        "separating rule: precision and recall are 1",
+        (m.get("precision"), m.get("recall")) == (1.0, 1.0),
+        str(m),
+    )
+    check(
+        "groups report their hit rates",
+        {g["label"]: g["hit_rate"] for g in res["groups"]} == {"one": 1.0, "two": 0.0},
+        str(res.get("groups")),
+    )
+
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": both},
+        label="POST /api/yara/test (matches both)",
+    )
+    m = (res or {}).get("metrics") or {}
+    check(
+        "matching both files: one false positive",
+        (m.get("tp"), m.get("fp"), m.get("precision")) == (1, 1, 0.5),
+        str(m),
+    )
+    check(
+        "the false hit is listed",
+        [f["id"] for f in res["false_hits"]] == [ids[1]],
+        str(res.get("false_hits")),
+    )
+
+    str_rule = "rule hex { strings: $m = { 7f 45 4c 46 } condition: $m at 0 }"
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": str_rule},
+        label="POST /api/yara/test (string stats)",
+    )
+    row = {x["id"]: x for x in (res or {}).get("strings", [])}.get("$m", {})
+    check(
+        "per-string counts cover targets and negatives",
+        (row.get("pos"), row.get("neg")) == (1, 1),
+        str(row),
+    )
+    check(
+        "hit landing is reported per string",
+        "hex:$m" in (res or {}).get("landing", {}),
+        str((res or {}).get("landing")),
+    )
+
+    rest = {**sets, "negatives": [{"label": "rest", "rest": True}]}
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**rest, "rule": exact},
+        label="POST /api/yara/test (rest negatives)",
+    )
+    check(
+        "'rest' negatives exclude the targets",
+        (res or {}).get("metrics", {}).get("fp") == 0
+        and res["sample"]["negatives_scanned"] >= 1,
+        str((res or {}).get("sample")),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": "rule a {"},
+        expected_ok=True,
+        label="POST /api/yara/test (syntax error -> ok false)",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={"rule": exact, "targets": []},
+        expected_status=400,
+        label="POST /api/yara/test (no scope -> 400)",
+    )
+
+    sug = test_endpoint(
+        "POST",
+        "/api/yara/suggest",
+        data={**sets, "min_frac": 1.0},
+        label="POST /api/yara/suggest",
+    )
+    check(
+        "suggest answers with a strings list",
+        isinstance(sug and sug.get("strings"), list),
+    )
+    fsug = test_endpoint(
+        "POST",
+        "/api/yara/suggest/functions",
+        data={
+            **sets,
+            "nway": {
+                "collection": COLLECTION,
+                "md5s": f"{file_md5},{file_md5_2}",
+                "columns": "files",
+                "family": f"{COLLECTION}:{file_md5}",
+            },
+        },
+        label="POST /api/yara/suggest/functions",
+    )
+    check(
+        "suggest/functions answers with a functions list",
+        isinstance(fsug and fsug.get("functions"), list),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/suggest/functions",
+        data={**sets, "nway": {"collection": COLLECTION}},
+        expected_status=400,
+        label="POST /api/yara/suggest/functions (no family -> 400)",
+    )
+
+    # registry: versions, export, apply, sweep
+    saved = test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={
+            "rule": exact,
+            "scope": {"targets": sets["targets"], "negatives": sets["negatives"]},
+        },
+        label="POST /api/yara/rules",
+    )
+    uuid_ = (saved or {}).get("uuid")
+    check(
+        "save returns a uuid at version 1",
+        bool(uuid_) and saved["version"] == 1,
+        str(saved),
+    )
+    if not uuid_:
+        return
+    v2 = test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={"rule": exact.replace("only_one", "only_one2"), "uuid": uuid_},
+        label="POST /api/yara/rules (v2)",
+    )
+    check("saving the same uuid bumps the version", v2 and v2["version"] == 2, str(v2))
+    got = test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}",
+        params={"version": 1},
+        label="GET /api/yara/rules/<uuid>?version=1",
+    )
+    check(
+        "an old version reads back unchanged",
+        got and "only_one {" in got["text"],
+        str(got),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={"rule": "rule a {"},
+        expected_status=400,
+        label="POST /api/yara/rules (does not compile -> 400)",
+    )
+    exp = test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}/export",
+        label="GET /api/yara/rules/<uuid>/export",
+    )
+    check(
+        "export header carries uuid and version",
+        exp and uuid_ in exp["content"] and "v2" in exp["content"],
+        str(exp),
+    )
+    check(
+        "rule appears in the list",
+        any(
+            r["uuid"] == uuid_
+            for r in (
+                test_endpoint("GET", "/api/yara/rules", label="GET /api/yara/rules")
+                or {}
+            ).get("rules", [])
+        ),
+    )
+
+    sweep = test_endpoint(
+        "POST",
+        "/api/yara/sweep",
+        data={**sets, "rule": exact},
+        label="POST /api/yara/sweep",
+    )
+    run = (sweep or {}).get("run_id")
+    if run:
+        for _ in range(60):
+            st = requests.get(f"{BASE_URL}/api/yara/run/{run}", timeout=20).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        check(
+            "sweep hits exactly the target file",
+            st.get("done")
+            and st.get("hits") == 1
+            and st.get("metrics", {}).get("recall") == 1.0
+            and st.get("metrics", {}).get("fp") == 0,
+            str(st),
+        )
+
+    app = test_endpoint(
+        "POST",
+        "/api/yara/apply",
+        data={**sets, "rule": exact.replace("only_one", "only_one2"), "uuid": uuid_},
+        label="POST /api/yara/apply",
+    )
+    run = (app or {}).get("run_id")
+    if run:
+        for _ in range(60):
+            st = requests.get(f"{BASE_URL}/api/yara/run/{run}", timeout=20).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        tagged = _search_file_md5s(
+            {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
+        )
+        check("apply tags exactly the matching file", tagged == {file_md5}, str(tagged))
+        # a rename must drop the old version's tag
+        test_endpoint(
+            "POST",
+            "/api/yara/rules",
+            data={"rule": exact.replace("only_one", "renamed"), "uuid": uuid_},
+            label="POST /api/yara/rules (v3, renamed)",
+        )
+        app = test_endpoint(
+            "POST",
+            "/api/yara/apply",
+            data={**sets, "rule": exact.replace("only_one", "renamed"), "uuid": uuid_},
+            label="POST /api/yara/apply (renamed)",
+        )
+        for _ in range(60):
+            st = requests.get(
+                f"{BASE_URL}/api/yara/run/{app['run_id']}", timeout=20
+            ).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        check(
+            "renamed rule: old tag is gone, new tag is set",
+            not _search_file_md5s(
+                {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
+            )
+            and _search_file_md5s(
+                {"collection": COLLECTION, "tag": "yara:custom:renamed"}
+            )
+            == {file_md5},
+        )
+    test_endpoint(
+        "DELETE", f"/api/yara/rules/{uuid_}", label="DELETE /api/yara/rules/<uuid>"
+    )
+    test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}",
+        expected_status=404,
+        label="GET /api/yara/rules/<uuid> (deleted -> 404)",
     )
 
 
@@ -4999,6 +5392,288 @@ def _nway_rows(body):
     """A page of N-way rows as a set of function-id sets, comparable across modes."""
     rows = (body or {}).get("items", [])
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
+
+
+def test_nway_indicators():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(
+        _color(" STEP 3c-sexies – N-way family stats, strings table, indicators", BOLD)
+    )
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – indicator checks skipped.", YELLOW))
+        return
+    lane = f"{COLLECTION}:{file_md5}"
+    st, body = _nway(family=lane, tab="all", columns="files")
+    rows = (body or {}).get("items", [])
+    check(
+        "nway family: rows carry stats",
+        st == 200 and rows and all("stats" in r for r in rows),
+        f"HTTP {st}",
+    )
+    check(
+        "nway family: family and contrast are the two files",
+        st == 200
+        and body["family"]["family"] == [lane]
+        and len(body["family"]["contrast"]) == 1,
+        str((body or {}).get("family")),
+    )
+    st, cb = _nway(calls="1", consts="1", columns="files", tab="all")
+    crow = (cb or {}).get("items", [])
+    check(
+        "nway calls/consts: rows carry callers, callees and constants",
+        st == 200
+        and crow
+        and all(
+            {"callers", "callees"} <= set(x["calls"]) and "total" in x["consts"]
+            for x in crow
+        ),
+        f"HTTP {st}",
+    )
+    st, gb = _nway(
+        family=lane, tab="all", columns="files", group_merge="name,call", limit=500
+    )
+    check(
+        "nway family: group_merge keeps the rows",
+        st == 200 and gb["total"] > 0,
+        f"HTTP {st} total {(gb or {}).get('total')} vs {len(rows)}",
+    )
+    check(
+        "nway family: cover is a share of the family",
+        all(
+            0 <= r["stats"]["cover"] <= 1 and 0 <= r["stats"]["score"] <= 1
+            for r in rows
+        ),
+    )
+    st, sb = _nway(strings="1", columns="files", tab="all")
+    check(
+        "nway strings=1: every row carries its inline strings",
+        st == 200
+        and sb["items"]
+        and all({"total", "top"} <= set(r.get("strings", {})) for r in sb["items"]),
+        f"HTTP {st}",
+    )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/strings",
+        params={
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "columns": "files",
+            "group": "lane",
+            "refs": "1",
+            "group_open": "all",
+        },
+        timeout=60,
+    )
+    gb = resp.json() if resp.status_code == 200 else {}
+    gitems = gb.get("items", [])
+    check(
+        "nway strings: group=lane gives headers, lane groups and refs",
+        resp.status_code == 200
+        and gb.get("groups")
+        and any(x.get("header") for x in gitems)
+        and all("refs" in x for x in gitems if not x.get("header")),
+        f"HTTP {resp.status_code} {str(gb)[:120]}",
+    )
+    check(
+        "nway strings: refs carry the functions and their metadata for the signature",
+        all(
+            f in gb.get("functions_metadata", {})
+            for x in gitems
+            if not x.get("header")
+            for d in x["refs"]["direct"]
+            for f in d["cells"].values()
+        ),
+    )
+    check(
+        "nway strings: a string lane names the functions that use its strings",
+        all("fids" in g for g in gb.get("groups", {}).values()),
+    )
+    check(
+        "nway strings: refs name the function rows using the string",
+        any(x["refs"]["direct"] for x in gitems if not x.get("header")),
+        "no string with a referencing function row",
+    )
+    sv = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/strings",
+        params={
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "columns": "files",
+            "refs": "1",
+        },
+        timeout=60,
+    ).json()
+    hit = next((x for x in sv.get("items", []) if x["refs"]["direct"]), None)
+    if hit:
+        st, qb = _nway(q=hit["name"], columns="files", tab="all", scope="all")
+        names = {x["name"] for x in hit["refs"]["direct"]}
+        check(
+            "nway q: a string finds the functions that reference it",
+            st == 200 and names <= {x.get("name") for x in qb["items"]},
+            f"{names} not in {[x.get('name') for x in qb.get('items', [])][:6]}",
+        )
+    base_ex = {
+        "collection": COLLECTION,
+        "md5s": f"{file_md5},{file_md5_2}",
+        "columns": "files",
+    }
+    if hit:
+        resp = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        )
+        eb = resp.json() if resp.status_code == 200 else {}
+        check(
+            "nway expand: a string gives the function rows that reference it, with presence",
+            resp.status_code == 200
+            and eb["items"]
+            and all(
+                {"present", "total", "on"} <= set(c)
+                for c in eb["items"][0]["cells"].values()
+            ),
+            f"HTTP {resp.status_code}",
+        )
+        fn = next(
+            (
+                x
+                for x in _nway(columns="files", tab="all", scope="all")[1]["items"]
+                if x["name"] in {d["name"] for d in hit["refs"]["direct"]}
+            ),
+            None,
+        )
+        if fn:
+            resp = requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/expand",
+                params={
+                    **base_ex,
+                    "kind": "function",
+                    "cells": json.dumps(fn.get("files") or fn["cells"]),
+                },
+                timeout=60,
+            )
+            check(
+                "nway expand: a function row gives the strings its functions reference",
+                resp.status_code == 200
+                and hit["name"] in {x["name"] for x in resp.json()["items"]},
+                f"HTTP {resp.status_code}",
+            )
+            for kind in ("callers", "callees", "consts"):
+                resp = requests.get(
+                    f"{BASE_URL}/api/bin_sim/nway/expand",
+                    params={
+                        **base_ex,
+                        "kind": kind,
+                        "cells": json.dumps(fn.get("files") or fn["cells"]),
+                    },
+                    timeout=60,
+                )
+                body = resp.json() if resp.status_code == 200 else {}
+                check(
+                    f"nway expand: kind={kind} gives rows with per-column presence",
+                    resp.status_code == 200
+                    and all(
+                        0 <= c["via"] <= c["present"] <= c["total"]
+                        for x in body.get("items", [])
+                        for c in x["cells"].values()
+                    ),
+                    f"HTTP {resp.status_code}",
+                )
+    if hit:
+        eb = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        ).json()
+        check(
+            "nway expand: via <= present <= total in every cell",
+            all(
+                0 <= c["via"] <= c["present"] <= c["total"]
+                for x in eb["items"]
+                for c in x["cells"].values()
+            ),
+        )
+    if hit:
+        # sub-rows are keyed by the columns of the same request, opened twin columns included
+        opened = {"columns": "twins", "col_open": '["*"]'}
+        cols = [
+            c["id"]
+            for c in requests.get(
+                f"{BASE_URL}/api/bin_sim/nway",
+                params={**base_ex, **opened, "limit": 1},
+                timeout=60,
+            ).json()["columns"]
+        ]
+        eb = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, **opened, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        ).json()
+        check(
+            "nway expand: cells follow the opened columns of the table",
+            eb["items"] and all(set(x["cells"]) == set(cols) for x in eb["items"]),
+            f"{cols} vs {[list(x['cells']) for x in eb['items'][:1]]}",
+        )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/expand",
+        params={**base_ex, "kind": "bogus"},
+        timeout=60,
+    )
+    check(
+        "nway expand: bad kind is a 400",
+        resp.status_code == 400,
+        f"HTTP {resp.status_code}",
+    )
+    st, _ = _nway(family="nope:0", columns="files")
+    check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
+    st, ign = _nway(
+        family=lane, ignore=f"{COLLECTION}:{file_md5_2}", columns="files", tab="all"
+    )
+    check(
+        "nway family: ignored columns leave the contrast",
+        st == 200 and ign["family"]["contrast"] == [] and ign["family"]["ignored"],
+        str((ign or {}).get("family")),
+    )
+    base = {
+        "collection": COLLECTION,
+        "md5s": f"{file_md5},{file_md5_2}",
+        "family": lane,
+        "columns": "files",
+    }
+    resp = requests.get(f"{BASE_URL}/api/bin_sim/nway/strings", params=base, timeout=60)
+    sb = resp.json() if resp.status_code == 200 else {}
+    check(
+        "nway strings: answers with rows and a family",
+        resp.status_code == 200 and "items" in sb and "family" in sb,
+        f"HTTP {resp.status_code}",
+    )
+    check(
+        "nway strings: stats carry reach for each shown row",
+        all(r["stats"]["reach"] is not None for r in sb.get("items", [])),
+    )
+    sc = [r["stats"]["score"] for r in sb.get("items", [])]
+    check("nway strings: best score first", sc == sorted(sc, reverse=True), str(sc[:5]))
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/indicators", params=base, timeout=60
+    )
+    ib = resp.json() if resp.status_code == 200 else {}
+    sc = [x["stats"]["score"] for x in ib.get("items", [])]
+    check(
+        "nway indicators: ranked list",
+        resp.status_code == 200 and sc == sorted(sc, reverse=True),
+        f"HTTP {resp.status_code}",
+    )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/indicators",
+        params={k: v for k, v in base.items() if k != "family"},
+        timeout=60,
+    )
+    check(
+        "nway indicators: family is required",
+        resp.status_code == 400,
+        f"HTTP {resp.status_code}",
+    )
 
 
 def test_nway_column_groups():
@@ -10157,6 +10832,7 @@ if __name__ == "__main__":
     STEPS = [
         test_call_edge_id_dedup,
         test_strings,
+        test_yara_editor,
         test_maintenance_remove_validation,
         test_maintenance_remove_file,
         test_pool_member_removal,
@@ -10174,6 +10850,7 @@ if __name__ == "__main__":
         test_bin_sim_diff_cache,
         test_nway_diff,
         test_nway_column_groups,
+        test_nway_indicators,
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
@@ -10208,6 +10885,7 @@ if __name__ == "__main__":
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_nway_column_groups": ["test_search_filters_and_sorting"],
+        "test_nway_indicators": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],

@@ -1073,6 +1073,36 @@ class Worker:
                 self.job_service.enqueue_job(next_job_id, is_continuation=True)
             return True
 
+        elif jtype == JobType.YARA_RULE_RUN.value:
+            from bsimvis.app.services.yara_edit_service import run_chunk
+
+            cursor = str(payload.get("cursor", "0"))
+            next_cursor, seen, hits, changed = run_chunk(
+                self.r_data,
+                self.r_raw,
+                self.r_queue,
+                collection,
+                payload["rule"],
+                payload.get("mode", "sweep"),
+                payload["run_id"],
+                payload.get("rule_uuid"),
+                cursor,
+            )
+            if job_id:
+                self.job_service.update_progress(
+                    job_id,
+                    0 if next_cursor != "0" else 100,
+                    f"Scanned {seen} files: {hits} hit, {changed} retagged (cursor {cursor} -> {next_cursor})",
+                )
+            if next_cursor != "0":
+                next_job_id = self.job_service.create_job(
+                    JobType.YARA_RULE_RUN,
+                    {**payload, "cursor": next_cursor},
+                    enqueue=False,
+                )
+                self.job_service.enqueue_job(next_job_id, is_continuation=True)
+            return True
+
         elif jtype == JobType.INIT_POOL_BUILD.value:
             pool_id = payload.get("pool_id")
             from bsimvis.app.services.pool_service import pool_service

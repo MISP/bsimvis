@@ -696,10 +696,15 @@ def _label(cells, fmeta, weights):
 
 def _tag_name(tag):
     """A function name carried by a tag: `fid:libc:1.2.6#__toread` -> `__toread`,
-    `yara:botnet:generic:Rule` -> `Rule`. Bare `fid:libc` names no function."""
+    `yara:botnet:generic:Rule` -> `Rule`, `capa:a:host-interaction:software` -> `host-interaction:software`. Bare `fid:libc` names no function.
+    """
     if "#" in tag:
-        return tag.rsplit("#", 1)[1] or None
+        name = tag.rsplit("#", 1)[1]
+        return None if name in ("", "ambiguous") else name  # #ambiguous: FID multi-match marker
     parts = tag.split(":")
+    # capa / mbc / mitre: the last two fields after the prefix tell more than the last one
+    if parts[0] in ("capa", "mbc", "mitre"):
+        return ":".join(parts[1:][-2:]) or None
     return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
 
 
@@ -766,6 +771,43 @@ def seriate(columns, edges, min_edge):
     return [by[i] for i in order]
 
 
+_TAG_PREFERENCE = {"capa": 0, "mbc": 0, "yara": 1}
+
+
+def _variants(rows):
+    """Rows that share a name are told apart.
+
+    A row named only by a tag (every function is FUN_xxx) takes the name of the tag the
+    other rows of that name lack, capa / mbc first: its old name stays in `name_was`.
+    Rows that still share a name, tag-named or not, are numbered `variant = {n, of}`
+    in table order (span, then weight)."""
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for name, group in by.items():
+        if len(group) < 2:
+            continue
+        sets = [set(r["tags"]) for r in group]
+        for row, own in zip(group, sets):
+            if row.get("name_from") != "tag":
+                continue
+            seen = set().union(*(s for s in sets if s is not own))
+            fresh = [
+                (_TAG_PREFERENCE.get(t.split(":")[0], 2), i, short)
+                for i, t in enumerate(row["tags"])
+                if t not in seen and (short := _tag_name(t)) and short != name
+            ]
+            if fresh:
+                row["name_was"], row["name"] = name, min(fresh)[2]
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for group in by.values():
+        if len(group) > 1:
+            for n, row in enumerate(group, 1):
+                row["variant"] = {"n": n, "of": len(group)}
+
+
 def _match(base, min_edge):
     weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
     rows = nway_match(base["edges"], base["funcs"], min_edge)
@@ -773,6 +815,7 @@ def _match(base, min_edge):
         fids = list(row["cells"].values())
         row.update(_name_row(fids, base["fmeta"], weights))
         row["library"] = any(base["library"].get(f) for f in fids)
+    _variants(rows)
     return rows
 
 
@@ -1035,6 +1078,26 @@ def demo():
 
     tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
     assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
+    assert _tag_name("capa:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("capa:communication/http/client") == "communication/http/client"
+    assert _tag_name("capa:a:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("yara:trojan:mirai:Mirai_ELF") == "Mirai_ELF"
+    # tag-named rows take the tag the others lack (capa before yara); the rest are numbered
+    vr = [
+        {
+            "name": "Mirai_ELF",
+            "name_from": "tag",
+            "tags": ["yara:a:Mirai_ELF", "yara:b:Other", "capa:x:xor"],
+        },
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "main", "tags": []},
+        {"name": "main", "tags": []},
+    ]
+    _variants(vr)
+    assert [r["name"] for r in vr[:3]] == ["x:xor", "Mirai_ELF", "Mirai_ELF"], vr
+    assert vr[0]["name_was"] == "Mirai_ELF" and "variant" not in vr[0]
+    assert [r["variant"]["n"] for r in vr[1:]] == [1, 2, 1, 2], vr
     cols = [{"id": i, "functions": 10} for i in "abcd"]
     ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
     got = [c["id"] for c in seriate(cols, ed, 0.5)]

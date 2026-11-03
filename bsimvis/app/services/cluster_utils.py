@@ -74,6 +74,26 @@ def default_bin_cluster_name(
     return fallback
 
 
+def default_func_cluster_name(fids, metas, fallback):
+    """Name of a function cluster, by the rule N-way rows use: an analyst name, else
+    the most common non-default name (never FUN_/sub_/thunk_), else a name carried
+    by the members' tags, else `fallback`. `metas` maps function id -> function meta."""
+    from bsimvis.app.services.nway_diff_service import (
+        _DEFAULT_NAME,
+        _fn_meta,
+        _name_row,
+    )
+
+    fmeta = {f: _fn_meta(metas.get(f) or {}) for f in fids}
+    weights = {f: float(fmeta[f].get("bsim_features_count") or 0) or 1.0 for f in fids}
+    name = _name_row(list(fids), fmeta, weights)["name"] if fids else None
+    if name and not _DEFAULT_NAME.match(name):
+        return name
+    # nothing better than a Ghidra default: the most common one, as before
+    names = Counter(m["name"] for m in fmeta.values() if m.get("name"))
+    return names.most_common(1)[0][0] if names else fallback
+
+
 def collect_member_values(metas):
     """Flatten member file metadata into the value lists a cluster summary counts.
 

@@ -67,6 +67,8 @@ def _pop(mask):
 
 
 def _fids(row):
+    if row.get("is_string"):
+        return []
     return [
         f for f in (row.get("files") or row["cells"]).values() if isinstance(f, str)
     ]
@@ -400,7 +402,11 @@ def _summary(nd, n):
 def name_key(row):
     """The row's name without compiler suffixes, or None for an auto name."""
     name = (row.get("name") or "").strip()
-    if not name or _DEFAULT_NAME.match(name) or row.get("name_from") == "cluster":
+    if (
+        not name
+        or _DEFAULT_NAME.match(name)
+        or row.get("name_from") in ("cluster", "string")
+    ):
         return None
     while m := _SUFFIX.search(name):
         name = name[: m.start()]
@@ -497,7 +503,12 @@ def merge_units(rows, doc, r, evidence, min_link):
         doc["_links"] = (row_of, _best_links(doc["edges"], row_of))
     row_of, best = doc["_links"]
     at = {id(row): i for i, row in enumerate(all_rows)}
-    cand = [(at[id(row)], row) for row in rows if id(row) in at]
+    # annotated copies (`family=`) carry their index instead of their identity
+    cand = [
+        (row["_at"] if "_at" in row else at[id(row)], row)
+        for row in rows
+        if "_at" in row or id(row) in at
+    ]
     link = {}  # (row, row) -> {"kinds", "sim"}
     # Rows are joined on files, lanes group on columns: with twin or child columns
     # one column holds several files, and two rows in one column may sit in different files.
@@ -522,7 +533,9 @@ def merge_units(rows, doc, r, evidence, min_link):
                 byname[key].append(i)
         for ids in byname.values():
             for a, b in combinations(ids[:NAME_BUCKET], 2):
-                add(a, b, "name", 0.0)
+                sim = best.get((min(a, b), max(a, b)), 0.0)
+                if sim >= min_link:
+                    add(a, b, "name", sim)
     if "call" in evidence:
         if sum(len(_fids(row)) for _, row in cand) > CALL_MAX_FIDS:
             note = "Call position skipped: too many functions. Filter the rows first."
@@ -578,6 +591,7 @@ def merge_units(rows, doc, r, evidence, min_link):
             units.append(byrow[i])
             continue
         members = [byrow[j] for j in sorted(g["rows"])]
+        pairs = list(combinations(sorted(g["rows"]), 2))
         cells = {
             f"{k}:{c}": f
             for k, row in enumerate(members)
@@ -592,6 +606,8 @@ def merge_units(rows, doc, r, evidence, min_link):
                 "_rows": members,
                 "_kinds": g["kinds"],
                 "_sim": g["sim"],
+                # how alike the joined rows are: the mean best edge over row pairs, 0 where the matcher found none
+                "_xcoh": sum(best.get(k, 0.0) for k in pairs) / len(pairs),
                 "_idx": min(g["rows"]),
                 "_fspan": _pop(g["fmask"]),
             }
@@ -620,7 +636,12 @@ def _graft(g, parent_id, parent_path):
     return g
 
 
-SORT_COLS = ("name", "span", "weight", "support", "cohesion")
+SORT_COLS = ("name", "span", "weight", "support", "cohesion", "cover", "leak", "score")
+
+
+def _stat(r, key):
+    """A row's family stat (`stats` is there only when `family=` is set)."""
+    return (r.get("stats") or {}).get(key) or 0
 
 
 def _unit_sortkey(u, ctx):
@@ -632,7 +653,15 @@ def _unit_sortkey(u, ctx):
             "span": u["_fspan"],
             "weight": max(r["weight"] for r in rs),
             "support": sum(r.get("support", 1.0) for r in rs) / len(rs),
-            "cohesion": sum(r.get("cohesion", 1.0) for r in rs) / len(rs),
+            "cohesion": u["_xcoh"],
+            **{
+                k: max(_stat(r, f) for r in rs)
+                for k, f in (
+                    ("cover", "cover"),
+                    ("leak", "leak_rate"),
+                    ("score", "score"),
+                )
+            },
         }
     else:
         vals = {
@@ -641,6 +670,9 @@ def _unit_sortkey(u, ctx):
             "weight": u["weight"],
             "support": u.get("support", 1.0),
             "cohesion": u.get("cohesion", 1.0),
+            "cover": _stat(u, "cover"),
+            "leak": _stat(u, "leak_rate"),
+            "score": _stat(u, "score"),
         }
     col = ctx["sort_col"]
     # the table's default order: most files first, then the heaviest
@@ -679,8 +711,7 @@ def _expand(units, ctx, parent_id, parent_path, carried):
                 link=round(u["_sim"], 3),
                 names=list(dict.fromkeys(row["name"] for row in members))[:4],
                 fids=list(dict.fromkeys(f for row in members for f in _fids(row))),
-                cohesion=sum(row.get("cohesion", 1.0) for row in members)
-                / len(members),
+                cohesion=u["_xcoh"],
             )
             best, m["name_from"] = best_name(members, ctx["fmeta"])
             m["names"] = [best] + [x for x in m["names"] if x != best][:3]
@@ -980,12 +1011,19 @@ def _lane_evidence(l):
     from bsimvis.app.services.function_service import fetch_function_data
     from bsimvis.app.services.redis_client import get_redis
 
+    by_string = l.get("kind") == "string"
     out = [
-        f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+        (
+            f"{l['rows']} strings found together in {l['files']} of {l['total']} files of a malware family. The evidence below comes from the functions that use them."
+            if by_string
+            else f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+        )
     ]
-    if l["sample"]:
+    if l["sample"] and not by_string:
         out.append("Function names: " + ", ".join(l["sample"]))
     tags, strings, code = list(l["tags"]), [], []
+    if by_string:
+        strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
     libs, inner, callers = Counter(), Counter(), Counter()
     for fid in l["fids"][:LANE_FIDS]:
         try:
@@ -1091,6 +1129,8 @@ def lane_names(lanes):
             "fids": fids,
             "v": 6,  # bump when the prompt changes, so cached names are redone
         }
+        if l.get("kind") == "string":
+            item["kind"] = "string"
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()
@@ -1154,6 +1194,9 @@ def group_rows(rows, doc, r, mode, params):
             )
         ),
         tuple(map(id, rows)),
+        # annotated copies are fresh objects, so an id can come back for another family
+        params.get("family"),
+        params.get("ignore"),
     )
     hit = key and _CACHE.get(key)
     if hit:
@@ -1437,10 +1480,13 @@ def demo():
             row(1, 6, "other", {"A": "a2"}),
         ],
     }
-    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.3)
+    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.0)
     merged = [u for u in units if "_rows" in u]
     assert len(units) == 3 and len(merged) == 1 and note == ""
     assert merged[0]["mask"] == 15 and merged[0]["_kinds"] == {"name"}
+    # annotated copies (family=) merge too: they match back by `_at`, not identity
+    copies = [{**rw, "_at": i} for i, rw in enumerate(doc["rows"])]
+    assert len(merge_units(copies, doc, None, {"name"}, 0.0)[0]) == 3
 
     # a merged function is grouped by the lane of ALL its files, with its rows under it
     ctx = {
@@ -1464,7 +1510,7 @@ def demo():
     merged_pair = next(p for p in got if p[0]["id"] == "lane:1111/same:0")
     assert merged_pair[0]["path"] == ["lane:1111", "lane:1111/same:0"]
     assert merged_pair[0]["fids"] == ["a1", "b1", "c1", "d1"]
-    assert merged_pair[0]["cohesion"] == 1.0
+    assert merged_pair[0]["cohesion"] == 0.0  # same name, no edge between the rows
     assert len(merged_pair[1]) == 2 and got[0][1] == []
     # no levels: the merged function and the plain rows are ordered together, like functions
     top = _nest(units, [], ctx, "", [], {})

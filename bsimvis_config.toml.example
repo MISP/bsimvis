@@ -113,6 +113,18 @@
     # Strings kept per file, in address order; the rest are dropped.
     max_per_file = 10000
 
+[yara_editor]
+    # Live rule workbench (/yara). The negative side is sampled to these caps;
+    # "Full sweep" lifts them by running a job over every file.
+    neg_cap_files = 500
+    neg_cap_mb = 500
+    # Files scanned on the target side, and negatives considered before sampling.
+    target_cap_files = 2000
+    neg_pool_cap = 20000
+    scan_timeout = 20
+    # Hit files whose offsets are mapped to functions / strings.
+    land_files = 20
+
 [similarity]
     top_k = 1000
     min_score = 0.9

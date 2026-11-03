@@ -1278,7 +1278,8 @@ def group_rows(rows, doc, r, mode, params):
     units = rows
     if evidence:
         try:
-            min_link = float(params.get("group_min_link") or 0.3)
+            raw = params.get("group_min_link")
+            min_link = 0.3 if raw in (None, "") else float(raw)
         except ValueError:
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)

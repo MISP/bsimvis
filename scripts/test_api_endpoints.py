@@ -6529,6 +6529,7 @@ def test_nway_diff():
         columns="twins",
         group="lane",
         group_merge="name",
+        group_min_link=0,  # the fixture's same-name rows share no edge
         group_open="all",
     )
     check(
@@ -6689,6 +6690,7 @@ def test_nway_diff():
             limit=1000,
             group="lane",
             group_merge="name",
+            group_min_link=0,  # the fixture's same-name rows share no edge
             sort_col="weight",
             sort_dir=_dir,
             group_open="all",

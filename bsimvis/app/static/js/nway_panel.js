@@ -36,10 +36,10 @@
         column: '', focus: '', focus_rule: 'any', side: '',
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
         family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '',
-        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', col_open: '',
+        group: 'lane', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts'];
     // Family stats columns: Cover, Leak, Score (+ Reach for strings).
     const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
     const STR_PAGE = 100;
@@ -49,6 +49,8 @@
         ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
         ['tag', 'Tag', 'Nest under the tags of one axis (origin, capa, YARA...). Something with several tags on the axis is listed under each.'],
     ];
+    // What the sidebar's reset puts back: the row grouping it exposes, not the lane fit / tier / fold tuning.
+    const GROUP_RESET = ['group', 'group_axis', 'group_axis_b', 'group_tag_depth', 'group_lane_depth'];
     const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
@@ -243,7 +245,7 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
-            if (this.state.view !== 'strings') qs.set('strings', '1');
+            if (this.state.view !== 'strings') { qs.set('strings', '1'); qs.set('facets', '1'); }
             if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
@@ -423,6 +425,14 @@
             return v ? `<i class="nway-var" title="${escapeAttr(`${Number(v.n)} of ${Number(v.of)} rows with this name`)}">#${Number(v.n)}</i>` : '';
         }
 
+        // One row whose functions carry different Ghidra names (FUN_, analyst and inferred names left out).
+        _nameConflict(c) {
+            if (!c || !(c.names || []).length) return '';
+            const list = c.names.map(([n, k]) => `${n} ×${Number(k)}`).join('\n');
+            const title = `Same N-way row, different Ghidra names (${c.names.length} names over ${Number(c.named)} named functions):\n${list}\nHeterogeneity ${pct(c.spread)}: low when one function disagrees, 100% when every named function differs. FUN_ and inferred names are not counted.`;
+            return `<span class="nway-nconf${Number(c.spread) >= 0.5 ? ' hi' : ''}" title="${escapeAttr(title)}"><i class="fa-solid fa-shuffle"></i> ${c.names.length} names · ${pct(c.spread)}</span>`;
+        }
+
         _fnLabel(x) {
             return `${this._fnSig({ name: x.name, cells: x.fcells || x.cells })}${this._varChip(x.variant)}<i class="fa-solid fa-table-list nway-fnq" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions" role="button"></i>`;
         }
@@ -549,7 +559,7 @@
             const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
                 ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
-            return `<div class="nway-tabrow">${search}${this._columnChip()}${this._famChip()}${moreBtn}</div>
+            return `<div class="nway-tabrow">${search}${this._columnChip()}${this._tagChip()}${this._famChip()}${moreBtn}</div>
                 <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${s.view === 'strings' ? '' : inl}${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
         }
 
@@ -2571,7 +2581,6 @@
 
         _row(row) {
             const cols = this.data.columns;
-            const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
@@ -2579,7 +2588,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${g && g.kind === 'same' ? 'nway-ver ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -2804,8 +2813,35 @@
 
         // The column outline: every group and column with its number range, and the button that opens or folds it.
         _legend() {
-            const t = this._tree();
-            if (!t.grouped) return '';
+            const t = this._tree(), rows = this.state.view !== 'strings';
+            const facets = rows ? this._facets() : '';
+            if (!t.grouped && !rows) return '';
+            const off = (!t.grouped || this._legOff) && (!rows || this._grpOff) && (!facets || this._facOff);
+            return `<aside class="nway-legend${off ? ' off' : ''}">${t.grouped ? this._colOutline(t) : ''}${rows ? this._groupSide() : ''}${facets}</aside>`;
+        }
+
+        // Row grouping from the sidebar: each level toggles, ⇄ swaps two neighbours, lane depth beside it.
+        _groupSide() {
+            const s = this.state, lv = (s.group || '').split(',').filter(Boolean), labels = Object.fromEntries(TAG_AXES);
+            const name = l => (l === 'tag' ? `${labels[s.group_axis || 'origin'] || s.group_axis} tags` : (GROUPS.find(g => g[0] === l) || [l, l])[1]);
+            const pill = (l, i) => `<button type="button" class="nway-gpick${i >= 0 ? ' on' : ''}" data-gpick="${l}" aria-pressed="${i >= 0}" title="${escapeAttr(i >= 0 ? `Stop grouping by ${name(l)}` : (GROUPS.find(g => g[0] === l) || [])[2] || '')}">${i >= 0 ? `<b>${i + 1}</b>` : ''}${escapeHtml(name(l))}</button>`;
+            const onP = lv.map((l, i) => (i ? `<button type="button" class="nway-fswap" data-fswap="${i}" title="${escapeAttr(`Swap ${name(lv[i - 1])} and ${name(l)}`)}" aria-label="${escapeAttr(`Swap ${name(lv[i - 1])} and ${name(l)}`)}">&#8644;</button>` : '') + pill(l, i)).join('');
+            // ponytail: prefix only under More options for now; shown here while it is on so it can be turned off
+            const offP = ['lane', 'tag'].filter(v => !lv.includes(v)).map(v => pill(v, -1)).join('');
+            const lane = lv.includes('lane') ? this._dots('Lane levels', 'flane', Number(s.group_lane_depth) || 1, 6, n => `${n} lane level${n > 1 ? 's' : ''}`) : '';
+            const dirty = GROUP_RESET.some(k => String(s[k] ?? '') !== String(DEFAULTS[k] ?? ''));
+            const tip = 'Click a level to turn it on or off; the numbers are the nesting order, and ⇄ swaps two levels. Tag grouping uses the axis picked with the layers button below. Lane, tier and fold settings stay under More options.';
+            const btns = (dirty ? '<button type="button" data-greset title="Reset the row grouping to the default"><i class="fa-solid fa-rotate-left"></i></button>' : '')
+                + (lv.length ? '<button type="button" data-gall="open" title="Expand every group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-gall="close" title="Collapse every group"><i class="fa-solid fa-angles-up"></i></button>' : '');
+            return `<details data-leg="grp"${this._grpOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Group rows ${this._tip(tip).replace('<span ', '<span onclick="event.preventDefault()" ')}${btns ? `<span class="nway-fold">${btns}</span>` : ''}</summary><div class="nway-forder"><div class="nway-forder-row">${onP}${offP}</div>${lane}</div></details>`;
+        }
+
+        // The depth dots of the column outline, 1..max, for a sidebar setting.
+        _dots(label, attr, cur, max, tip) {
+            return `<div class="nway-depth"><span>${escapeHtml(label)}</span>${[...Array(max).keys()].map(i => `<button type="button" class="nway-ddot${i < cur ? ' on' : ''}" data-${attr}="${i + 1}" title="${escapeAttr(tip(i + 1))}" aria-label="${escapeAttr(tip(i + 1))}"></button>`).join('<i></i>')}</div>`;
+        }
+
+        _colOutline(t) {
             const row = (n, dep) => {
                 const open = n.kids.length > 0, toggle = open || n.expandable;
                 const range = n.lo === n.hi ? `${n.lo + 1}` : `${n.lo + 1}–${n.hi + 1}`;
@@ -2816,7 +2852,58 @@
                     + (n.count > 1 ? `<em>${n.count}</em>` : '') + `<b class="nway-rg">${range}</b></div>`
                     + n.kids.map(k => row(k, dep + 1)).join('');
             };
-            return `<aside class="nway-legend${this._legOff ? ' off' : ''}"><details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em><span class="nway-fold"><button type="button" data-coldepth="all" title="Expand every column group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-coldepth="0" title="Collapse every column group"><i class="fa-solid fa-angles-up"></i></button></span></summary>${this._colDepth()}${t.root.kids.map(k => row(k, 0)).join('')}</details></aside>`;
+            return `<details${this._legOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Columns <em>${this.data.columns.length}</em><span class="nway-fold"><button type="button" data-coldepth="all" title="Expand every column group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-coldepth="0" title="Collapse every column group"><i class="fa-solid fa-angles-up"></i></button></span></summary>${this._colDepth()}${t.root.kids.map(k => row(k, 0)).join('')}</details>`;
+        }
+
+        _tagList() {
+            return String(this.state.tags || '').split(',').filter(Boolean);
+        }
+
+        // Tag facets: one checkbox tree per axis (OR inside an axis, AND across axes), and the
+        // button that groups the rows by that axis, with depth dots for how many levels.
+        _facets() {
+            const f = this.data.tag_facets;
+            if (!f || !Object.keys(f).length) return '';
+            const s = this.state, on = this._tagList(), lv = (s.group || '').split(',').filter(Boolean);
+            const grouped = lv.includes('tag') ? s.group_axis || 'origin' : '';
+            const labels = Object.fromEntries(TAG_AXES);
+            const axes = [...TAG_AXES.map(([k]) => k).filter(k => f[k]), ...Object.keys(f).filter(k => !labels[k])];
+            // the tree opens on the checked tags and the grouped axis
+            if (!this._ftOpen) this._ftOpen = new Set(on.flatMap(id => { const out = []; for (let i = id.length; i > 0; i--) if (':/'.includes(id[i])) out.push(id.slice(0, i)); return out; }));
+            if (!this._faxOpen) this._faxOpen = new Set(axes.filter(a => a === grouped || on.some(id => f[a].some(([n]) => n === id))));
+            this._fmore = this._fmore || new Set();
+            const CAP = 12;
+            const axis = a => {
+                const byId = new Map(f[a].map(([id, parent, n]) => [id, { id, parent, n, kids: [] }])), roots = [];
+                for (const nd of byId.values()) (byId.get(nd.parent) ? byId.get(nd.parent).kids : roots).push(nd);
+                // a lone namespace only repeats the axis name
+                let top = roots;
+                while (top.length === 1 && top[0].kids.length) top = top[0].kids;
+                const label = nd => (nd.parent && nd.id.startsWith(nd.parent) ? nd.id.slice(nd.parent.length).replace(/^[:/]/, '') : nd.id);
+                // levels below the namespace, what group_tag_depth counts
+                const level = nd => { let k = 0; for (let p = byId.get(nd.parent); p; p = byId.get(p.parent)) k++; return k; };
+                const max = Math.max(0, ...[...byId.values()].map(level));
+                const rows = (list, dep, key) => {
+                    const all = this._fmore.has(key), shown = all ? list : list.slice(0, CAP);
+                    return shown.map(nd => {
+                        const open = this._ftOpen.has(nd.id), part = !on.includes(nd.id) && on.some(t => t.startsWith(nd.id) && ':/'.includes(t[nd.id.length]));
+                        return `<div class="nway-ol nway-fo${on.includes(nd.id) ? ' on' : part ? ' part' : ''}" style="--dep:${dep}">`
+                            + (nd.kids.length ? `<button type="button" class="nway-tg" data-ftg="${escapeAttr(nd.id)}" aria-expanded="${open}" aria-label="${open ? 'Fold' : 'Open'} ${escapeAttr(label(nd))}">${open ? '&#9662;' : '&#9656;'}</button>` : '<span class="nway-tg"></span>')
+                            + `<label class="nway-olb" title="${escapeAttr(nd.id)}"><input type="checkbox" data-ftag="${escapeAttr(nd.id)}"${on.includes(nd.id) ? ' checked' : ''}> ${escapeHtml(label(nd))}</label><em>${Number(nd.n)}</em></div>`
+                            + (open ? rows(nd.kids, dep + 1, nd.id) : '');
+                    }).join('') + (list.length > shown.length ? `<button type="button" class="nway-blink nway-fmore" style="--dep:${dep}" data-fmore="${escapeAttr(key)}">+${list.length - shown.length} more</button>` : '');
+                };
+                const open = this._faxOpen.has(a), n = on.filter(id => byId.has(id)).length, g = grouped === a;
+                const body = open ? rows(top, 0, `${a}:`) : '';
+                const dots = g && open && max > 1 ? this._dots('Depth', 'ftdepth', Number(s.group_tag_depth) || 2, Math.min(8, max), n => `Group ${n} tag level${n > 1 ? 's' : ''} deep`) : '';
+                return `<div class="nway-fax"><div class="nway-ol nway-faxh"><button type="button" class="nway-tg" data-fax="${escapeAttr(a)}" aria-expanded="${open}">${open ? '&#9662;' : '&#9656;'}</button><span class="nway-olb" data-fax="${escapeAttr(a)}">${escapeHtml(labels[a] || a)}</span>${n ? `<em class="on">${n} on</em>` : ''}${labels[a] ? `<button type="button" class="nway-fgrp${g ? ' on' : ''}" data-fgroup="${escapeAttr(a)}" title="${g ? 'Stop grouping the rows by this axis' : 'Group the rows by this axis'}" aria-pressed="${g}"><i class="fa-solid fa-layer-group"></i></button>` : ''}</div>${dots}${body}</div>`;
+            };
+            return `<details data-leg="fac"${this._facOff ? '' : ' open'} ontoggle="NwayPanel.legend(this)"><summary>Tags ${this._tip('Check tags to filter the rows. Inside one axis a row needs any checked tag (OR); across axes it needs one from each (AND). The counts already follow the other axes\' filters. The layers button groups the rows by that axis.').replace('<span ', '<span onclick="event.preventDefault()" ')}${on.length ? ` <em>${on.length} on</em>` : ''}${on.length ? '<span class="nway-fold"><button type="button" data-fclear title="Clear the tag filters"><i class="fa-solid fa-xmark"></i></button></span>' : ''}</summary>${axes.map(axis).join('')}</details>`;
+        }
+
+        _tagChip() {
+            const on = this._tagList();
+            return on.length ? `<button class="nway-chip on" data-fclear title="Drop the tag filters">Tags <span class="dim">${escapeHtml(on.join(' · '))}</span> &times;</button>` : '';
         }
 
         // The host (the N-way page) can park its own controls in the More section.
@@ -3003,8 +3090,30 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
             if (!t) return;
+            if (t.dataset.ftg || t.dataset.fax || t.dataset.fmore) {
+                const [set, id] = t.dataset.ftg ? [this._ftOpen, t.dataset.ftg] : t.dataset.fax ? [this._faxOpen, t.dataset.fax] : [this._fmore, t.dataset.fmore];
+                if (!set.delete(id)) set.add(id);
+                this._scrollSave();
+                return this.render();
+            }
+            if (t.dataset.fclear !== undefined) { e.preventDefault(); return this._set({ tags: '', offset: 0 }); }
+            if (t.dataset.flane) return this._set({ group_lane_depth: Number(t.dataset.flane), offset: 0 });
+            if (t.dataset.greset !== undefined) return this._set({ ...Object.fromEntries(GROUP_RESET.map(k => [k, DEFAULTS[k]])), offset: 0 });
+            if (t.dataset.ftdepth) return this._set({ group_tag_depth: t.dataset.ftdepth === '2' ? '' : t.dataset.ftdepth, offset: 0 });
+            if (t.dataset.fgroup) {
+                const a = t.dataset.fgroup, lv = (this.state.group || '').split(',').filter(Boolean), on = lv.includes('tag') && (this.state.group_axis || 'origin') === a;
+                this._faxOpen.add(a);
+                // the tag level goes last (inside the lanes) or keeps its place when only the axis changes
+                return this._set({ group: (on ? lv.filter(l => l !== 'tag') : lv.includes('tag') ? lv : [...lv, 'tag']).join(','), group_axis: a, ...(this.state.group_axis_b === a ? { group_axis_b: '' } : {}), offset: 0 });
+            }
+            if (t.dataset.fswap) {
+                const lv = (this.state.group || '').split(',').filter(Boolean), i = Number(t.dataset.fswap);
+                if (!lv[i] || !lv[i - 1]) return;
+                [lv[i - 1], lv[i]] = [lv[i], lv[i - 1]];
+                return this._set({ group: lv.join(','), offset: 0 });
+            }
             if (t.dataset.xp !== undefined) return this._expand(t);
             if (t.dataset.fnQ !== undefined) return this._set({ view: 'functions', q: t.dataset.fnQ, offset: 0, sort_col: '' });
             if (t.dataset.strQ !== undefined) return this._set({ view: 'strings', q: t.dataset.strQ, offset: 0, sort_col: '' });
@@ -3055,7 +3164,10 @@
             if (t.dataset.gpick) {
                 const lv = (this.state.group || '').split(',').filter(Boolean), i = lv.indexOf(t.dataset.gpick);
                 if (i >= 0) lv.splice(i, 1); else lv.push(t.dataset.gpick);
-                return this._set({ group: lv.join(','), offset: 0 });
+                // turning tags on: start on an axis these rows carry, not an empty default
+                const f = this.data && this.data.tag_facets, ax = this.state.group_axis || 'origin';
+                const axis = i < 0 && t.dataset.gpick === 'tag' && f && !f[ax] ? (TAG_AXES.find(([k]) => f[k]) || [ax])[0] : ax;
+                return this._set({ group: lv.join(','), ...(axis !== ax ? { group_axis: axis } : {}), offset: 0 });
             }
             if (t.dataset.gtoggle !== undefined && !t.dataset.gall) return this._gSplice(t.dataset.gtoggle);
             if (t.dataset.gall) {
@@ -3121,6 +3233,12 @@
 
         _onChange(e) {
             const t = e.target;
+            if (t.dataset.ftag) {
+                const on = this._tagList().filter(id => id !== t.dataset.ftag);
+                if (t.checked) on.push(t.dataset.ftag);
+                this._scrollSave();
+                return this._set({ tags: on.join(','), offset: 0 });
+            }
             if (t.dataset.lnames !== undefined) {
                 this.state.lane_names = t.checked ? 'on' : 'off';
                 this._lnSig = null;
@@ -3163,8 +3281,8 @@
 
     NwayPanel.legend = el => {
         const p = NwayPanel._active;
-        if (p) p._legOff = !el.open;
-        el.parentNode.classList.toggle('off', !el.open);
+        if (p) p[{ fac: '_facOff', grp: '_grpOff' }[el.dataset.leg] || '_legOff'] = !el.open;
+        el.parentNode.classList.toggle('off', !el.parentNode.querySelector(':scope > details[open]'));
     };
 
     NwayPanel.act = (act, id) => NwayPanel._active && NwayPanel._active._act(act, id);

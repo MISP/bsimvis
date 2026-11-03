@@ -6129,6 +6129,17 @@ def test_nway_diff():
         [c["md5"] for c in core["columns"]] == [file_md5, file_md5_2],
         str(core["columns"]),
     )
+    _nc = [i["name_conflict"] for i in core["items"] if i.get("name_conflict")]
+    check(
+        "nway name_conflict: 2+ Ghidra names, no FUN_, spread in (0, 1]",
+        all(
+            len(c["names"]) >= 2
+            and not any(n.startswith(("FUN_", "FID_conflict")) for n, _ in c["names"])
+            and 0 < c["spread"] <= 1
+            for c in _nc
+        ),
+        str(_nc[:3]),
+    )
 
     # An analyst rename survives re-matching and resets cleanly.
     _first = next(iter(core["items"]), None)
@@ -6151,6 +6162,14 @@ def test_nway_diff():
             and _hit.get("name") == "analyst_renamed_fn"
             and _hit.get("user_named") == "llm",
             f"HTTP {_rn_resp.status_code} {str(_hit)[:200]}",
+        )
+        check(
+            "nway name_conflict: an analyst name is never a conflicting name",
+            not any(
+                n == "analyst_renamed_fn"
+                for n, _ in (_hit.get("name_conflict") or {}).get("names", [])
+            ),
+            str(_hit.get("name_conflict")),
         )
         _rn("")
         _, _rb = _nway(tab="core", scope="all", limit=1000)
@@ -6853,6 +6872,76 @@ def test_nway_diff():
     check(
         "nway group: group_lane_link=2 is a 400",
         _nway(group="lane", group_lane_link=2)[0] == 400,
+    )
+    # tag facets: counts per level, and tags= is OR inside an axis, AND across axes
+    _, _fb = _nway(tab="all", scope="all", limit=1000, facets=1)
+    _fac = (_fb or {}).get("tag_facets") or {}
+    check(
+        "nway facets: facets=1 gives every axis as [level, parent, rows], parents listed",
+        _fac
+        and all(
+            n > 0 and (not p or p in {x[0] for x in lv})
+            for lv in _fac.values()
+            for _, p, n in lv
+        ),
+        f"{list(_fac)}",
+    )
+    _ax = next((a for a, lv in _fac.items() if lv), None)
+    if _ax:
+        _id, _, _n = _fac[_ax][0]
+        _, _tb = _nway(tab="all", scope="all", limit=1000, tags=_id)
+        check(
+            "nway facets: tags=<level> keeps exactly the rows its count says",
+            _tb and _tb["total"] == _n,
+            f"{_id}: {_tb and _tb['total']} vs {_n}",
+        )
+        _two = [x[0] for x in _fac[_ax][:2]]
+        _, _ob = _nway(tab="all", scope="all", limit=1000, tags=",".join(_two))
+        check(
+            "nway facets: two levels of one axis are an OR",
+            _ob and _ob["total"] >= _n,
+        )
+        _other = next((a for a in _fac if a != _ax and _fac[a]), None)
+        if _other:
+            _, _ab = _nway(
+                tab="all", scope="all", limit=1000, tags=f"{_id},{_fac[_other][0][0]}"
+            )
+            check(
+                "nway facets: levels of two axes are an AND",
+                _ab and _ab["total"] <= min(_n, _fac[_other][0][2]),
+            )
+    check(
+        "nway group: group_tag_depth=x is a 400",
+        _nway(group="tag", group_tag_depth="x")[0] == 400,
+    )
+    _, _td = _nway(
+        tab="all", scope="all", group="tag", group_tag_depth=1, group_open="all"
+    )
+    _st, _lt2 = _nway(
+        tab="all", scope="all", group="lane,tag", group_tag_depth=1, group_open="all"
+    )
+    _lanes = {
+        g
+        for g, m in ((_lt2 or {}).get("groups") or {}).items()
+        if m.get("kind") == "lane"
+    }
+    check(
+        "nway group: lane,tag nests tag groups inside the lanes",
+        _st == 200
+        and (
+            not _lanes
+            or any(
+                m["path"][0] in _lanes and len(m["path"]) > 1
+                for m in _lt2["groups"].values()
+                if m.get("kind") == "tag"
+            )
+        ),
+        f"{_st}",
+    )
+    check(
+        "nway group: group_tag_depth=1 nests one tag level",
+        _td is not None and all(">" not in g for g in _td["groups"]),
+        f"{_td and list(_td['groups'])[:5]}",
     )
     # tiers and folds only regroup: every row stays, tiers start open, folds closed
     _, _lt = _nway(

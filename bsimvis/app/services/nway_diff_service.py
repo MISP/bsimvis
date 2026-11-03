@@ -54,6 +54,7 @@ from bsimvis.app.services.redis_client import get_raw_queue_redis
 
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
+_SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
 SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
@@ -715,6 +716,33 @@ def _row_tags(fids, fmeta):
     return ranked
 
 
+def _name_conflict(fids, fmeta):
+    """Distinct Ghidra names over one row's functions, or None when they agree.
+
+    Only the function's own name counts: no analyst / LLM name, no tag or
+    string name, no FUN_ / sub_ / thunk_, no FID_conflict. Compiler suffixes
+    (.part.0, .cold) are dropped first. `spread` is (names - 1) / (named - 1):
+    low when one function disagrees, 1 when every named function differs.
+    """
+    count, shown = Counter(), {}
+    for f in fids:
+        name = (fmeta.get(f) or {}).get("name") or ""
+        if not name or _DEFAULT_NAME.match(name) or name.startswith("FID_conflict"):
+            continue
+        while m := _SUFFIX.search(name):
+            name = name[: m.start()]
+        count[name.lower()] += 1
+        shown.setdefault(name.lower(), name)
+    if len(count) < 2:
+        return None
+    named = sum(count.values())
+    return {
+        "names": [[shown[k], c] for k, c in count.most_common()],
+        "named": named,
+        "spread": round((len(count) - 1) / (named - 1), 2),
+    }
+
+
 def _name_row(fids, fmeta, weights):
     """Name + tags of a set of functions: the rule N-way rows and the function hero share.
 
@@ -722,6 +750,8 @@ def _name_row(fids, fmeta, weights):
     """
     out = {"tags": _row_tags(fids, fmeta)}
     out["name"], out["names"] = _label(fids, fmeta, weights)
+    if conflict := _name_conflict(fids, fmeta):
+        out["name_conflict"] = conflict
     if not out["names"] and _DEFAULT_NAME.match(out["name"]):
         tagged = next((n for t in out["tags"] if (n := _tag_name(t))), None)
         if tagged:
@@ -1054,6 +1084,24 @@ def coverage(rows, column_ids):
 
 def demo():
     import time
+
+    # name_conflict: Ghidra names only, suffixes folded, FUN_ / FID_conflict ignored
+    fm = {
+        "a": {"name": "udp_attack"},
+        "b": {"name": "udp_attack.part.0"},
+        "c": {"name": "http_attack"},
+        "d": {"name": "FUN_00401000"},
+        "e": {"name": "FID_conflict:memcpy"},
+        "f": {"name": "udp_attack", "user_name": "flood"},
+    }
+    c = _name_conflict(list(fm), fm)
+    assert c == {
+        "names": [["udp_attack", 3], ["http_attack", 1]],
+        "named": 4,
+        "spread": 0.33,
+    }, c
+    assert _name_conflict(["a", "b", "d", "e"], fm) is None
+    assert _name_row(["a", "c"], fm, {"a": 1, "c": 1})["name_conflict"]["spread"] == 1
 
     # Concurrent builds of one key run once; the waiter sees the leader's progress and result.
     calls, seen, started = [], [], threading.Event()

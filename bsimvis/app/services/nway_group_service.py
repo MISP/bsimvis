@@ -35,7 +35,12 @@ from itertools import combinations
 import numpy as np
 
 from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
-from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, _LRU, BadParams
+from bsimvis.app.services.nway_diff_service import (
+    _DEFAULT_NAME,
+    _LRU,
+    _SUFFIX,
+    BadParams,
+)
 from bsimvis.app.services.nway_match import PairEdges, concat_edges
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
@@ -54,8 +59,6 @@ UNTAGGED = "(no tag)"
 # Grouped tree per (doc, filtered rows, group params): opening a group or
 # scrolling only rebuilds the flat entry list.
 _CACHE = _LRU(8)
-
-_SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 
 
 def _bits(mask, n):
@@ -318,13 +321,13 @@ def _row_tags(row, fmeta, axis):
     return ranked[:TAG_FANOUT]
 
 
-def _tag_path(tag):
-    """Two nesting levels of a tag, below its namespace: `yara:botnet` > `yara:botnet:mirai`."""
+def _tag_path(tag, depth=2):
+    """`depth` nesting levels of a tag, below its namespace: `yara:botnet` > `yara:botnet:mirai`."""
     chain = tag_prefixes(tag) + [tag_body(tag)[0]]
-    return chain[1:3] or chain[-1:]
+    return chain[1 : 1 + depth] or chain[-1:]
 
 
-def tag_groups(rows, fmeta, n, sort, axis, axis_b=""):
+def tag_groups(rows, fmeta, n, sort, axis, axis_b="", depth=2):
     """Tag tree on `axis`; with `axis_b`, `axis` top level crossed with the other's."""
     for a in (axis, axis_b):
         if a and a not in AXES:
@@ -357,7 +360,7 @@ def tag_groups(rows, fmeta, n, sort, axis, axis_b=""):
                 for b in tops
             ]
         else:
-            paths = [_tag_path(a) for a in a_tags]
+            paths = [_tag_path(a, depth) for a in a_tags]
         # two tags can share their first two levels: list the row once per path
         paths = [list(p) for p in dict.fromkeys(map(tuple, paths))] or [[UNTAGGED]]
         also[id(row)] = len(paths)
@@ -624,7 +627,13 @@ def _level(mode, units, ctx):
             units, ctx["n"], ctx["sort"], ctx["lane_min"], ctx["lane_fit"]
         )
     return tag_groups(
-        units, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
+        units,
+        ctx["fmeta"],
+        ctx["n"],
+        ctx["sort"],
+        ctx["axis"],
+        ctx["axis_b"],
+        ctx["tag_depth"],
     )
 
 
@@ -984,7 +993,7 @@ def _annotate(pairs, fmeta):
                 reverse=True,
             )
             g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
-            found = Counter(t for _, _, r in ranked for t in set(finds(r)))
+            found = Counter(t for _, _, r in ranked for t in sorted(set(finds(r))))
             g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:
@@ -1219,6 +1228,7 @@ def group_rows(rows, doc, r, mode, params):
         "fmeta": doc["fmeta"],
         "axis": params.get("group_axis") or "origin",
         "axis_b": params.get("group_axis_b") or "",
+        "tag_depth": 2,
         "merge": bool(evidence),
         "note": "",
         "prefix_min": PREFIX_MIN,
@@ -1270,6 +1280,11 @@ def group_rows(rows, doc, r, mode, params):
             ctx["lane_fold"] = max(0, int(params["group_lane_fold"]))
         except ValueError:
             raise BadParams("group_lane_fold must be an integer")
+    if params.get("group_tag_depth"):
+        try:
+            ctx["tag_depth"] = max(1, min(8, int(params["group_tag_depth"])))
+        except ValueError:
+            raise BadParams("group_tag_depth must be an integer")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))

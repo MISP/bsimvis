@@ -3648,6 +3648,24 @@ def test_yara_editor():
             {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
         )
         check("apply tags exactly the matching file", tagged == {file_md5}, str(tagged))
+        # the tag popup names the editor rule and shows its text
+        _prov = requests.get(
+            f"{BASE_URL}/api/tags/provenance",
+            params={"tag": "yara:custom:only_one2"},
+            timeout=20,
+        ).json()
+        _recs = (_prov.get("provenance") or {}).get("yara:custom:only_one2") or []
+        _src = requests.get(
+            f"{BASE_URL}/api/tags/rule_source",
+            params={"id": f"custom:{uuid_}"},
+            timeout=20,
+        ).json()
+        check(
+            "apply: the custom tag's provenance is the editor rule, with its text",
+            [r.get("id") for r in _recs] == [f"custom:{uuid_}"]
+            and "only_one2" in (_src.get("text") or ""),
+            f"{_recs} / {str(_src)[:120]}",
+        )
         # a rename must drop the old version's tag
         test_endpoint(
             "POST",

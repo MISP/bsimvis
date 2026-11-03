@@ -513,6 +513,12 @@ def rule_text(rid, max_bytes=20000):
         text = (rule_meta([rid]).get(rid) or {}).get("text")
         return text[:max_bytes] if text else None
 
+    if rid.startswith("custom:"):
+        from bsimvis.app.services.yara_edit_service import get_rule
+
+        doc = get_rule(_redis(), rid.split(":", 1)[1])
+        return doc["text"][:max_bytes] if doc else None
+
     if rid.startswith("yara:"):
         from bsimvis.app.services.yara_service import rules_dir
 

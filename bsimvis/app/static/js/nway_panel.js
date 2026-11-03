@@ -418,6 +418,14 @@
             return v ? `<i class="nway-var" title="${escapeAttr(`${Number(v.n)} of ${Number(v.of)} rows with this name`)}">#${Number(v.n)}</i>` : '';
         }
 
+        // One row whose functions carry different Ghidra names (FUN_, analyst and inferred names left out).
+        _nameConflict(c) {
+            if (!c || !(c.names || []).length) return '';
+            const list = c.names.map(([n, k]) => `${n} ×${Number(k)}`).join('\n');
+            const title = `Same N-way row, different Ghidra names (${c.names.length} names over ${Number(c.named)} named functions):\n${list}\nHeterogeneity ${pct(c.spread)}: low when one function disagrees, 100% when every named function differs. FUN_ and inferred names are not counted.`;
+            return `<span class="nway-nconf${Number(c.spread) >= 0.5 ? ' hi' : ''}" title="${escapeAttr(title)}"><i class="fa-solid fa-shuffle"></i> ${c.names.length} names · ${pct(c.spread)}</span>`;
+        }
+
         _fnLabel(x) {
             return `${this._fnSig({ name: x.name, cells: x.fcells || x.cells })}${this._varChip(x.variant)}<i class="fa-solid fa-table-list nway-fnq" data-fn-q="${escapeAttr(x.name)}" title="Show this row in Functions" role="button"></i>`;
         }
@@ -2566,7 +2574,6 @@
 
         _row(row) {
             const cols = this.data.columns;
-            const extra = Array.isArray(row.names) ? row.names.length - 1 : Number(row.names || 0) - 1;
             const low = row.support < LOW_SUPPORT && (row.file_span || row.span) > 2
                 ? `<i class="fa-solid fa-triangle-exclamation nway-warn" title="low support: only ${pct(row.support)} of the possible pairs in this row are matched; it may be a chain of transitive matches"></i>` : '';
             const also = row.also > 1 ? `<span class="nway-gchip also" title="This row has ${Number(row.also)} tags on this axis, so it is listed under each of them">&times;${Number(row.also)}</span>` : '';
@@ -2574,7 +2581,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${g && g.kind === 'same' ? 'nway-ver ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${extra > 0 ? `<span class="dim">+${extra} names</span>` : ''}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>

@@ -35,7 +35,12 @@ from itertools import combinations
 import numpy as np
 
 from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
-from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, _LRU, BadParams
+from bsimvis.app.services.nway_diff_service import (
+    _DEFAULT_NAME,
+    _LRU,
+    _SUFFIX,
+    BadParams,
+)
 from bsimvis.app.services.nway_match import PairEdges, concat_edges
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
@@ -54,8 +59,6 @@ UNTAGGED = "(no tag)"
 # Grouped tree per (doc, filtered rows, group params): opening a group or
 # scrolling only rebuilds the flat entry list.
 _CACHE = _LRU(8)
-
-_SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 
 
 def _bits(mask, n):

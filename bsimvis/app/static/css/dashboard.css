@@ -3678,6 +3678,8 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-schips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 4px; }
 .nway-schip { font: 0.7rem 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--card-bg); }
 .nway-schip.fn { border-radius: 3px; }
+.nway-nconf { font: 0.65rem sans-serif; margin-left: 5px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--token-warning); color: var(--token-warning); white-space: nowrap; }
+.nway-nconf.hi { background: var(--token-warning); color: var(--bg, #fff); }
 .nway-var { font: 0.65rem sans-serif; font-style: normal; margin-left: 5px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--subtle, #888); white-space: nowrap; }
 .nway-schip.ext { border-style: dashed; font-style: italic; cursor: default; }
 .nway-siglbl { font-size: 0.7rem; min-width: 74px; }

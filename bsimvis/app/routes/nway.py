@@ -20,7 +20,7 @@ from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
 from bsimvis.app.services.bin_sim_tags import merge_tag_fields, tag_axis
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
-from bsimvis.app.services.tag_taxonomy import tag_in_scope
+from bsimvis.app.services.tag_taxonomy import tag_body, tag_in_scope, tag_prefixes
 
 # A stored cluster only names a row when its members agree this much.
 CLUSTER_NAME_MIN_COHESION = 0.8
@@ -265,6 +265,38 @@ def _tag_axis_counts(fmeta):
     return {axis: len(values) for axis, values in tags.items()}
 
 
+# ponytail: tag levels per axis, page the facet tree if an axis outgrows it
+FACET_CAP = 400
+
+
+def _tag_facets(tagged, passes):
+    """{axis: [[level id, parent id, rows]]}, every tag level the rows carry, busiest first.
+
+    An axis is counted over the rows that pass the *other* axes' scope, so a count
+    reads as what checking that level adds.
+    """
+    count = {}
+    for tags, ok in zip(tagged, passes):
+        levels = {}
+        for t in tags:
+            chain = tag_prefixes(t) + [tag_body(t)[0]]
+            for i, c in enumerate(chain):
+                levels[c] = (tag_axis(t), chain[i - 1] if i else "")
+        for c, (axis, parent) in levels.items():
+            if all(v for a, v in ok.items() if a != axis):
+                count.setdefault(axis, {}).setdefault(c, [parent, 0])[1] += 1
+    # a parent holds at least its child's rows, so the cap never orphans a kept level
+    return {
+        axis: [
+            [c, p, n]
+            for c, (p, n) in sorted(
+                levels.items(), key=lambda x: (-x[1][1], len(x[0]))
+            )[:FACET_CAP]
+        ]
+        for axis, levels in count.items()
+    }
+
+
 def _row_clusters(r, rows, fmeta, pool_id, args):
     """Function clusters of the paged rows: {row index: [uuid]}, plus the uuid -> card map.
 
@@ -435,11 +467,6 @@ def _page(doc, args, r=None, pool_id=None):
             return False
         if sup_min is not None and row["support"] < sup_min:
             return False
-        fids = list(_row_fids(row))
-        if tag_scope:
-            tags = _fids_tags(fids, fmeta)
-            if not any(tag_in_scope(t, p) for t in tags for p in tag_scope):
-                return False
         return True
 
     filtered = [r for r in rows if keep(r)]
@@ -464,6 +491,24 @@ def _page(doc, args, r=None, pool_id=None):
 
         filtered = [row for row in filtered if hit(row)]
         page_clusters = False
+
+    # tags: OR inside one axis, AND across axes; facets are counted before the cut
+    facets = None
+    if tag_scope or args.get("facets") == "1":
+        by_axis = {}
+        for p in tag_scope:
+            by_axis.setdefault(tag_axis(p), []).append(p)
+        tagged = [_fids_tags(list(_row_fids(row)), fmeta) for row in filtered]
+        passes = [
+            {
+                a: any(tag_in_scope(t, p) for t in tags for p in ps)
+                for a, ps in by_axis.items()
+            }
+            for tags in tagged
+        ]
+        if args.get("facets") == "1":
+            facets = _tag_facets(tagged, passes)
+        filtered = [row for row, ok in zip(filtered, passes) if all(ok.values())]
 
     sort_col = args.get("sort_col")
     if ctx and sort_col in STAT_SORTS:
@@ -552,6 +597,7 @@ def _page(doc, args, r=None, pool_id=None):
         "scope": scope,
         "counts": counts,
         "tag_axis_counts": doc["tag_axis_counts"],
+        "tag_facets": facets,
         "columns": doc["columns"],
         "columns_mode": doc["columns_mode"],
         "file_columns": doc["file_columns"],

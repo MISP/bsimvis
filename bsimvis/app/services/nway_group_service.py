@@ -318,13 +318,13 @@ def _row_tags(row, fmeta, axis):
     return ranked[:TAG_FANOUT]
 
 
-def _tag_path(tag):
-    """Two nesting levels of a tag, below its namespace: `yara:botnet` > `yara:botnet:mirai`."""
+def _tag_path(tag, depth=2):
+    """`depth` nesting levels of a tag, below its namespace: `yara:botnet` > `yara:botnet:mirai`."""
     chain = tag_prefixes(tag) + [tag_body(tag)[0]]
-    return chain[1:3] or chain[-1:]
+    return chain[1 : 1 + depth] or chain[-1:]
 
 
-def tag_groups(rows, fmeta, n, sort, axis, axis_b=""):
+def tag_groups(rows, fmeta, n, sort, axis, axis_b="", depth=2):
     """Tag tree on `axis`; with `axis_b`, `axis` top level crossed with the other's."""
     for a in (axis, axis_b):
         if a and a not in AXES:
@@ -357,7 +357,7 @@ def tag_groups(rows, fmeta, n, sort, axis, axis_b=""):
                 for b in tops
             ]
         else:
-            paths = [_tag_path(a) for a in a_tags]
+            paths = [_tag_path(a, depth) for a in a_tags]
         # two tags can share their first two levels: list the row once per path
         paths = [list(p) for p in dict.fromkeys(map(tuple, paths))] or [[UNTAGGED]]
         also[id(row)] = len(paths)
@@ -624,7 +624,13 @@ def _level(mode, units, ctx):
             units, ctx["n"], ctx["sort"], ctx["lane_min"], ctx["lane_fit"]
         )
     return tag_groups(
-        units, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
+        units,
+        ctx["fmeta"],
+        ctx["n"],
+        ctx["sort"],
+        ctx["axis"],
+        ctx["axis_b"],
+        ctx["tag_depth"],
     )
 
 
@@ -1219,6 +1225,7 @@ def group_rows(rows, doc, r, mode, params):
         "fmeta": doc["fmeta"],
         "axis": params.get("group_axis") or "origin",
         "axis_b": params.get("group_axis_b") or "",
+        "tag_depth": 2,
         "merge": bool(evidence),
         "note": "",
         "prefix_min": PREFIX_MIN,
@@ -1270,6 +1277,11 @@ def group_rows(rows, doc, r, mode, params):
             ctx["lane_fold"] = max(0, int(params["group_lane_fold"]))
         except ValueError:
             raise BadParams("group_lane_fold must be an integer")
+    if params.get("group_tag_depth"):
+        try:
+            ctx["tag_depth"] = max(1, min(8, int(params["group_tag_depth"])))
+        except ValueError:
+            raise BadParams("group_tag_depth must be an integer")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))

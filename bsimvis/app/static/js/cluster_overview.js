@@ -364,6 +364,10 @@
         const { ok, d } = await f.promise;
         if (done) done();
         if (stale()) return;
+        if (!ok && d.error === 'needs_build') {
+            NwayPanel.buildGate(el.querySelector('#cov-fn-body'), d, qs, () => ClusterDetailView.renderOverviewTab());
+            return;
+        }
         if (!ok) {
             const msg = d.error === 'too_large'
                 ? `Too many files to align here (${num(d.members)}). The Functions tab groups them by sub-cluster.`

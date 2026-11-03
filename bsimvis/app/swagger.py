@@ -2748,6 +2748,26 @@ class BinSimNwayCancel(Resource):
         return cancel_nway()
 
 
+@ns_bin_sim.route("/nway/build")
+class BinSimNwayBuild(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
+        }
+    )
+    def post(self):
+        """Build a large set's N-way as a NWAY_BUILD job.
+
+        A set over `nway.auto_build_max_members` files is never built by a request:
+        `/nway` (and every call that reads its doc) answers 428 `needs_build` until
+        this job ran. Answers `{status: ready}` when built, else the job `id` and the
+        `progress_id` that `/nway/progress` and `/nway/cancel` take.
+        """
+        from bsimvis.app.routes.nway import post_nway_build
+
+        return post_nway_build()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(

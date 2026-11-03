@@ -6862,6 +6862,95 @@ def _check_runtime_unweighted_matching():
     )
 
 
+def test_nway_build_job():
+    """A set over `nway.auto_build_max_members` is built by a NWAY_BUILD job only.
+
+    Run in-process with the threshold patched to 1, so the two fixture files
+    count as a large set: requests answer 428, the job runner builds once and
+    keeps the doc in Redis, and later requests read it without touching Kvrocks.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-sext – N-way build job (large sets)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – nway build checks skipped.", YELLOW))
+        return
+    from flask import Flask
+    from bsimvis.app.routes import nway as nway_routes
+    from bsimvis.app.services import nway_diff_service as nds
+    from bsimvis.app.routes.bin_sim import job_service
+    from bsimvis.app.services.redis_client import get_raw_queue_redis
+
+    args = {"md5s": f"{file_md5},{file_md5_2}", "collection": COLLECTION}
+    app = Flask(__name__)
+    call = lambda fn: _unwrap(fn, app, args)
+    real = (nds.auto_build_max, job_service.enqueue_job, nds._load_base)
+    loads = []
+    nds.auto_build_max = lambda: 1
+    job_service.enqueue_job = lambda *a, **k: None  # the live worker must not race us
+    nds.invalidate()
+    key = jid = None
+    try:
+        body, status = call(nway_routes.get_nway)
+        key = body.get("key")
+        check(
+            "nway build: a large set is refused with 428 needs_build",
+            status == 428 and body.get("error") == "needs_build" and not body["job"],
+            f"HTTP {status} {str(body)[:200]}",
+        )
+        if status != 428:
+            return
+        if key:
+            get_raw_queue_redis().delete(f"nway:built:base:{key}")
+        queued, status = call(nway_routes.post_nway_build)
+        jid = queued.get("id")
+        again, _ = call(nway_routes.get_nway)
+        check(
+            "nway build: the job is queued and /nway re-attaches to it",
+            status == 202
+            and jid
+            and (again.get("job") or {}).get("id") == jid
+            and (again.get("job") or {}).get("progress_id") == queued["progress_id"],
+            f"HTTP {status} {queued} / {again.get('job')}",
+        )
+        payload = json.loads(job_service.r.hget(f"job:{jid}", "payload"))
+        ok = nway_routes.run_build_job(payload, job_service, jid)
+        job_service.complete_job(jid)
+        check(
+            "nway build: the job builds and keeps the base in Redis",
+            ok and get_raw_queue_redis().exists(f"nway:built:base:{key}"),
+            f"ok={ok}",
+        )
+        nds._load_base = lambda *a, **k: loads.append(1) or real[2](*a, **k)
+        nds.invalidate()
+        page, status = call(nway_routes.get_nway)
+        ready, _ = call(nway_routes.post_nway_build)
+        check(
+            "nway build: once built, /nway serves it without reading Kvrocks again",
+            status == 200 and page.get("total") is not None and not loads,
+            f"HTTP {status} loads={len(loads)} {str(page)[:200]}",
+        )
+        check(
+            "nway build: /nway/build answers ready for a built set",
+            ready.get("status") == "ready",
+            str(ready),
+        )
+    finally:
+        nds.auto_build_max, job_service.enqueue_job, nds._load_base = real
+        nds.invalidate()
+        if key:
+            get_raw_queue_redis().delete(f"nway:built:base:{key}")
+            get_raw_queue_redis().delete(f"nway:build_job:{key}")
+
+
+def _unwrap(fn, app, args):
+    """(body, status) of a route function run in a synthetic request."""
+    with app.test_request_context(query_string=args):
+        res = fn()
+    return res if isinstance(res, tuple) else (res, 200)
+
+
 def test_llm_pair_analysis_job():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-bis-2 – LLM pair analysis job contract", BOLD))
@@ -10088,6 +10177,7 @@ if __name__ == "__main__":
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
+        test_nway_build_job,
         test_llm_pair_analysis_job,
         test_search_job,
         test_bin_sim_notes_and_tags,
@@ -10121,6 +10211,7 @@ if __name__ == "__main__":
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
+        "test_nway_build_job": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],

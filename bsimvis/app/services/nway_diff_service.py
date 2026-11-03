@@ -11,15 +11,18 @@ or above `min_features`, exact FunctionID-hash matches below it, pairwise greedy
 then the bin-level discovery pass. It works for any set, whatever collections the
 files live in. Nothing is written to Kvrocks in either mode.
 
-`compute` is pure (no Flask, JSON-serialisable result) so a worker job can call
-it unchanged later; only the cache in front of it would move to Redis.
+`compute` is pure (no Flask), so a worker job calls it unchanged. A set over
+`nway.auto_build_max_members` files is never built on demand: a NWAY_BUILD job
+builds it once and keeps its base + matched rows in Redis (`nway:built:*`).
 """
 
 import hashlib
 import json
+import pickle
 import re
 import statistics
 import threading
+import zlib
 
 import numpy as np
 from collections import Counter, OrderedDict, defaultdict
@@ -47,6 +50,7 @@ from bsimvis.app.services.collection_config import (
 )
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.nway_match import PairEdges, nway_match
+from bsimvis.app.services.redis_client import get_raw_queue_redis
 
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
@@ -78,6 +82,15 @@ class TooLarge(Exception):
 
 class BadParams(ValueError):
     pass
+
+
+class NeedsBuild(Exception):
+    """A large set with no built doc yet: queue a NWAY_BUILD job (see `compute`)."""
+
+    def __init__(self, members, key):
+        super().__init__(f"{members} members: build it as a job")
+        self.members = members
+        self.key = key
 
 
 class MemberMissing(Exception):
@@ -172,6 +185,25 @@ def _single_flight(key, build):
         with _FLIGHTS_LOCK:
             _FLIGHTS.pop(key, None)
         flight["done"].set()
+
+
+BUILT_TTL = 7 * 24 * 3600
+
+
+def auto_build_max():
+    """Above this many files a set is built by a job, never by a request."""
+    return int(config_service.get("nway.auto_build_max_members", 50))
+
+
+def _built(kind, key):
+    raw = get_raw_queue_redis().get(f"nway:built:{kind}:{key}")
+    # pickle: only this module writes these keys (app or worker), never a client
+    return pickle.loads(zlib.decompress(raw)) if raw else None
+
+
+def _keep_built(kind, key, value):
+    raw = zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)
+    get_raw_queue_redis().setex(f"nway:built:{kind}:{key}", BUILT_TTL, raw)
 
 
 def invalidate():
@@ -1243,15 +1275,32 @@ def compute(r, scope, members, params=None):
     if doc is not None:
         return doc
 
+    # Large sets: the base (all the Kvrocks reads) comes from a job only, so a
+    # call-graph walk or a reload never re-reads every pair; matched rows for a
+    # new min_edge are CPU only and are kept next to it.
+    big = len(members) > auto_build_max()
+    bkey = hashlib.md5(repr(base_key).encode()).hexdigest()
+    rkey = hashlib.md5(repr(base_key + (min_edge,)).encode()).hexdigest()
+
     def build():
         base = _BASE_CACHE.get(base_key)
+        if base is None and big:
+            base = _built("base", bkey)
         if base is None:
+            if big and not params.get("build"):
+                raise NeedsBuild(len(members), bkey)
             base = _load_base(r, scope, members, vparams, labels, warnings, sample)
-            _BASE_CACHE.put(base_key, base)
+            if big:
+                _keep_built("base", bkey, base)
+        _BASE_CACHE.put(base_key, base)
         rows = _MATCH_CACHE.get(base_key + (min_edge,))
+        if rows is None and big:
+            rows = _built("rows", rkey)
         if rows is None:
             rows = _match(base, min_edge)
-            _MATCH_CACHE.put(base_key + (min_edge,), rows)
+            if big:
+                _keep_built("rows", rkey, rows)
+        _MATCH_CACHE.put(base_key + (min_edge,), rows)
         return base, rows
 
     base, rows = _single_flight(base_key + (min_edge,), build)

@@ -307,7 +307,7 @@
                 this.data = null;
             }
             if (this.cgInit) {
-                if (this.error) this.el.innerHTML = this._renderError();
+                if (this.error) { this.el.innerHTML = this._renderError(); this._mountGate(); }
                 else this._cgStart(this.cgInit.name, this.cgInit.cells, this.cgInit, this.el);
                 return;
             }
@@ -316,6 +316,7 @@
 
         _renderError() {
             const e = this.error;
+            if (e.error === 'needs_build') return '<div class="nway-build-gate"></div>';
             if (e.status === 413) {
                 const kids = (e.children || []).map(c => {
                     const uuid = c.cluster_uuid || c.uuid || '';
@@ -329,6 +330,12 @@
             }
             const msg = e.missing ? `Unknown files: ${e.missing.join(', ')}` : (e.message || e.error || `HTTP ${e.status}`);
             return `<div class="nway-note err">${escapeHtml(msg)}</div>`;
+        }
+
+        // A large set not built yet: the Build button / running job card in place of the table.
+        _mountGate() {
+            const host = this.error && this.el.querySelector('.nway-build-gate');
+            if (host) NwayPanel.buildGate(host, this.error, this._listQs(), () => this.load());
         }
 
         _count(tab) {
@@ -2840,6 +2847,7 @@
         _renderPanel() {
             if (this.error) {
                 this.el.innerHTML = `<div class="nway-panel">${this._renderError()}</div>`;
+                this._mountGate();
                 return;
             }
             const d = this.data;
@@ -2859,6 +2867,7 @@
                     <div class="table-footer">
                         <div class="table-footer-left">${window.Paging.footer({ offset: off, total, size: PAGE, shown: d.items.length })}</div>
                         <div class="table-footer-right">
+                            <span class="nway-build-status"></span>
                             <span class="table-footer-sel selection-stats" style="display:none;"></span>
                         </div>
                     </div>
@@ -3138,17 +3147,19 @@
      * The "Matching functions" card of a `/nway` call sent with `progress_id=pid`,
      * appended to `host`: server fraction when reported, else elapsed time against
      * the last run's duration. Cancel stops the server side and calls `onCancel`.
-     * Returns `done()`, which removes the card.
+     * Returns `done()`, which removes the card. `job`: the NWAY_BUILD job id feeding
+     * `pid` instead of a live call; Cancel cancels that job too, and there is no timeout.
      */
-    NwayPanel.busy = function (host, pid, { inline = true, onCancel } = {}) {
+    NwayPanel.busy = function (host, pid, { inline = true, onCancel, job } = {}) {
         const t0 = Date.now(), usual = NwayPanel._lastMs;
         let prog = null, polling = false;
         const b = document.createElement('div');
         b.className = 'nway-busy' + (inline ? ' inline' : '');
-        b.innerHTML = '<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> Matching functions<button type="button" class="nway-busy-cancel" title="Stop this computation"><i class="fa-solid fa-xmark"></i> Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>';
+        b.innerHTML = `<div class="nway-busy-head"><i class="fa-solid fa-spinner fa-spin"></i> ${job ? 'Building N-way (background job)' : 'Matching functions'}<button type="button" class="nway-busy-cancel" title="Stop this computation"><i class="fa-solid fa-xmark"></i> Cancel</button></div><div class="nway-bar-track"><div class="nway-bar-fill"></div></div><div class="nway-busy-foot"><span class="nway-busy-l"></span><span class="nway-busy-r"></span></div>`;
         host.appendChild(b);
         b.querySelector('.nway-busy-cancel').onclick = () => {
             fetch(`/api/bin_sim/nway/cancel?id=${pid}`, { method: 'POST' }).catch(() => { });
+            if (job) fetch(`/api/jobs/${encodeURIComponent(job)}/cancel`, { method: 'POST' }).catch(() => { });
             if (onCancel) onCancel();
         };
         const tick = () => {
@@ -3158,9 +3169,9 @@
             fill.style.width = f ? `${Math.max(2, Math.round(f * 100))}%` : '';
             const right = [f ? `${Math.round(f * 100)}%` : '', `${Math.round(el)}s`];
             if (f > 0.1 && el > 2) right.push(`~${Math.max(1, Math.round(el * (1 - f) / f))}s left`);
-            else if (!f && usual) right.push(`usually ~${Math.max(1, Math.round(usual / 1000))}s`);
-            b.querySelector('.nway-busy-l').textContent = f ? prog.label : 'Starting...';
-            b.querySelector('.nway-busy-r').textContent = right.filter(Boolean).join(' · ') + ` · times out at ${NWAY_TIMEOUT_MS / 1000}s`;
+            else if (!f && usual && !job) right.push(`usually ~${Math.max(1, Math.round(usual / 1000))}s`);
+            b.querySelector('.nway-busy-l').textContent = f ? prog.label : job ? 'Waiting for a worker...' : 'Starting...';
+            b.querySelector('.nway-busy-r').textContent = right.filter(Boolean).join(' · ') + (job ? '' : ` · times out at ${NWAY_TIMEOUT_MS / 1000}s`);
             if (!polling) {
                 polling = true;
                 fetch(`/api/bin_sim/nway/progress?id=${pid}`).then(r => r.json()).then(p => { if (p.label) prog = p; }).catch(() => { }).finally(() => { polling = false; });
@@ -3169,6 +3180,49 @@
         tick();
         const timer = setInterval(tick, 500);
         return () => { clearInterval(timer); b.remove(); };
+    };
+
+    /**
+     * The 428 `needs_build` answer of a large set (`err`, from any N-way call) in `host`:
+     * a Build button that queues the NWAY_BUILD job for the call's params `qs`, then
+     * the same progress card as a live call, fed by the job. A running job (a reload,
+     * another tab) is re-attached; `onReady()` once the set is built.
+     */
+    NwayPanel.buildGate = function (host, err, qs, onReady) {
+        const q = new URLSearchParams(qs);
+        for (const k of ['progress_id', 'limit', 'offset']) q.delete(k);
+        const ask = (note = '') => {
+            host.innerHTML = `<div class="nway-note warn"><b>Large set: ${Number(err.members)} files</b> (over ${Number(err.limit)}, <code>nway.auto_build_max_members</code>). Its N-way is built once as a background job; the table, call graph and function views then read that result.${note ? `<div style="margin-top:4px;">${escapeHtml(note)}</div>` : ''}<div style="margin-top:8px;"><button type="button" class="btn-action nway-build-btn"><i class="fa-solid fa-hammer"></i> Build N-way</button></div></div>`;
+            host.querySelector('.nway-build-btn').onclick = start;
+        };
+        const start = async () => {
+            host.querySelector('.nway-build-btn').disabled = true;
+            try {
+                const res = await fetch(`/api/bin_sim/nway/build?${q}`, { method: 'POST' });
+                const d = await res.json().catch(() => ({}));
+                if (!res.ok) return ask(d.message || d.error || `HTTP ${res.status}`);
+                if (d.status === 'ready') return onReady();
+                if (window.updateJobStatusIcon) window.updateJobStatusIcon();
+                watch(d);
+            } catch (e) { ask(String(e)); }
+        };
+        const watch = job => {
+            host.innerHTML = '';
+            const done = NwayPanel.busy(host, job.progress_id, { inline: true, job: job.id });
+            const poll = async () => {
+                if (!host.isConnected) return done();
+                const j = await fetch(`/api/jobs/${encodeURIComponent(job.id)}`).then(r => r.json()).catch(() => ({}));
+                if (!host.isConnected) return done();
+                if (j.status === 'completed') { done(); return onReady(); }
+                if (j.status === 'failed' || j.status === 'cancelled') {
+                    done();
+                    return ask(j.status === 'failed' ? `Last build failed: ${j.error || 'see Jobs'}` : 'Build cancelled.');
+                }
+                setTimeout(poll, 2000);
+            };
+            setTimeout(poll, 1000);
+        };
+        if (err.job) watch(err.job); else ask();
     };
 
     NwayPanel.urlForFunctions = function (fids, ref) {

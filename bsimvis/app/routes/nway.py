@@ -719,8 +719,13 @@ def get_column_axes():
     }
 
 
-def _load_doc():
-    """Parse the shared N-way params and compute the doc: (doc, redis, pool_id)."""
+def _load_doc(build=False, on_progress=None):
+    """Parse the shared N-way params and compute the doc: (doc, redis, pool_id).
+
+    `build` lets a large set build (the NWAY_BUILD job); a request for one that
+    is not built answers 428 `needs_build`. `on_progress(frac, label)` also gets
+    each progress step.
+    """
     pool_id = request.args.get("pool")
     collection = request.args.get("collection")
     cluster_uuid = (request.args.get("cluster_uuid") or "").strip().lower()
@@ -775,6 +780,8 @@ def _load_doc():
                 if q.exists(f"nway:cancel:{pid}"):
                     raise _Cancelled()
                 q.setex(f"nway:progress:{pid}", 120, json.dumps([frac, label]))
+                if on_progress:
+                    on_progress(frac, label)
 
         nway_diff_service.set_progress(report)
     try:
@@ -840,7 +847,22 @@ def _load_doc():
                 "child_presence": max(0.0, min(1.0, presence)),
                 "pair_k": None if pair_k is None else max(0, pair_k),
                 "groups_mode": "by" if columns == "by" else "children",
+                "build": build,
             },
+        )
+    except nway_diff_service.NeedsBuild as e:
+        raise _Reply(
+            (
+                {
+                    "error": "needs_build",
+                    "message": f"{e.members} files: build this N-way as a job",
+                    "members": e.members,
+                    "key": e.key,
+                    "limit": nway_diff_service.auto_build_max(),
+                    "job": _build_job(e.key),
+                },
+                428,
+            )
         )
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
@@ -873,6 +895,89 @@ def _load_doc():
             "No sub-cluster splits these files: their smallest shared cluster holds them directly."
         )
     return doc, r, pool_id
+
+
+def _build_job(key):
+    """The live NWAY_BUILD job of a set (`NeedsBuild.key`), or None."""
+    from bsimvis.app.routes.bin_sim import job_service
+    from bsimvis.app.services.job_service import JobStatus
+
+    jid = get_queue_redis().get(f"nway:build_job:{key}")
+    job = job_service.r.hgetall(f"job:{jid}") if jid else {}
+    if job.get("status") not in (JobStatus.PENDING.value, JobStatus.RUNNING.value):
+        return None
+    payload = json.loads(job.get("payload") or "{}")
+    return {
+        "id": jid,
+        "status": job["status"],
+        "progress_id": payload.get("args", {}).get("progress_id"),
+    }
+
+
+def post_nway_build():
+    """Queue the NWAY_BUILD job of a large set (same params as `/nway`)."""
+    from bsimvis.app.routes.bin_sim import job_service
+    from bsimvis.app.services.job_service import JobType
+
+    try:
+        _load_doc()
+        return {"status": "ready"}
+    except _Reply as e:
+        body, status = e.args[0]
+        if body.get("error") != "needs_build":
+            return body, status
+    if body["job"]:
+        return {"status": "queued", **body["job"]}
+    args = request.args.to_dict()
+    # one progress id per set, so a reload re-attaches to the running build
+    args["progress_id"] = hashlib.md5(body["key"].encode()).hexdigest()[:20]
+    payload = {
+        "args": args,
+        "key": body["key"],
+        "members": body["members"],
+        "priority": "high",
+    }
+    if args.get("pool"):
+        payload["pool_id"] = args["pool"]
+    elif args.get("collection"):
+        payload["collection"] = args["collection"]
+    # ponytail: check-then-set, two clicks in the same instant can queue twice
+    jid = job_service.create_job(JobType.NWAY_BUILD, payload, enqueue=False)
+    get_queue_redis().setex(
+        f"nway:build_job:{body['key']}", nway_diff_service.BUILT_TTL, jid
+    )
+    get_queue_redis().delete(f"nway:cancel:{args['progress_id']}")
+    job_service.enqueue_job(jid)
+    return {
+        "status": "queued",
+        "id": jid,
+        "progress_id": args["progress_id"],
+    }, 202
+
+
+def run_build_job(payload, job_service, job_id):
+    """Worker side of NWAY_BUILD: compute the doc once, `compute` keeps it in Redis."""
+    from flask import Flask
+
+    def progress(frac, label):
+        if job_service.is_cancelled(job_id):
+            raise _Cancelled()
+        job_service.update_progress(job_id, int(frac * 100))
+
+    job_service.add_log(job_id, f"Building the N-way of {payload['members']} files")
+    try:
+        with Flask(__name__).test_request_context(query_string=payload["args"]):
+            _load_doc(build=True, on_progress=progress)
+    except _Cancelled:
+        job_service.cancel_job(job_id)
+        return False
+    except _Reply as e:
+        body, status = e.args[0]
+        raise RuntimeError(f"{status}: {body.get('message') or body.get('error')}")
+    finally:
+        # the doc now lives in Redis; the worker has no use for its copy
+        nway_diff_service.invalidate()
+    return True
 
 
 def get_nway_progress():

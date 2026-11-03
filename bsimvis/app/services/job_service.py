@@ -56,6 +56,7 @@ class JobType(Enum):
     SEARCH_CLASSIFY = "search_classify"
     SCAN = "scan"
     SCAN_CONTAINER = "scan_container"
+    NWAY_BUILD = "nway_build"
 
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the

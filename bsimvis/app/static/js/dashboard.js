@@ -3809,6 +3809,19 @@ window.addEventListener('load', () => {
         }
     };
 
+    // Footer chip of the running/queued N-way builds (NWAY_BUILD jobs), in every
+    // `.nway-build-status` host: the main footer and the N-way table footer.
+    let nwayBuilds = [];
+    window.renderNwayBuildStatus = (jobs) => {
+        if (jobs) nwayBuilds = jobs.filter(j => j.type === 'nway_build');
+        document.querySelectorAll('.nway-build-status').forEach(el => {
+            el.innerHTML = nwayBuilds.map(j => {
+                const run = j.status === 'running';
+                return `<span class="table-footer-badge" style="cursor:pointer;" title="N-way build job ${escapeAttr(j.id)} (click for details)" onclick="window.showJobDetails && window.showJobDetails(${escapeAttr(JSON.stringify(j.id))})"><i class="fa-solid ${run ? 'fa-circle-notch fa-spin' : 'fa-clock'}"></i> N-way build ${run ? `${Number(j.progress) || 0}%` : 'queued'}</span>`;
+            }).join('');
+        });
+    };
+
     let jobStatusInFlight = false;
     window.updateJobStatusIcon = async () => {
         // ponytail: one poll at a time. Without this, a slow /api/jobs/stats lets
@@ -3913,6 +3926,7 @@ window.addEventListener('load', () => {
                     .join(' ');
             };
 
+            window.renderNwayBuildStatus(activeJobList);
             const matchingJob = activeJobList.find(job => isJobInContext(job) && isJobRelevant(job));
             const statusBadge = document.getElementById('view-job-status');
             if (statusBadge) {

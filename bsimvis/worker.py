@@ -986,6 +986,11 @@ class Worker:
                 job_id=job_id,
             )
 
+        elif jtype == JobType.NWAY_BUILD.value:
+            from bsimvis.app.routes.nway import run_build_job
+
+            return run_build_job(payload, self.job_service, job_id)
+
         elif jtype == JobType.SEARCH_CLASSIFY.value:
             from bsimvis.app.services.search_service import search_service
 

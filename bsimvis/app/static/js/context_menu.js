@@ -1374,6 +1374,18 @@
         return true;
     };
 
+    // The entity a cell stands for: its only one, or in a stacked cell (file A
+    // over file B) the one on the clicked line. A row of file squares is
+    // ambiguous and gets none.
+    const cellEntity = (cell, y) => {
+        const one = (els) => (new Set(els.map(el => el.dataset.entityData)).size === 1 ? els[0] : null);
+        const ents = [...cell.querySelectorAll('[data-entity-data]')].filter(el => !el.parentElement.closest('[data-entity-data]'));
+        if (ents.length < 2) return ents[0] || null;
+        const dist = ents.map(el => { const b = el.getBoundingClientRect(); return Math.max(0, b.top - y, y - b.bottom); });
+        const min = Math.min(...dist);
+        return one(ents) || one(ents.filter((el, i) => dist[i] === min));
+    };
+
     window.applyContextCellFilter = () => {
         const cell = window.currentContextMenu?.data?.__cell;
         if (cell && applyCellFilter(cell.filterCell, cell.value)) {
@@ -1387,6 +1399,15 @@
         // EntityRenderer owns its rows. Let its bubble handler open the unified
         // menu, which now includes this cell's filter/copy operations.
         if (event.target.closest('[data-entity-data]')) return;
+        // A right-click on a cell's padding means the cell's entity. Re-fire it
+        // there so every entity handler (inline or listener) runs, instead of
+        // the bare cell menu below swallowing the event.
+        const ent = cellEntity(cell, event.clientY);
+        if (ent && !ent.dispatchEvent(new MouseEvent('contextmenu', event))) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
         const value = cellValue(cell, event.target);
         if (!value) return;
 

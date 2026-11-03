@@ -1642,6 +1642,65 @@ class SimilaritySearch(Resource):
         return similarity_search()
 
 
+@ns_similarity.route("/discover")
+class SimilarityDiscover(Resource):
+    @ns_similarity.doc(
+        params={
+            "collection": {
+                "description": "Anchor function's collection",
+                "required": True,
+            },
+            "md5": {"description": "Anchor function's file md5", "required": True},
+            "address": {"description": "Anchor function's address", "required": True},
+            "pool": "Discover across this pool's member collections instead",
+            "min_score": "Floor; clamped up to similarity.discovery_min_score",
+            "max_score": "Upper bound on the live score",
+            "limit": "Rows returned (default 50, max 1000)",
+            "cross_binary": "true / false",
+        }
+    )
+    def get(self):
+        """Live similar functions below the stored edges' min_score (read-only).
+
+        Any /api/function/search filter (name, func_tag, file_name, q, ...) also
+        applies, to the partner function. Partners that already have a stored
+        edge are left out; rows have
+        `live: true` and no `sid`. Save one with POST /discover/persist.
+        """
+        from bsimvis.app.routes.function_similarity import discover_similar
+
+        return discover_similar()
+
+
+@ns_similarity.route("/discover/persist")
+class SimilarityDiscoverPersist(Resource):
+    @ns_similarity.expect(
+        api.model(
+            "SimilarityDiscoverPersistRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "md5": fields.String(required=True),
+                "address": fields.String(required=True),
+                "partner_ids": fields.List(
+                    fields.String,
+                    required=True,
+                    example=["main:func:0ed905e8abcdef12:00101144"],
+                ),
+                "pool": fields.String(),
+            },
+        )
+    )
+    def post(self):
+        """Stores live-discovered pairs as real edges tagged `discovered`.
+
+        Scores are recomputed server-side; pairs below the discovery floor or
+        already stored are reported under `skipped`.
+        """
+        from bsimvis.app.routes.function_similarity import persist_discovered
+
+        return persist_discovered()
+
+
 @ns_similarity.route("/tag")
 class SimilarityTag(Resource):
     @ns_similarity.expect(

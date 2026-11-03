@@ -855,6 +855,213 @@ def test_function_search_unindexed_cluster():
         r.delete(*keys)
 
 
+def test_function_live_discovery():
+    """/api/similarity/discover + /discover/persist on a synthetic collection.
+
+    Vectors are 10 unit-tf features each, so unweighted cosine = shared / 10:
+    B shares 7 (0.7, below the 0.9 build threshold, above the discovery floor),
+    C shares 10 (1.0, stored up front), D shares 3 (0.3, below the floor).
+    """
+    from bsimvis.app.services.pool_service import pool_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Live below-threshold similarity discovery", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"live_disc_{uuid.uuid4().hex[:8]}"
+    algo = "unweighted_cosine"
+    r.hset(
+        f"global:collection:{coll}:meta",
+        mapping={"algo": algo, "min_features": 5, "min_score": 0.9},
+    )
+    feats = [f"h{i:02d}" for i in range(20)]
+    funcs = {
+        "a": feats[0:10],
+        "b": feats[0:7] + feats[10:13],
+        "c": feats[0:10],
+        "d": feats[0:3] + feats[13:20],
+    }
+    fid = {k: f"{coll}:func:md5{k}:00{k}" for k in funcs}
+    for k, fs in funcs.items():
+        f = fid[k]
+        r.zadd(f"{f}:vec:tf", {h: 1 for h in fs})
+        r.set(f"{f}:vec:norm", str(len(fs) ** 0.5))
+        r.zadd(f"{coll}:idx:func:bsim_features_count", {f: len(fs)})
+        r.sadd(f"{coll}:all_functions", f)
+        r.set(
+            f"{f}:meta",
+            json.dumps(
+                {
+                    "function_id": f,
+                    "function_name": f"fn_{k}",
+                    "file_md5": f"md5{k}",
+                    "entrypoint_address": f"00{k}",
+                }
+            ),
+        )
+        for h in fs:
+            r.zadd(f"{coll}:feature:{h}:functions", {f: 1})
+    # Partner filter fixture: only B carries func tag `keepme`.
+    r.sadd(f"{coll}:idx:func:tags:keepme", fid["b"])
+    r.sadd(f"{coll}:reg:func:tags", f"{coll}:idx:func:tags:keepme")
+    # C is an existing stored edge.
+    stored_sid = f"{coll}:sim:{algo}:md5c:00c::md5a:00a"
+    r.zadd(f"{coll}:sim:score:{algo}", {stored_sid: 1.0})
+
+    anchor = {"collection": coll, "md5": "md5a", "address": "00a"}
+    score_key = f"{coll}:sim:score:{algo}"
+
+    body = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, min_score="0.01"),
+            label="GET /api/similarity/discover",
+        )
+        or {}
+    )
+    ids = [p.get("id2") for p in body.get("pairs", [])]
+    floor = body.get("floor")
+    check(
+        "discover: min_score clamps up to the discovery floor",
+        floor is not None and body.get("min_score") == floor,
+        str({k: body.get(k) for k in ("min_score", "floor")}),
+    )
+    check(
+        "discover: sub-threshold partner found live, stored/self/below-floor left out",
+        ids == [fid["b"]]
+        and body["pairs"][0].get("live") is True
+        and abs(body["pairs"][0]["score"] - 0.7) < 1e-6,
+        f"ids={ids} floor={floor}",
+    )
+    check(
+        "discover: writes no similarity",
+        r.zcard(score_key) == 1,
+        f"zcard={r.zcard(score_key)}",
+    )
+
+    kept = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, func_tag="keepme"),
+            label="GET /api/similarity/discover (func_tag)",
+        )
+        or {}
+    )
+    dropped = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, exclude_func_tag="keepme"),
+            label="GET /api/similarity/discover (exclude_func_tag)",
+        )
+        or {}
+    )
+    check(
+        "discover: partner filters use function-search semantics",
+        [p["id2"] for p in kept.get("pairs", [])] == [fid["b"]]
+        and dropped.get("total") == 0,
+        f"kept={kept.get('total')} dropped={dropped.get('total')}",
+    )
+
+    saved = (
+        test_endpoint(
+            "POST",
+            "/api/similarity/discover/persist",
+            data=dict(anchor, partner_ids=[fid["b"], fid["c"], fid["d"]]),
+            label="POST /api/similarity/discover/persist",
+        )
+        or {}
+    )
+    reasons = {s["id"]: s["reason"] for s in saved.get("skipped", [])}
+    check(
+        "persist: saves B, skips stored C and below-floor D",
+        [s["id"] for s in saved.get("saved", [])] == [fid["b"]]
+        and reasons == {fid["c"]: "already_stored", fid["d"]: "below_floor"},
+        str(saved)[:300],
+    )
+    new_sid = f"{coll}:sim:{algo}:md5b:00b::md5a:00a"
+    doc = json.loads(r.get(new_sid) or "{}")
+    check(
+        "persist: one real edge, tagged discovered",
+        r.zcard(score_key) == 2 and "discovered" in (doc.get("user_tags") or []),
+        f"zcard={r.zcard(score_key)} user_tags={doc.get('user_tags')}",
+    )
+    found = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={
+                "collection": coll,
+                "md5": "md5a",
+                "address": "00a",
+                "min_score": "0.5",
+                "sim_tag": "discovered",
+            },
+            label="GET /api/similarity/search (sim_tag=discovered)",
+        )
+        or {}
+    )
+    check(
+        "persist: saved edge visible to /api/similarity/search",
+        found.get("total") == 1,
+        f"total={found.get('total')}",
+    )
+    again = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=anchor,
+            label="GET /api/similarity/discover (after save)",
+        )
+        or {}
+    )
+    check(
+        "discover: a saved partner is no longer live",
+        again.get("total") == 0,
+        f"total={again.get('total')}",
+    )
+
+    # Pool scope: sweeps member collections, persists into the pool namespace.
+    pool_id = f"live_disc_pool_{uuid.uuid4().hex[:6]}"
+    pool_service.create_pool(
+        pool_id, pool_id, [coll], {"func_sim_params": {"algo": algo, "min_features": 5}}
+    )
+    pooled = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, pool=pool_id),
+            label="GET /api/similarity/discover (pool)",
+        )
+        or {}
+    )
+    pool_ids = sorted(p["id2"] for p in pooled.get("pairs", []))
+    check(
+        "discover (pool): finds B and C, the pool has no stored edges yet",
+        pool_ids == sorted([fid["b"], fid["c"]]),
+        f"ids={pool_ids}",
+    )
+    psaved = (
+        test_endpoint(
+            "POST",
+            "/api/similarity/discover/persist",
+            data=dict(anchor, pool=pool_id, partner_ids=[fid["b"]]),
+            label="POST /api/similarity/discover/persist (pool)",
+        )
+        or {}
+    )
+    check(
+        "persist (pool): edge lands in the pool namespace",
+        len(psaved.get("saved", [])) == 1
+        and r.zcard(f"global:pool:{pool_id}:sim:score") == 1,
+        str(psaved)[:200],
+    )
+
+
 def test_cluster_response_contract():
     """Guards the response shape the unified search and homepage read.
 
@@ -10963,6 +11170,7 @@ if __name__ == "__main__":
         test_entrypoint_backfill,
         test_incremental_hierarchical_cluster_equivalence,
         test_function_search_unindexed_cluster,
+        test_function_live_discovery,
         test_cluster_response_contract,
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,

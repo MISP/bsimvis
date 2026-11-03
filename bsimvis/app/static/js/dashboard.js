@@ -3085,7 +3085,12 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
                         onclick="openDiffDirectly(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || ''))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || ''))}, event)"
                         title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
-                    ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
+                    ${p.live ? `
+                    <div style="display:flex; align-items:center; gap:6px; margin-top:3px;">
+                        <input type="checkbox" class="nbr-live-pick" value="${escapeAttr(otherId)}" title="Select for Save selected">
+                        <span class="mono" style="font-size:0.65rem; color:var(--warning, #d97706); border:1px dashed currentColor; border-radius:3px; padding:0 4px;" title="Computed live below the stored edges' min score; not saved">live</span>
+                        <button class="btn-icon" onclick="FunctionView.saveDiscovered([${escapeAttr(jsString(otherId))}])" title="Save as a real similarity edge (tag: discovered)" style="background:none; border:none; color:var(--accent); cursor:pointer; padding:0;"><i class="fa-solid fa-floppy-disk"></i></button>
+                    </div>` : EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
                 </td>
                 <td style="min-width: 300px;">${EntityRenderer.renderFunction(otherData, { hideNote: true })}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(otherAddr)}</span></td>

@@ -146,6 +146,13 @@ skip BSim entirely and get a deterministic 1.0/0 match from their exact Ghidra
 FunctionID hash (`{fid}:funcid` pointer, `{coll}:funcid:{hash}` buckets) — BSim is
 false-positive-prone on tiny functions. Both the collection and pool build paths do this.
 
+Below the stored edges' floor, the function view's Similar tab can discover live:
+`GET /api/similarity/discover` (`SimilarityService.discover_live`, read-only,
+clamped to `similarity.discovery_min_score`) and `POST /api/similarity/discover/persist`
+(recomputes the score, writes through `_persist_and_index_batch`, user tag
+`discovered`). Partner filters reuse `/api/function/search` via its `ids=` param
+(`filter_ids_by_groups`) -- no second filter path.
+
 Binary similarity diff tables are paged, filtered and sorted **server-side**
 (`_page_diff` in `routes/bin_sim.py`). Don't reintroduce full-table client loads.
 

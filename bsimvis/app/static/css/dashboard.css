@@ -3272,7 +3272,8 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-peek-a b { color: var(--text); font-weight: 600; }
 .nway-peek-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes nway-hit { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
-.nway-table tr.nway-grow.nway-hit td { animation: nway-hit 1.6s ease-out; }
+/* What a toggle just opened: its rows, or the cells of its new columns. */
+.nway-table tr.nway-hit > td, .nway-table td.nway-hit, .nway-table th.nway-hit { animation: nway-hit 1.6s ease-out; }
 .nway-table tr.nway-grow.k-lane td:first-child { box-shadow: inset 3px 0 0 var(--lane-c), 1px 0 0 var(--border); }
 .nway-ltag { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; padding: 0 6px; border-radius: 9px; border: 1px solid; }
 .nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }

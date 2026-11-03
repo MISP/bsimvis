@@ -1417,19 +1417,44 @@
         }
 
         // Scroll offsets ride along in sessionStorage so Back (or the breadcrumb) lands where the row was.
+        // Also kept in memory: a toggle that rewrites the URL (col_open) would miss the stored key.
         _scrollSave() {
+            this._scrollMem = this._scrollBoxes().map(b => [b.scrollTop, b.scrollLeft]);
             try {
-                sessionStorage.setItem(`nway:scroll:${window.location.pathname}${window.location.search}`, JSON.stringify(this._scrollBoxes().map(b => b.scrollTop)));
+                sessionStorage.setItem(`nway:scroll:${window.location.pathname}${window.location.search}`, JSON.stringify(this._scrollMem));
             } catch (e) { /* storage blocked: the table just opens at the top */ }
         }
 
         _scrollRestore() {
+            let saved = this._scrollMem;
+            this._scrollMem = null;
             try {
                 const key = `nway:scroll:${window.location.pathname}${window.location.search}`;
-                const saved = JSON.parse(sessionStorage.getItem(key) || 'null');
+                saved = saved || JSON.parse(sessionStorage.getItem(key) || 'null');
                 sessionStorage.removeItem(key);
-                if (saved) this._scrollBoxes().forEach((b, i) => { b.scrollTop = saved[i] || 0; });
-            } catch (e) { /* nothing to restore */ }
+            } catch (e) { /* nothing stored */ }
+            if (saved) this._scrollBoxes().forEach((b, i) => { const [t, l] = [].concat(saved[i] || 0); b.scrollTop = t || 0; b.scrollLeft = l || 0; });
+        }
+
+        // Pulse what a toggle just opened, so the eye finds it after the redraw.
+        _flashCols() {
+            const was = this._colsWas;
+            this._colsWas = null;
+            const table = this.el.querySelector('#nway-table');
+            if (!was || !table) return;
+            const cols = this.data.columns, n = cols.length;
+            const fresh = cols.map((c, i) => (was.ids.has(c.id) ? -1 : i)).filter(i => i >= 0);
+            // everything changed (depth buttons): nothing to point at
+            if (fresh.length && fresh.length < n) table.querySelectorAll('tr').forEach(tr => {
+                const cells = tr.children;
+                if (cells.length < n) return;
+                for (const i of fresh) { const td = cells[cells.length - n + i]; if (td.classList.contains('sq')) td.classList.add('nway-hit'); }
+            });
+            table.querySelectorAll('th.nway-band').forEach(b => { if (!was.bands.has(b.dataset.colx)) b.classList.add('nway-hit'); });
+        }
+
+        _colsMark() {
+            this._colsWas = { ids: new Set(this.data.columns.map(c => c.id)), bands: new Set([...this.el.querySelectorAll('th.nway-band')].map(b => b.dataset.colx)) };
         }
 
         async _cgFetch(focus, role) {
@@ -2366,7 +2391,9 @@
                 items.splice(i + 1, whole ? 0 : items.length, ...rows);
                 if (!whole) while (head.nextElementSibling) head.nextElementSibling.remove();
                 this._gprint = path;
+                const stop = head.nextElementSibling;
                 head.insertAdjacentHTML('afterend', this._rows(rows, i + 1));
+                for (let r = head.nextElementSibling; r && r !== stop; r = r.nextElementSibling) r.classList.add('nway-hit');
             } else if (items.length < PAGE && body.items.length) {
                 Object.assign(d.functions_metadata, body.functions_metadata);
                 Object.assign(d.clusters, body.clusters);
@@ -2742,7 +2769,8 @@
 
         // The columns the user has expanded (ids of column groups); the server answers with their children.
         _colOpen() {
-            try { return new Set(JSON.parse(this.state.col_open || '[]')); } catch (e) { return new Set(); }
+            // no col_open yet: the window fit the server answered (`*fit:N`) is what is open
+            try { return new Set(JSON.parse(this.state.col_open || this._openQ || '[]')); } catch (e) { return new Set(); }
         }
 
         _colToggle(id, openOnly) {
@@ -2751,6 +2779,9 @@
             if ([...open].some(i => i[0] === '*')) open = new Set([...this._tree().byId.values()].filter(n => n.kids.length).map(n => n.id));
             if (openOnly) open.add(id); else if (!open.delete(id)) open.add(id);
             this._scrollSave();
+            this._colsMark();
+            // scroll mode: reload as many rows as were on screen, or the scroll clamps to the first page
+            this._keep = window.Paging.mode() === 'scroll' ? Math.max(PAGE, this.data.items.length) : 0;
             this._set({ col_open: JSON.stringify([...open]), offset: 0 });
         }
 
@@ -2983,6 +3014,7 @@
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
+            this._flashCols();
             if (this._gHit) {
                 const hit = this.el.querySelector(`tr.nway-grow[data-gtoggle="${CSS.escape(this._gHit)}"]`);
                 this._gHit = null;
@@ -3078,6 +3110,7 @@
             this._exp.set(key, body);
             drop();
             tr.insertAdjacentHTML('afterend', this._subRows(key, body));
+            this.el.querySelectorAll(`tr[data-sub="${CSS.escape(key)}"]`).forEach(x => x.classList.add('nway-hit'));
         }
 
         // Under a string row: the line of function rows that use it, and the rows it opened.

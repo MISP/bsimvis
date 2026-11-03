@@ -42,6 +42,7 @@ window.FunctionView = {
         this.id = `idx:${collection}:func:${file_md5}:${address}`;
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
         this.neighborsLoaded = false;
+        this.nbrLive = false;
         this.callGraphLoaded = false;
         this.stringsLoaded = false;
         if (this.graphController) {
@@ -121,6 +122,16 @@ window.FunctionView = {
                                     <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
                                     <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FunctionView.debounceNeighborsSearch()">
                                 </div>
+                                <div class="home-card" style="padding:16px; min-width:220px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Source</h3>
+                                    <input type="hidden" id="fn-nbr-source" value="stored">
+                                    <div id="fn-nbr-source-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                </div>
+                            </div>
+                            <div id="fn-nbr-live-bar" style="display:none; align-items:center; gap:12px; flex-wrap:wrap;">
+                                <span id="fn-nbr-live-status" style="font-size:0.75rem; color:var(--dim);"></span>
+                                <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, or right-click a live row</span>
+                                <button class="ui-button hdr-btn" style="margin-left:auto;" onclick="FunctionView.saveDiscovered()" title="Store the selected live matches as similarity edges, tagged 'discovered'"><i class="fa-solid fa-link"></i> Save selected as edges</button>
                             </div>
                             <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
                                 <table id="fn-nbr-results-table">
@@ -1011,20 +1022,127 @@ window.FunctionView = {
         tagList('fn-nbr-exclude-func-tag').forEach(t => qs.append('exclude_func_tag', t));
 
         try {
-            const res = await fetch(`/api/similarity/search?${qs.toString()}`);
+            const [res, live] = await Promise.all([
+                fetch(`/api/similarity/search?${qs.toString()}`),
+                this.nbrLive ? this.fetchLiveNeighbors(qs, collection, scope === 'pool' ? poolId : null) : null,
+            ]);
             if (!res.ok) throw new Error("Neighbors search failed");
             const data = await res.json();
-            const items = data.pairs || data.items || data.results || [];
+            let items = data.pairs || data.items || data.results || [];
+            let total = data.total ?? items.length;
+            if (live && live.pairs.length) {
+                // Stored rows win: discover already leaves stored pairs out, this
+                // only guards against an edge saved between the two requests.
+                const anchor = live.pairs[0].id1;
+                const shown = new Set(items.map(p => p.id1 === anchor ? p.id2 : p.id1));
+                const fresh = live.pairs.filter(p => !shown.has(p.id2));
+                items = items.concat(fresh).sort((a, b) => b.score - a.score);
+                total += live.total;
+            }
             const html = window.renderTopCorrelations ? window.renderTopCorrelations(items, {}, file_md5, address) : '';
             tbody.innerHTML = html || '<tr><td colspan="11" style="text-align: center; color: var(--dim); padding: 20px;">No similar functions found.</td></tr>';
             const countEl = document.getElementById('fn-nbr-count');
-            if (countEl) countEl.innerText = data.total ?? items.length;
+            if (countEl) countEl.innerText = total;
             const countWrap = document.getElementById('fn-nbr-count-wrap');
             if (countWrap) countWrap.style.display = 'inline';
             if (window.TableSelection) new window.TableSelection('fn-nbr-results-table');
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="11" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading similar functions: ${e.message}</td></tr>`;
+        }
+    },
+
+    /**
+     * Live (below-threshold) partners for the Similar tab: the stored-search
+     * query with the anchor's collection, the Score min only when it is below
+     * the build threshold (the server clamps it to the discovery floor).
+     * Returns {pairs, total} or null, and writes the outcome to the status line.
+     */
+    async fetchLiveNeighbors(qs, collection, poolId) {
+        const status = document.getElementById('fn-nbr-live-status');
+        const liveQs = new URLSearchParams(qs);
+        liveQs.set('collection', collection);
+        if (poolId) liveQs.set('pool', poolId); else liveQs.delete('pool');
+        const buildMin = parseFloat(window.defaultMinScore ? window.defaultMinScore() : '0.9');
+        if (!(parseFloat(liveQs.get('min_score')) < buildMin)) liveQs.delete('min_score');
+        try {
+            const res = await fetch(`/api/similarity/discover?${liveQs.toString()}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            if (data.below_min_features) {
+                if (status) status.textContent = `Under ${data.min_features} features: matched by FunctionID hash only, no BSim discovery.`;
+                return null;
+            }
+            if (status) status.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> ${data.total} live match${data.total === 1 ? '' : 'es'} from ${Number(data.min_score).toFixed(2)} (floor ${Number(data.floor).toFixed(2)}), not saved`;
+            return { pairs: data.pairs || [], total: data.total || 0 };
+        } catch (e) {
+            if (status) status.textContent = `Live discovery failed: ${e.message}`;
+            return null;
+        }
+    },
+
+    /** Source pill: 'live' adds live (below-threshold) rows to the stored ones. */
+    setLive(on) {
+        this.nbrLive = on;
+        const bar = document.getElementById('fn-nbr-live-bar');
+        if (bar) bar.style.display = on ? 'flex' : 'none';
+        const status = document.getElementById('fn-nbr-live-status');
+        if (status && !on) status.textContent = '';
+        // Drop Score min to the discovery floor while live is on, so a saved
+        // (sub-threshold) edge stays visible as a stored row after the refresh.
+        const minEl = document.getElementById('fn-nbr-min-score');
+        const buildMin = window.defaultMinScore ? window.defaultMinScore() : '0.9';
+        const floor = String(window.APP_CONFIG?.similarity?.discovery_min_score ?? 0.5);
+        if (minEl) {
+            if (this.nbrLive && !(parseFloat(minEl.value) < parseFloat(buildMin))) minEl.value = floor;
+            else if (!this.nbrLive && minEl.value === floor) minEl.value = buildMin;
+        }
+    },
+
+    /** Partner ids of the live rows in the table selection. */
+    selectedLivePartners() {
+        const sel = new Set(window.getSelectedTableIds ? window.getSelectedTableIds() : []);
+        return [...document.querySelectorAll('#fn-nbr-results-tbody tr[data-live="1"]')]
+            .filter(tr => sel.has(tr.dataset.id))
+            .map(tr => tr.dataset.id2);
+    },
+
+    /** Save live rows as real edges: `ids` given (context menu) or the selected rows. */
+    async saveDiscovered(ids) {
+        const status = document.getElementById('fn-nbr-live-status');
+        const partnerIds = ids || this.selectedLivePartners();
+        if (!partnerIds.length) {
+            const msg = 'Select live rows first (click, shift/ctrl-click or drag).';
+            if (typeof showToast === 'function') showToast(msg, 'warning');
+            else if (status) status.textContent = msg;
+            return;
+        }
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scope = document.getElementById('fn-nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+        const body = {
+            collection: this.params.collection || '',
+            md5: this.params.md5 || this.params.file_md5,
+            address: this.params.address,
+            partner_ids: partnerIds,
+        };
+        if (scope === 'pool' && poolId) body.pool = poolId;
+        try {
+            const res = await fetch('/api/similarity/discover/persist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            const saved = (data.saved || []).length;
+            const skipped = (data.skipped || []).length;
+            await this.searchNeighbors();
+            const msg = `Saved ${saved} edge${saved === 1 ? '' : 's'} (tag: discovered)${skipped ? `, skipped ${skipped}: ${[...new Set(data.skipped.map(s => s.reason))].join(', ')}` : ''}`;
+            if (typeof showToast === 'function') showToast(msg, saved ? 'success' : 'warning');
+            else if (status) status.textContent = msg;
+        } catch (e) {
+            if (typeof showToast === 'function') showToast(`Save failed: ${e.message}`, 'error');
+            else if (status) status.textContent = `Save failed: ${e.message}`;
         }
     },
 
@@ -1048,6 +1166,10 @@ window.FunctionView = {
             if (value === 'overall') params.delete('score_axis'); else params.set('score_axis', value);
             window.history.replaceState(window.history.state, '', window.location.pathname + (params.toString() ? `?${params}` : '') + window.location.hash);
         }
+        if (inputId === 'fn-nbr-source') {
+            this.setLive(value === 'live');
+            this.renderNeighborPillGroup(inputId, containerId, this.SOURCE_OPTIONS, '#ae81ff');
+        }
         if (inputId === 'fn-nbr-scope') this.renderScopePills();
         else if (inputId === 'fn-nbr-score-axis') this.renderNeighborPillGroup(inputId, containerId, this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
@@ -1060,6 +1182,11 @@ window.FunctionView = {
         { v: 'library', label: 'Library', icon: 'fa-solid fa-book' },
         { v: 'content', label: 'Content', icon: 'fa-solid fa-file-lines' },
     ],
+    SOURCE_OPTIONS: [
+        { v: 'stored', label: 'Stored', icon: 'fa-solid fa-database' },
+        { v: 'live', label: 'Stored + Live', icon: 'fa-solid fa-satellite-dish' },
+    ],
+
     CROSS_BINARY_OPTIONS: [
         { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
         { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
@@ -1082,6 +1209,7 @@ window.FunctionView = {
         this.renderScopePills();
         this.renderNeighborPillGroup('fn-nbr-score-axis', 'fn-nbr-score-axis-pills', this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
+        this.renderNeighborPillGroup('fn-nbr-source', 'fn-nbr-source-pills', this.SOURCE_OPTIONS, '#ae81ff');
     },
 
     copyFunctionCode(btn) {

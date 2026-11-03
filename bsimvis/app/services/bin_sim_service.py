@@ -47,9 +47,20 @@ def stored_discovery():
 
     if not bool(config_service.get("similarity.discovery", False)):
         return None
-    min_score = float(config_service.get("similarity.discovery_min_score", 0.5))
     max_df = float(config_service.get("similarity.discovery_max_df", 1.0))
-    return max(0.0, min(1.0, min_score)), max(0.0, min(1.0, max_df))
+    return discovery_floor(), max(0.0, min(1.0, max_df))
+
+
+def discovery_floor():
+    """Lowest score any discovery may reach: `similarity.discovery_min_score`.
+
+    Also the floor of live function discovery (`/api/similarity/discover`),
+    whether or not `similarity.discovery` is on.
+    """
+    from bsimvis.app.services.config_service import config_service
+
+    min_score = float(config_service.get("similarity.discovery_min_score", 0.5))
+    return max(0.0, min(1.0, min_score))
 
 
 def load_vectors(r, fids):

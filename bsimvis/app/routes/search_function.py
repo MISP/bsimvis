@@ -65,6 +65,72 @@ def _cluster_members_key(r, col, algo, field, val):
     return key if cid and r.exists(key) else None
 
 
+def filter_ids_by_groups(r, col, groups, ids):
+    """The ids, in order, that pass `groups` -- search_function.lua's filter loop
+    run over a fixed id list instead of a producer scan.
+
+    For a caller that already holds its candidates (live similarity discovery):
+    the groups come from the same request parsing, so the filters mean exactly
+    what they mean in /api/function/search. Read-only, no EVAL.
+    """
+    keep = list(ids)
+    for g in groups:
+        if not keep:
+            break
+        if g["type"] == "numeric_range":
+            lo, hi = g.get("min", float("-inf")), g.get("max", float("inf"))
+            scores = r.zmscore(g["key"], keep)
+            keep = [i for i, s in zip(keep, scores) if lo <= float(s or 0) <= hi]
+            continue
+        if g["type"] != "metadata":
+            continue
+
+        hit = set()
+        pipe = r.pipeline(transaction=False)
+        keys = []
+        file_keys = []
+        subs = g.get("sub_groups") or [
+            {
+                "level": g.get("level"),
+                "targets": g.get("targets"),
+                "field": g.get("field"),
+            }
+        ]
+        for sub in subs:
+            if sub.get("keys"):
+                keys.extend(sub["keys"])
+            elif sub.get("level") == "file":
+                file_keys.extend(
+                    f"{col}:idx:file:{sub['field']}:{t}"
+                    for t in sub.get("targets") or []
+                )
+            elif sub.get("level") == "func":
+                keys.extend(
+                    f"{col}:idx:func:{sub['field']}:{t}"
+                    for t in sub.get("targets") or []
+                )
+        for key in keys:
+            pipe.smismember(key, keep)
+        for key in file_keys:
+            pipe.smembers(key)
+        out = pipe.execute() if keys or file_keys else []
+        for flags in out[: len(keys)]:
+            hit.update(i for i, f in zip(keep, flags) if f)
+        # Lua joins a file match to its functions through idx:file:functions:{md5},
+        # which is keyed by md5 alone -- so an md5 match is the same test.
+        md5s = set()
+        for members in out[len(keys) :]:
+            for f_id in members:
+                f_id = f_id.decode() if isinstance(f_id, bytes) else f_id
+                if ":file:" in f_id:
+                    md5s.add(f_id.split(":file:", 1)[1].split(":", 1)[0])
+        if md5s:
+            hit.update(i for i in keep if i.split(":")[-2] in md5s)
+
+        keep = [i for i in keep if (i in hit) != bool(g.get("exclude"))]
+    return keep
+
+
 def search_functions():
     try:
         t_req_start = time.perf_counter()
@@ -597,6 +663,10 @@ def search_functions():
                     "weight": weight,
                 }
             )
+
+        restrict_ids = request.args.getlist("ids")
+        if restrict_ids:
+            return {"ids": filter_ids_by_groups(r, col, groups_raw, restrict_ids)}
 
         if not groups_raw:
             all_key = f"{col}:all_functions"

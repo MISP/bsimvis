@@ -458,6 +458,151 @@ class SimilarityService:
         # ARGV: [...head, features...]
         return target_feat_total, head + lua_features_args
 
+    def _live_scope(self, fid, pool_id=None):
+        """`(algo, min_features, member collections to sweep, sim namespace)` for
+        live discovery of `fid` -- the same params its collection or pool build used."""
+        from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services.collection_config import (
+            get_collection_param,
+            resolve_collection_algo,
+        )
+
+        coll = fid.split(":")[0]
+        default_mf = config_service.get("similarity.min_features", 10)
+        if not pool_id:
+            algo = resolve_collection_algo(coll, None)
+            min_features = get_collection_param(coll, "min_features", default_mf)
+            return algo, int(min_features or 0), [coll], coll
+
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            raise LookupError(f"Pool {pool_id} not found")
+        params = pool.get("func_sim_params") or {}
+        members = pool.get("collections", [])
+        if pool.get("only_cross_collection"):
+            members = [c for c in members if c != coll]
+        return (
+            pool_service.similarity_algo(pool),
+            int(params.get("min_features", default_mf) or 0),
+            members,
+            f"global:pool:{pool_id}",
+        )
+
+    def _stored_mask(self, ns, algo, fid, partner_ids):
+        """Per partner: is the (fid, partner) pair already stored in `ns`?"""
+        if not partner_ids:
+            return []
+        pool = ns.startswith("global:pool:")
+        score_key = f"{ns}:sim:score" if pool else f"{ns}:sim:score:{algo}"
+        sids = [self._canonicalize_sid(ns, fid, p, algo) for p in partner_ids]
+        return [s is not None for s in self.r.zmscore(score_key, sids)]
+
+    def discover_live(self, fid, min_score, top_k, pool_id=None):
+        """Partners of one stored function at `min_score`, minus the pairs
+        already stored. Read-only.
+
+        Stored edges stop at the build's min_score; this reaches below it with
+        the build's own discovery (`build_discovery_args` + `_discover`) over
+        the function's stored vector. A pool sweeps each member collection the
+        way build_pool does.
+        """
+        algo, min_features, members, ns = self._live_scope(fid, pool_id)
+        out = {"algo": algo, "min_features": min_features, "candidates": []}
+        features = self.r.zrange(f"{fid}:vec:tf", 0, -1, withscores=True)
+        if not features or len(features) < min_features:
+            # Matched by FunctionID hash only, never by BSim.
+            out["below_min_features"] = True
+            return out
+
+        found = {}
+        for coll in members:
+            _total, args = self.build_discovery_args(
+                fid, coll, algo, min_score, top_k, min_features, features
+            )
+            raw = self._discover(args) or []
+            for k in range(0, len(raw), 3):
+                cid = raw[k].decode() if isinstance(raw[k], bytes) else str(raw[k])
+                found[cid] = {
+                    "id": cid,
+                    "score": float(raw[k + 1]),
+                    "c_total": float(raw[k + 2]),
+                }
+        ranked = sorted(found.values(), key=lambda c: (-c["score"], c["id"]))[:top_k]
+        stored = self._stored_mask(ns, algo, fid, [c["id"] for c in ranked])
+        out["candidates"] = [c for c, s in zip(ranked, stored) if not s]
+        return out
+
+    def persist_live(self, fid, partner_ids, floor, pool_id=None, tag="discovered"):
+        """Store live-discovered pairs as real edges, tagged `tag`.
+
+        Scores are recomputed here (never taken from the client) and a pair
+        below `floor` or already stored is skipped. Goes through the one pair
+        writer, fully indexed, so /api/similarity/search sees it at once.
+        Returns `{"saved": [...], "skipped": [{"id", "reason"}]}`.
+        """
+        algo, min_features, members, ns = self._live_scope(fid, pool_id)
+        partner_ids = list(dict.fromkeys(p for p in partner_ids if p and p != fid))
+        result = {"saved": [], "skipped": []}
+
+        def skip(pid, reason):
+            result["skipped"].append({"id": pid, "reason": reason})
+
+        allowed = set(members)
+        stored = self._stored_mask(ns, algo, fid, partner_ids)
+        ids = [fid] + partner_ids
+        pipe = self.r.pipeline(transaction=False)
+        for i in ids:
+            pipe.zscore(f"{i.split(':')[0]}:idx:func:bsim_features_count", i)
+        totals = {i: float(t or 0) for i, t in zip(ids, pipe.execute())}
+        if totals[fid] < min_features:
+            for pid in partner_ids:
+                skip(pid, "below_min_features")
+            return result
+
+        candidates = []
+        for pid, is_stored in zip(partner_ids, stored):
+            if pid.split(":")[0] not in allowed:
+                skip(pid, "out_of_scope")
+            elif is_stored:
+                skip(pid, "already_stored")
+            elif totals[pid] < min_features:
+                skip(pid, "below_min_features")
+            else:
+                score = self.calculate_exact_score(fid, pid, algo=algo)
+                if score is None or score < floor:
+                    skip(pid, "below_floor")
+                else:
+                    candidates.append(
+                        {"id": pid, "score": score, "c_total": totals[pid]}
+                    )
+
+        if candidates:
+            parts = fid.split(":")
+            self._func_meta_cache = {}
+            self._file_meta_cache = {}
+            self._persist_and_index_batch(
+                "" if pool_id else ns,
+                algo,
+                [(fid, parts[-2], parts[-1], totals[fid], candidates)],
+                pool_id=pool_id,
+                min_features=0,
+                index_depth="full",
+                user_tags=[tag],
+            )
+            # Indexed the way TagService indexes any sim user tag, but in the
+            # namespace the edge lives in: a pool edge has no origin collection.
+            from bsimvis.app.services.bin_sim_tags import bump_tags_rev
+            from bsimvis.app.services.tag_service import _add_tag_buckets
+
+            sids = [self._canonicalize_sid(ns, fid, c["id"], algo) for c in candidates]
+            bump_tags_rev(self.r, ns)
+            _add_tag_buckets(self.r, ns, "sim", tag.lower(), sids)
+            self._ensure_tag_metadata(ns, tag)
+            result["saved"] = [{"id": c["id"], "score": c["score"]} for c in candidates]
+        return result
+
     def _discover(self, args):
         """Python reimplementation of the find_candidates.lua / minhash_lsh.lua
         discovery step. Takes the same flat ARGV list the Lua scripts took and
@@ -1158,8 +1303,14 @@ class SimilarityService:
         min_features=0,
         index_depth="full",
         skip_write=False,
+        user_tags=None,
     ):
-        """Unified helper to persist similarity results and propagate metadata to search indexes."""
+        """Unified helper to persist similarity results and propagate metadata to search indexes.
+
+        `user_tags` are written onto every pair's doc; indexing them is the
+        caller's job (`tag_service._add_tag_buckets`), as for any sim user tag.
+        """
+        user_tags = list(user_tags or [])
         r = self.r
         now = int(time.time() * 1000)
         total_written = 0
@@ -1346,6 +1497,8 @@ class SimilarityService:
                     "entry_date": now,
                     "is_cross_binary": "true" if md5_a != md5_b else "false",
                 }
+                if user_tags:
+                    sim_doc["user_tags"] = user_tags
 
                 if pool_id:
                     sim_doc["coll_1"] = coll_a

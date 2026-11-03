@@ -160,7 +160,7 @@ if [ "$CLEAN_TMUX" = "true" ]; then
     # one after another instead of all at once. Passing every unit to one
     # invocation enqueues independent stop jobs that systemd runs in parallel,
     # so the wall time is the slowest worker, not their sum.
-    UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-*worker-*.scope" 2>/dev/null | awk '{print $1}')
+    UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" "bsimvis-${PROJECT_NAME}-scan-worker-*.scope" 2>/dev/null | awk '{print $1}')
     if [ -n "$UNITS" ]; then
         echo "Stopping leftover worker scopes: $(echo $UNITS | tr '\n' ' ')"
         systemctl --user stop $UNITS 2>/dev/null || true

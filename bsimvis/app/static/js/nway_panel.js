@@ -2964,10 +2964,16 @@
             this._watch();
             this._scrollRestore();
             // Header and notes fold away once the table scrolls; they return at the top.
+            // Fold only if the table still overflows once their height goes to it:
+            // otherwise the browser clamps scrollTop under 30 and they unfold again.
             const sc = this.el.querySelector('.nway-scroll'), view = this.el.closest('.nway-view');
             if (sc && view) sc.addEventListener('scroll', () => {
-                if (sc.scrollTop > 30) view.classList.add('nway-compact');
-                else view.classList.remove('nway-compact');
+                const compact = view.classList.contains('nway-compact');
+                if (sc.scrollTop > 30 && !compact) {
+                    let folded = 0;
+                    view.querySelectorAll(':scope > .nway-hero, .nway-panel .nway-note').forEach(n => { folded += n.offsetHeight; });
+                    if (sc.scrollHeight - sc.clientHeight - folded > 40) view.classList.add('nway-compact');
+                } else if (sc.scrollTop <= 30 && compact) view.classList.remove('nway-compact');
             }, { passive: true });
         }
 

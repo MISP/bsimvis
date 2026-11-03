@@ -246,7 +246,7 @@
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
             if (this.state.view !== 'strings') { qs.set('strings', '1'); qs.set('facets', '1'); }
-            if (!this.state.col_open) qs.set('col_open', JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
+            if (!this.state.col_open) qs.set('col_open', this._openQ || JSON.stringify([`*fit:${Math.max(1, Math.floor((window.innerWidth - 120 - (this.data ? this._lead() : DATA_COLS).reduce((a, b) => a + b, 0)) / SQ_COL))}`]));
             if (this.state.group || this.state.group_merge) {
                 qs.set('group_open', this._rowAuto ? 'all' : this._gdef);
                 if (this._gflip.size) qs.set('group_flip', JSON.stringify([...this._gflip]));
@@ -263,7 +263,10 @@
             // The compare lives in the URL as `cmp`; its saved set (col_set) only caches it.
             if (!append && this.state.cmp && !this.state.col_set && !(await this._resolveCmp())) return;
             if (gen !== this._gen) return;
+            // a fresh load refits the columns to the window; per-row calls then reuse that fit
+            if (!append) this._openQ = '';
             const qs = this._listQs();
+            if (!append) this._openQ = qs.get('col_open');
             if (this.state.view === 'strings') ['group', 'group_merge', 'group_open', 'group_flip'].forEach(k => qs.delete(k));
             // After opening or closing a group, reload as many rows as were on screen.
             qs.set('limit', this.cgInit || this.state.view === 'strings' ? 1 : (this._keep || PAGE));
@@ -1372,12 +1375,7 @@
 
         // The standalone page's URL: the member source, doc controls, and the focused graph.
         _cgUrl() {
-            const qs = new URLSearchParams();
-            for (const [k, v] of Object.entries(this.source)) if (v !== null && v !== undefined && v !== '') qs.set(k, v);
-            for (const k of DOC_KEYS) {
-                const v = this.state[k];
-                if (v !== null && v !== undefined && v !== '') qs.set(k, v);
-            }
+            const qs = this._docQs();
             const st = this._cg, f = this._cgFocus();
             qs.set('cg_name', f.name);
             qs.set('cg_cells', JSON.stringify(f.cells));
@@ -1396,6 +1394,9 @@
                 const v = this.state[k];
                 if (v !== null && v !== undefined && v !== '') qs.set(k, v);
             }
+            // the columns the table was loaded with, so the server reuses the table's own (cached) doc
+            const open = this.state.col_open || this._openQ;
+            if (open) qs.set('col_open', open);
             return qs;
         }
 
@@ -1572,18 +1573,13 @@
             this._cgDraw();
         }
 
-        // One square per file: lit when that file's function has the edge.
-        // Each square is a file. Lit (colored by how many files) = the file has the function;
-        // a dot inside = the focus function in that file calls it. Hover shows name and md5,
-        // click opens the file details, right-click gives the usual file menu.
-        // Optional "color by file" mode (strips + column swatches); neutral ratio colors stay the default.
+        // Graph squares are the table's columns: lit (colored by how many files) = the column's files have the
+        // function; a dot inside = the focus function there calls it. One colour setting with the table
+        // (`nway.sqlane`): per file / cluster column, or by how many files have the function.
         _applyHue() {
-            let on = false;
-            try { on = localStorage.getItem('nway.hue') === '1'; } catch (e) { /* storage blocked */ }
+            const on = !this._sqLane();
             this._hueOn = on;
             for (const el of [this.el, this._dw]) if (el) el.classList.toggle('nway-hue', on);
-            // the dock has no colour toggle: its squares follow the table's (per file / cluster, or by coverage)
-            if (this._cg && this._cg.lean && this._dw) this._dw.classList.toggle('nway-hue', !this._sqLane());
         }
 
         // i is a column index (data.columns), not an index into file_columns.
@@ -1646,23 +1642,37 @@
             return `<div class="nway-node-sub dim">${fs.html} <span>${fs.n}/${files.length} files</span></div>`;
         }
 
+        // `on` / `edge` are per file; the squares are the table's columns (same collapse, order and colours),
+        // a group column filled when all its files have the function, part-filled when only some do.
         _cgStrip(on, files, edge) {
             const n = on.filter(Boolean).length;
             const cls = n === files.length ? 'r-hi' : n * 2 >= files.length ? 'r-mid' : 'r-low';
-            const total = files.length;
+            const fi = new Map(files.map((c, i) => [c.id, i]));
+            const cols = this.data.columns.map((col, ci) => ({ col, ci, idx: (col.kind ? col.members : [col.id]).map(id => fi.get(id)).filter(i => i !== undefined) })).filter(u => u.idx.length);
+            const total = cols.length;
             if (total > 120) {
-                return { html: `<span class="nway-pbar ${cls}" title="${n} of ${total} files"><b style="width:${(100 * n / total).toFixed(0)}%"></b></span>`, n, cls };
+                return { html: `<span class="nway-pbar ${cls}" title="${n} of ${files.length} files"><b style="width:${(100 * n / files.length).toFixed(0)}%"></b></span>`, n, cls };
             }
             const sz = total <= 16 ? 11 : total <= 64 ? 6 : 4;
-            const sq = files.map((c, i) => {
-                const coll = c.collection || '';
+            let hued = false;
+            const sq = cols.map(({ col, ci, idx }) => {
+                const k = idx.filter(i => on[i]).length, ed = edge && idx.some(i => edge[i]);
+                const style = this._sqStyle(ci);
+                if (style) hued = true;
+                const attrs = `class="${k === idx.length ? 'on' : k ? 'part' : ''}${ed ? ' edge' : ''}"${style ? ` style="${style}"` : ''}`;
+                if (col.kind) {
+                    const names = idx.filter(i => on[i]).map(i => this._colLabel(files[i]));
+                    const tip = [`${col.label || col.id}: ${k} of ${idx.length} files have the function`, ...names, ed ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
+                    return `<i ${attrs} title="${escapeAttr(tip)}"></i>`;
+                }
+                const c = files[idx[0]], coll = c.collection || '';
                 const data = { md5: c.md5, fileId: `${coll}:file:${c.md5}`, name: c.file_name || c.md5, file_name: c.file_name || '', collection: coll };
-                const tip = [c.file_name, c.md5, coll, on[i] ? 'function present' : 'function absent', edge && edge[i] ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
-                return `<i class="${on[i] ? 'on' : ''}${edge && edge[i] ? ' edge' : ''}"${total <= 16 ? ` style="--h:${this._fileHue(this.data.columns.findIndex(x => x.id === c.id))}"` : ''} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                const tip = [c.file_name, c.md5, coll, k ? 'function present' : 'function absent', ed ? 'called from the focus function here' : ''].filter(Boolean).join('\n');
+                return `<i ${attrs} title="${escapeAttr(tip)}" data-entity-data='${escapeAttr(JSON.stringify(data))}'
                     onclick="event.stopPropagation(); openFileDetails(${escapeAttr(jsString(coll))}, ${escapeAttr(jsString(c.md5))}, ${escapeAttr(jsString(c.file_name || c.md5))}, event)"
                     oncontextmenu='event.stopPropagation(); EntityRenderer.handleContextMenu(event, "file", this)'></i>`;
             }).join('');
-            return { html: `<span class="nway-strip ${cls}${total <= 16 ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`, n, cls };
+            return { html: `<span class="nway-strip ${cls}${hued ? ' hued' : ''}" style="--sq:${sz}px">${sq}</span>`, n, cls };
         }
 
         // Presence: the neighbor's function exists in that file. Edge: the focus function there calls it.
@@ -2237,8 +2247,11 @@
             }
             if (t.dataset.cgDetails !== undefined) { this._cg.co = this._cg.hints = !this._cg.co; return this._cgShow(); }
             if (t.dataset.cgHue !== undefined) {
-                try { localStorage.setItem('nway.hue', this._hueOn ? '0' : '1'); } catch (err) { /* storage blocked */ }
+                this._sl = this._hueOn;
+                try { localStorage.setItem('nway.sqlane', this._sl ? '1' : '0'); } catch (err) { /* storage blocked */ }
                 this._applyHue();
+                // the table shares the setting: redraw its squares too
+                if (!this.cgInit && this.data) { this._scrollSave(); this.render(); }
                 return this._cgDraw();
             }
             if (t.dataset.cgFocusgrp) {
@@ -2461,8 +2474,10 @@
         // Names for the lane groups on screen: asked in the background, cached by the server, shown when ready.
         async _nameLanes() {
             const d = this.data, groups = d && this.state.lane_names !== 'off' ? Object.values(d.groups || {}) : [];
+            // real file counts: in a grouped-columns table a mask bit is a column group, not a file
+            const nFiles = d ? (d.file_columns || d.columns.filter(c => !c.kind)).length : 0;
             const lanes = groups.filter(g => g.kind === 'lane' && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length)).slice(0, 40)
-                .map(g => ({ id: g.id, files: g.mask.split('1').length - 1, total: g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], ...(this.state.view === 'strings' ? { kind: 'string' } : {}) }));
+                .map(g => ({ id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0, ...(this.state.view === 'strings' ? { kind: 'string' } : {}) }));
             // function and string lanes can share an id: keep their names apart
             const kind = this.state.view === 'strings' ? 's' : 'f';
             if (this._lnKind !== kind) { this._lnKind = kind; this._laneNames = {}; this._laneEvid = {}; this._lnSig = ''; }
@@ -2534,7 +2549,7 @@
                 const mix = g.core ? chip('also', `${Number(g.lanes)} lanes · ${g.core.split('1').length - 1} shared`, 'Not a real set of files: related lanes grouped under the files they cover together. The count is the files every lane in it holds.') : '';
                 const under = this._parentChip(g);
                 const have = cov.split('1').length - 1;
-                title = `${this._laneName(g)}<span class="nway-lcount"><b>${have}</b> of ${cov.length} files</span>${mix}${under}`;
+                title = `${this._laneName(g)}<span class="nway-lcount">${have} of ${cov.length} files</span>${mix}${under}`;
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
@@ -2559,10 +2574,15 @@
                 const full = all ? have === all : b === '1', some = all ? have > 0 : b === '1';
                 return `<td class="col sq"><i class="nway-sq${some ? (full ? ' on' : ' part') : ''}" style="${this._sqStyle(i)}" title="${escapeAttr(this._colLabel(cols[i]) + (some ? (all > 1 ? `: ${have} of ${all} files` : '') : ': not in this group'))}">${all > 1 && some && !full ? have : ''}</i></td>`;
             }).join('');
+            // A closed group names its biggest merged functions, each with the functions it holds across the files.
+            const ms = closed ? g.merges || [] : [];
+            const peek = ms.length ? `<div class="nway-peek">${ms.map(([name, k, id]) => `<button type="button" class="nway-peek-a" data-gpeek="${escapeAttr(id)}" data-gpeek-in="${escapeAttr(g.id)}" title="Open the group on this merged function">${escapeHtml(name)} <span><b>${Number(k)}</b> functions</span></button>`).join('')}${g.merge_n > ms.length ? `<span>+${Number(g.merge_n) - ms.length} more</span>` : ''}</div>` : '';
+            const units = Number(g.units ?? g.rows);
+            const stat = this.state.view === 'strings' ? `${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} chars` : `${units} function${units === 1 ? '' : 's'}`;
             const same = g.kind === 'same';
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff${Number(g.cohesion) < 0.5 ? ' lowc' : ''}" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px">${g.kind === 'same' ? '' : chevBtn}<span class="nway-gt" data-gmask="${escapeAttr(files)}">${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}<span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} ${this.state.view === 'strings' ? 'chars' : 'feat'}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff}</span>${same ? '' : `<span class="nway-gst">${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} ${this.state.view === 'strings' ? 'chars' : 'feat'}</span><span class="nway-gnote">${note}</span>`}${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${this._lead().length}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px">${g.kind === 'same' ? '' : chevBtn}<span class="nway-gt" data-gmask="${escapeAttr(files)}">${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff}</span>${same ? '' : `<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span>`}${peek}${g.kind === 'lane' ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2963,6 +2983,11 @@
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
+            if (this._gHit) {
+                const hit = this.el.querySelector(`tr.nway-grow[data-gtoggle="${CSS.escape(this._gHit)}"]`);
+                this._gHit = null;
+                if (hit) { hit.scrollIntoView({ block: 'center' }); hit.classList.add('nway-hit'); }
+            }
             // Header and notes fold away once the table scrolls; they return at the top.
             // Fold only if the table still overflows once their height goes to it:
             // otherwise the browser clamps scrollTop under 30 and they unfold again.
@@ -3096,7 +3121,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
+            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
             if (!t) return;
             if (t.dataset.ftg || t.dataset.fax || t.dataset.fmore) {
                 const [set, id] = t.dataset.ftg ? [this._ftOpen, t.dataset.ftg] : t.dataset.fax ? [this._faxOpen, t.dataset.fax] : [this._fmore, t.dataset.fmore];
@@ -3174,6 +3199,11 @@
                 const f = this.data && this.data.tag_facets, ax = this.state.group_axis || 'origin';
                 const axis = i < 0 && t.dataset.gpick === 'tag' && f && !f[ax] ? (TAG_AXES.find(([k]) => f[k]) || [ax])[0] : ax;
                 return this._set({ group: lv.join(','), ...(axis !== ax ? { group_axis: axis } : {}), offset: 0 });
+            }
+            if (t.dataset.gpeek) {
+                // open the group and the merged function inside it, then bring the merge into view
+                this._gHit = t.dataset.gpeek;
+                return this._gChange(() => [t.dataset.gpeekIn, t.dataset.gpeek].forEach(id => { if (!this._gOpen(id)) { if (!this._gflip.delete(id)) this._gflip.add(id); } }));
             }
             if (t.dataset.gtoggle !== undefined && !t.dataset.gall) return this._gSplice(t.dataset.gtoggle);
             if (t.dataset.gall) {

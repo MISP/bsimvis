@@ -40,6 +40,7 @@ from bsimvis.app.services.nway_diff_service import (
     _LRU,
     _SUFFIX,
     BadParams,
+    _decode,
 )
 from bsimvis.app.services.nway_match import PairEdges, concat_edges
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
@@ -92,6 +93,7 @@ def _meta(rows, n):
         held |= _fileset(r)
     return {
         "_held": held,
+        "units": len(rows),
         "rows": sum(len(r["_rows"]) if "_rows" in r else 1 for r in rows),
         "weight": sum(r["weight"] for r in rows),
         "union": _bits(union, n),
@@ -973,7 +975,8 @@ def _annotate(pairs, fmeta):
             continue
         best = {}
         for r in rows[g["id"]]:
-            if k := name_key(r):
+            # a tag-carried name is a rule name (powershell, linux_trojan_x), not a function name
+            if r.get("name_from") != "tag" and (k := name_key(r)):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
         if g["kind"] == "lane":
@@ -993,7 +996,11 @@ def _annotate(pairs, fmeta):
                 reverse=True,
             )
             g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
+            # the heaviest rows' functions, looked up for a similar-function name only
+            heavy = sorted(rows[g["id"]], key=lambda r: -r["weight"])[:LANE_NAME_FIDS]
+            g["name_fids"] = [f for r in heavy for f in _fids(r)[:1]]
             found = Counter(t for _, _, r in ranked for t in sorted(set(finds(r))))
+            g["tag_rows"] = sum(hit for hit, _, _ in ranked)
             g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:
@@ -1002,10 +1009,17 @@ def _annotate(pairs, fmeta):
                 g["hint"] = top + "*"
 
 
+_SYMBOL = re.compile(r"[a-z_][\w.:@]*")  # a symbol, not a cluster label like "mirai#x"
 LANE_NAMES_MAX = 40  # lanes named per request
 LANE_FIDS = 6  # heaviest functions of a lane the model reads findings and strings from
 LANE_CODE_FNS = 2  # ... and code from
-_DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+(\[\d+\])?;\s*$")
+LANE_NAME_FIDS = 20  # heaviest functions whose similar-function names the model sees
+_DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+\s*(\[\d+\])?;\s*$")
+# decompiler noise: PowerPC condition-register packing, comment ends, lone braces
+_NOISE = re.compile(r"\bin_cr\d|\bunaff_cr\d|^\s*\|\s*\(uint\)|^\s*\*/|^\s*[{}]\s*$")
+# FID_conflict: is FunctionID picking one of several libc bodies, often wrongly
+_JUNK_NAME = re.compile(r"^(func_|LAB_|DAT_|FID_conflict:)|\+\d")
+_LIT = re.compile(r'"((?:[^"\\\n]|\\.){4,60})"')
 LANE_NAME_TTL = 30 * 86400
 LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
 _LANE_POOL = None
@@ -1014,13 +1028,111 @@ _LANE_LOCK = threading.Lock()
 
 
 def _lane_evidence(l):
-    """(text, tags, strings, calls): the text the model names a lane from (names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
+    """(text, tags, strings, calls): the text the model names a lane from (platform, names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
     from bsimvis.app.routes.llm import get_code_for_llm
     from bsimvis.app.services import llm_tools, string_service
     from bsimvis.app.services.function_service import fetch_function_data
     from bsimvis.app.services.redis_client import get_redis
 
+    def named(name):
+        return name and not _DEFAULT_NAME.match(name) and not _JUNK_NAME.search(name)
+
+    def finding(t):
+        # an unknown-family yara hit is only worth its rule name
+        base, _, rule = t.partition("#")
+        t = f"yara:{rule}" if base.endswith(":unknown") and rule else base
+        return None if t.endswith(":unknown") else t
+
+    tags = [t for t in dict.fromkeys(map(finding, l["tags"])) if t]
     by_string = l.get("kind") == "string"
+    strings, code = [], []
+    if by_string:
+        strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
+    libs, inner, callers, platform = Counter(), Counter(), Counter(), Counter()
+    seen = set()
+    # functions read, and those with a string, with a finding
+    n_read = n_str = n_tag = 0
+    for fid in l["fids"][:LANE_FIDS]:
+        try:
+            coll, md5, addr = llm_tools.parse_func_id(fid)
+            _, _, meta, _ = fetch_function_data(coll, md5, addr, meta_only=True)
+            meta = meta or {}
+            if md5 not in seen:
+                # "ELF, PowerPC 32-bit": the file's format and CPU, not file(1)'s
+                # raw type string ("PowerPC or cisco 4500" reads as Cisco IOS)
+                seen.add(md5)
+                fm = _decode(get_redis().get(f"{coll}:file:{md5}:meta"))
+                fmt = (fm.get("file_format") or {}).get("Executable Format") or ""
+                fmt = (re.findall(r"\((\w[\w-]*)\)", fmt) or [fmt])[-1]
+                cpu = (fm.get("language_id") or meta.get("language_id") or "").split(
+                    ":"
+                )
+                cpu = f"{cpu[0]} {cpu[2]}-bit" if len(cpu) > 2 else cpu[0]
+                if fmt or cpu:
+                    platform[", ".join(x for x in (fmt, cpu) if x)] += 1
+            hits = [
+                f
+                for t in meta.get("tags") or []
+                if t.startswith(("capa:", "yara:")) and (f := finding(t))
+            ]
+            n_tag += bool(hits)
+            tags += [t for t in dict.fromkeys(hits) if t not in tags]
+            graph = llm_tools.get_call_graph(fid)
+            for c in graph.get("callees") or []:
+                if named(c.get("name")):
+                    (libs if c.get("is_external") else inner)[c["name"]] += 1
+            for c in graph.get("callers") or []:
+                if named(c.get("name")):
+                    callers[c["name"]] += 1
+            own = [
+                " ".join(str(rec.get("value") or "").split())[:60]
+                for rec in string_service.function_strings(get_redis(), coll, md5, addr)
+            ]
+            src, _ = get_code_for_llm(fid)
+            text = (src or {}).get("code", "")
+            # plus the string literals of the code: paths, commands, messages the
+            # string table missed
+            own += [" ".join(m.split()) for m in _LIT.findall(text)]
+            own = [v for v in dict.fromkeys(own) if len(v) >= 4 and v not in strings]
+            strings += own
+            n_read += 1
+            n_str += bool(own)
+            if len(code) < LANE_CODE_FNS:
+                # the signature and body, without declarations and decompiler noise
+                lines = [
+                    x
+                    for x in text.splitlines()
+                    if x.strip()
+                    and not x.lstrip().startswith("/*")
+                    and not _DECL.match(x)
+                    and not _NOISE.search(x)
+                ]
+                if lines:
+                    code.append("\n".join(lines[:20])[:900])
+        except Exception:
+            pass
+    sample = list(l["sample"])
+    try:
+        # a stripped function goes by the name of its cohesive named cluster, as
+        # its row does on screen (rows are only named after grouping, page by page)
+        from bsimvis.app.routes.nway import _attach_clusters
+
+        one = [
+            {"name": "FUN_0", "cells": {"c": f}}
+            for f in (l.get("name_fids") or l["fids"])[:LANE_NAME_FIDS]
+        ]
+        _attach_clusters(get_redis(), one, {}, None, {})
+        sample += [
+            k
+            for k in dict.fromkeys(
+                name_key({**x, "name_from": None})
+                for x in one
+                if x.get("name_from") == "cluster"
+            )
+            if k and _SYMBOL.fullmatch(k) and k not in sample
+        ]
+    except Exception:
+        pass
     out = [
         (
             f"{l['rows']} strings found together in {l['files']} of {l['total']} files of a malware family. The evidence below comes from the functions that use them."
@@ -1028,45 +1140,17 @@ def _lane_evidence(l):
             else f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
         )
     ]
-    if l["sample"] and not by_string:
-        out.append("Function names: " + ", ".join(l["sample"]))
-    tags, strings, code = list(l["tags"]), [], []
-    if by_string:
-        strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
-    libs, inner, callers = Counter(), Counter(), Counter()
-    for fid in l["fids"][:LANE_FIDS]:
-        try:
-            coll, md5, addr = llm_tools.parse_func_id(fid)
-            _, _, meta, _ = fetch_function_data(coll, md5, addr, meta_only=True)
-            for t in (meta or {}).get("tags") or []:
-                t = t.split("#")[0]
-                if t.startswith(("capa:", "yara:")) and t not in tags:
-                    tags.append(t)
-            graph = llm_tools.get_call_graph(fid)
-            for c in graph.get("callees") or []:
-                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
-                    (libs if c.get("is_external") else inner)[c["name"]] += 1
-            for c in graph.get("callers") or []:
-                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
-                    callers[c["name"]] += 1
-            for rec in string_service.function_strings(get_redis(), coll, md5, addr):
-                v = " ".join(str(rec.get("value") or "").split())[:60]
-                if len(v) >= 4 and v not in strings:
-                    strings.append(v)
-            if len(code) < LANE_CODE_FNS:
-                src, _ = get_code_for_llm(fid)
-                # the signature and body, without the block of variable declarations
-                lines = [
-                    x
-                    for x in (src or {}).get("code", "").splitlines()
-                    if x.strip()
-                    and not x.lstrip().startswith("/*")
-                    and not _DECL.match(x)
-                ]
-                if lines:
-                    code.append("\n".join(lines[:14])[:600])
-        except Exception:
-            pass
+    if platform:
+        out.append("Platform: " + platform.most_common(1)[0][0])
+    if sample and not by_string:
+        # a few names over many functions describe those few, not the lane
+        few = len(sample) < 10 and len(sample) * 4 < l["rows"]
+        head = (
+            f"Function names (only {len(sample)} of the {l['rows']} are named)"
+            if few
+            else "Function names"
+        )
+        out.append(f"{head}: " + ", ".join(sample))
     if libs:
         out.append("Library calls: " + ", ".join(k for k, _ in libs.most_common(12)))
     if inner:
@@ -1074,12 +1158,28 @@ def _lane_evidence(l):
     if callers:
         out.append("Called from: " + ", ".join(k for k, _ in callers.most_common(6)))
     if tags:
-        out.append("Findings: " + ", ".join(tags[:8]))
+        # findings are read first, so count them over the whole lane when known
+        hit, of = (l["tag_rows"], l["rows"]) if l.get("tag_rows") else (n_tag, n_read)
+        head = (
+            f"Rule findings (on only {hit} of the {of} functions)"
+            if hit * 2 < of
+            else "Rule findings"
+        )
+        # a small model names the lane after any rule it sees: one that covers
+        # under a fifth of the lane is not lane evidence (it stays a chip)
+        if hit * 5 >= of:
+            out.append(f"{head}: " + ", ".join(tags[:8]))
     if strings:
-        out.append("Strings: " + " | ".join(strings[:10]))
+        # one function's strings can mislead about a whole lane
+        head = (
+            f"Strings (from {n_str} of {n_read} functions read)"
+            if n_str * 2 < n_read
+            else "Strings"
+        )
+        out.append(f"{head}: " + " | ".join(strings[:12]))
     out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
     calls = [k for k, _ in libs.most_common(6)]
-    return "\n".join(out)[:2600], tags, strings, calls
+    return "\n".join(out)[:3400], tags, strings, calls
 
 
 def _name_lane(l, red):
@@ -1127,6 +1227,8 @@ def lane_names(lanes):
         hint = str(l.get("hint") or "")[:40]
         tags = [str(x)[:80] for x in (l.get("tags") or [])[:5]]
         fids = [str(x) for x in (l.get("fids") or [])[:LANE_FIDS]]
+        name_fids = [str(x) for x in (l.get("name_fids") or [])[:LANE_NAME_FIDS]]
+        tag_rows = int(l.get("tag_rows") or 0)
         if not (sample or hint or tags or fids):
             continue
         item = {
@@ -1136,7 +1238,9 @@ def lane_names(lanes):
             "hint": hint,
             "tags": tags,
             "fids": fids,
-            "v": 6,  # bump when the prompt changes, so cached names are redone
+            "name_fids": name_fids,
+            "tag_rows": tag_rows,
+            "v": 9,  # bump when the prompt changes, so cached names are redone
         }
         if l.get("kind") == "string":
             item["kind"] = "string"
@@ -1307,6 +1411,16 @@ def group_rows(rows, doc, r, mode, params):
         held = g.pop("_held", set())
         g["fcover"] = "".join("1" if f in held else "0" for f in fids)
     groups = {g["id"]: g for g, _ in pairs if not g.get("headless")}
+    # every group's biggest merged functions, so a closed header can name what it holds
+    merges = defaultdict(list)
+    for g, _ in pairs:
+        if g.get("kind") == "same":
+            for a in g["path"][:-1]:
+                merges[a].append([g["name"], len(g["fids"]), g["id"]])
+    for gid, ms in merges.items():
+        if gid in groups:
+            groups[gid]["merges"] = sorted(ms, key=lambda m: -m[1])[:3]
+            groups[gid]["merge_n"] = len(ms)
     entries = _entries(pairs, params)
     if key:
         _CACHE.put(key, (pairs, groups, ctx["note"]))
@@ -1545,6 +1659,18 @@ def demo():
     assert order(sort_col="weight", reverse=False) == ["other6", "init7", "same:0"]
     assert order(sort_col="span", reverse=False)[-1] == "same:0"
     assert order(sort_col="name", reverse=False)[0] == "same:0"  # "init" < "other"
+    # a lane names its merged functions, with how many functions each holds
+    _, gs, _ = group_rows(
+        doc["rows"],
+        doc,
+        None,
+        "lane",
+        {"group_merge": "name", "group_lane_min": "1", "group_min_link": "0"},
+    )
+    lane = gs["lane:1111"]
+    assert lane["units"] == 1 and lane["merge_n"] == 1, lane
+    assert lane["merges"] == [["init", 4, "lane:1111/same:0"]], lane["merges"]
+    assert "merges" not in gs["lane:0100"]
     for mode in ("lane,lane", "bogus", "same"):
         try:
             group_rows(doc["rows"], doc, None, mode, {})
@@ -1686,13 +1812,17 @@ def demo():
     assert ids[0] == "tier:core" and ids.index("tier:core/lane:1111") == 1, ids
     # annotate: a shared prefix becomes the lane's hint
     named = [row(15, 4, n) for n in ("attack_a", "attack_b", "attack_c", "main")]
+    # a tag-carried name is a rule name: never part of the sample the lane is named from
+    named.append({**row(15, 4, "powershell"), "name_from": "tag"})
     nt = _nest(named, ["lane"], {**lctx, "lane_depth": 1}, "", [], {})
     fm = {"fattack_a": {"tags": ["capa:network#send", "yara:x", "origin:lib"]}}
     named[0]["cells"] = {"A": "fattack_a"}
     _annotate(nt, fm)
-    assert nt[0][0]["tags"] == ["capa:network", "yara:x"], nt[0][0]
-    assert len(nt[0][0]["fids"]) == 4, nt[0][0]
+    assert sorted(nt[0][0]["tags"]) == ["capa:network", "yara:x"], nt[0][0]
+    assert len(nt[0][0]["fids"]) == 5, nt[0][0]
     assert nt[0][0]["hint"] == "attack_*" and "main" in nt[0][0]["sample"], nt[0][0]
+    assert "powershell" not in nt[0][0]["sample"], nt[0][0]
+    assert nt[0][0]["tag_rows"] == 1 and len(nt[0][0]["name_fids"]) == 5, nt[0][0]
     print("nway_group_service demo ok")
 
 

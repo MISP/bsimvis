@@ -176,6 +176,8 @@ pair_random = 4
 [llm]
     ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"
+    # One context size for every call: Ollama reloads the model each time it changes.
+    num_ctx = 65536
     prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
 
 [ghidra]

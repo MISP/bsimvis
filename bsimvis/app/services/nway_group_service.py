@@ -990,7 +990,7 @@ def _annotate(pairs, fmeta):
                 reverse=True,
             )
             g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
-            found = Counter(t for _, _, r in ranked for t in set(finds(r)))
+            found = Counter(t for _, _, r in ranked for t in sorted(set(finds(r))))
             g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:

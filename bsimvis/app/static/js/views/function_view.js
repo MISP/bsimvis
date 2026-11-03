@@ -123,14 +123,15 @@ window.FunctionView = {
                                     <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FunctionView.debounceNeighborsSearch()">
                                 </div>
                                 <div class="home-card" style="padding:16px; min-width:220px;">
-                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Below Threshold</h3>
-                                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
-                                        <button class="btn-action" id="fn-nbr-live-btn" onclick="FunctionView.toggleLiveDiscovery()" title="Also compute matches below the stored edges' min score, live from feature vectors. Nothing is saved until you save a row."><i class="fa-solid fa-satellite-dish"></i> Discover</button>
-                                        <button class="btn-action" id="fn-nbr-live-pick-all" style="display:none;" onclick="FunctionView.pickAllLive()" title="Select every live row shown"><i class="fa-regular fa-square-check"></i> Select all</button>
-                                        <button class="btn-action" id="fn-nbr-live-save" style="display:none;" onclick="FunctionView.saveDiscovered()" title="Store the selected live matches as real similarity edges, tagged 'discovered'"><i class="fa-solid fa-floppy-disk"></i> Save selected</button>
-                                    </div>
-                                    <div id="fn-nbr-live-status" style="font-size:0.7rem; color:var(--dim); margin-top:6px;"></div>
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Source</h3>
+                                    <input type="hidden" id="fn-nbr-source" value="stored">
+                                    <div id="fn-nbr-source-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
                                 </div>
+                            </div>
+                            <div id="fn-nbr-live-bar" style="display:none; align-items:center; gap:12px; flex-wrap:wrap;">
+                                <span id="fn-nbr-live-status" style="font-size:0.75rem; color:var(--dim);"></span>
+                                <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, or right-click a live row</span>
+                                <button class="ui-button hdr-btn" style="margin-left:auto;" onclick="FunctionView.saveDiscovered()" title="Store the selected live matches as similarity edges, tagged 'discovered'"><i class="fa-solid fa-link"></i> Save selected as edges</button>
                             </div>
                             <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
                                 <table id="fn-nbr-results-table">
@@ -1072,7 +1073,7 @@ window.FunctionView = {
                 if (status) status.textContent = `Under ${data.min_features} features: matched by FunctionID hash only, no BSim discovery.`;
                 return null;
             }
-            if (status) status.textContent = `${data.total} live match${data.total === 1 ? '' : 'es'} from ${Number(data.min_score).toFixed(2)} (floor ${Number(data.floor).toFixed(2)}), not saved.`;
+            if (status) status.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> ${data.total} live match${data.total === 1 ? '' : 'es'} from ${Number(data.min_score).toFixed(2)} (floor ${Number(data.floor).toFixed(2)}), not saved`;
             return { pairs: data.pairs || [], total: data.total || 0 };
         } catch (e) {
             if (status) status.textContent = `Live discovery failed: ${e.message}`;
@@ -1080,18 +1081,13 @@ window.FunctionView = {
         }
     },
 
-    toggleLiveDiscovery() {
-        this.nbrLive = !this.nbrLive;
-        const btn = document.getElementById('fn-nbr-live-btn');
-        if (btn) btn.innerHTML = this.nbrLive
-            ? '<i class="fa-solid fa-xmark"></i> Hide live'
-            : '<i class="fa-solid fa-satellite-dish"></i> Discover';
-        ['fn-nbr-live-pick-all', 'fn-nbr-live-save'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.style.display = this.nbrLive ? '' : 'none';
-        });
+    /** Source pill: 'live' adds live (below-threshold) rows to the stored ones. */
+    setLive(on) {
+        this.nbrLive = on;
+        const bar = document.getElementById('fn-nbr-live-bar');
+        if (bar) bar.style.display = on ? 'flex' : 'none';
         const status = document.getElementById('fn-nbr-live-status');
-        if (status && !this.nbrLive) status.textContent = '';
+        if (status && !on) status.textContent = '';
         // Drop Score min to the discovery floor while live is on, so a saved
         // (sub-threshold) edge stays visible as a stored row after the refresh.
         const minEl = document.getElementById('fn-nbr-min-score');
@@ -1101,21 +1097,24 @@ window.FunctionView = {
             if (this.nbrLive && !(parseFloat(minEl.value) < parseFloat(buildMin))) minEl.value = floor;
             else if (!this.nbrLive && minEl.value === floor) minEl.value = buildMin;
         }
-        this.searchNeighbors();
     },
 
-    pickAllLive() {
-        const boxes = [...document.querySelectorAll('#fn-nbr-results-tbody .nbr-live-pick')];
-        const all = boxes.length && boxes.every(b => b.checked);
-        boxes.forEach(b => { b.checked = !all; });
+    /** Partner ids of the live rows in the table selection. */
+    selectedLivePartners() {
+        const sel = new Set(window.getSelectedTableIds ? window.getSelectedTableIds() : []);
+        return [...document.querySelectorAll('#fn-nbr-results-tbody tr[data-live="1"]')]
+            .filter(tr => sel.has(tr.dataset.id))
+            .map(tr => tr.dataset.id2);
     },
 
-    /** Save live rows as real edges: `ids` given (one row's button) or the checked rows. */
+    /** Save live rows as real edges: `ids` given (context menu) or the selected rows. */
     async saveDiscovered(ids) {
         const status = document.getElementById('fn-nbr-live-status');
-        const partnerIds = ids || [...document.querySelectorAll('#fn-nbr-results-tbody .nbr-live-pick:checked')].map(b => b.value);
+        const partnerIds = ids || this.selectedLivePartners();
         if (!partnerIds.length) {
-            if (status) status.textContent = 'Select live rows to save first.';
+            const msg = 'Select live rows first (click, shift/ctrl-click or drag).';
+            if (typeof showToast === 'function') showToast(msg, 'warning');
+            else if (status) status.textContent = msg;
             return;
         }
         const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
@@ -1138,9 +1137,12 @@ window.FunctionView = {
             const saved = (data.saved || []).length;
             const skipped = (data.skipped || []).length;
             await this.searchNeighbors();
-            if (status) status.textContent = `Saved ${saved} edge${saved === 1 ? '' : 's'} (tag: discovered)${skipped ? `, skipped ${skipped}: ${[...new Set(data.skipped.map(s => s.reason))].join(', ')}` : ''}.`;
+            const msg = `Saved ${saved} edge${saved === 1 ? '' : 's'} (tag: discovered)${skipped ? `, skipped ${skipped}: ${[...new Set(data.skipped.map(s => s.reason))].join(', ')}` : ''}`;
+            if (typeof showToast === 'function') showToast(msg, saved ? 'success' : 'warning');
+            else if (status) status.textContent = msg;
         } catch (e) {
-            if (status) status.textContent = `Save failed: ${e.message}`;
+            if (typeof showToast === 'function') showToast(`Save failed: ${e.message}`, 'error');
+            else if (status) status.textContent = `Save failed: ${e.message}`;
         }
     },
 
@@ -1164,6 +1166,10 @@ window.FunctionView = {
             if (value === 'overall') params.delete('score_axis'); else params.set('score_axis', value);
             window.history.replaceState(window.history.state, '', window.location.pathname + (params.toString() ? `?${params}` : '') + window.location.hash);
         }
+        if (inputId === 'fn-nbr-source') {
+            this.setLive(value === 'live');
+            this.renderNeighborPillGroup(inputId, containerId, this.SOURCE_OPTIONS, '#ae81ff');
+        }
         if (inputId === 'fn-nbr-scope') this.renderScopePills();
         else if (inputId === 'fn-nbr-score-axis') this.renderNeighborPillGroup(inputId, containerId, this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
@@ -1176,6 +1182,11 @@ window.FunctionView = {
         { v: 'library', label: 'Library', icon: 'fa-solid fa-book' },
         { v: 'content', label: 'Content', icon: 'fa-solid fa-file-lines' },
     ],
+    SOURCE_OPTIONS: [
+        { v: 'stored', label: 'Stored', icon: 'fa-solid fa-database' },
+        { v: 'live', label: 'Stored + Live', icon: 'fa-solid fa-satellite-dish' },
+    ],
+
     CROSS_BINARY_OPTIONS: [
         { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
         { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
@@ -1198,6 +1209,7 @@ window.FunctionView = {
         this.renderScopePills();
         this.renderNeighborPillGroup('fn-nbr-score-axis', 'fn-nbr-score-axis-pills', this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
+        this.renderNeighborPillGroup('fn-nbr-source', 'fn-nbr-source-pills', this.SOURCE_OPTIONS, '#ae81ff');
     },
 
     copyFunctionCode(btn) {

@@ -226,7 +226,9 @@
         html += `<div class="context-menu-header">${escapeHtml(headerTitle)}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType) || (resolvedType === 'string' && norm.id)) {
+        // A live (not yet saved) similarity has no doc to bookmark or tag.
+        const isLiveSim = resolvedType === 'similarity' && !!(data && data.live);
+        if (!isLiveSim && (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType) || (resolvedType === 'string' && norm.id))) {
             const etype = resolvedType;
             const eid = (resolvedType === 'similarity' || resolvedType === 'bin_sim')
                 ? norm.sid
@@ -592,6 +594,13 @@
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Diff</span>
             </div>`;
+            if (isLiveSim && window.FunctionView) {
+                actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); FunctionView.saveDiscovered([${escapeAttr(jsString(norm.id2))}])">
+                <i class="fa-solid fa-link" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Save as similarity edge</span>
+            </div>`;
+            }
         } else if (resolvedType === 'bin_similarity') {
             const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(col, norm.md5_a, col, norm.md5_b);
             const diffTitle = `Bin Diff: ${String(norm.name_a || '')} vs ${String(norm.name_b || '')}`;

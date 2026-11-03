@@ -3984,6 +3984,26 @@ def test_strings():
         pool_service.delete_pool(pid)
 
 
+def test_branch_badge():
+    """The dashboard page and icons carry the checkout's branch, hashed to a stable hue."""
+    page = requests.get(f"{BASE_URL}/collections").text
+    m = re.search(r'data-branch="([^"]+)" data-branch-hue="(\d+)"', page)
+    if not check("index stamps branch on <html>", m, page[:300]):
+        return
+    name, hue = m.groups()
+    check("title names the branch", f"<title>[{name}] BSimVis</title>" in page)
+    check("favicon link carries the hue", f'href="/favicon.svg?h={hue}"' in page)
+    again = requests.get(f"{BASE_URL}/").text
+    check("hue is stable across loads", f'data-branch-hue="{hue}"' in again)
+    for icon in ("/favicon.svg", "/logo.svg"):
+        r = requests.get(f"{BASE_URL}{icon}")
+        check(
+            f"{icon} served tinted",
+            r.ok and r.headers.get("content-type", "").startswith("image/svg+xml"),
+            f"{r.status_code} {r.headers.get('content-type')}",
+        )
+
+
 def test_maintenance_remove_validation():
     """The remove route requires one valid file selector."""
     test_endpoint(
@@ -10955,6 +10975,7 @@ if __name__ == "__main__":
         test_call_edge_id_dedup,
         test_strings,
         test_yara_editor,
+        test_branch_badge,
         test_maintenance_remove_validation,
         test_maintenance_remove_file,
         test_pool_member_removal,

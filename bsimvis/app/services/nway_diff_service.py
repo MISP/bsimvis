@@ -59,8 +59,10 @@ _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
 _SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
-# Sampled sets: what links files beyond the pairs read (see `_bridges`).
-BRIDGES = ("mst", "fid", "cluster")
+# Sampled sets: what links files beyond the pairs read (see `_bridges`). Measured on
+# 437 mirai files: `lane` pays per pair read; `arch` is no better than a bigger
+# pair_k at the same budget; `fid`/`cluster` cost BSim checks for a few rows.
+BRIDGES = ("mst", "arch", "lane", "fid", "cluster")
 BRIDGE_CHUNK = 5000  # candidate pairs whose vectors are held at once
 SCORABLE = ("unweighted_cosine", "binary_cosine", "jaccard", "weighted_cosine")
 SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
@@ -432,18 +434,20 @@ def pair_sample():
         int(config_service.get("nway.sample_above", 100)),
         int(config_service.get("nway.pair_k", 16)),
         int(config_service.get("nway.pair_random", 4)),
-        bridge_kinds(config_service.get("nway.bridges", ",".join(BRIDGES))),
+        bridge_kinds(config_service.get("nway.bridges", "lane")),
     )
 
 
-def nearest_pairs(scores, k, extra, seed, tree=False):
+def nearest_pairs(scores, k, extra, seed, tree=False, groups=None):
     """Pairs to read for a large set -> sorted [(i, j)], i < j.
 
     Each file keeps its `k` best-scored partners plus `extra` seeded random
     ones, so two sub-families inside one cluster stay linked. With `tree`, the
     maximum spanning tree's scored pairs are added too, so every family is
-    reached through its strongest stored link, not by chance. `scores` is an
-    N x N array, -1 where a pair has no stored score.
+    reached through its strongest stored link, not by chance. With `groups`
+    (one label per file, e.g. its architecture), each file also keeps its best
+    scored partner in every other group: nearest partners rarely cross one.
+    `scores` is an N x N array, -1 where a pair has no stored score.
     """
     n = len(scores)
     s = np.array(scores, np.float64)
@@ -459,6 +463,55 @@ def nearest_pairs(scores, k, extra, seed, tree=False):
         # an unscored pair has no doc and would fall back to the costly rebuild
         w = np.where(s > 0, s, 0.0)
         out |= {(min(i, j), max(i, j)) for i, j in spanning_tree(w, 0) if w[i, j] > 0}
+    if groups is not None:
+        labels = np.array(groups, object)
+        for g in set(groups):
+            cols = np.flatnonzero(labels == g)
+            pick = cols[np.argmax(s[:, cols], axis=1)]
+            ok = (s[np.arange(n), pick] > 0) & (labels != g)
+            out |= {
+                (int(min(i, j)), int(max(i, j)))
+                for i, j in zip(np.flatnonzero(ok), pick[ok])
+            }
+    return sorted(out)
+
+
+def lane_pairs(rows, scores, read, k):
+    """Unread file pairs that would join lanes sharing no file -> sorted [(i, j)].
+
+    `rows` are matched rows, `mask` bit i = file i. A lane is a set of 2+
+    files held by 2+ rows. Each lane takes its `k` best lanes it shares no
+    file with, ranked by their best stored file pair outside `read`, and
+    that pair is returned. One read pair is enough to join every row the two
+    lanes hold in common.
+    """
+    count = Counter(r["mask"] for r in rows if r["span"] > 1)
+    lanes = [m for m, c in count.items() if c >= 2]  # nway_group_service.LANE_MIN
+    if len(lanes) < 2:
+        return []
+    n = len(scores)
+    s = np.array(scores, np.float64)
+    np.fill_diagonal(s, -1.0)
+    # a read pair already had its say: those lanes stayed apart through it
+    for i, j in read:
+        s[i, j] = s[j, i] = -1.0
+    idx = [np.array([i for i in range(n) if m >> i & 1]) for m in lanes]
+    member = np.zeros((len(lanes), n), bool)
+    for a, ia in enumerate(idx):
+        member[a, ia] = True
+    near = np.stack(
+        [s[ia].max(axis=0) for ia in idx]
+    )  # lane -> best score to each file
+    best = np.stack([near[:, ib].max(axis=1) for ib in idx], axis=1)
+    best[(member.astype(np.int32) @ member.T.astype(np.int32)) > 0] = -1.0
+    out = set()
+    for a in range(len(lanes)):
+        for b in np.argsort(-best[a], kind="stable")[:k].tolist():
+            if best[a, b] <= 0:
+                break
+            j = idx[b][np.argmax(near[a, idx[b]])]
+            i = idx[a][np.argmax(s[idx[a], j])]
+            out.add((int(min(i, j)), int(max(i, j))))
     return sorted(out)
 
 
@@ -647,35 +700,58 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
         _report(0.05, "picking file pairs")
         scores = _pair_scores(r, scope, members, algo, pairs, sids)
         seed = int(hashlib.md5(json.dumps(members).encode()).hexdigest()[:8], 16)
+        arch = None
+        if "arch" in sample[3]:
+            arch = [(c.get("language_id") or "?").split(":")[0] for c in columns]
         keep = set(
-            nearest_pairs(scores, sample[1], sample[2], seed, "mst" in sample[3])
+            nearest_pairs(scores, sample[1], sample[2], seed, "mst" in sample[3], arch)
         )
         sampled = (len(keep), len(pairs))
+        all_pairs, all_sids = pairs, sids
         sids = [sid for p, sid in zip(pairs, sids) if p in keep]
         pairs = [p for p in pairs if p in keep]
 
     edges, missing = {}, []
-    for start in range(0, len(pairs), PAIR_CHUNK):
-        _report(
-            0.1 + 0.85 * start / len(pairs),
-            f"reading file pair {start + 1}/{len(pairs)}",
-        )
-        pipe = r.pipeline(transaction=False)
-        for sid in sids[start : start + PAIR_CHUNK]:
-            pipe.get(sid or "")
-        chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
-        for (i, j), raw in chunk:
-            doc = _decode(raw)
-            edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
-                fids,
-                ix,
-                (
-                    (m["func_a"], m["func_b"], float(m["similarity"]))
-                    for m in (doc.get("diff") or {}).get("matched") or []
-                ),
+
+    def read(pairs, sids):
+        for start in range(0, len(pairs), PAIR_CHUNK):
+            _report(
+                0.1 + 0.85 * start / len(pairs),
+                f"reading file pair {start + 1}/{len(pairs)}",
             )
-            if not doc:
-                missing.append((i, j))
+            pipe = r.pipeline(transaction=False)
+            for sid in sids[start : start + PAIR_CHUNK]:
+                pipe.get(sid or "")
+            chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
+            for (i, j), raw in chunk:
+                doc = _decode(raw)
+                edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
+                    fids,
+                    ix,
+                    (
+                        (m["func_a"], m["func_b"], float(m["similarity"]))
+                        for m in (doc.get("diff") or {}).get("matched") or []
+                    ),
+                )
+                if not doc:
+                    missing.append((i, j))
+
+    read(pairs, sids)
+    if sampled and "lane" in sample[3]:
+        # Second pass: match what was read, then read the best pair between lanes
+        # sharing no file, so a family split across far files can rejoin.
+        _report(0.6, "joining lanes")
+        funcs = {c["id"]: dict.fromkeys(fid_sets[c["id"]], 1.0) for c in columns}
+        sid_of = dict(zip(all_pairs, all_sids))
+        lane_k = int(config_service.get("nway.lane_k", 8))
+        for _ in range(int(config_service.get("nway.lane_rounds", 3))):
+            rows = nway_match(edges, funcs, default_min_edge())
+            extra = lane_pairs(rows, scores, keep, lane_k)
+            if not extra:
+                break
+            read(extra, [sid_of[p] for p in extra])
+            keep |= set(extra)
+        sampled = (len(keep), sampled[1])
 
     if missing:
         # No stored doc: edges from function-sim docs, each file's vectors read once.
@@ -1469,6 +1545,22 @@ def demo():
     tree = nearest_pairs(unscored, 3, 0, seed=1, tree=True)
     assert not any(fam[i] != fam[j] for i, j in tree)
 
+    # arch groups: every file reaches its best partner in each other group
+    arch = ["x86" if fam[i] else "arm" for i in range(20)]
+    crossed = nearest_pairs(sc, 3, 0, seed=1, groups=arch)
+    assert all(
+        any(fam[j if i == x else i] != fam[x] for i, j in crossed if x in (i, j))
+        for x in range(20)
+    )
+    # lanes sharing no file: one unread pair between them, the best scored
+    ln = [{"span": 2, "mask": 0b0011}] * 2 + [{"span": 2, "mask": 0b1100}] * 2
+    ls = np.full((4, 4), 0.1)
+    ls[1, 2] = ls[2, 1] = 0.6
+    assert lane_pairs(ln, ls, set(), 1) == [(1, 2)]
+    ls[0, 3] = ls[3, 0] = 0.4
+    assert lane_pairs(ln, ls, {(1, 2)}, 1) == [(0, 3)]  # the best pair left unread
+    assert lane_pairs(ln[:3], ls, set(), 1) == []  # one row is not a lane
+
     # bridge chains: column order, read pairs skipped, ambiguous groups dropped
     pos = {"A": 0, "B": 1, "C": 2, "D": 3}
     groups = {
@@ -1480,6 +1572,7 @@ def demo():
     assert got == [("b1", "c1")], got
     assert bridge_candidates(groups, pos, set()) == [("a1", "b1"), ("b1", "c1")]
     assert bridge_kinds("cluster, mst") == ("mst", "cluster")
+    assert bridge_kinds("lane,arch") == ("arch", "lane")
     assert bridge_kinds("none") == () and bridge_kinds(["fid"]) == ("fid",)
     try:
         bridge_kinds("fid,lsh")

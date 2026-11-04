@@ -217,6 +217,7 @@ job keys.
 | `nway:progress:{pid}` / `nway:cancel:{pid}` | **String** | A running `/nway` call's progress, and its cancel flag (checked at each progress step). 120 s TTL. |
 | `nway:built:base:{key}` / `nway:built:rows:{key}` | **String** | zlib-pickled base / matched rows of a set over `nway.auto_build_max_members` files, written by the `nway_build` job (or a later min_edge). 7 day TTL. Such a set is never built by a request: `/nway` answers 428 `needs_build`. |
 | `nway:build_job:{key}` | **String** | That set's last `nway_build` job id, so a reload re-attaches to it. 7 day TTL. |
+| `nway:depth:{set}` | **String** | The `pair_k` a large set was last asked to build at (fast / balanced / deep; 0 = every pair), so every `/nway` call without `pair_k` reads that build or re-attaches to its job. 7 day TTL. |
 | `nway:titles:{sha1}` | **String** | LLM titles of an N-way row's reference blocks (JSON), 30 day TTL. Written by a background thread in the app, never by a job. |
 | `nway:colset:{sha1}` | **String** | Saved N-way compare: the members and column groups that `POST /api/bin_sim/nway/columns` resolved from file queries (JSON), read back by `col_set`. 1 h TTL. |
 

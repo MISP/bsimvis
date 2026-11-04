@@ -922,6 +922,7 @@ def _load_doc(build=False, on_progress=None):
         min_features = request.args.get("min_features", type=int)
         presence = float(request.args.get("child_presence", 0.5))
         pair_k = request.args.get("pair_k", type=int)
+        sample_above = request.args.get("sample_above", type=int)
         twin_depth = request.args.get("twin_depth", 1, type=int)
         twin_link = float(request.args.get("twin_link", 0.5))
     except ValueError:
@@ -1005,6 +1006,8 @@ def _load_doc(build=False, on_progress=None):
                 "focus_rule": focus_rule,
                 "child_presence": max(0.0, min(1.0, presence)),
                 "pair_k": None if pair_k is None else max(0, pair_k),
+                "sample_above": None if sample_above is None else max(1, sample_above),
+                "bridges": request.args.get("bridges"),
                 "groups_mode": "by" if columns == "by" else "children",
                 "build": build,
             },
@@ -1019,6 +1022,9 @@ def _load_doc(build=False, on_progress=None):
                     "key": e.key,
                     "limit": nway_diff_service.auto_build_max(),
                     "job": _build_job(e.key),
+                    "functions": e.functions,
+                    "pair_k": e.pair_k,
+                    "depths": nway_diff_service.build_depths(e.members, e.functions),
                 },
                 428,
             )

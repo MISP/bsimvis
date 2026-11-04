@@ -83,14 +83,16 @@ def concat_edges(edges_by_pair, fids, ix):
     return a[keep], b[keep], s[keep]
 
 
-def nway_match(edges_by_pair, members, min_edge=0.0):
+def nway_match(edges_by_pair, members, min_edge=0.0, bridges=None):
     """Group functions of N files into rows.
 
     `members` is `{member: {fid: weight}}`; its key order fixes the mask bits.
     Fids must be unique across members. `edges_by_pair` is
     `{(member_i, member_j): edges}`, edges being `[(fid_i, fid_j, score), ...]`
     or a `PairEdges`. A pair left out was never read (sampled sets): `support`
-    then only counts the row's pairs that are present.
+    then only counts the row's pairs that are present. `bridges` are extra
+    edges (tuples or a `PairEdges`) across pairs that were not read: they join
+    rows in the same greedy pass and count toward `cohesion`, never `support`.
 
     Returns rows, one per group, singletons included (a singleton is a function
     unique to its file):
@@ -98,7 +100,8 @@ def nway_match(edges_by_pair, members, min_edge=0.0):
     `mask` is a bitmask over `members`, `cells` is `{member: fid}`, `span` the
     number of files in the row and `weight` the heaviest member function.
     `support` is edges present / possible pairs in the row and `cohesion` the
-    mean edge score; a singleton has both at 1.0.
+    mean edge score; a singleton has both at 1.0. A row joined by bridges also
+    carries `bridged`, the number of bridge edges inside it.
     """
     bit = {m: 1 << i for i, m in enumerate(members)}
     owner = {fid: m for m, funcs in members.items() for fid in funcs}
@@ -116,10 +119,15 @@ def nway_match(edges_by_pair, members, min_edge=0.0):
         return x
 
     a, b, s = concat_edges(edges_by_pair, fids, ix)
+    read = np.ones(len(s), bool)
+    if bridges is not None and len(bridges):
+        ba, bb, bs = concat_edges({None: bridges}, fids, ix)
+        a, b, s = (np.concatenate(p) for p in ((a, ba), (b, bb), (s, bs)))
+        read = np.concatenate([read, np.zeros(len(bs), bool)])
     keep = s >= min_edge
-    a, b, s = a[keep], b[keep], s[keep]
+    a, b, s, read = a[keep], b[keep], s[keep], read[keep]
     order = np.lexsort((b, a, -s))
-    a, b, s = a[order], b[order], s[order]
+    a, b, s, read = a[order], b[order], s[order], read[order]
     for x, y in zip(a.tolist(), b.tolist()):
         root_a, root_b = find(x), find(y)
         if root_a == root_b or mask[root_a] & mask[root_b]:
@@ -133,7 +141,8 @@ def nway_match(edges_by_pair, members, min_edge=0.0):
         groups.setdefault(r, []).append(i)
     ra = root[a]
     same = ra == root[b]
-    n_found = np.bincount(ra[same], minlength=len(fids)).tolist()
+    n_all = np.bincount(ra[same], minlength=len(fids)).tolist()
+    n_found = np.bincount(ra[same & read], minlength=len(fids)).tolist()
     total = np.bincount(ra[same], weights=s[same], minlength=len(fids)).tolist()
 
     # pairs actually read, per member bit: all of them unless the set was sampled
@@ -156,16 +165,17 @@ def nway_match(edges_by_pair, members, min_edge=0.0):
                 sum((near[owner[fids[i]]] & mask[r]).bit_count() for i in members_ix)
                 / 2
             )
-        rows.append(
-            {
-                "mask": mask[r],
-                "cells": {owner[fids[i]]: fids[i] for i in members_ix},
-                "span": span,
-                "weight": max(weight[fids[i]] for i in members_ix),
-                "support": found / possible if span > 1 and possible else 1.0,
-                "cohesion": total[r] / found if found else 1.0,
-            }
-        )
+        row = {
+            "mask": mask[r],
+            "cells": {owner[fids[i]]: fids[i] for i in members_ix},
+            "span": span,
+            "weight": max(weight[fids[i]] for i in members_ix),
+            "support": found / possible if span > 1 and possible else 1.0,
+            "cohesion": total[r] / n_all[r] if n_all[r] else 1.0,
+        }
+        if n_all[r] > found:
+            row["bridged"] = n_all[r] - found
+        rows.append(row)
     rows.sort(key=lambda r: (-r["span"], -r["weight"], min(r["cells"].values())))
     return rows
 
@@ -225,6 +235,20 @@ def demo():
     # a pair never read (sampled set) is not held against support
     e = {("A", "B"): [("a", "b", 0.95)], ("B", "C"): [("b", "c", 0.9)]}
     assert nway_match(e, m)[0]["support"] == 1.0
+
+    # a bridge joins rows across an unread pair: cohesion counts it, support does not
+    e = {("A", "B"): [("a", "b", 0.95)]}
+    rows = nway_match(e, m, bridges=[("b", "c", 0.85)])
+    assert len(rows) == 1 and rows[0]["span"] == 3 and rows[0]["bridged"] == 1
+    assert rows[0]["support"] == 1.0 and abs(rows[0]["cohesion"] - 0.9) < 1e-9
+    assert "bridged" not in nway_match(e, m)[0]
+    rows = nway_match(e, m, min_edge=0.9, bridges=[("b", "c", 0.85)])
+    assert sorted(r["span"] for r in rows) == [1, 2]
+    # a bridge still keeps one function per file
+    m2 = {"A": {"a": 1, "a2": 1}, "B": {"b": 1}}
+    rows = nway_match({("A", "B"): [("a", "b", 0.9)]}, m2, bridges=[("a2", "b", 1.0)])
+    assert {"A": "a2", "B": "b"} in [r["cells"] for r in rows]
+    assert all(len(r["cells"]) == r["span"] for r in rows)
 
     # PairEdges round-trips and answers single scores
     fids = ["a", "b", "c"]

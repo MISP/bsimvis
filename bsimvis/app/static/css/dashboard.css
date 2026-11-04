@@ -3805,4 +3805,23 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 /* N-way icons: roles (in their colour) and bands */
 .nway-ricon { color: var(--rc); width: 14px; margin-right: 5px; text-align: center; font-size: 11px; }
 .nway-bicon { color: var(--accent); width: 14px; margin-right: 6px; text-align: center; font-size: 12px; opacity: 0.85; }
+.nway-gsw { width: 12px; height: 12px; margin-right: 6px; }
+/* Lineage tracking (track=): lit rows and headers over their own background, outlined columns */
+.nway-table tr.nway-trk > td { background-image: linear-gradient(color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent) 14%, transparent)); }
+.nway-table .col.nway-tc { box-shadow: inset 1px 0 0 color-mix(in srgb, var(--accent) 55%, transparent), inset -1px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+.nway-gtrk, .nway-rtrk { all: unset; cursor: pointer; color: var(--dim); padding: 0 4px; border-radius: 4px; font-size: 11px; font-weight: 400; }
+.nway-rtrk { opacity: 0; }
+.nway-table tr:hover .nway-rtrk, .nway-rtrk.on, .nway-rtrk:focus-visible { opacity: 1; }
+.nway-gtrk:hover, .nway-rtrk:hover, .nway-gtrk.on, .nway-rtrk.on { color: var(--accent); }
+.nway-gtrk:focus-visible, .nway-rtrk:focus-visible { outline: 2px solid var(--accent); }
+.nway-trkchip b { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-weight: 600; }
+/* order=lineage: the tree over the column heads; it scrolls away, the heads below stay sticky */
+.nway-table thead .nway-dendro th { position: static; padding: 0; vertical-align: middle; font-weight: 400; font-size: 0.72rem; }
+.nway-table thead .nway-dendro th:first-child { padding: 0 8px; }
+.nway-dendro svg { display: block; overflow: visible; }
+.nway-dline { fill: none; stroke: var(--dim); stroke-width: 1.4; opacity: 0.7; }
+.nway-dnode { cursor: pointer; outline: none; }
+.nway-dnode circle { fill: hsl(var(--h, 195) 62% 52%); stroke: var(--bg); stroke-width: 1.5; }
+.nway-dnode.on circle, .nway-dnode:hover circle, .nway-dnode:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
+.nway-dbadge { fill: var(--success); font-size: 9px; font-weight: 600; }
 

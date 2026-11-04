@@ -1,6 +1,10 @@
 from flask import request
 from bsimvis.app.services.collection_config import resolve_collection_algo
-from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
+from bsimvis.app.services.function_service import (
+    fetch_function_data,
+    get_feature_map,
+    source_tokens,
+)
 from bsimvis.app.services.index_service import (
     parse_timestamp,
     get_pool_id,
@@ -20,7 +24,7 @@ def render_single_function(
     Renders the semantic tokens for a single function without any diffing logic.
     """
     f_map = get_feature_map(features)
-    tokens = source.get("c_tokens", [])
+    tokens = source_tokens(source)
     if not tokens:
         return []
 

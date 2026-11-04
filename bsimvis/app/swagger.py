@@ -2912,6 +2912,8 @@ class BinSimNway(Resource):
             "col_rest": "col_pick: other (default, the unpicked files are one `other` column) or drop (they leave the set)",
             "col_set": "Column groups saved by POST /nway/columns (replaces md5s; sets columns=by)",
             "col_presence": "columns=by: a group holds a function when any (default 0.5 child_presence otherwise), half or all of its files do",
+            "sample_above": "stored mode: files above which pairs are sampled (default nway.sample_above = 100)",
+            "bridges": "stored mode, sampled sets: what links files beyond the pairs read, a subset of mst,fid,cluster or none (default nway.bridges = all). mst adds the strongest-link spanning tree to the pairs read; fid matches functions under min_features sharing a FunctionID hash at 1.0; above min_features a shared hash or primary cluster is kept only when its BSim score reaches min_score",
             "pair_k": "stored mode, sets over nway.sample_above files (default 100): file pairs read per file, its k best-scored partners plus nway.pair_random random ones (default nway.pair_k = 16; 0 reads every pair)",
             "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",

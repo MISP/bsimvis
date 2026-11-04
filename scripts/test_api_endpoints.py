@@ -7985,6 +7985,80 @@ def test_nway_build_job():
             get_raw_queue_redis().delete(f"nway:build_job:{key}")
 
 
+def test_nway_bridges():
+    """Sampled sets: bridges link files across pairs that were never read.
+
+    In-process, with the pair sampler patched to read no pair, so the two
+    fixture files can only be linked by bridges. Every bridged row must be a
+    row of the full read (pair_k=0): a bridge recovers rows, never invents one.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-sept – N-way bridges (sampled sets)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(
+            _color("\n[SKIP] Need two binaries – nway bridge checks skipped.", YELLOW)
+        )
+        return
+    from flask import Flask
+    from bsimvis.app.routes import nway as nway_routes
+    from bsimvis.app.services import nway_diff_service as nds
+
+    status, _ = _nway(sample_above=1, bridges="fid,lsh")
+    check("nway bridges: an unknown kind is a 400", status == 400, f"HTTP {status}")
+
+    args = {
+        "md5s": f"{file_md5},{file_md5_2}",
+        "collection": COLLECTION,
+        "tab": "all",
+        "scope": "all",
+        "limit": 0,
+    }
+    app = Flask(__name__)
+    call = lambda **extra: _unwrap(nway_routes.get_nway, app, {**args, **extra})
+    real = nds.nearest_pairs
+    nds.nearest_pairs = lambda *a, **k: []
+    nds.invalidate()
+    try:
+        full, s_full = call(pair_k=0)
+        bare, s_bare = call(sample_above=1, bridges="none")
+        bridged, s_br = call(sample_above=1, bridges="mst,fid,cluster")
+    finally:
+        nds.nearest_pairs = real
+        nds.invalidate()
+
+    multi = lambda body: [i for i in body.get("items", []) if i.get("span", 0) > 1]
+    check(
+        "nway bridges: with no pair read and no bridges, no row spans two files",
+        s_bare == 200 and not multi(bare),
+        f"HTTP {s_bare} rows={len(multi(bare))}",
+    )
+    rows = multi(bridged)
+    check(
+        "nway bridges: every two-file row of an unread pair is a bridged row",
+        s_br == 200 and all(i.get("bridged") for i in rows),
+        f"HTTP {s_br} {[i for i in rows if not i.get('bridged')][:2]}",
+    )
+    truth = {s for s in _nway_rows(full) if len(s) > 1}
+    got = {s for s in _nway_rows({"items": rows})}
+    wrong = got - truth
+    print(
+        f"  bridged rows: {len(got)} of {len(truth)} full-read rows, "
+        f"{len(wrong)} not in the full read"
+    )
+    check(
+        "nway bridges: bridges recover rows, and those agree with the full read (>= 95%)",
+        s_full == 200 and truth and got and len(wrong) <= 0.05 * len(got),
+        f"HTTP {s_full} {len(wrong)}/{len(got)} of {len(truth)} e.g. {list(wrong)[:2]}",
+    )
+    check(
+        "nway bridges: the warning reports the bridges",
+        any("Bridges over unread pairs" in w for w in bridged.get("warnings") or []),
+        str(bridged.get("warnings")),
+    )
+
+
 def _unwrap(fn, app, args):
     """(body, status) of a route function run in a synthetic request."""
     with app.test_request_context(query_string=args):
@@ -11223,6 +11297,7 @@ if __name__ == "__main__":
         test_nway_lineage,
         test_nway_cluster_entry,
         test_nway_build_job,
+        test_nway_bridges,
         test_llm_pair_analysis_job,
         test_search_job,
         test_bin_sim_notes_and_tags,
@@ -11258,6 +11333,7 @@ if __name__ == "__main__":
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
         "test_nway_build_job": ["test_search_filters_and_sorting"],
+        "test_nway_bridges": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],

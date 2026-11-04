@@ -30,6 +30,7 @@ from itertools import combinations
 
 from bsimvis.app.services import bsim_profiles, container_sim_service, lineage_service
 from bsimvis.app.services.bin_sim_service import (
+    _discover_edges_py,
     _origin_coll,
     bin_sim_service,
     discover_edges,
@@ -49,6 +50,7 @@ from bsimvis.app.services.collection_config import (
     resolve_collection_algo,
 )
 from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.nway_lineage_service import spanning_tree
 from bsimvis.app.services.nway_match import PairEdges, nway_match
 from bsimvis.app.services.redis_client import get_raw_queue_redis
 
@@ -57,6 +59,10 @@ _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
 _SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
+# Sampled sets: what links files beyond the pairs read (see `_bridges`).
+BRIDGES = ("mst", "fid", "cluster")
+BRIDGE_CHUNK = 5000  # candidate pairs whose vectors are held at once
+SCORABLE = ("unweighted_cosine", "binary_cosine", "jaccard", "weighted_cosine")
 SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
 
 
@@ -347,12 +353,7 @@ def virtual_params(scope, members, params):
     }
     # ponytail: top_k is ignored (it never binds at the caps); minhash_lsh and
     # milvus_sparse have no in-memory scorer.
-    if bsim_profiles.parse_algo(out["algo"])[0] not in (
-        "unweighted_cosine",
-        "binary_cosine",
-        "jaccard",
-        "weighted_cosine",
-    ):
+    if bsim_profiles.parse_algo(out["algo"])[0] not in SCORABLE:
         raise BadParams(f"mode=virtual cannot score with algo {out['algo']!r}")
 
     masks = set()
@@ -416,20 +417,32 @@ def _virtual_edges(r, columns, fid_sets, p, fids, ix):
     return edges
 
 
+def bridge_kinds(value):
+    """`mst,fid,cluster` (str or list) -> tuple in BRIDGES order; `none` or empty -> ()."""
+    asked = value.split(",") if isinstance(value, str) else list(value or ())
+    asked = {a.strip() for a in asked} - {"", "none"}
+    if asked - set(BRIDGES):
+        raise BadParams(f"bridges must be a subset of {','.join(BRIDGES)} or none")
+    return tuple(b for b in BRIDGES if b in asked)
+
+
 def pair_sample():
-    """(files above which pairs are sampled, nearest partners, random partners)."""
+    """(files above which pairs are sampled, nearest partners, random partners, bridges)."""
     return (
         int(config_service.get("nway.sample_above", 100)),
         int(config_service.get("nway.pair_k", 16)),
         int(config_service.get("nway.pair_random", 4)),
+        bridge_kinds(config_service.get("nway.bridges", ",".join(BRIDGES))),
     )
 
 
-def nearest_pairs(scores, k, extra, seed):
+def nearest_pairs(scores, k, extra, seed, tree=False):
     """Pairs to read for a large set -> sorted [(i, j)], i < j.
 
     Each file keeps its `k` best-scored partners plus `extra` seeded random
-    ones, so two sub-families inside one cluster stay linked. `scores` is an
+    ones, so two sub-families inside one cluster stay linked. With `tree`, the
+    maximum spanning tree's scored pairs are added too, so every family is
+    reached through its strongest stored link, not by chance. `scores` is an
     N x N array, -1 where a pair has no stored score.
     """
     n = len(scores)
@@ -442,7 +455,131 @@ def nearest_pairs(scores, k, extra, seed):
         for j in rng.choice(n - 1, size=min(extra, n - 1), replace=False).tolist():
             j += j >= i
             out.add((min(i, j), max(i, j)))
+    if tree and n > 1:
+        # an unscored pair has no doc and would fall back to the costly rebuild
+        w = np.where(s > 0, s, 0.0)
+        out |= {(min(i, j), max(i, j)) for i, j in spanning_tree(w, 0) if w[i, j] > 0}
     return sorted(out)
+
+
+def bridge_candidates(groups, pos, read):
+    """Chain links across unread file pairs -> [(fid_a, fid_b)].
+
+    `groups` is `{key: {column: [fid, ...]}}` (one FunctionID hash, or one
+    cluster). Its files are chained in `pos` order, one link per consecutive
+    pair, skipping pairs in `read` (frozensets of columns): a read pair's doc
+    already decided. A group where one file holds several functions is
+    ambiguous and skipped.
+    """
+    # ponytail: a chain, not every pair -- a link that fails BSim splits the
+    # group; try more links per group if recall measures short.
+    out = []
+    for g in groups.values():
+        if len(g) < 2 or any(len(v) > 1 for v in g.values()):
+            continue
+        cols = sorted(g, key=pos.__getitem__)
+        out += [
+            (g[x][0], g[y][0])
+            for x, y in zip(cols, cols[1:])
+            if frozenset((x, y)) not in read
+        ]
+    return out
+
+
+def _bridges(r, scope, members, fid_sets, info, read, kinds, algo):
+    """Edges across the file pairs a sampled set did not read -> (edges, warning).
+
+    `info` is `{fid: (FunctionID hash, distinct feature count)}`. Two functions
+    under the BSim floor sharing a FunctionID hash match at 1.0, the sim
+    builder's own rule. Above the floor, a shared hash or a shared primary
+    cluster (cohesion >= `clustering.cohesion_cut`) is only a candidate, kept
+    when its BSim score reaches the collection's `min_score`.
+    """
+    if scope.get("pool"):
+        p = _pool_params(scope)[0]
+    else:
+        from bsimvis.app.services.scan_service import get_scan_service
+
+        p = get_scan_service()._params_for(members[0][0], {})
+    floor, min_score = int(p["min_features"]), float(p["min_score"])
+    owner = {f: c for c, fs in fid_sets.items() for f in fs}
+    pos = {c: i for i, c in enumerate(fid_sets)}
+    small = {f for f, (_, n) in info.items() if n < floor}
+    auto, check = [], set()
+
+    if "fid" in kinds:
+        groups = defaultdict(lambda: defaultdict(list))
+        for f, (h, _) in info.items():
+            if h:
+                groups[h][owner[f]].append(f)
+        for x, y in bridge_candidates(groups, pos, read):
+            if x in small and y in small:
+                auto.append((x, y, 1.0))
+            else:
+                check.add((x, y))
+
+    if "cluster" in kinds:
+        # tiny functions cluster on BSim noise (clustering.min_features is 0)
+        # ponytail: no cluster rev in the base key; a recluster shows up when the
+        # base is next rebuilt. BSim checks every link, so staleness costs recall only.
+        pool = scope.get("pool")
+        big = sorted(f for f in info if f not in small)
+        pipe = r.pipeline(transaction=False)
+        for f in big:
+            pipe.hkeys(
+                f"global:pool:{pool}:{f}:cluster_scores"
+                if pool
+                else f"{f}:cluster_scores"
+            )
+        # ponytail: one primary cluster per function; hdbscan's multi-cluster
+        # entries are skipped.
+        cid = {
+            f: (c[0].decode() if isinstance(c[0], bytes) else str(c[0]))
+            for f, c in zip(big, pipe.execute())
+            if len(c) == 1
+        }
+        ns = f"global:pool:{pool}" if pool else members[0][0]
+        calgo = resolve_collection_algo(ns)
+        ids = sorted(set(cid.values()))
+        pipe = r.pipeline(transaction=False)
+        for c in ids:
+            pipe.get(f"{ns}:cluster:{calgo}:{c}:meta")
+        cut = float(config_service.get("clustering.cohesion_cut", 0.9))
+        tight = {
+            c
+            for c, raw in zip(ids, pipe.execute())
+            if float(_decode(raw).get("cohesion_score") or 0) >= cut
+        }
+        groups = defaultdict(lambda: defaultdict(list))
+        for f, c in cid.items():
+            if c in tight:
+                groups[c][owner[f]].append(f)
+        check.update(bridge_candidates(groups, pos, read))
+
+    check = sorted(check)
+    cap = int(config_service.get("nway.bridge_max_checks", 200000))
+    unchecked = 0
+    if bsim_profiles.parse_algo(algo)[0] not in SCORABLE:
+        check, unchecked = [], len(check)
+    elif len(check) > cap:
+        check, unchecked = check[:cap], len(check) - cap
+    kept = []
+    for start in range(0, len(check), BRIDGE_CHUNK):
+        _report(0.9, f"checking bridge {start + 1}/{len(check)}")
+        chunk = check[start : start + BRIDGE_CHUNK]
+        vectors = load_vectors(r, {f for pair in chunk for f in pair})
+        for x, y in chunk:
+            kept += _discover_edges_py(vectors, [x], [y], algo, min_score)
+    warning = None
+    if auto or check or unchecked:
+        warning = (
+            f"Bridges over unread pairs: {len(auto):,} FunctionID match(es) under "
+            f"min_features, {len(kept):,} of {len(check):,} FunctionID/cluster "
+            f"candidates kept at BSim >= {min_score:g}"
+            + (f", {unchecked:,} not checked" if unchecked else "")
+            + "."
+        )
+    return auto + kept, warning
 
 
 def _pair_scores(r, scope, members, algo, pairs, sids):
@@ -510,7 +647,9 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
         _report(0.05, "picking file pairs")
         scores = _pair_scores(r, scope, members, algo, pairs, sids)
         seed = int(hashlib.md5(json.dumps(members).encode()).hexdigest()[:8], 16)
-        keep = set(nearest_pairs(scores, sample[1], sample[2], seed))
+        keep = set(
+            nearest_pairs(scores, sample[1], sample[2], seed, "mst" in sample[3])
+        )
         sampled = (len(keep), len(pairs))
         sids = [sid for p, sid in zip(pairs, sids) if p in keep]
         pairs = [p for p in pairs if p in keep]
@@ -624,12 +763,21 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
     for fid in all_fids:
         pipe.get(f"{fid}:meta")
     fmeta, library = {}, {}
-    weights = {}
+    weights, info = {}, {}
     for fid, raw in zip(all_fids, pipe.execute()):
         meta = _decode(raw)
         weights[fid] = float(meta.get("bsim_features_count") or 0) or 1.0
         library[fid] = any(is_library_tag(t) for t in merge_tag_fields(meta))
         fmeta[fid] = _fn_meta(meta)
+        # the BSim floor counts distinct features, as the sim builder does
+        info[fid] = (
+            meta.get("function_id_hash"),
+            int(
+                meta.get("bsim_unique_features_count")
+                or meta.get("bsim_features_count")
+                or 0
+            ),
+        )
 
     columns = [
         {
@@ -657,11 +805,26 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
         edges, fallback, sampled, stats = _stored_edges(
             r, scope, members, columns, algo, fid_sets, all_fids, ix, sample
         )
+    bridges = None
     if sampled:
         warnings = warnings + [
             f"Large set: read each file's closest partners only ({sampled[0]:,} of "
             f"{sampled[1]:,} file pairs). Support counts the pairs read."
         ]
+        kinds = {"fid", "cluster"} & set(sample[3])
+        if kinds:
+            found, note = _bridges(
+                r,
+                scope,
+                members,
+                fid_sets,
+                info,
+                {frozenset(k) for k in edges},
+                kinds,
+                algo,
+            )
+            bridges = PairEdges(all_fids, ix, found) if found else None
+            warnings += [note] if note else []
 
     columns = seriate(columns, edges, default_min_edge())
     return {
@@ -673,6 +836,7 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
         "fmeta": fmeta,
         "library": library,
         "edges": edges,
+        "bridges": bridges,
         "fallback_pairs": fallback,
         "pairs_read": sampled,
         "pair_stats": stats,
@@ -701,7 +865,9 @@ def _tag_name(tag):
     """
     if "#" in tag:
         name = tag.rsplit("#", 1)[1]
-        return None if name in ("", "ambiguous") else name  # #ambiguous: FID multi-match marker
+        return (
+            None if name in ("", "ambiguous") else name
+        )  # #ambiguous: FID multi-match marker
     parts = tag.split(":")
     # capa / mbc / mitre: the last two fields after the prefix tell more than the last one
     if parts[0] in ("capa", "mbc", "mitre"):
@@ -840,7 +1006,7 @@ def _variants(rows):
 
 def _match(base, min_edge):
     weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
-    rows = nway_match(base["edges"], base["funcs"], min_edge)
+    rows = nway_match(base["edges"], base["funcs"], min_edge, base.get("bridges"))
     for row in rows:
         fids = list(row["cells"].values())
         row.update(_name_row(fids, base["fmeta"], weights))
@@ -1295,6 +1461,31 @@ def demo():
     assert all(i < j for i, j in pairs) and len(pairs) < 190
     assert any(fam[i] != fam[j] for i, j in pairs)
     assert all(sum(i == x or j == x for i, j in pairs) >= 3 for x in range(20))
+    # no random partners: only the spanning tree links the two families, through a scored pair
+    assert not any(fam[i] != fam[j] for i, j in nearest_pairs(sc, 3, 0, seed=1))
+    tree = nearest_pairs(sc, 3, 0, seed=1, tree=True)
+    assert sum(fam[i] != fam[j] for i, j in tree) == 1
+    unscored = [[0.9 if fam[i] == fam[j] else -1 for j in range(20)] for i in range(20)]
+    tree = nearest_pairs(unscored, 3, 0, seed=1, tree=True)
+    assert not any(fam[i] != fam[j] for i, j in tree)
+
+    # bridge chains: column order, read pairs skipped, ambiguous groups dropped
+    pos = {"A": 0, "B": 1, "C": 2, "D": 3}
+    groups = {
+        "h1": {"C": ["c1"], "A": ["a1"], "B": ["b1"]},
+        "h2": {"A": ["a2"], "D": ["d2", "d3"]},
+        "h3": {"B": ["b4"]},
+    }
+    got = bridge_candidates(groups, pos, {frozenset(("A", "B"))})
+    assert got == [("b1", "c1")], got
+    assert bridge_candidates(groups, pos, set()) == [("a1", "b1"), ("b1", "c1")]
+    assert bridge_kinds("cluster, mst") == ("mst", "cluster")
+    assert bridge_kinds("none") == () and bridge_kinds(["fid"]) == ("fid",)
+    try:
+        bridge_kinds("fid,lsh")
+        raise AssertionError("bad bridge kind accepted")
+    except BadParams:
+        pass
     print("nway_diff_service demo ok")
 
 
@@ -1323,10 +1514,14 @@ def compute(r, scope, members, params=None):
     min_edge = params.get("min_edge")
     min_edge = default_min_edge() if min_edge is None else float(min_edge)
 
-    sample = pair_sample()
+    sample = list(pair_sample())
+    if params.get("sample_above") is not None:
+        sample[0] = int(params["sample_above"])
     if params.get("pair_k") is not None:
-        sample = (sample[0], int(params["pair_k"]), sample[2])
-    sample = sample if sample[1] > 0 else None
+        sample[1] = int(params["pair_k"])
+    if params.get("bridges") is not None:
+        sample[3] = bridge_kinds(params["bridges"])
+    sample = tuple(sample) if sample[1] > 0 else None
 
     vparams = None
     if mode == "virtual":

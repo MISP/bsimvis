@@ -179,6 +179,14 @@
             };
             document.addEventListener('function-renamed', this._onRenamed);
             this.el.addEventListener('click', e => this._onClick(e));
+            // a built large set: pick another build depth, then reload the table
+            this.el.addEventListener('click', e => {
+                const b = e.target.closest('[data-nway-rebuild]');
+                if (!b) return;
+                const host = b.parentElement.querySelector('.nway-rebuild-host');
+                b.hidden = true;
+                NwayPanel.buildGate(host, this.data.large, this._listQs(), () => this.load());
+            });
             this._ddClose = e => document.querySelectorAll('details.nway-ddl[open]').forEach(d => { if (!d.contains(e.target)) d.removeAttribute('open'); });
             document.addEventListener('click', this._ddClose);
             this.el.addEventListener('mouseover', e => this._gTip(e, true));
@@ -1038,6 +1046,10 @@
             if (d.fallback_pairs) html += `<div class="nway-note">${Number(d.fallback_pairs)} pairs computed on the fly (no stored pair doc).</div>`;
             if ((d.warnings || []).length) {
                 html += `<div class="nway-note warn">${d.warnings.map(w => `<div>${escapeHtml(w)}</div>`).join('')}</div>`;
+            }
+            if (d.large) {
+                const cur = (d.large.depths || []).find(x => Number(x.pair_k) === Number(d.large.pair_k));
+                html += `<div class="nway-note">Large set built at <b>${escapeHtml(cur ? cur.label : d.large.pair_k ? 'k=' + Number(d.large.pair_k) : 'Deep')}</b> depth. <button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>`;
             }
             return html;
         }
@@ -2428,6 +2440,16 @@
             this._cgSelSync();
             if (!err && st.nb && st.view === 'graph') {
                 this._cgEdges();
+                // cards that change size after this draw (fonts, tags, sim text) move their neighbours: draw the edges again
+                if (this._cgRo) this._cgRo.disconnect();
+                if (window.ResizeObserver) {
+                    let first = true, raf = 0;
+                    this._cgRo = new ResizeObserver(() => {
+                        if (first) { first = false; return; }
+                        if (!raf) raf = requestAnimationFrame(() => { raf = 0; if (this._dw && this._dw.querySelector('.nway-graph')) this._cgEdges(); });
+                    });
+                    this._dw.querySelectorAll('.nway-graph .nway-node').forEach(n => this._cgRo.observe(n));
+                }
                 const body = this._dw.querySelector('.nway-cg-body'), c = body.querySelector('.nway-node.center');
                 const cr = c.getBoundingClientRect(), br = body.getBoundingClientRect();
                 body.scrollLeft = Math.max(0, cr.left - br.left + body.scrollLeft + cr.width / 2 - body.clientWidth / 2);

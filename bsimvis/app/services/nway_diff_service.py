@@ -1787,6 +1787,17 @@ def compute(r, scope, members, params=None):
         "fallback_pairs": base["fallback_pairs"],
         "pair_stats": base.get("pair_stats"),
         "warnings": base["warnings"],
+        # a built large set: lets the page offer a rebuild at another depth
+        "large": (
+            {
+                "members": len(members),
+                "limit": auto_build_max(),
+                "pair_k": sample[1] if sample else 0,
+                "depths": build_depths(len(members), len(base["fmeta"])),
+            }
+            if big
+            else None
+        ),
         # Read by nway_facets_service (cache key, pair scores); never sent to clients.
         "key": hashlib.md5(repr(doc_key).encode()).hexdigest(),
         "edges": base["edges"],

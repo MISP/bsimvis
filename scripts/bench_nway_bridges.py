@@ -48,6 +48,28 @@ def fetch(api, args, timeout):
         time.sleep(5)
 
 
+def build_local(scope, collection, md5s, extra):
+    """`fetch`, in this process: the base and rows `/nway` would serve, nothing cached."""
+    from bsimvis.app.services import nway_diff_service as nds
+    from bsimvis.app.services.redis_client import get_redis
+
+    start = time.time()
+    r = get_redis()
+    members = [(collection, m) for m in md5s] if collection else []
+    if not collection:
+        raise SystemExit("--in-process needs --collection")
+    members, labels_, warnings = nds.expand_members(r, members)
+    sample = list(nds.pair_sample())
+    sample[0] = extra.get("sample_above", sample[0])
+    sample[1] = extra.get("pair_k", sample[1])
+    if "bridges" in extra:
+        sample[3] = nds.bridge_kinds(extra["bridges"])
+    sample = tuple(sample) if sample[1] > 0 else None
+    base = nds._load_base(r, scope, members, None, labels_, warnings, sample)
+    rows = nds._match(base, nds.default_min_edge())
+    return {"items": rows, "warnings": base["warnings"]}, time.time() - start
+
+
 def labels(body):
     """{fid: row index} and the rows spanning 2+ files as fid lists."""
     rows = [
@@ -98,6 +120,12 @@ def main():
     ap.add_argument("--pair-k", type=int, default=None)
     ap.add_argument("--variants", default=VARIANTS, help=f"default {VARIANTS}")
     ap.add_argument("--timeout", type=int, default=3600)
+    ap.add_argument(
+        "--in-process",
+        action="store_true",
+        help="build with this checkout's code straight from Kvrocks: no app, no job, "
+        "nothing written (point KVROCKS_PORT at the stack; run where its config is)",
+    )
     a = ap.parse_args()
     if not (a.collection or a.pool):
         ap.error("--collection or --pool")
@@ -105,33 +133,40 @@ def main():
         md5s = [line.strip() for line in fh if line.strip()]
     base = {"md5s": ",".join(md5s), "tab": "all", "scope": "all", "limit": 0}
     base.update({"collection": a.collection} if a.collection else {"pool": a.pool})
+    if a.in_process:
+        scope = {"pool": a.pool} if a.pool else {"collection": a.collection}
+        run = lambda extra: build_local(scope, a.collection, md5s, extra)
+    else:
+        run = lambda extra: fetch(a.api, {**base, **extra}, a.timeout)
 
-    ref_body, secs = fetch(a.api, {**base, "pair_k": 0}, a.timeout)
+    ref_body, secs = run({"pair_k": 0})
     ref = labels(ref_body)
     print(f"{len(md5s)} files, {len(ref[0]):,} functions")
     head = f"{'variant':<18}{'prec':>7}{'recall':>8}{'split':>7}{'rows':>8}{'lanes':>7}{'bridged':>9}{'secs':>8}"
-    print(head)
+    print(head, flush=True)
     print(
         f"{'all pairs (ref)':<18}{1:>7.3f}{1:>8.3f}{0:>7}{len(ref[1]):>8}"
-        f"{lanes(ref_body):>7}{0:>9}{secs:>8.0f}"
+        f"{lanes(ref_body):>7}{0:>9}{secs:>8.0f}",
+        flush=True,
     )
     for v in a.variants.split(","):
-        args = {**base, "bridges": v.replace("+", ",")}
+        extra = {"bridges": v.replace("+", ",")}
         if a.sample_above is not None:
-            args["sample_above"] = a.sample_above
+            extra["sample_above"] = a.sample_above
         if a.pair_k is not None:
-            args["pair_k"] = a.pair_k
-        body, secs = fetch(a.api, args, a.timeout)
+            extra["pair_k"] = a.pair_k
+        body, secs = run(extra)
         test = labels(body)
         m = compare(ref, test)
         bridged = sum(1 for i in body.get("items", []) if i.get("bridged"))
         print(
             f"{v:<18}{m['precision']:>7.3f}{m['recall']:>8.3f}{m['split']:>7}"
-            f"{len(test[1]):>8}{lanes(body):>7}{bridged:>9}{secs:>8.0f}"
+            f"{len(test[1]):>8}{lanes(body):>7}{bridged:>9}{secs:>8.0f}",
+            flush=True,
         )
         for w in body.get("warnings") or []:
             if w.startswith(("Bridges", "Large set")):
-                print(f"    {w}")
+                print(f"    {w}", flush=True)
 
 
 if __name__ == "__main__":

@@ -1022,6 +1022,9 @@ def _load_doc(build=False, on_progress=None):
                     "key": e.key,
                     "limit": nway_diff_service.auto_build_max(),
                     "job": _build_job(e.key),
+                    "functions": e.functions,
+                    "pair_k": e.pair_k,
+                    "depths": nway_diff_service.build_depths(e.members, e.functions),
                 },
                 428,
             )

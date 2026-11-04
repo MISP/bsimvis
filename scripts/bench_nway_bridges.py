@@ -17,7 +17,7 @@ per file that is tens of MB of JSON per variant.
 
     uv run python scripts/bench_nway_bridges.py --collection C --md5s md5s.txt
     uv run python scripts/bench_nway_bridges.py --pool P --md5s md5s.txt \\
-        --sample-above 50 --variants none,mst,mst+fid,mst+fid+cluster
+        --sample-above 50 --variants none,lane,lane+fid+cluster
 """
 
 import argparse
@@ -27,7 +27,7 @@ from collections import Counter
 
 import requests
 
-VARIANTS = "none,mst,mst+fid,mst+fid+cluster"
+VARIANTS = "none,lane,fid,cluster,lane+fid+cluster"
 
 
 def fetch(api, args, timeout):

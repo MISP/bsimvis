@@ -2880,6 +2880,7 @@ class BinSimNwayBuild(Resource):
     @ns_bin_sim.doc(
         params={
             "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
+            "pair_k": "Build depth: one of the `depths` the 428 answer lists (fast = nway.pair_k, balanced = 64, deep = 0, every pair). It sticks to the set: later calls without pair_k read this build",
         }
     )
     def post(self):
@@ -2888,7 +2889,9 @@ class BinSimNwayBuild(Resource):
         A set over `nway.auto_build_max_members` files is never built by a request:
         `/nway` (and every call that reads its doc) answers 428 `needs_build` until
         this job ran. Answers `{status: ready}` when built, else the job `id` and the
-        `progress_id` that `/nway/progress` and `/nway/cancel` take.
+        `progress_id` that `/nway/progress` and `/nway/cancel` take. The 428 answer
+        lists `depths`: `{id, label, pair_k, note, pairs, total_pairs, secs}`, the
+        file pairs each depth reads and its estimated build time.
         """
         from bsimvis.app.routes.nway import post_nway_build
 
@@ -2913,7 +2916,7 @@ class BinSimNway(Resource):
             "col_set": "Column groups saved by POST /nway/columns (replaces md5s; sets columns=by)",
             "col_presence": "columns=by: a group holds a function when any (default 0.5 child_presence otherwise), half or all of its files do",
             "sample_above": "stored mode: files above which pairs are sampled (default nway.sample_above = 100)",
-            "bridges": "stored mode, sampled sets: what links files beyond the pairs read, a subset of mst,arch,lane,fid,cluster or none (default nway.bridges = lane). mst adds the strongest-link spanning tree to the pairs read; arch adds each file's best partner in every other architecture; lane matches once, then reads the best pair between lanes sharing no file (nway.lane_k per lane, default 8, for nway.lane_rounds rounds, default 3); fid matches functions under min_features sharing a FunctionID hash at 1.0; above min_features a shared hash or primary cluster is kept only when its BSim score reaches min_score",
+            "bridges": "stored mode, sampled sets: what links files beyond the pairs read, a subset of lane,fid,cluster or none (default nway.bridges = lane). lane matches once, then reads the best pair between lanes sharing no file (nway.lane_k per lane, default 8, for nway.lane_rounds rounds, default 3); fid matches functions under min_features sharing a FunctionID hash at 1.0; above min_features a shared hash or primary cluster is kept only when its BSim score reaches min_score",
             "pair_k": "stored mode, sets over nway.sample_above files (default 100): file pairs read per file, its k best-scored partners plus nway.pair_random random ones (default nway.pair_k = 16; 0 reads every pair)",
             "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",

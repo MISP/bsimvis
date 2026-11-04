@@ -3443,12 +3443,21 @@
     NwayPanel.buildGate = function (host, err, qs, onReady) {
         const q = new URLSearchParams(qs);
         for (const k of ['progress_id', 'limit', 'offset']) q.delete(k);
+        const span = s => s < 90 ? `~${Math.max(1, Math.round(s))} s` : s < 5400 ? `~${Math.round(s / 60)} min` : `~${(s / 3600).toFixed(1)} h`;
+        const kilo = n => n >= 10000 ? `${Math.round(n / 1000)}k` : Number(n).toLocaleString();
+        const icons = { fast: 'fa-bolt', balanced: 'fa-scale-balanced', deep: 'fa-layer-group' };
+        // one button per build depth, its estimated time and the file pairs it reads
+        const depths = (err.depths || []).map(d => `<button type="button" class="btn-action nway-build-btn" data-k="${Number(d.pair_k)}" title="${escapeAttr(d.note || '')}" style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:150px;height:auto;padding:6px 10px;line-height:1.25;">
+                <span><i class="fa-solid ${icons[d.id] || 'fa-hammer'}"></i> ${escapeHtml(d.label)} <b>${span(Number(d.secs))}</b></span>
+                <span class="dim" style="font-size:0.72rem;">${kilo(d.pairs)} of ${kilo(d.total_pairs)} file pairs${Number(d.pair_k) === 0 ? ' · exact' : ''}</span>
+            </button>`).join('') || '<button type="button" class="btn-action nway-build-btn"><i class="fa-solid fa-hammer"></i> Build N-way</button>';
         const ask = (note = '') => {
-            host.innerHTML = `<div class="nway-note warn"><b>Large set: ${Number(err.members)} files</b> (over ${Number(err.limit)}, <code>nway.auto_build_max_members</code>). Its N-way is built once as a background job; the table, call graph and function views then read that result.${note ? `<div style="margin-top:4px;">${escapeHtml(note)}</div>` : ''}<div style="margin-top:8px;"><button type="button" class="btn-action nway-build-btn"><i class="fa-solid fa-hammer"></i> Build N-way</button></div></div>`;
-            host.querySelector('.nway-build-btn').onclick = start;
+            host.innerHTML = `<div class="nway-note warn"><b>Large set: ${Number(err.members)} files</b> (over ${Number(err.limit)}, <code>nway.auto_build_max_members</code>). Its N-way is built once as a background job; the table, call graph and function views then read that result. Deeper builds read more file pairs: fewer functions are split across rows, at a longer build. Times are estimates.${note ? `<div style="margin-top:4px;">${escapeHtml(note)}</div>` : ''}<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">${depths}</div></div>`;
+            host.querySelectorAll('.nway-build-btn').forEach(b => { b.onclick = () => start(b.dataset.k); });
         };
-        const start = async () => {
-            host.querySelector('.nway-build-btn').disabled = true;
+        const start = async k => {
+            host.querySelectorAll('.nway-build-btn').forEach(b => { b.disabled = true; });
+            if (k !== undefined) q.set('pair_k', k);
             try {
                 const res = await fetch(`/api/bin_sim/nway/build?${q}`, { method: 'POST' });
                 const d = await res.json().catch(() => ({}));

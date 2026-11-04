@@ -7977,6 +7977,33 @@ def test_nway_build_job():
             ready.get("status") == "ready",
             str(ready),
         )
+        depths = body.get("depths") or []
+        check(
+            "nway build: the 428 offers build depths with estimates (2 files: Deep only)",
+            [d["id"] for d in depths] == ["deep"]
+            and depths[-1]["pair_k"] == 0
+            and all(d["pairs"] >= 1 and d["secs"] >= 0 for d in depths)
+            and body.get("functions", 0) > 0,
+            str(depths)[:300],
+        )
+        deep, s_deep = _unwrap(nway_routes.get_nway, app, {**args, "pair_k": 0})
+        sticky, s_sticky = call(nway_routes.get_nway)
+        check(
+            "nway build: a chosen depth sticks to the set for calls without pair_k",
+            s_deep == 428
+            and deep.get("pair_k") == 0
+            and s_sticky == 428
+            and sticky.get("key") == deep.get("key") != key,
+            f"HTTP {s_deep}/{s_sticky} {deep.get('pair_k')} {sticky.get('pair_k')}",
+        )
+        back, s_back = _unwrap(
+            nway_routes.get_nway, app, {**args, "pair_k": nds.pair_sample()[1]}
+        )
+        check(
+            "nway build: picking the built depth again serves the built set",
+            s_back == 200 and call(nway_routes.get_nway)[1] == 200,
+            f"HTTP {s_back}",
+        )
     finally:
         nds.auto_build_max, job_service.enqueue_job, nds._load_base = real
         nds.invalidate()
@@ -8023,7 +8050,7 @@ def test_nway_bridges():
     try:
         full, s_full = call(pair_k=0)
         bare, s_bare = call(sample_above=1, bridges="none")
-        bridged, s_br = call(sample_above=1, bridges="mst,fid,cluster")
+        bridged, s_br = call(sample_above=1, bridges="lane,fid,cluster")
     finally:
         nds.nearest_pairs = real
         nds.invalidate()

@@ -50,7 +50,6 @@ from bsimvis.app.services.collection_config import (
     resolve_collection_algo,
 )
 from bsimvis.app.services.config_service import config_service
-from bsimvis.app.services.nway_lineage_service import spanning_tree
 from bsimvis.app.services.nway_match import PairEdges, nway_match
 from bsimvis.app.services.redis_client import get_raw_queue_redis
 
@@ -60,9 +59,10 @@ _SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
 # Sampled sets: what links files beyond the pairs read (see `_bridges`). Measured on
-# 437 mirai files: `lane` pays per pair read; `arch` is no better than a bigger
-# pair_k at the same budget; `fid`/`cluster` cost BSim checks for a few rows.
-BRIDGES = ("mst", "arch", "lane", "fid", "cluster")
+# 437 mirai files: `lane` pays per pair read; `fid`/`cluster` cost BSim checks for
+# a few rows. Cross-arch pair picking and a spanning tree were tried: no better
+# than a larger pair_k at the same budget.
+BRIDGES = ("lane", "fid", "cluster")
 BRIDGE_CHUNK = 5000  # candidate pairs whose vectors are held at once
 SCORABLE = ("unweighted_cosine", "binary_cosine", "jaccard", "weighted_cosine")
 SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
@@ -96,10 +96,12 @@ class BadParams(ValueError):
 class NeedsBuild(Exception):
     """A large set with no built doc yet: queue a NWAY_BUILD job (see `compute`)."""
 
-    def __init__(self, members, key):
+    def __init__(self, members, key, functions=0, pair_k=None):
         super().__init__(f"{members} members: build it as a job")
         self.members = members
         self.key = key
+        self.functions = functions
+        self.pair_k = pair_k
 
 
 class MemberMissing(Exception):
@@ -202,6 +204,66 @@ BUILT_TTL = 7 * 24 * 3600
 def auto_build_max():
     """Above this many files a set is built by a job, never by a request."""
     return int(config_service.get("nway.auto_build_max_members", 50))
+
+
+def depth_key(scope, members):
+    """Queue-Redis key holding the pair_k a large set was last asked to build at."""
+    ident = json.dumps([scope, members], sort_keys=True).encode()
+    return f"nway:depth:{hashlib.md5(ident).hexdigest()}"
+
+
+# (id, label, pair_k, what it reads); pair_k None = nway.pair_k, 0 = every pair
+DEPTHS = (
+    ("fast", "Fast", None, "nearest partners of each file (nway.pair_k)"),
+    ("balanced", "Balanced", 64, "64 nearest partners of each file"),
+    ("deep", "Deep", 0, "every file pair: exact"),
+)
+
+
+def estimate(n_files, n_functions, pair_k):
+    """(file pairs read, seconds) of a build at `pair_k` (0 = every pair).
+
+    Fitted on 437 mirai files (212k functions, ~485 per file): a fixed cost
+    per function, plus per pair read a cost that grows with the functions per
+    file (pair docs list matched functions). Recalibrate on other hardware
+    with `nway.est_secs_per_function` / `nway.est_secs_per_pair_function`.
+    """
+    above, _, extra, _ = pair_sample()
+    total = n_files * (n_files - 1) // 2
+    pairs = total
+    if pair_k and n_files > above:
+        # k nearest + random partners overlap: ~0.72 of k + extra per file
+        pairs = min(total, int(0.72 * n_files * (pair_k + extra)))
+    per_fn = float(config_service.get("nway.est_secs_per_function", 1.4e-4))
+    per_pair = float(config_service.get("nway.est_secs_per_pair_function", 1.44e-5))
+    secs = per_fn * n_functions + per_pair * n_functions / max(n_files, 1) * pairs
+    return pairs, secs
+
+
+def build_depths(n_files, n_functions):
+    """The build choices a large set offers, with their estimated cost.
+
+    Depths reading the same pairs collapse into the deepest: under
+    `nway.sample_above` files every depth reads every pair, so only Deep is left.
+    """
+    out = []
+    for did, label, pair_k, note in DEPTHS:
+        k = pair_sample()[1] if pair_k is None else pair_k
+        pairs, secs = estimate(n_files, n_functions, k)
+        if out and out[-1]["pairs"] == pairs:
+            out.pop()
+        out.append(
+            {
+                "id": did,
+                "label": label,
+                "pair_k": k,
+                "note": note,
+                "pairs": pairs,
+                "total_pairs": n_files * (n_files - 1) // 2,
+                "secs": round(secs),
+            }
+        )
+    return out
 
 
 def _built(kind, key):
@@ -420,7 +482,7 @@ def _virtual_edges(r, columns, fid_sets, p, fids, ix):
 
 
 def bridge_kinds(value):
-    """`mst,fid,cluster` (str or list) -> tuple in BRIDGES order; `none` or empty -> ()."""
+    """`lane,fid,cluster` (str or list) -> tuple in BRIDGES order; `none` or empty -> ()."""
     asked = value.split(",") if isinstance(value, str) else list(value or ())
     asked = {a.strip() for a in asked} - {"", "none"}
     if asked - set(BRIDGES):
@@ -438,16 +500,12 @@ def pair_sample():
     )
 
 
-def nearest_pairs(scores, k, extra, seed, tree=False, groups=None):
+def nearest_pairs(scores, k, extra, seed):
     """Pairs to read for a large set -> sorted [(i, j)], i < j.
 
     Each file keeps its `k` best-scored partners plus `extra` seeded random
-    ones, so two sub-families inside one cluster stay linked. With `tree`, the
-    maximum spanning tree's scored pairs are added too, so every family is
-    reached through its strongest stored link, not by chance. With `groups`
-    (one label per file, e.g. its architecture), each file also keeps its best
-    scored partner in every other group: nearest partners rarely cross one.
-    `scores` is an N x N array, -1 where a pair has no stored score.
+    ones, so two sub-families inside one cluster stay linked. `scores` is an
+    N x N array, -1 where a pair has no stored score.
     """
     n = len(scores)
     s = np.array(scores, np.float64)
@@ -459,20 +517,6 @@ def nearest_pairs(scores, k, extra, seed, tree=False, groups=None):
         for j in rng.choice(n - 1, size=min(extra, n - 1), replace=False).tolist():
             j += j >= i
             out.add((min(i, j), max(i, j)))
-    if tree and n > 1:
-        # an unscored pair has no doc and would fall back to the costly rebuild
-        w = np.where(s > 0, s, 0.0)
-        out |= {(min(i, j), max(i, j)) for i, j in spanning_tree(w, 0) if w[i, j] > 0}
-    if groups is not None:
-        labels = np.array(groups, object)
-        for g in set(groups):
-            cols = np.flatnonzero(labels == g)
-            pick = cols[np.argmax(s[:, cols], axis=1)]
-            ok = (s[np.arange(n), pick] > 0) & (labels != g)
-            out |= {
-                (int(min(i, j)), int(max(i, j)))
-                for i, j in zip(np.flatnonzero(ok), pick[ok])
-            }
     return sorted(out)
 
 
@@ -700,12 +744,7 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
         _report(0.05, "picking file pairs")
         scores = _pair_scores(r, scope, members, algo, pairs, sids)
         seed = int(hashlib.md5(json.dumps(members).encode()).hexdigest()[:8], 16)
-        arch = None
-        if "arch" in sample[3]:
-            arch = [(c.get("language_id") or "?").split(":")[0] for c in columns]
-        keep = set(
-            nearest_pairs(scores, sample[1], sample[2], seed, "mst" in sample[3], arch)
-        )
+        keep = set(nearest_pairs(scores, sample[1], sample[2], seed))
         sampled = (len(keep), len(pairs))
         all_pairs, all_sids = pairs, sids
         sids = [sid for p, sid in zip(pairs, sids) if p in keep]
@@ -1537,21 +1576,6 @@ def demo():
     assert all(i < j for i, j in pairs) and len(pairs) < 190
     assert any(fam[i] != fam[j] for i, j in pairs)
     assert all(sum(i == x or j == x for i, j in pairs) >= 3 for x in range(20))
-    # no random partners: only the spanning tree links the two families, through a scored pair
-    assert not any(fam[i] != fam[j] for i, j in nearest_pairs(sc, 3, 0, seed=1))
-    tree = nearest_pairs(sc, 3, 0, seed=1, tree=True)
-    assert sum(fam[i] != fam[j] for i, j in tree) == 1
-    unscored = [[0.9 if fam[i] == fam[j] else -1 for j in range(20)] for i in range(20)]
-    tree = nearest_pairs(unscored, 3, 0, seed=1, tree=True)
-    assert not any(fam[i] != fam[j] for i, j in tree)
-
-    # arch groups: every file reaches its best partner in each other group
-    arch = ["x86" if fam[i] else "arm" for i in range(20)]
-    crossed = nearest_pairs(sc, 3, 0, seed=1, groups=arch)
-    assert all(
-        any(fam[j if i == x else i] != fam[x] for i, j in crossed if x in (i, j))
-        for x in range(20)
-    )
     # lanes sharing no file: one unread pair between them, the best scored
     ln = [{"span": 2, "mask": 0b0011}] * 2 + [{"span": 2, "mask": 0b1100}] * 2
     ls = np.full((4, 4), 0.1)
@@ -1571,8 +1595,17 @@ def demo():
     got = bridge_candidates(groups, pos, {frozenset(("A", "B"))})
     assert got == [("b1", "c1")], got
     assert bridge_candidates(groups, pos, set()) == [("a1", "b1"), ("b1", "c1")]
-    assert bridge_kinds("cluster, mst") == ("mst", "cluster")
-    assert bridge_kinds("lane,arch") == ("arch", "lane")
+    assert bridge_kinds("cluster, lane") == ("lane", "cluster")
+    # build estimates: calibration point (437 files, 212k functions) and order
+    deep_pairs, deep_secs = estimate(437, 211798, 0)
+    assert deep_pairs == 95266 and 600 < deep_secs < 800, deep_secs
+    assert 5000 < estimate(437, 211798, 16)[0] < 8000
+    ds = build_depths(437, 211798)
+    assert [d["id"] for d in ds] == ["fast", "balanced", "deep"]
+    assert ds[0]["secs"] < ds[1]["secs"] < ds[2]["secs"]
+    assert estimate(60, 6000, 16)[0] == 60 * 59 // 2  # not sampled: every pair
+    assert [d["id"] for d in build_depths(60, 6000)] == ["deep"]
+    assert len(build_depths(120, 12000)) == 3
     assert bridge_kinds("none") == () and bridge_kinds(["fid"]) == ("fid",)
     try:
         bridge_kinds("fid,lsh")
@@ -1610,6 +1643,18 @@ def compute(r, scope, members, params=None):
     sample = list(pair_sample())
     if params.get("sample_above") is not None:
         sample[0] = int(params["sample_above"])
+    # Large sets: the base (all the Kvrocks reads) comes from a job only, so a
+    # call-graph walk or a reload never re-reads every pair; matched rows for a
+    # new min_edge are CPU only and are kept next to it.
+    big = len(members) > auto_build_max()
+    if big and mode == "stored":
+        # A build's depth (pair_k) sticks to the set, so every view without
+        # one reads the base that was built, or re-attaches to its job.
+        dkey = depth_key(scope, members)
+        if params.get("pair_k") is not None:
+            get_raw_queue_redis().setex(dkey, BUILT_TTL, int(params["pair_k"]))
+        elif (stored := get_raw_queue_redis().get(dkey)) is not None:
+            sample[1] = int(stored)
     if params.get("pair_k") is not None:
         sample[1] = int(params["pair_k"])
     if params.get("bridges") is not None:
@@ -1674,10 +1719,6 @@ def compute(r, scope, members, params=None):
     if doc is not None:
         return doc
 
-    # Large sets: the base (all the Kvrocks reads) comes from a job only, so a
-    # call-graph walk or a reload never re-reads every pair; matched rows for a
-    # new min_edge are CPU only and are kept next to it.
-    big = len(members) > auto_build_max()
     bkey = hashlib.md5(repr(base_key).encode()).hexdigest()
     rkey = hashlib.md5(repr(base_key + (min_edge,)).encode()).hexdigest()
 
@@ -1687,7 +1728,11 @@ def compute(r, scope, members, params=None):
             base = _built("base", bkey)
         if base is None:
             if big and not params.get("build"):
-                raise NeedsBuild(len(members), bkey)
+                pipe = r.pipeline(transaction=False)
+                for coll, md5 in members:
+                    pipe.scard(f"{coll}:idx:file:functions:{md5}")
+                depth = sample[1] if sample else 0
+                raise NeedsBuild(len(members), bkey, sum(pipe.execute()), depth)
             base = _load_base(r, scope, members, vparams, labels, warnings, sample)
             if big:
                 _keep_built("base", bkey, base)

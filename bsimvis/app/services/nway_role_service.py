@@ -189,10 +189,11 @@ def vote(pairs):
 def attach(r, doc, fids_of):
     """Set `role` / `role_src` on every row of `doc` once (cached on the doc)."""
     if "_roles" not in doc:
-        doc["_calls"] = {}
-        doc["_roles"] = (
-            function_roles(r, doc["fmeta"], doc["_calls"]) if r is not None else {}
-        )
+        # requests share the cached doc: build both maps aside, publish the calls first
+        calls = {}
+        roles = function_roles(r, doc["fmeta"], calls) if r is not None else {}
+        doc["_calls"] = calls
+        doc["_roles"] = roles
     roles = doc["_roles"]
     if not roles:
         return

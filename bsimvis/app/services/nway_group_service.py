@@ -839,13 +839,17 @@ def _level(mode, units, ctx):
     )
 
 
-def _no_lone(nodes, ctx):
-    """Top level: the functions no group took become one "Other functions" group, listed last."""
+def _no_lone(nodes, ctx, parent_id="", parent_path=()):
+    """The functions no group took become one "Other functions" group, listed last.
+
+    Always at the top level; inside a group only when they sit beside sub-groups
+    (a group holding nothing but rows keeps them as its content).
+    """
     loose = [n for n in nodes if not n["container"]]
-    if not loose:
+    if not loose or (parent_id and len(loose) == len(nodes)):
         return nodes
     units = [n["unit"] for n in loose]
-    g = _rest(units, ctx)
+    g = _graft(_rest(units, ctx), parent_id, list(parent_path))
     inner = _expand(
         units, ctx, g["id"], g["path"], {id(n["unit"]): n["extra"] for n in loose}
     )
@@ -1020,7 +1024,7 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
                 "pairs": pairs,
             }
         )
-    return nodes
+    return _no_lone(nodes, ctx, parent_id, parent_path) if parent_id else nodes
 
 
 TIERS = (("core", "Core"), ("common", "Common"), ("rare", "Rare"))
@@ -1142,7 +1146,8 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
     if not ctx.get("lane_tier"):
         top = {"id": parent_id, "path": parent_path}
         nodes = with_fold(roots, top, "top")
-        return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+        nodes += _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+        return _no_lone(nodes, ctx, parent_id, parent_path) if parent_id else nodes
     nodes = []
     bands, bounds = _lane_tiers(roots, loose, ctx)
     for t, (band, (lo, hi)) in enumerate(zip(bands, bounds)):
@@ -1157,6 +1162,7 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
         _graft(tg, parent_id, parent_path)
         inner = with_fold(lanes, tg, key)
         inner += _nodes(band["rows"], levels[1:], ctx, tg["id"], tg["path"], carried)
+        inner = _no_lone(inner, ctx, tg["id"], tg["path"])
         nodes.append(
             {
                 "container": True,
@@ -1833,6 +1839,16 @@ def demo():
         {},
     )
     assert list(gs) == ["prefix:attack_", "rest"], gs
+    # inside a tier, a row beside the lanes goes into that tier's Other group
+    tr = [row(3, 1), row(3, 1), row(1, 1)]
+    tdoc = {"rows": tr, "fmeta": {}, "columns": [{"id": "A"}, {"id": "B"}], "key": None}
+    _, gs, _ = group_rows(tr, tdoc, None, "lane", {"group_lane_tier": "0.8"})
+    assert "tier:core/rest" not in gs and gs.get("tier:rare", {}).get("units") == 1, gs
+    tr2 = [row(3, 1), row(3, 1), row(1, 1), row(1, 1), row(2, 1)]
+    _, gs, _ = group_rows(
+        tr2, {**tdoc, "rows": tr2}, None, "lane", {"group_lane_tier": "0.5"}
+    )
+    assert any(k.endswith("/rest") for k in gs), gs
     # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")
@@ -1908,7 +1924,7 @@ def demo():
     by_weight = _nest(kinds, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
     assert top(by_weight) == ["prefix:attack_", "lane:1110"], top(by_weight)
 
-    # at every level: under a prefix, a plain row covering more files comes before a lane
+    # under a prefix, a row beside the lanes goes into the prefix's Other group, after them
     under = [
         row(1, 5, "attack_a"),
         row(1, 5, "attack_b"),
@@ -1916,19 +1932,15 @@ def demo():
     ]
     inner = _nest(under, ["prefix", "lane"], {**sctx, "sort": "files"}, "", [], {})
     shape = ["row" if g.get("headless") else g["id"] for g, _ in inner]
-    assert shape == ["prefix:attack_", "row", "prefix:attack_/lane:1000"], shape
-    # ... while the lanes order lists the groups first, plain rows after
+    want = ["prefix:attack_", "prefix:attack_/lane:1000", "prefix:attack_/rest", "row"]
+    assert shape == want, shape
+    # ... whatever the group order
     lanes = _nest(under, ["prefix", "lane"], {**sctx, "sort": "lanes"}, "", [], {})
     shape = ["row" if g.get("headless") else g["id"] for g, _ in lanes]
-    assert shape == ["prefix:attack_", "prefix:attack_/lane:1000", "row"], shape
-    # ... and the other way round when features decide
+    assert shape == want, shape
     heavy = [row(1, 50, "attack_a"), row(1, 50, "attack_b"), row(7, 1, "attack_c")]
     flip = _nest(heavy, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
-    assert ["row" if g.get("headless") else g["id"] for g, _ in flip] == [
-        "prefix:attack_",
-        "prefix:attack_/lane:1000",
-        "row",
-    ]
+    assert ["row" if g.get("headless") else g["id"] for g, _ in flip] == want
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"

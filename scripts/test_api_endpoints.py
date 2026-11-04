@@ -5731,6 +5731,31 @@ def test_nway_roles():
             st == 200 and items and all(it.get("g") for it in items),
             f"status {st}, {sum(1 for it in items if not it.get('g'))} top-level rows",
         )
+    # nor beside sub-groups deeper down: a group holding sub-groups holds no row of its own
+    for chain, extra in (
+        ("lane,region", {"group_lane_tier": "0.8", "group_split_min": "0"}),
+        ("presence,region", {"group_split_min": "0"}),
+    ):
+        st, nb = _nway(
+            tab="all",
+            columns="files",
+            scope="all",
+            group=chain,
+            group_open="all",
+            **extra,
+        )
+        gs = (nb or {}).get("groups", {})
+        parents = {p for g in gs.values() for p in g["path"][:-1]}
+        mixed = [
+            it["g"]
+            for it in (nb or {}).get("items", [])
+            if not it.get("header") and it.get("g") in parents
+        ]
+        check(
+            f"nway group={chain}: no row sits beside sub-groups",
+            st == 200 and gs and not mixed,
+            f"status {st}, rows beside sub-groups under {sorted(set(mixed))[:3]}",
+        )
     st, pb = _nway(tab="all", columns="files", scope="all", group="presence")
     check(
         "nway group=presence: bands count files",

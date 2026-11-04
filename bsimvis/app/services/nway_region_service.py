@@ -120,7 +120,7 @@ def row_regions(rows, calls, fids_of):
 
 def attach(doc, fids_of):
     """Set `region` on every row of `doc` once; needs the roles pass (`doc["_calls"]`)."""
-    if doc.get("_regions_done"):
+    if doc.get("_regions_done") or "_roles" not in doc:
         return
     regions = row_regions(doc["rows"], doc.get("_calls") or {}, fids_of)
     for i, row in enumerate(doc["rows"]):

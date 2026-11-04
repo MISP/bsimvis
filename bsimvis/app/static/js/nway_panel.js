@@ -15,6 +15,10 @@
  * `state.column` keeps the rows with a function in one file; `state.focus` (file
  * ids) splits the files into Focus vs Rest, both set from the file header's
  * right-click menu.
+ * `state.track` (`fn:<func id>` or `<lens>:<key>`, see `_trackKey`) lights the matching rows and
+ * the columns that hold them; `setTrack(track)` sets it from outside, `onTrack(track)` fires when
+ * the user tracks something here, `onRowHover(row | null)` on row hover. `state.order=lineage`
+ * orders the file columns by the lineage tree and draws it over the column heads.
  * `opts.cg` ({name, cells, view, scope, depth}) makes the panel a standalone
  * call graph on `container` (no table); `onCg(snapshot)` fires on every graph change.
  * Rows are paged
@@ -37,9 +41,10 @@
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
         family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '', feat_min: '', feat_max: '', support_min: '',
         group: 'region,role', group_split_min: '', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
+        track: '', order: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min', 'order'];
     // Family stats columns: Cover, Leak, Score (+ Reach for strings).
     const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
     const STR_PAGE = 100;
@@ -164,6 +169,8 @@
             this.onCg = opts.onCg || null;
             this.onData = opts.onData || null;
             this.onSlot = opts.onSlot || null;
+            this.onTrack = opts.onTrack || null;
+            this.onRowHover = opts.onRowHover || null;
             this.data = null;
             this.error = null;
             this._gen = 0;
@@ -192,6 +199,19 @@
             document.addEventListener('click', this._ddClose);
             this.el.addEventListener('mouseover', e => this._gTip(e, true));
             this.el.addEventListener('mouseout', e => this._gTip(e, false));
+            if (this.onRowHover) {
+                this.el.addEventListener('mouseover', e => {
+                    const tr = e.target.closest('#nway-table tbody tr');
+                    if (tr === this._hoverTr) return;
+                    this._hoverTr = tr;
+                    const td = tr && tr.querySelector('td[data-fn-open]'), row = (td && this._rowAt(td)) || null;
+                    if (row !== this._hoverRow) { this._hoverRow = row; this.onRowHover(row); }
+                });
+                this.el.addEventListener('mouseleave', () => {
+                    this._hoverTr = null;
+                    if (this._hoverRow) { this._hoverRow = null; this.onRowHover(null); }
+                });
+            }
             this.el.addEventListener('pointerdown', e => {
                 if (e.target.closest('.nway-colgrip')) this._fnGrip(e);
                 else if (e.target.closest('.nway-lsplit')) this._lsplitDrag(e);
@@ -251,7 +271,7 @@
                 if (fn) window.EntityRenderer.handleContextMenu(e, 'function', fn);
             }, true);
             this.el.addEventListener('keydown', e => {
-                if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-nway-file]')) this._onClick(e);
+                if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-nway-file], [data-dnode]')) this._onClick(e);
                 else if (e.key === 'Enter' && e.target.dataset.text) this._set({ [e.target.dataset.text]: e.target.value.trim(), offset: 0 });
             });
         }
@@ -273,6 +293,19 @@
                 this._laneTipEl = null;
                 for (const ev of ['wheel', 'scroll', 'pointerdown']) window.removeEventListener(ev, this._tipDrop, true);
             }
+        }
+
+        // Light another tracked item; no reload, the track is not an API param.
+        setTrack(track) {
+            this.state.track = track || '';
+            this._paintTrack();
+        }
+
+        _track(track) {
+            this.state.track = track;
+            if (this.onState) this.onState({ ...this.state });
+            if (this.onTrack) this.onTrack(track);
+            this._paintTrack();
         }
 
         _set(patch) {
@@ -615,7 +648,7 @@
                 ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}${inl}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
             // Compare and Family are rarely used: both live in the ... menu, lit while either is on.
             const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}</div></details>`;
-            return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
+            return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._trackChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
                 <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
         }
 
@@ -667,8 +700,10 @@
             const pickCtl = picked.length ? `${this._seg('Others', 'col_rest', [['', 'Merged'], ['drop', 'Hidden']], 'The files whose value was not picked: merged into one "other" column, or left out of the table.')}<button class="nway-blink" data-colpick-clear>clear picks</button>` : '';
             const abCtl = by && !s.col_set && this._ab() && s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', d.columns[0].label], ['b', d.columns[1].label]], 'Unique tab only: functions in one column and not the other.') : '';
             const byCtl = !by ? '' : s.col_set ? `<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button><a class="nway-blink" title="Write a YARA rule: group A must match, the others must not" href="/yara?${new URLSearchParams({ collection: (this._cmp.scope().collection || ''), cmp: this.state.cmp }).toString()}" onclick="Nav.openPath(this.href, event)">Write YARA</a>` : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}${pickCtl}${abCtl}`;
+            // Column order: the usual one, or the lineage tree's (files and twins only).
+            const orderDd = fileMode === 'files' || fileMode === 'twins' ? this._dd('Order', [['', 'Default', 'fa-solid fa-arrow-down-1-9', 'var(--dim, #888)', undefined, 'The usual column order.'], ['lineage', 'Lineage', 'fa-solid fa-sitemap', 'var(--info, #3b82f6)', undefined, 'Columns in lineage-tree order, each parent before its children, with the tree drawn over the column heads. The Deltas lens then groups rows by the column they were born in.']], s.order || '', 'How the file columns are ordered.', v => `data-set="order:${v}"`) : '';
             return {
-                files: `${fileDd}${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}`,
+                files: `${fileDd}${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}${orderDd}`,
                 byRow: by || this._byErr ? `<div class="nway-byrow">${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</div>` : '',
                 rows: `<div class="nway-gcard${active ? ' active' : ''}">
                 <span class="nway-bgrp">${lbl('Group by', 'Click order is nesting order: each group is split again by the next level. The column sort still orders the rows inside each group.')}${picks}${axes}${laneDepth}${laneLink}${laneTier}${laneFold}${lv.slice(1).some(l => l === 'role' || l === 'region') ? this._slider('Split above', 'group_split_min', s.group_split_min === '' ? 10 : Number(s.group_split_min), 0, 50, 1, 'A nested Role or Region level splits only a group holding more functions than this.') : ''}${laneNames}</span>${sep}
@@ -700,9 +735,95 @@
             return `<span class="nway-file-link" data-nway-file="${escapeAttr(f.id)}" role="link" tabindex="0" title="${escapeAttr(`Open ${f.file_name || f.md5}`)}">${escapeHtml(f.file_name || f.md5)}</span>`;
         }
 
+        // The column filter: a file, or a twin column (the lineage tree's dots set either).
         _columnChip() {
-            const only = this.state.column && this._files().find(f => f.id === this.state.column);
-            return only ? `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${this._fileNameLink(only)} &times;</button>` : '';
+            const id = this.state.column, file = id && this._files().find(f => f.id === id), col = file || (id && this.data.columns.find(c => c.id === id));
+            if (!col) return '';
+            const show = '<button type="button" class="nway-chip" data-lineage title="Open the lineage page on this column, with the same filters"><i class="fa-solid fa-sitemap"></i> Show in lineage</button>';
+            return `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${file ? this._fileNameLink(file) : escapeHtml(this._colLabel(col))} &times;</button>${show}`;
+        }
+
+        // "Tracking <label> · in x/N columns": the count is filled in by _paintTrack.
+        _trackChip(n) {
+            if (!this.state.track || !this.data) return '<span data-trk-chip hidden></span>';
+            return `<button type="button" class="nway-chip on nway-trkchip" data-trk-chip data-trk="" title="Stop tracking"><i class="fa-solid fa-crosshairs"></i> Tracking <b>${escapeHtml(this._trackLabel())}</b>${n == null ? '' : ` <span class="dim">&middot; in ${Number(n)}/${this.data.columns.length} columns</span>`} &times;</button>`;
+        }
+
+        _trackLabel() {
+            const t = this.state.track, d = this.data;
+            if (t.startsWith('fn:')) {
+                const fid = t.slice(3), row = d.items.find(r => !r.header && Object.values(r.files || r.cells || {}).includes(fid));
+                return row ? row.name : fnParts(fid).addr || fid;
+            }
+            const g = Object.values(d.groups || {}).find(x => this._trackKey(x.id) === t), lens = LENSES.find(l => t.startsWith(`${l[0]}:`));
+            const name = g ? g.label || this._shownName((this._laneNames || {})[g.id]) || g.hint || '' : '';
+            return lens ? `${lens[1]}: ${name || t.slice(lens[0].length + 1)}` : name || t;
+        }
+
+        // A group's track key, `<lens>:<key>` for the kinds a lens names: region -> modules:<region id>,
+        // presence -> core:<band>, role -> triage:<role>, born -> deltas:<column id>, lane -> lanes:<mask hex,
+        // bit i = column i>. Any other kind (tier, delta, tag, prefix, same, fold, rest) keeps its group id.
+        _trackKey(gid) {
+            const g = ((this.data && this.data.groups) || {})[gid];
+            if (g && g.kind === 'born' && g.column) return `deltas:${g.column}`;
+            const last = String(gid).split('/').pop(), i = last.indexOf(':'), kind = i > 0 ? last.slice(0, i) : '', key = last.slice(i + 1);
+            const lens = { region: 'modules', presence: 'core', role: 'triage', born: 'deltas' }[kind];
+            if (lens) return `${lens}:${key}`;
+            if (kind === 'lane' && /^[01]+$/.test(key)) return `lanes:${BigInt(`0b${[...key].reverse().join('')}`).toString(16)}`;
+            return String(gid);
+        }
+
+        // A row is tracked by any of its function ids, by a group on its path, or by its own role / region.
+        _trackRow(row) {
+            const t = this.state.track;
+            if (!t) return false;
+            if (t.startsWith('fn:')) return Object.values(row.files || row.cells || {}).includes(t.slice(3));
+            const g = row.g && (this.data.groups || {})[row.g];
+            if (g && (g.path || [row.g]).some(id => this._trackKey(id) === t)) return true;
+            return (!!row.role && t === `triage:${row.role}`) || (!!row.region && t === `modules:${row.region}`);
+        }
+
+        // Light the tracked rows and group headers, outline the columns that hold them (nothing is filtered).
+        _paintTrack() {
+            const t = this.state.track, table = this.el.querySelector('#nway-table'), d = this.data;
+            let held = null;
+            if (table && d && this.state.view !== 'strings') {
+                const cols = d.columns, groups = d.groups || {}, rows = d.items.filter(x => !x.header);
+                held = cols.map(() => false);
+                table.querySelectorAll('.nway-trk, .nway-tc').forEach(el => el.classList.remove('nway-trk', 'nway-tc'));
+                if (t) {
+                    table.querySelectorAll('td[data-fn-open]').forEach((td, i) => {
+                        const row = rows[i];
+                        if (!row || !this._trackRow(row)) return;
+                        td.parentElement.classList.add('nway-trk');
+                        cols.forEach((c, ci) => { const v = row.cells[c.id]; if (v && (typeof v === 'string' || v.present)) held[ci] = true; });
+                    });
+                    table.querySelectorAll('tr.nway-grow').forEach(tr => {
+                        const g = groups[tr.dataset.gtoggle];
+                        if (!g || this._trackKey(g.id) !== t) return;
+                        tr.classList.add('nway-trk');
+                        [...(g.kind === 'lane' ? g.mask : g.union || '')].forEach((b, ci) => { if (b === '1') held[ci] = true; });
+                    });
+                    table.querySelectorAll('tr').forEach(tr => tr.querySelectorAll('.col').forEach((el, i) => { if (held[i]) el.classList.add('nway-tc'); }));
+                }
+                table.querySelectorAll('[data-trk]').forEach(b => {
+                    const tr = b.closest('tr');
+                    b.classList.toggle('on', !!t && (b.dataset.trk === t || (t.startsWith('fn:') && b.dataset.trk.startsWith('fn:') && !!tr && tr.classList.contains('nway-trk'))));
+                });
+            }
+            const chip = this.el.querySelector('[data-trk-chip]');
+            if (chip) chip.outerHTML = this._trackChip(held ? held.filter(Boolean).length : undefined);
+        }
+
+        // Every table param for the lineage page (track and column included). It reads `order` as its
+        // own tree layout, so the column order stays here; the lens (`group`) always goes, even emptied.
+        _lineageQs() {
+            const qs = this._docQs();
+            for (const [k, v] of Object.entries(this.state)) {
+                if (k === 'offset' || k === 'order' || v === null || v === undefined || (v === '' && k !== 'group')) continue;
+                if (k === 'group' || k === 'columns' || String(v) !== String(DEFAULTS[k] ?? '')) qs.set(k, v);
+            }
+            return qs;
         }
 
         // Two top-level merged columns compare like Focus and Rest: Core = both, Unique = one group.
@@ -2517,6 +2638,7 @@
             head.insertAdjacentHTML('afterend', this._groupHead(groups[id], path.length - 1));
             head.remove();
             this._mark(this.el.querySelector('#nway-table'));
+            this._paintTrack();
             this._nameLanes();
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: Number(d.offset) || 0, total: Number(d.total), size: PAGE, shown: items.length });
             this._drawn = gen;
@@ -2699,6 +2821,10 @@
                 title = `${this._laneName(g)}<span class="nway-lcount" title="Region: rows whose functions call each other">${escapeHtml(peek || 'region')}</span>`;
             } else if (g.kind === 'role') {
                 title = `${this._roleIcon(g.role)}<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
+            } else if (g.kind === 'born') {
+                // order=lineage Deltas: the rows born in one column, in that column's colour
+                const ci = this.data.columns.findIndex(c => c.id === (g.column || String(g.id).split('/').pop().slice(5)));
+                title = `<i class="fa-solid fa-code-compare nway-bicon"></i>${ci >= 0 ? `<i class="nway-sq on nway-gsw" style="${this._sqStyle(ci)}"></i>` : ''}<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
             } else if (g.kind === 'fold') {
                 title = `<b>${Number(g.lanes)} small lanes</b> <span class="dim">${Number(this.state.group_lane_fold) > 1 ? `under ${Number(this.state.group_lane_fold)} rows each` : ''}</span>`;
             } else if (g.kind === 'same') {
@@ -2730,9 +2856,10 @@
             const units = Number(g.units ?? g.rows);
             const stat = this.state.view === 'strings' ? `${Number(g.rows)} row${g.rows === 1 ? '' : 's'} &middot; ${Number(g.weight).toFixed(0)} chars` : `${units} function${units === 1 ? '' : 's'}`;
             const same = g.kind === 'same';
+            const trk = `<button type="button" class="nway-gtrk" data-trk="${escapeAttr(this._trackKey(g.id))}" title="Track this group across the lineage: light its rows and the columns that hold them" aria-label="Track this group"><i class="fa-solid fa-crosshairs"></i></button>`;
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff${Number(g.cohesion) < 0.5 ? ' lowc' : ''}" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${hs.span}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><span class="nway-gt" data-gmask="${escapeAttr(files)}">${g.kind === 'same' ? '' : chevBtn}${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff}</span>${same ? '' : `<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span>`}${peek}${g.kind === 'lane' || (g.kind === 'region' && !g.label) ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${hs.cells}${sq}</tr>`;
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${hs.span}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><span class="nway-gt" data-gmask="${escapeAttr(files)}">${g.kind === 'same' ? '' : chevBtn}${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}${trk}<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff + trk}</span>${same ? '' : `<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span>`}${peek}${g.kind === 'lane' || (g.kind === 'region' && !g.label) ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${hs.cells}${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2758,7 +2885,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${g && g.kind === 'same' ? 'nway-ver ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}${this._fnKey(row) ? `<button type="button" class="nway-rtrk" data-trk="${escapeAttr(`fn:${this._fnKey(row).slice(2)}`)}" title="Track across lineage: light this row and the columns that hold it" aria-label="Track across lineage"><i class="fa-solid fa-crosshairs"></i></button>` : ''}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -3024,9 +3151,31 @@
                 : (this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>') + (this._roleOn() ? '<th title="Triage role: library and runtime from the library analyzer, the rest from the call graph. Click a row\'s role to override it.">Role</th>' : '') + (this._famOn() ? FAM_COLS.map(famTh).join('') : '');
             if (this._tree().grouped) {
                 const bands = this._bands();
-                return `${bands.html}<tr style="--bt:${bands.n * BAND_H}px">${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
+                return `${this._dendro()}${bands.html}<tr style="--bt:${bands.n * BAND_H}px">${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
             }
-            return `<tr>${lead}${this.data.columns.map(fileHead).join('')}</tr>`;
+            return `${this._dendro()}<tr>${lead}${this.data.columns.map(fileHead).join('')}</tr>`;
+        }
+
+        // order=lineage: the tree over the column heads, elbow lines and one dot per column in its hue
+        // (xN on a twin column); a dot sets the column filter. Not sticky: it scrolls away with the table.
+        _dendro() {
+            const d = this.data, par = d.column_parents, cols = d.columns;
+            if (!par || !cols.length) return '';
+            const at = new Map(cols.map((c, i) => [c.id, i]));
+            // nearest ancestor that is a column (an opened twin's parent may not be one)
+            const up = id => { let p = par[id]; for (let n = 0; p && !at.has(p) && n < 10000; n++) p = par[p]; return p && at.has(p) ? p : null; };
+            const depth = new Map();
+            const dep = id => { if (!depth.has(id)) { depth.set(id, 0); const p = up(id); depth.set(id, p ? dep(p) + 1 : 0); } return depth.get(id); };
+            const D = Math.max(0, ...cols.map(c => dep(c.id)));
+            const dy = Math.max(4, Math.min(18, 96 / Math.max(1, D))), H = Math.ceil(18 + D * dy);
+            const x = i => i * SQ_COL + SQ_COL / 2, y = id => 9 + dep(id) * dy;
+            let s = '';
+            cols.forEach((c, i) => { const p = up(c.id); if (p) s += `<path class="nway-dline" d="M${x(at.get(p))},${y(p)}V${y(c.id) - dy / 2}H${x(i)}V${y(c.id)}"/>`; });
+            cols.forEach((c, i) => {
+                const n = Number(c.member_count) || 1, many = !!c.kind && n > 1, label = this._colLabel(c);
+                s += `<g class="nway-dnode${this.state.column === c.id ? ' on' : ''}" data-dnode="${escapeAttr(c.id)}" role="button" tabindex="0" aria-label="${escapeAttr(`Only rows of ${label}`)}" style="--h:${this._fileHue(i)}"><title>${escapeHtml(`${label}${many ? ` (${n} files)` : ''}\nclick: only rows of this column`)}</title><circle cx="${x(i)}" cy="${y(c.id)}" r="${many ? 6.5 : 5}"/>${many ? `<text class="nway-dbadge" x="${x(i) + 6}" y="${y(c.id) - 5}">&times;${n}</text>` : ''}</g>`;
+            });
+            return `<tr class="nway-dendro"><th colspan="${this._lead().length}" class="dim">Lineage order &middot; click a dot to filter</th><th colspan="${cols.length}"><svg width="${cols.length * SQ_COL}" height="${H}" aria-label="Lineage tree over the columns">${s}</svg></th></tr>`;
         }
 
         // One header row per nesting level: a band over the columns of each opened cluster or twin, with a button that folds it.
@@ -3196,6 +3345,7 @@
         // The host (the N-way page) can park its own controls in the More section.
         render() {
             this._renderPanel();
+            this._paintTrack();
             this._nameLanes();
             if (this.onSlot) {
                 const actions = this.el.querySelector('[data-actions]');
@@ -3390,12 +3540,22 @@
             this._nameLanes();
             this.el.querySelector('.table-footer-left').innerHTML = window.Paging.footer({ offset: 0, total: Number(d.total), size: PAGE, shown: d.items.length });
             this._mark(this.el.querySelector('#nway-table'));
+            this._paintTrack();
             this._watch();
         }
 
+        // The row of a name cell: the n-th row cell is the n-th non-header item (group splices shift indexes, so none is stored).
+        _rowAt(td) {
+            const at = [...this.el.querySelectorAll('#nway-table td[data-fn-open]')].indexOf(td);
+            return at < 0 ? null : this.data.items.filter(x => !x.header)[at];
+        }
+
         _onClick(e) {
-            const t = e.target.closest('[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-ff-clear],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
+            const t = e.target.closest('[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-ff-clear],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear],[data-trk],[data-dnode]');
             if (!t) return;
+            // a lit crosshair (or the chip's x) stops tracking
+            if (t.dataset.trk !== undefined) return this._track(t.dataset.trk && !t.classList.contains('on') ? t.dataset.trk : '');
+            if (t.dataset.dnode) return this._set({ column: this.state.column === t.dataset.dnode ? '' : t.dataset.dnode, offset: 0 });
             if (t.dataset.lens) {
                 const lens = LENSES.find(l => l[0] === t.dataset.lens);
                 return lens && this._set({ group: lens[2], offset: 0 });
@@ -3431,7 +3591,7 @@
             if (t.dataset.famClear !== undefined) return this._set({ family: '', ignore: '', cover_min: '', leak_max: '', offset: 0, sort_col: '' });
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
-                return window.Nav.openPath(`/diff/nway/lineage?${this._docQs().toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
+                return window.Nav.openPath(`/diff/nway/lineage?${this._lineageQs().toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
             }
             if (t.dataset.mergeDiff) {
                 const group = this.data.groups[t.dataset.mergeDiff];
@@ -3505,9 +3665,7 @@
             }
             if (t.dataset.fnOpen !== undefined) {
                 if (e.target.closest('button, a, input, .bsim-tag-pill, .entity-actions')) return;
-                // The n-th row cell is the n-th non-header item (group splices shift indexes, so none is stored).
-                const at = [...this.el.querySelectorAll('#nway-table td[data-fn-open]')].indexOf(t);
-                const row = this.data.items.filter(x => !x.header)[at];
+                const row = this._rowAt(t);
                 // Plain click: the call-graph side panel. Ctrl / Shift / middle click: the full function-family page.
                 if (!e.ctrlKey && !e.metaKey && !e.shiftKey && row && !this.cgInit) return this._cgOpen(row);
                 const url = this._fnUrl(row);

@@ -167,7 +167,12 @@ state: `track` (`fn:<fid>` or `<lens>:<key>`; lane hex bits and colours are over
 default column order, `NwayColors` in `nway_colors.js`), and the lineage page keeps its
 own `layout` (tree / chain / star) and `lview`: Tree, Tracks (one lens group through the
 tree, or six small multiples) or Split (compact tree over a real `NwayPanel`, wired by
-`setTrack` / `onTrack` / `onRowHover`). Node check: `node scripts/test_nway_lineage.js`.
+`setTrack` / `onTrack` / `onRowHover`). With the table's `group` (the lens preset) the route
+also sends the first-level `groups` that `/nway` builds over the same filtered rows (same
+`group_rows` call, so same ids, meta and LLM names) and `rows.group` (each matching row's
+deepest one); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
+keys, and one lane-name cache keyed by content, so a lane is never named twice).
+Node check: `node scripts/test_nway_lineage.js`.
 
 ## Homepage and unified search
 

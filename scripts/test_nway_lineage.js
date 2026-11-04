@@ -11,6 +11,7 @@ const assert = require('assert');
 const src = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_lineage.js', 'utf8');
 const window = {};
 new Function('window', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_colors.js', 'utf8'))(window);
+new Function('window', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_groups.js', 'utf8'))(window);
 new Function('window', src)(window);
 const { buildModel, layout, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } = window.NwayLineage._layout;
 
@@ -122,4 +123,47 @@ const tq = window.NwayLineage.tableQs('md5s=a,b&order=chain&layout=star&lview=sp
 assert.strictEqual(tq.toString(), 'md5s=a%2Cb&track=fn%3Ax&root=c%3Afile%3Aa&col_open=%5B%5D', 'lineage-only keys dropped, an old order=chain too; twins closed as here');
 assert.strictEqual(window.NwayLineage.tableQs('order=lineage&lview=tracks&col_open=x').toString(), 'order=lineage&col_open=x', "the table's own order and open columns pass through");
 
-console.log('nway lineage self-check OK');
+// --- the table's groups (doc.groups for doc.group, rows.group = deepest first-level group) ---------
+const NG = window.NwayGroups;
+assert.strictEqual(NG.trackKey({ kind: 'lane' }, 'tier:core/lane:0110', i => i), 'lanes:6', 'lane bits over the default column order');
+assert.strictEqual(NG.trackKey({ kind: 'lane' }, 'lane:0110', i => [3, 2, 1, 0][i]), 'lanes:6', 'order=lineage: bits go back to the base index');
+assert.strictEqual(NG.trackKey({ kind: 'region' }, 'region:r2', i => i), 'modules:r2');
+assert.strictEqual(NG.trackKey({ kind: 'tier' }, 'tier:core', i => i), 'tier:core', 'a tier keeps its group id');
+const grouped = doc([true, true, true, true, true, false]);
+Object.assign(grouped, {
+    group: 'lane,region',
+    groups: [
+        { id: 'tier:core', kind: 'tier', label: 'Core', path: ['tier:core'] },
+        { id: 'tier:core/lane:1100', kind: 'lane', mask: '1100', path: ['tier:core', 'tier:core/lane:1100'] },
+        { id: 'tier:rare', kind: 'tier', label: 'Rare', path: ['tier:rare'] },
+    ],
+});
+grouped.rows.group = [1, 1, 0, 2, null, null];
+const gb = build(grouped), lanes = lensCats(grouped, gb.R, 'lanes', g => `name of ${g.id}`);
+assert.deepStrictEqual(lanes.cats.map(c => [c.tk, c.label]), [['tier:core', 'name of tier:core'], ['lanes:3', 'name of tier:core/lane:1100'], ['tier:rare', 'name of tier:rare'], ['', 'Other functions']],
+    'cats: the groups holding rows themselves, in table order, by their table track key; a matching row with no group goes to Other');
+assert.deepStrictEqual(lanes.groups.map(x => x.depth), [0, 1, 0]);
+const marked = t => { const m = trackRows(gb.R, l => lensCats(grouped, gb.R, l), t, 'lanes'); return m && [...m].join(''); };
+assert.strictEqual(marked('tier:core'), '111000', 'a tier tracks its own rows and its lanes\'');
+assert.strictEqual(marked('lanes:3'), '110000');
+assert.strictEqual(marked('tier:nope'), null, 'an unknown group id tracks nothing');
+assert.strictEqual(marked('modules:2'), '000101', 'another lens keeps its row-derived groups (old track keys)');
+assert.ok(!lensCats(grouped, gb.R, 'modules').groups, 'groups are for the lens of doc.group only');
+assert.ok(!lensCats(grouped, gb.R, 'deltas').groups, 'Deltas keeps its own rendering');
+const gp = build(grouped, 'lanes'), sum = [...gp.P.segs.get('c:file:a').m.values()].reduce((a, x) => a + x.cnt, 0) + gp.P.segs.get('c:file:a').faint.cnt;
+assert.strictEqual(sum, 3, 'server cats paint every row of a node');
+
+// --- lane names: one model call per lane content, shared by every page -----------------------------
+const lane = NG.payload({ id: 'lane:1100', kind: 'lane', mask: '1100', files: 2, rows: 4, sample: ['attack_udp'] }, 3);
+assert.deepStrictEqual([lane.files, lane.total, lane.kind], [2, 3, undefined]);
+assert.ok(NG.nameable({ kind: 'region', sample: ['x'] }) && !NG.nameable({ kind: 'region', label: 'Runtime', sample: ['x'] }) && !NG.nameable({ kind: 'lane' }));
+let posts = 0;
+global.fetch = async () => { posts++; return { ok: true, json: async () => ({ status: 'ready', names: { 'lane:1100': 'udp flood' }, evidence: {} }) }; };
+(async () => {
+    const got = [];
+    assert.strictEqual(await NG.nameLanes([lane], () => true, n => got.push(n['lane:1100'])), 'ready');
+    // the lineage page asks for the same lane under another id: answered from the cache
+    assert.strictEqual(await NG.nameLanes([{ ...lane, id: 'tier:core/lane:1100' }], () => true, n => got.push(n['tier:core/lane:1100'])), 'ready');
+    assert.deepStrictEqual([posts, got], [1, ['udp flood', 'udp flood']], 'a lane named once is not asked again');
+    console.log('nway lineage self-check OK');
+})().catch(e => { console.error(e); process.exit(1); });

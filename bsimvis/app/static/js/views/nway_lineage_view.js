@@ -6,8 +6,8 @@
  * (NwayLineage.mount). The page reads and writes the N-way table's own params
  * (q, scope, tab, group = the lens preset, columns = files | twins, track, column,
  * order=lineage) plus its own layout, root and lview, so both pages hand every
- * filter to each other. A filter refetches (only rows.match changes, the tree
- * stays); a lens or track does not. `lview`: the tree, the group tracks (a group
+ * filter to each other. A filter or a lens refetches (rows.match and the lens groups change, the tree
+ * stays); a track does not. `lview`: the tree, the group tracks (a group
  * list beside it), or split: a compact tree over a real NwayPanel on the same URL
  * state (a row hover outlines its nodes, a node click sets the table's column,
  * tracking in either pane lights the other).
@@ -51,10 +51,10 @@ window.NwayLineageView = {
         const cols = () => (st.columns === 'twins' && twinsOk ? 'twins' : 'files');
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
-            for (const k of ['order', 'layout', 'lview', 'root', 'file', 'offset', 'track', 'sort_col', 'sort_dir']) out.delete(k);
-            for (const k of ['q', 'scope', 'tab']) if (st[k]) out.set(k, st[k]); else out.delete(k);
-            // match and the columns must be the table's: the server's own defaults differ (tab=core, no twin tree)
-            for (const k of ['k', 'mode', 'twin_depth', 'twin_link', 'child_presence']) if (!out.has(k) && D[k] !== undefined && D[k] !== '') out.set(k, String(D[k]));
+            for (const k of ['order', 'layout', 'lview', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph']) out.delete(k);
+            for (const k of ['q', 'scope', 'tab', 'group']) if (st[k]) out.set(k, st[k]); else out.delete(k);
+            // match, columns and groups must be the table's: the server's own defaults differ (tab=core, no twin tree, no merge)
+            for (const k of Object.keys(D)) if ((['k', 'mode', 'twin_depth', 'twin_link', 'child_presence', 'sort_dir'].includes(k) || k.startsWith('group_')) && !out.has(k) && D[k] !== undefined && D[k] !== '') out.set(k, String(D[k]));
             out.set('columns', cols());
             out.set('order', st.layout);
             if (st.root) out.set('root', st.root);
@@ -167,7 +167,8 @@ window.NwayLineageView = {
                 if (!rich && k !== 'deltas') continue;
                 const b = mk('button', { type: 'button', role: 'tab', class: `bsim-tab${k === cur ? ' active' : ''}`, 'aria-selected': String(k === cur) });
                 b.append(mk('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${label}`));
-                b.addEventListener('click', () => { st.group = group; writeUrl(); renderBar(null); if (this._inst) this._inst.setLens(k); });
+                // a lens is the table's groups for its preset: refetched, the tree stays
+                b.addEventListener('click', () => { st.group = group; writeUrl(); renderBar(null); load(); });
                 lenses.append(b);
             }
         };
@@ -202,8 +203,9 @@ window.NwayLineageView = {
             st.column = s.column || '';
             back.href = backHref();
             renderBar(null);
-            if (this._inst) { this._inst.setLens(lensOf(st.group)); this._inst.setTrack(st.track); this._inst.select(st.column); }
-            if (apiQs().toString() !== loadedQs) load();
+            const stale = apiQs().toString() !== loadedQs;
+            if (this._inst) { if (!stale) this._inst.setLens(lensOf(st.group)); this._inst.setTrack(st.track); this._inst.select(st.column); }
+            if (stale) load();
         };
         const mountTable = () => {
             const u = new URLSearchParams(window.location.search), source = {}, state = {};
@@ -268,6 +270,15 @@ window.NwayLineageView = {
                     lens: lensOf(st.group),
                     track: st.track,
                     view: st.lview === 'tracks' ? 'tracks' : 'tree',
+                    laneNames: q.get('lane_names') !== 'off',
+                    // split: a group's call graph or its table opens in the table below, not on a new page
+                    onGroup: (what, tk) => {
+                        const p = this._panel;
+                        if (!p) return false;
+                        if (what === 'graph') p.laneGraph(tk);
+                        else setTrack(tk);
+                        return true;
+                    },
                     onTrack: t => { st.track = t; writeUrl(); if (this._panel) this._panel.setTrack(t); },
                     // split: a node is the table's column filter (a second click clears it), not the dock
                     onNode: n => {
@@ -278,7 +289,7 @@ window.NwayLineageView = {
                 });
             }
             for (const w of doc.warnings || []) console.warn('lineage:', w);
-            this._inst.setDoc(doc);
+            this._inst.setDoc(doc, lensOf(st.group));
             if (this._panel) this._inst.select(st.column);
         };
         layoutSel.addEventListener('change', () => { st.layout = layoutSel.value; writeUrl(); load(); });

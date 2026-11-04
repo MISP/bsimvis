@@ -41,7 +41,7 @@
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
         family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '', feat_min: '', feat_max: '', support_min: '',
         group: 'region,role', group_split_min: '', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
-        track: '', order: '',
+        track: '', order: '', lane_graph: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min', 'order'];
@@ -66,24 +66,8 @@
         ['lanes', 'Lanes', 'lane,region', 'Core, common and rare tiers, then lanes of exactly the same files; a lane above the split threshold is split by region.'],
         ['triage', 'Triage', 'role,region', 'What to read first: roles in reading order, library and runtime last; a role above the threshold is split by region.'],
     ];
-    // Group header icons by kind and key: tiers, presence bands, deltas, special regions.
-    const BAND_ICONS = {
-        core: 'fa-bullseye', common: 'fa-circle-half-stroke', rare: 'fa-circle-dot',
-        every: 'fa-bullseye', most: 'fa-chart-pie', some: 'fa-circle-half-stroke', few: 'fa-circle-dot',
-        added: 'fa-plus', dropped: 'fa-minus', rewritten: 'fa-pen-to-square', span: 'fa-arrows-left-right', scattered: 'fa-shuffle', kept: 'fa-equals',
-        small: 'fa-cubes', none: 'fa-link-slash', runtime: 'fa-gears', library: 'fa-book', rest: 'fa-ellipsis',
-    };
-    // Triage roles in reading order (nway_role_service.ROLES).
-    const ROLES = [
-        ['orchestrator', 'Orchestrator', 'Calls many functions of its file: read first for the program flow.', 'fa-sitemap'],
-        ['entry', 'Entry point', 'No caller in the call graph: thread, signal handler or pointer-table entry.', 'fa-door-open'],
-        ['logic', 'Logic', 'Calls and is called: the body of each feature.', 'fa-code'],
-        ['compute', 'Compute', 'Large and calls nothing: decoders, checksums, crypto.', 'fa-calculator'],
-        ['leaf', 'Leaf helper', 'Small and calls nothing.', 'fa-leaf'],
-        ['plumbing', 'Plumbing', 'Stubs, one-call wrappers and helpers called from everywhere.', 'fa-plug'],
-        ['runtime', 'Runtime', 'C runtime start-up and teardown.', 'fa-gears'],
-        ['library', 'Library', 'Recognised by the library analyzer (FunctionID, stdlib reference).', 'fa-book'],
-    ];
+    // Group header icons and triage roles in reading order: shared with the lineage page (nway_groups.js).
+    const NG = window.NwayGroups, BAND_ICONS = NG.BAND_ICONS, ROLES = NG.ROLES;
     // What the sidebar's reset puts back: the row grouping it exposes, not the lane fit / tier / fold tuning.
     const GROUP_RESET = ['group', 'group_axis', 'group_axis_b', 'group_tag_depth', 'group_lane_depth'];
     const TAG_AXES = [['origin', 'Origin'], ['severity', 'Severity'], ['category', 'Behavior'], ['user', 'User'], ['capa', 'Capa'], ['mitre', 'ATT&CK'], ['mbc', 'MBC'], ['yara', 'YARA'], ['ruleset', 'Ruleset'], ['family', 'Family'], ['vuln', 'Vulnerability']];
@@ -421,6 +405,20 @@
                 if (gen !== this._gen) return;
             }
             this.render();
+            // a pivot from the lineage page: open that group's call graph once (`lane_graph` = group id or track key)
+            const lg = this.state.lane_graph;
+            if (lg && this.data) {
+                this.state.lane_graph = '';
+                if (this.onState) this.onState({ ...this.state });
+                this.laneGraph(lg);
+            }
+        }
+
+        // The call graph of the shown group with this id or track key, as its header's button opens it.
+        laneGraph(key) {
+            const groups = (this.data && this.data.groups) || {};
+            const g = groups[key] || Object.values(groups).find(x => this._trackKey(x.id) === key);
+            if (g) this._laneGraph(g.id);
         }
 
         // The strings table: same files, columns and family as the function table.
@@ -760,18 +758,9 @@
             return lens ? `${lens[1]}: ${name || t.slice(lens[0].length + 1)}` : name || t;
         }
 
-        // A group's track key, `<lens>:<key>` for the kinds a lens names: region -> modules:<region id>,
-        // presence -> core:<band>, role -> triage:<role>, born -> deltas:<column id>, lane -> lanes:<mask hex,
-        // bit i = the column's default-order index (_base), as the lineage page's node masks>. Any other kind
-        // (tier, delta, tag, prefix, same, fold, rest) keeps its group id.
+        // A group's track key (NwayGroups.trackKey): `<lens>:<key>`, lane bits over the default column order.
         _trackKey(gid) {
-            const g = ((this.data && this.data.groups) || {})[gid];
-            if (g && g.kind === 'born' && g.column) return `deltas:${g.column}`;
-            const last = String(gid).split('/').pop(), i = last.indexOf(':'), kind = i > 0 ? last.slice(0, i) : '', key = last.slice(i + 1);
-            const lens = { region: 'modules', presence: 'core', role: 'triage', born: 'deltas' }[kind];
-            if (lens) return `${lens}:${key}`;
-            if (kind === 'lane' && /^[01]+$/.test(key)) return `lanes:${[...key].reduce((m, b, ci) => (b === '1' ? m | (1n << BigInt(this._base(ci))) : m), 0n).toString(16)}`;
-            return String(gid);
+            return NG.trackKey(((this.data && this.data.groups) || {})[gid], gid, i => this._base(i));
         }
 
         // A column's index in the default /nway order: order=lineage moves columns and keeps it as `base`.
@@ -1134,11 +1123,7 @@
         }
 
         // Support / cohesion use the same red-to-green ramp as the other score cells.
-        _score(v) {
-            let color = '';
-            try { color = typeof window.scoreColor === 'function' ? window.scoreColor(v) : ''; } catch (e) { color = ''; }
-            return `<span${color ? ` style="color:${escapeAttr(color)}"` : ''}>${pct(v)}</span>`;
-        }
+        _score(v) { return NG.score(v); }
 
         // The row's guessed signature: the most common return type and parameter
         // list over its functions. The best function carries that signature (ties
@@ -1263,7 +1248,7 @@
             // one function per file stands for the lane in the file strip
             const cells = {};
             for (const c of this._cgFiles()) { const f = body.fids.find(x => x.includes(`:func:${c.md5}:`)); if (f) cells[c.id] = f; }
-            const name = LANE_MARK + (this._shownName((this._laneNames || {})[id]) || `${g.mask.split('1').length - 1}-file lane`);
+            const name = LANE_MARK + (this._shownName((this._laneNames || {})[id]) || g.label || `${(g.mask || g.union).split('1').length - 1}-file ${g.kind === 'lane' ? 'lane' : 'group'}`);
             this._dockTab = 'graph';
             this._cgOpen({ name, cells, lane: id, laneRow });
         }
@@ -2650,76 +2635,23 @@
             return [col.members.filter(m => g.fcover[d._fidx.get(m)] === '1').length, col.members.length];
         }
 
-        // The lane's name once the model has answered; a placeholder while it is still working.
-        _laneName(g) {
-            const name = this._shownName((this._laneNames || {})[g.id]);
-            const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
-            const off = this.state.lane_names === 'off' || this.data.llm_names === false;
-            const fb = !name && !wait && !off && this._lnDone ? this._laneFallback(g) : '';
-            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
+        // The shared group header pieces (nway_groups.js), with this table's naming state.
+        _ns() {
+            return { names: this._laneNames || {}, evid: this._laneEvid || {}, busy: this._lnBusy, done: this._lnDone, off: this.state.lane_names === 'off' || this.data.llm_names === false };
         }
-
-        // A lane the model could not describe (the call failed): its main library calls, else a plain note.
-        _laneFallback(g) {
-            const calls = (((this._laneEvid || {})[g.id] || {}).calls || []).slice(0, 3);
-            return calls.length ? `calls ${calls.join(', ')}` : 'unlabelled';
-        }
-
-        // The nearest lane above this one: a sub-lane holds only files that are also in it.
-        _laneParent(g) {
-            const groups = this.data.groups || {};
-            if (g.under_id) return groups[g.under_id] || null;
-            const path = g.path || [];
-            for (let i = path.length - 2; i >= 0; i--) if ((groups[path[i]] || {}).kind === 'lane') return groups[path[i]];
-            return null;
-        }
-
-        // "⊂ network scanning": which lane this one is a part of, by name once known.
-        _parentChip(g) {
-            const par = this._laneParent(g);
-            const files = par ? par.mask.split('1').length - 1 : Number(g.under) || 0;
-            const label = (par && this._shownName((this._laneNames || {})[par.id])) || (files ? `${files}-file lane` : '');
-            if (!label) return '';
-            return `<span class="nway-gchip" data-lpar="${escapeAttr(g.id)}" title="${escapeAttr(`Sub-lane of ${label}: its files are all in that lane.`)}">\u2282 ${escapeHtml(label)}</span>`;
-        }
-
-        // The lane's capa / yara findings (group meta plus what the naming call saw), without the rule-detail tail.
-        _laneTags(g) {
-            const ev = (this._laneEvid || {})[g.id] || {};
-            return [...new Set([...(g.tags || []), ...(ev.tags || [])].map(t => t.split('#')[0]))].slice(0, 4);
-        }
-
-        // A finding drawn like a tag is everywhere else: its own colour, on a tinted badge.
-        _tagBadge(t) {
-            const color = window.tagInk(window.getTagMetadata(t).color);
-            return `<span class="analysis-tag-badge nway-ltag" style="border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" title="${escapeAttr(t)}: a finding on this lane's functions">${escapeHtml(t)}</span>`;
-        }
-
-        // The colour of the lane's first finding: a stripe at the lane's left edge.
-        _laneColor(g) {
-            const t = this._laneTags(g)[0];
-            return t ? window.tagInk(window.getTagMetadata(t).color) : '';
-        }
-
-        // What backs the name: the shared prefix, findings and a few strings the lane's functions use.
-        _laneEv(g) {
-            const ev = (this._laneEvid || {})[g.id] || {};
-            const graphBtn = `<button type="button" class="nway-gchip nway-lanegraph" data-lane-graph="${escapeAttr(g.id)}" title="Open the call graph of this lane's functions together: who calls them, what they call, and whether they are called together"><i class="fa-solid fa-diagram-project"></i> call graph</button>`;
-            const chip = (text, title, cls) => `<span class="nway-gchip${cls ? ` ${cls}` : ''}" title="${escapeAttr(title)}">${escapeHtml(text)}</span>`;
-            return graphBtn + (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
-                + this._laneTags(g).map(t => this._tagBadge(t)).join('')
-                + (ev.strings || []).map(t => chip(`"${t}"`, 'A string the lane\'s functions use', 'str')).join('');
-        }
-
-        _shownName(name) { return !name || /^unnamed/i.test(name) ? '' : name; }
+        _laneName(g) { return NG.laneName(g, this._ns()); }
+        _laneFallback(g) { return NG.laneFallback(g, this._ns()); }
+        _parentChip(g) { return NG.parentChip(g, this.data.groups || {}, this._ns()); }
+        _laneColor(g) { return NG.laneColor(g, this._ns()); }
+        _laneEv(g) { return NG.laneEv(g, this._ns()); }
+        _shownName(name) { return NG.shownName(name); }
 
         // Names for the lane groups on screen: asked in the background, cached by the server, shown when ready.
         async _nameLanes() {
             const d = this.data, groups = d && this.state.lane_names !== 'off' ? Object.values(d.groups || {}) : [];
             // real file counts: in a grouped-columns table a mask bit is a column group, not a file
             const nFiles = d ? (d.file_columns || d.columns.filter(c => !c.kind)).length : 0;
-            const lanes = groups.filter(g => (g.kind === 'lane' || g.kind === 'presence' || g.kind === 'delta' || (g.kind === 'region' && !g.label)) && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length)).slice(0, 40)
-                .map(g => ({ id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0, ...(this.state.view === 'strings' ? { kind: 'string' } : g.kind === 'presence' || g.kind === 'delta' ? { kind: 'summary' } : {}) }));
+            const lanes = groups.filter(NG.nameable).slice(0, 40).map(g => NG.payload(g, nFiles, this.state.view === 'strings'));
             // function and string lanes can share an id: keep their names apart
             const kind = this.state.view === 'strings' ? 's' : 'f';
             if (this._lnKind !== kind) { this._lnKind = kind; this._laneNames = {}; this._laneEvid = {}; this._lnSig = ''; }
@@ -2730,51 +2662,42 @@
             this._lnBusy = true;
             this._lnDone = false;
             this.el.querySelectorAll('.nway-lname:empty').forEach(el => el.classList.add('wait'));
-            for (let i = 0; i < 120 && this._lnSig === sig && this.el.isConnected; i++) {
-                let body = null;
-                try {
-                    const res = await fetch('/api/bin_sim/nway/lane_names', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lanes }) });
-                    body = res.ok ? await res.json() : null;
-                } catch (e) { body = null; }
-                if (this._lnSig !== sig) return;
-                if (body && body.names) {
-                    this._laneNames = { ...this._laneNames, ...body.names };
-                    this._laneEvid = { ...this._laneEvid, ...body.evidence };
-                    const groups = this.data.groups || {};
-                    this.el.querySelectorAll('[data-lname]').forEach(el => {
-                        const name = this._shownName(this._laneNames[el.dataset.lname]);
-                        if (!name) return;
-                        el.classList.remove('wait', 'fb');
-                        el.textContent = name;
-                    });
-                    this.el.querySelectorAll('[data-lpar]').forEach(el => {
-                        const g = groups[el.dataset.lpar];
-                        if (g) el.outerHTML = this._parentChip(g);
-                    });
-                    this.el.querySelectorAll('[data-lev]').forEach(el => {
-                        const g = groups[el.dataset.lev];
-                        if (!g) return;
-                        el.innerHTML = this._laneEv(g);
-                        el.closest('tr')?.style.setProperty('--lane-c', this._laneColor(g) || 'var(--border)');
-                    });
-                }
-                if (body && body.status === 'pending') { await new Promise(r => setTimeout(r, 1000)); continue; }
-                if (body && body.status === 'off') this.data.llm_names = false;
-                break;
-            }
-            if (this._lnSig === sig) {
-                // what is still unnamed now has failed: show what the lane is made of
-                this._lnBusy = false;
-                this._lnDone = true;
+            const status = await NG.nameLanes(lanes, () => this._lnSig === sig && this.el.isConnected, (names, evidence) => {
+                this._laneNames = { ...this._laneNames, ...names };
+                this._laneEvid = { ...this._laneEvid, ...evidence };
                 const groups = this.data.groups || {};
-                this.el.querySelectorAll('.nway-lname.wait').forEach(el => {
-                    el.classList.remove('wait');
-                    const g = groups[el.dataset.lname];
-                    if (!g || el.textContent) return;
-                    el.classList.add('fb');
-                    el.textContent = this._laneFallback(g);
+                this.el.querySelectorAll('[data-lname]').forEach(el => {
+                    const name = this._shownName(this._laneNames[el.dataset.lname]);
+                    if (!name) return;
+                    el.classList.remove('wait', 'fb');
+                    el.textContent = name;
                 });
-            }
+                this.el.querySelectorAll('[data-lpar]').forEach(el => {
+                    const g = groups[el.dataset.lpar];
+                    if (g) el.outerHTML = this._parentChip(g);
+                });
+                this.el.querySelectorAll('[data-lev]').forEach(el => {
+                    const g = groups[el.dataset.lev];
+                    if (!g) return;
+                    el.innerHTML = this._laneEv(g);
+                    el.closest('tr')?.style.setProperty('--lane-c', this._laneColor(g) || 'var(--border)');
+                });
+                // the track chip names a tracked group by its lane name too
+                if (this.state.track) this._paintTrack();
+            });
+            if (this._lnSig !== sig) return;
+            if (status === 'off') this.data.llm_names = false;
+            // what is still unnamed now has failed: show what the lane is made of
+            this._lnBusy = false;
+            this._lnDone = true;
+            const shown = this.data.groups || {};
+            this.el.querySelectorAll('.nway-lname.wait').forEach(el => {
+                el.classList.remove('wait');
+                const g = shown[el.dataset.lname];
+                if (!g || el.textContent) return;
+                el.classList.add('fb');
+                el.textContent = this._laneFallback(g);
+            });
         }
 
         _groupHead(g, depth) {
@@ -2893,18 +2816,9 @@
                 : '').join('');
         }
 
-        _roleIcon(role) {
-            const r = ROLES.find(x => x[0] === role);
-            return r ? `<i class="fa-solid ${r[3]} nway-ricon r-${r[0]}"></i>` : '';
-        }
+        _roleIcon(role) { return NG.roleIcon(role); }
 
-        // A group header's icon: its tier, band, delta pattern or special region.
-        _bandIcon(g) {
-            const last = String(g.id).split('/').pop();
-            const key = g.kind === 'region' ? g.region : last.slice(last.indexOf(':') + 1).split('-')[0];
-            const icon = BAND_ICONS[key];
-            return icon ? `<i class="fa-solid ${icon} nway-bicon"></i>` : '';
-        }
+        _bandIcon(g) { return NG.bandIcon(g); }
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
@@ -2918,23 +2832,15 @@
             return `<div class="bsim-tabbar nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}${lineage}</div>`;
         }
 
-        // A header's role mix: one stripe per role, as wide as its share.
-        _roleMix(roles) {
-            const parts = ROLES.filter(([k]) => roles[k]), n = parts.reduce((a, [k]) => a + roles[k], 0);
-            if (!n) return '';
-            return `<span class="nway-rmix" title="${escapeAttr(parts.map(([k, l]) => `${l} ${Number(roles[k])}`).join(' \u00b7 '))}">${parts.map(([k]) => `<i class="r-${k}" style="width:${(100 * roles[k] / n).toFixed(1)}%"></i>`).join('')}</span>`;
-        }
+        _roleMix(roles) { return NG.roleMix(roles); }
 
         // A group header fills the row columns: span and feature ranges, mean support, mean (and lowest) cohesion, role mix.
         _headStats(g) {
             const lead = this._lead().length, stats = !this._statsOff(), role = this._roleOn();
             if (this.state.view === 'strings' || (!stats && !role)) return { span: lead, cells: '' };
-            const range = (a, b) => (a == null ? '' : a === b ? `${Number(a)}` : `${Number(a)}\u2013${Number(b)}`);
-            const feat = g.kind === 'same' ? range(Math.round(g.w_lo), Math.round(g.w_hi)) : Number(g.weight || 0).toFixed(0);
-            const low = g.cohesion_min != null && g.cohesion != null && g.cohesion_min < g.cohesion - 0.005
-                ? `<span class="nway-gmin" title="Lowest cohesion in the group">\u2193${pct(g.cohesion_min)}</span>` : '';
+            const x = NG.stats(g);
             let cells = stats
-                ? `<td class="num nway-gnum">${range(g.span_lo, g.span_hi)}</td><td class="num nway-gnum">${feat}</td><td class="num nway-gnum">${g.support == null ? '' : this._score(g.support)}</td><td class="num nway-gnum">${g.cohesion == null ? '' : this._score(g.cohesion)}${low}</td><td></td>`
+                ? `<td class="num nway-gnum">${x.span}</td><td class="num nway-gnum">${x.feat}</td><td class="num nway-gnum">${x.support}</td><td class="num nway-gnum">${x.cohesion}</td><td></td>`
                 : '';
             if (role) cells += `<td class="nway-gnum">${g.roles ? this._roleMix(g.roles) : ''}</td>`;
             const fam = lead - 1 - (stats ? 5 : 0) - (role ? 1 : 0);

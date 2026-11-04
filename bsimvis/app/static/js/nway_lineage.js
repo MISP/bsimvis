@@ -1,9 +1,10 @@
 /**
  * Lineage chart of the files of an N-way set (GET /api/bin_sim/nway/lineage).
  *
- * NwayLineage.mount(container, opts) -> { setDoc(doc), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
+ * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
- * a group list beside the tree, or six mini trees), onNode(node) (true when it took the click: no dock).
+ * a group list beside the tree, or six mini trees), onNode(node) (true when it took the click: no dock),
+ * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
  * child" (orange); a strip on its left says what was born here (blue, hatched =
@@ -24,6 +25,10 @@
  * bottom of each node, so filters never move the tree. `track` (fn:<fid> or
  * <lens>:<key>) lights the nodes holding one row or group. A clicked node opens
  * the dock: its rows by lens, its diff against the parent, a function preview.
+ * When the doc carries the table's groups for the lens (`groups`, `rows.group`),
+ * they are the lens's groups: same ids, names (model names via NwayGroups) and
+ * header pieces as the table, and a tracked one gets a card with its heaviest
+ * functions and pivots to the table (its call graph, or the group tracked).
  */
 (function () {
     const NS = 'http://www.w3.org/2000/svg';
@@ -138,6 +143,19 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-mt.on{border-color:var(--accent,#66d9ef)}
 .lin-mt svg{width:100%;height:150px;display:block}
 .lin-glist[hidden],.lin-multi[hidden]{display:none}
+.lin-gn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lin-gi .t .lin-gn{flex:1 1 auto}
+.lin-chip .lin-gn{max-width:280px}
+.lin-gn .nway-bicon,.lin-gn .nway-ricon{margin-right:4px}
+.lin-gev{display:flex;flex-wrap:wrap;gap:4px}
+.lin-gev:empty{display:none}
+.lin-gev .nway-gchip{margin:0}
+.lin-gst{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center;font-size:11.5px;opacity:.85}
+.lin-card{border:1px solid var(--lin-line);border-radius:8px;padding:8px 10px;margin:4px 0 10px;display:flex;flex-direction:column;gap:5px}
+.lin-card .lin-gh{margin:0}
+.lin-acts{display:flex;gap:6px;flex-wrap:wrap}
+.lin-sum{font-size:11.5px;opacity:.75;margin:-3px 0 4px 22px}
+.lin-sum:empty{display:none}
 @media (max-width:700px){.lin-mini{display:none}.lin-body{flex-direction:column}.lin-glist{width:auto;max-width:none;max-height:35%;border-right:0;border-bottom:1px solid var(--lin-line)}}
 `;
 
@@ -234,14 +252,52 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // a member file id -> its node id: a deltas key or a hovered table row may name files, not nodes
         const nodeOf = new Map();
         for (const x of doc.nodes) for (const m of [x.id, ...(x.members || [])]) nodeOf.set(m, x.id);
-        return { n, N, pop, nodeOf, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), match: r => !R.match || !!R.match[r] };
+        return { n, N, pop, nodeOf, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), weight: col('weight'), group: R.group || null, match: r => !R.match || !!R.match[r] };
     }
 
     const presenceBand = (c, N) => (c >= N ? 'every' : c >= 0.75 * N ? 'most' : c > 2 ? 'some' : 'few');
 
-    // The groups of one lens: cats in display order, of(r) = the row's group key, raw(r) = the key `track` uses.
-    function lensCats(doc, R, lens) {
-        const cat = (key, label, color) => ({ key: String(key), label, color });
+    // The table's groups (doc.groups, built for the lens preset doc.group over the filtered rows): cats are
+    // the groups holding rows themselves, `groups` every one in table order with its track key (tk);
+    // track(t) marks the rows of the group(s) with that key and of the groups under them.
+    function serverCats(doc, R, lens, label) {
+        const G = doc.groups, idx = new Map(G.map((g, i) => [g.id, i])), direct = new Uint32Array(G.length);
+        const anc = G.map(g => (g.path || [g.id]).map(p => idx.get(p)).filter(i => i != null));
+        for (let r = 0; r < R.n; r++) if (R.group[r] != null) direct[R.group[r]]++;
+        let hues = 0;
+        const color = (g, i) => {
+            if (g.kind === 'role') return (ROLES.find(x => x[0] === g.role) || [0, 0, GREY])[2];
+            if (g.kind === 'presence') return (BANDS.find(x => `presence:${x[0]}` === g.id) || [0, 0, GREY])[2];
+            if (g.kind === 'region' && !g.label) return hsl(hueOf(hues++));
+            if (g.kind === 'lane' && direct[i] && hues < LANE_MAX) return hsl(hueOf(hues++ * 3 + 1));
+            return GREY;
+        };
+        const groups = G.map((g, i) => {
+            const tk = window.NwayGroups.trackKey(g, g.id, ci => ci);
+            return { i, g, tk, key: tk, depth: anc[i].length - 1, direct: direct[i], color: color(g, i), get label() { return label(g); } };
+        });
+        const of = r => (R.group[r] == null ? '' : groups[R.group[r]].key);
+        const cats = groups.filter(x => x.direct);
+        for (let r = 0; r < R.n; r++) if (R.group[r] == null && R.match(r)) { cats.push({ key: '', tk: '', label: 'Other functions', color: GREY }); break; }
+        // every row of each group, its sub-groups' included
+        const members = G.map(() => []);
+        for (let r = 0; r < R.n; r++) if (R.group[r] != null) for (const a of anc[R.group[r]]) members[a].push(r);
+        const track = t => {
+            const hit = groups.filter(x => x.tk === t);
+            if (!hit.length) return null;
+            const mark = new Uint8Array(R.n);
+            for (const x of hit) for (const r of members[x.i]) mark[r] = 1;
+            return mark;
+        };
+        return { lens, cats, groups, of, raw: of, track, members };
+    }
+
+    // The groups of one lens: cats in display order, of(r) = the row's group key, raw(r) = the key `track` uses,
+    // tk = the track value. The server's groups when the doc carries them for this lens (not Deltas).
+    function lensCats(doc, R, lens, label = g => g.label || g.id) {
+        const L = LENSES.find(l => l[0] === lens);
+        if (lens !== 'deltas' && L && doc.groups && doc.group === L[2] && R.group) return serverCats(doc, R, lens, label);
+        const cat = (key, label, color) => ({ key: String(key), tk: `${lens}:${key}`, label, color });
         const done = (cats, of, raw = of) => ({ lens, cats, of, raw });
         if (lens === 'core') return done(BANDS.map(([k, l, c]) => cat(k, l, c)), r => presenceBand(R.pop[r], R.N));
         if (lens === 'triage') {
@@ -333,8 +389,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         return `M${x0},${y0}C${m},${y0} ${m},${y1} ${x1},${y1}L${x1},${y1 + h1}C${m},${y1 + h1} ${m},${y0 + h0} ${x0},${y0 + h0}Z`;
     }
 
-    // Rows a `track` value names: fn:<fid> (any fid of the row) or <lens>:<key>. null when it names nothing.
-    function trackRows(R, catsOf, track) {
+    // Rows a `track` value names: fn:<fid> (any fid of the row), <lens>:<key>, or a group id of the
+    // current `lens`'s server groups (tier:core, fold:..). null when it names nothing.
+    function trackRows(R, catsOf, track, lens) {
         if (!R || !track) return null;
         const mark = new Uint8Array(R.n);
         const i = track.indexOf(':'), kind = track.slice(0, i);
@@ -342,9 +399,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         if (kind === 'fn') {
             for (let r = 0; r < R.n; r++) if (R.fid[r] === key || (R.fids && (R.fids[r] || []).includes(key))) mark[r] = 1;
         } else {
-            if (!LENSES.some(l => l[0] === kind)) return null;
+            const isLens = LENSES.some(l => l[0] === kind);
+            if (!isLens && !lens) return null;
+            const C = catsOf(isLens ? kind : lens);
+            if (C.track) { const m = C.track(track); if (m || !isLens) return m; }
             if (kind === 'deltas') key = R.nodeOf.get(key) || key;
-            const C = catsOf(kind);
             // of(r) too: the lanes lens's "other" bucket has no raw key of its own
             for (let r = 0; r < R.n; r++) if (C.raw(r) === key || C.of(r) === key) mark[r] = 1;
         }
@@ -635,7 +694,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         container.replaceChildren(root);
 
         const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: true, sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
-            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false };
+            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false,
+            // the model's group names (NwayGroups naming state) and one-line function summaries by fid
+            S: { names: {}, evid: {}, busy: false, done: false, off: opts.laneNames === false }, lnSig: '', sums: new Map() };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
         const world = s.append('g');
@@ -689,13 +750,56 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const names = ids => ids.slice(0, 8).map(name).join(', ') + (ids.length > 8 ? ` +${ids.length - 8} more` : '');
 
         const closeDock = () => drawer.classList.remove('open');
+        const closeBtn = () => { const x = el('button', { class: 'lin-x', type: 'button', 'aria-label': 'Close' }, '\u00d7'); x.addEventListener('click', closeDock); return x; };
         const openDrawer = pick => {
             drawer.classList.add('open');
             if (pick.node && st.R) dock(pick.node);
+            else if (pick.group) { drawer.replaceChildren(closeBtn()); const tg = trackedGroup(); if (tg) drawer.append(groupCard(tg.x, tg.C)); }
             else detail(drawer, pick, name, closeDock);
         };
         const lensOn = () => !!st.R && st.lens !== 'deltas' && LENSES.some(l => l[0] === st.lens);
-        const cats = lens => st.C.get(lens) || st.C.set(lens, lensCats(st.doc, st.R, lens)).get(lens);
+        const cats = lens => st.C.get(lens) || st.C.set(lens, lensCats(st.doc, st.R, lens, gText)).get(lens);
+        const NG = window.NwayGroups;
+        // a server group as plain text: its label, the model's name, or what it is made of
+        function gText(g) {
+            if (g.kind === 'fold') return `${g.lanes} small lanes`;
+            if (g.label) return g.label;
+            const nm = NG.shownName(st.S.names[g.id]);
+            if (nm) return nm;
+            if (st.S.busy) return 'naming\u2026';
+            if (st.S.done && !st.S.off) return NG.laneFallback(g, st.S);
+            if (g.kind === 'lane') return `${g.core ? `${g.lanes} lanes, ` : ''}${g.files}-file lane${g.hint ? ` ${g.hint}` : ''}`;
+            return g.hint || (g.sample || []).slice(0, 2).join(', ') || 'Region';
+        }
+        // as the table's header names it: icon, label, the model's name (shimmer while it works) or its fallback
+        function gHtml(g) {
+            const icon = g.kind === 'role' ? NG.roleIcon(g.role) : NG.bandIcon(g);
+            const nm = NG.shownName(st.S.names[g.id]), named = g.kind === 'lane' || (g.kind === 'region' && !g.label) || NG.nameable(g);
+            if (!named || g.kind === 'fold') return `${icon}<b>${escapeHtml(gText(g))}</b>`;
+            const fb = st.S.off ? (g.label ? '' : gText(g)) : NG.laneFallback(g, st.S);
+            const name = nm ? `<span class="nway-lname">${escapeHtml(nm)}</span>` : st.S.busy ? NG.laneName(g, st.S) : fb ? `<span class="nway-lname fb">${escapeHtml(fb)}</span>` : '';
+            return g.label ? `${icon}<b>${escapeHtml(g.label)}</b> <span class="nway-gsum">${name}</span>` : icon + name;
+        }
+        // the header's numbers: functions, files, span and features, support and cohesion (html), then the role mix
+        function gStats(g) {
+            const x = NG.stats(g), units = Number(g.units ?? g.rows);
+            return `<span>${units} function${units === 1 ? '' : 's'} \u00b7 ${Number(g.files)} file${g.files === 1 ? '' : 's'}${x.span ? ` \u00b7 span ${x.span}` : ''} \u00b7 ${x.feat} feat${x.support ? ` \u00b7 sup ${x.support}` : ''}${x.cohesion ? ` \u00b7 coh ${x.cohesion}` : ''}</span>${g.roles ? NG.roleMix(g.roles) : ''}`;
+        }
+        // the same as text lines, for a tooltip
+        function gTip(g) {
+            const units = Number(g.units ?? g.rows), ev = (st.S.evid[g.id] || {});
+            const roles = ROLES.filter(([k]) => (g.roles || {})[k]).map(([k, l]) => `${l} ${g.roles[k]}`).join(' \u00b7 ');
+            const evid = [g.hint, ...NG.laneTags(g, st.S), ...(ev.strings || []).map(x => `"${x}"`)].filter(Boolean).join(' \u00b7 ');
+            return [['Group', `${fmt(units)} functions in ${fmt(g.files)} files`], ...(g.span_lo != null ? [['Span', g.span_lo === g.span_hi ? `${g.span_lo} files` : `${g.span_lo}\u2013${g.span_hi} files`]] : []),
+                ['Features', fmt(Math.round(g.weight || 0))], ...(roles ? [['Roles', roles]] : []), ...(evid ? [['Evidence', evid]] : [])];
+        }
+        // the server group a track value names, with its lens cats (null for fn: or an old-style key)
+        function trackedGroup(t = st.track) {
+            if (!t || t.startsWith('fn:') || !st.R) return null;
+            const kind = t.slice(0, t.indexOf(':')), C = cats(LENSES.some(l => l[0] === kind) ? kind : st.lens);
+            const x = C.groups && C.groups.find(y => y.tk === t);
+            return x ? { C, x } : null;
+        }
         const twinsOf = n => (!n.agg && (n.members || []).length > 1 ? n.members : null);
         const md5Of = id => String(id).split(':').pop();
         const nodeOp = n => (st.T && !(st.T.info.get(n.id) || {}).tk ? 0.3 : 1);
@@ -760,10 +864,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (let r = 0; r < R.n; r++) if (R.match(r)) tot.set(C.of(r), tot.get(C.of(r)) + 1); else faint++;
             const list = C.cats.filter(c => tot.get(c.key));
             for (const c of list.slice(0, LEGEND_MAX)) {
-                const tk = `${st.lens}:${c.key}`, b = el('button', { type: 'button', class: `lin-chip${st.track === tk ? ' on' : ''}`, title: 'Track this group across the tree', 'aria-pressed': String(st.track === tk) });
-                const sw = el('span', { class: 'lin-sw' });
+                const tk = c.tk, b = el('button', { type: 'button', class: `lin-chip${st.track === tk ? ' on' : ''}`, title: c.g ? `${c.label}\n${gTip(c.g).map(([k, v]) => `${k}: ${v}`).join('\n')}\nClick to track it across the tree.` : 'Track this group across the tree', 'aria-pressed': String(st.track === tk) });
+                const sw = el('span', { class: 'lin-sw' }), lab = el('span', { class: 'lin-gn' });
                 sw.style.background = c.color;
-                b.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(tot.get(c.key))));
+                if (c.g) lab.innerHTML = gHtml(c.g); else lab.textContent = c.label;
+                b.append(sw, lab, el('span', { class: 'lin-dim' }, fmt(tot.get(c.key))));
                 b.addEventListener('click', () => setTrack(st.track === tk ? '' : tk));
                 legendBox.append(b);
             }
@@ -782,6 +887,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             // before the redraw: the Tracks view may pick a group inside it, and that one must win
             if (opts.onTrack) opts.onTrack(t);
             applyTrack(true);
+            // a group tracked here gets its card in the dock (the Tracks view shows it beside its list)
+            if (trackedGroup() && st.view === 'tree' && !(st.sel && st.sel.node && drawer.classList.contains('open'))) { st.sel = { group: true }; openDrawer(st.sel); }
         }
         function trackLabel() {
             const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
@@ -789,19 +896,19 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const r = st.R.fid.indexOf(key);
                 return r >= 0 ? st.R.name[r] || key : key;
             }
-            const lens = LENSES.find(l => l[0] === kind), c = lens && cats(kind).cats.find(x => x.key === key);
+            const tg = trackedGroup(), lens = LENSES.find(l => l[0] === (tg ? tg.C.lens : kind)), c = tg ? tg.x : lens && cats(kind).cats.find(x => x.key === key);
             return `${lens ? lens[1] : kind}: ${c ? c.label : key}`;
         }
         // the colour of what is tracked: its lens group's, the accent for one function
         function trackColor() {
             const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
-            const c = kind !== 'fn' && LENSES.some(l => l[0] === kind) && cats(kind).cats.find(x => x.key === (kind === 'deltas' ? st.R.nodeOf.get(key) || key : key));
+            const tg = trackedGroup(), c = tg ? tg.x : kind !== 'fn' && LENSES.some(l => l[0] === kind) && cats(kind).cats.find(x => x.key === (kind === 'deltas' ? st.R.nodeOf.get(key) || key : key));
             return c ? c.color : 'var(--accent,#66d9ef)';
         }
         // fade the nodes without the tracked rows, outline the holders, a bar for how much each holds,
         // +born badges (violet frame: also born elsewhere = reuse or independent birth), -lost on the edges
         function applyTrack(fromUser) {
-            const mark = st.R && st.track ? trackRows(st.R, cats, st.track) : null;
+            const mark = st.R && st.track ? trackRows(st.R, cats, st.track, st.lens) : null;
             st.T = mark ? trackInfo(st.L, st.R, mark) : null;
             gTrk.selectAll('*').remove();
             trackBox.replaceChildren();
@@ -828,15 +935,20 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             multiples();
             if (fromUser) {
                 schedule(true);
-                if (st.sel && st.sel.node && drawer.classList.contains('open')) openDrawer(st.sel);
+                const open = drawer.classList.contains('open') && st.sel && (st.sel.node || st.sel.group);
+                if (open && (st.sel.node || trackedGroup())) openDrawer(st.sel);
+                else if (open) { st.sel = null; closeDock(); }
             }
         }
 
         // ---- tracks view: the lens's groups (matching rows), one presence square per node ----
+        // server groups: every group in table order (a tier or a lane holds its sub-groups' rows too)
         function groupRows() {
-            const C = cats(st.lens), by = new Map(C.cats.map(c => [c.key, []]));
+            const C = cats(st.lens);
+            if (C.groups) return C.groups.map(c => ({ c, rows: C.members[c.i].filter(st.R.match), tk: c.tk, leaf: !!c.direct })).filter(x => x.rows.length);
+            const by = new Map(C.cats.map(c => [c.key, []]));
             for (let r = 0; r < st.R.n; r++) if (st.R.match(r)) by.get(C.of(r)).push(r);
-            return C.cats.filter(c => by.get(c.key).length).map(c => ({ c, rows: by.get(c.key), tk: `${st.lens}:${c.key}` }));
+            return C.cats.filter(c => by.get(c.key).length).map(c => ({ c, rows: by.get(c.key), tk: c.tk, leaf: true }));
         }
         // true when it picked the biggest group itself (that setTrack already redrew everything)
         function groupList() {
@@ -845,7 +957,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (side.hidden) return false;
             if (!st.R) { side.append(el('div', { class: 'lin-dim' }, 'This server sends no row list: groups need it.')); return false; }
             const list = groupRows();
-            if (!st.track && list.length) { setTrack([...list].sort((a, b) => b.rows.length - a.rows.length)[0].tk); return true; }
+            if (!st.track && list.length) { setTrack(list.filter(x => x.leaf).sort((a, b) => b.rows.length - a.rows.length)[0].tk); return true; }
             const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Group view' });
             for (const [v, t] of [[false, 'One group'], [true, 'Small multiples']]) {
                 const b = el('button', { type: 'button', 'aria-pressed': String(st.multi === v) }, t);
@@ -853,23 +965,113 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 seg.append(b);
             }
             side.append(seg);
+            const tg = trackedGroup();
+            if (tg) side.append(groupCard(tg.x, tg.C));
             for (const { c, rows, tk } of list) {
-                const b = el('button', { type: 'button', class: `lin-gi${st.track === tk ? ' on' : ''}`, 'aria-pressed': String(st.track === tk), title: 'Track this group across the tree' });
+                // a div: the evidence line holds the call graph button
+                const b = el('div', { role: 'button', tabindex: 0, class: `lin-gi${st.track === tk ? ' on' : ''}`, 'aria-pressed': String(st.track === tk), title: 'Track this group across the tree' });
                 const t = el('span', { class: 't' }), sw = el('span', { class: 'lin-sw' }), pres = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
                 sw.style.background = c.color;
-                t.append(sw, el('b', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rows.length)));
+                if (c.g) {
+                    b.style.marginLeft = `${c.depth * 14}px`;
+                    const nm = el('span', { class: 'lin-gn' });
+                    nm.innerHTML = gHtml(c.g);
+                    t.append(sw, nm, el('span', { class: 'lin-dim' }, fmt(rows.length)));
+                    const ev = el('span', { class: 'lin-gev' }), sts = el('span', { class: 'lin-gst' });
+                    ev.innerHTML = (c.g.kind === 'lane' || (c.g.kind === 'region' && !c.g.label) ? NG.laneEv(c.g, st.S) : NG.laneEv(c.g, st.S, false)) + (c.g.kind === 'lane' ? NG.parentChip(c.g, groupMap(), st.S) : '');
+                    sts.innerHTML = gStats(c.g);
+                    b.append(t, ev, sts, pres);
+                } else {
+                    t.append(sw, el('b', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rows.length)));
+                    b.append(t, pres);
+                }
                 for (const v of st.L.vis) {
                     const h = rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), i = el('i', { title: `${name(v.id)}: ${fmt(h)}` });
                     if (h) { i.style.background = nodeColor(st.doc, v.idx); i.style.opacity = (0.25 + 0.75 * h / rows.length).toFixed(2); i.style.boxShadow = 'none'; }
                     pres.append(i);
                 }
-                b.append(t, pres);
-                b.addEventListener('click', () => { st.multi = false; setTrack(tk); });
+                const go = ev => {
+                    if (ev.target.closest('[data-lane-graph]')) return groupPivot('graph', c, ev);
+                    st.multi = false;
+                    setTrack(tk);
+                };
+                b.addEventListener('click', go);
+                b.addEventListener('keydown', ev => { if (ev.target === b && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); go(ev); } });
                 side.append(b);
             }
             if (!list.length) side.append(el('div', { class: 'lin-dim' }, 'No group matches the filters.'));
             return false;
         }
+        const groupMap = () => Object.fromEntries((st.doc.groups || []).map(g => [g.id, g]));
+        // A tracked group as its table header reads, with its heaviest functions and their one-line LLM summaries.
+        function groupCard(x, C) {
+            const g = x.g, card = el('section', { class: 'lin-card', 'aria-label': 'Tracked group' });
+            const h = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), nm = el('span', { class: 'lin-gn' });
+            sw.style.background = x.color;
+            nm.innerHTML = gHtml(g);
+            h.append(sw, nm);
+            const ev = el('div', { class: 'lin-gev' }), sts = el('div', { class: 'lin-gst' });
+            ev.innerHTML = NG.laneEv(g, st.S, false) + (g.kind === 'lane' ? NG.parentChip(g, groupMap(), st.S) : '');
+            sts.innerHTML = gStats(g);
+            const acts = el('div', { class: 'lin-acts' });
+            for (const [what, txt, icon, tip] of [['graph', 'Call graph', 'fa-diagram-project', "The N-way table with the call graph of this group's functions together"], ['table', 'Open in table', 'fa-table', 'The N-way table on the same lens, this group tracked']]) {
+                const b = el('button', { type: 'button', class: 'lin-btn', title: tip });
+                b.append(el('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${txt}`));
+                b.addEventListener('click', e => groupPivot(what, x, e));
+                acts.append(b);
+            }
+            card.append(h);
+            if (g.tip) card.append(el('div', { class: 'lin-dim' }, g.tip));
+            card.append(ev, sts, acts);
+            // its heaviest matching functions, each with the first line of its LLM note when one exists
+            const top = C.members[x.i].filter(st.R.match).sort((a, b) => (st.R.weight[b] || 0) - (st.R.weight[a] || 0)).slice(0, DOCK_ROWS + 1);
+            if (top.length) card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'Heaviest functions'));
+            const want = [];
+            for (const r of top) {
+                const fid = st.R.fid[r], sum = el('div', { class: 'lin-sum' }, st.sums.get(fid) || '');
+                card.append(rowEl(r), sum);
+                if (!st.sums.has(fid)) want.push([fid, sum]);
+            }
+            if (want.length) {
+                fetch(`/api/bin_sim/nway/facets/summaries?fids=${encodeURIComponent(want.map(w => w[0]).join(','))}`).then(res => (res.ok ? res.json() : { summaries: {} })).then(d => {
+                    for (const [fid, box] of want) { const t = (d.summaries || {})[fid] || ''; st.sums.set(fid, t); box.textContent = t; }
+                }).catch(() => {});
+            }
+            return card;
+        }
+        // "Call graph" / "Open in table": the N-way table on this lens with the group tracked (and its call graph open)
+        function groupPivot(what, x, ev) {
+            if (opts.onGroup && opts.onGroup(what, x.tk, st.lens)) return;
+            const q = tableQs(location.search), lens = LENSES.find(l => l[0] === st.lens);
+            if (lens) q.set('group', lens[2]);
+            q.set('track', x.tk);
+            if (what === 'graph') q.set('lane_graph', x.tk);
+            const url = `/diff/nway?${q}`;
+            if (window.Nav) window.Nav.openPath(url, ev, { title: what === 'graph' ? 'Call graph' : 'N-way', type: 'bin_sim' });
+            else location.href = url;
+        }
+        // the model's names for the doc's groups: the table's call and cache (NwayGroups), redrawn as they come
+        async function askNames() {
+            const G = st.doc.groups || [];
+            const lanes = st.S.off || st.lens === 'deltas' ? [] : G.filter(NG.nameable).slice(0, 40).map(g => NG.payload(g, st.doc.nfiles, false));
+            const sig = `${st.doc.group}#${lanes.map(l => `${l.id}:${l.rows}`).join('|')}`;
+            if (sig === st.lnSig) return;
+            st.lnSig = sig;
+            st.S = { names: {}, evid: {}, busy: lanes.length > 0, done: false, off: st.S.off };
+            if (!lanes.length) return;
+            const status = await NG.nameLanes(lanes, () => st.lnSig === sig && !st.dead, (names, evidence) => { Object.assign(st.S.names, names); Object.assign(st.S.evid, evidence); relabel(); });
+            if (st.lnSig !== sig) return;
+            st.S.busy = false;
+            st.S.done = true;
+            if (status === 'off') st.S.off = true;
+            relabel();
+        }
+        function relabel() {
+            if (!st.L || !st.R || st.dead) return;
+            applyTrack(false);
+            if (drawer.classList.contains('open') && st.sel && (st.sel.node || st.sel.group)) openDrawer(st.sel);
+        }
+
         // small multiples: the six biggest groups, each on the same layout (minimap style), fill = share held
         function multiples() {
             const on = st.view === 'tracks' && st.multi && !!st.R, was = canvas.style.display === 'none';
@@ -878,7 +1080,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             grid.replaceChildren();
             if (!on) { if (was && st.L) fit(true); return; }
             const L = st.L;
-            for (const { c, rows, tk } of groupRows().sort((a, b) => b.rows.length - a.rows.length).slice(0, 6)) {
+            for (const { c, rows, tk } of groupRows().filter(x => x.leaf).sort((a, b) => b.rows.length - a.rows.length).slice(0, 6)) {
                 const mark = new Uint8Array(st.R.n);
                 for (const r of rows) mark[r] = 1;
                 const cnt = new Map(L.vis.map(v => [v.id, v.rows.reduce((a, r) => a + mark[r], 0)])), max = Math.max(1, ...cnt.values());
@@ -1019,6 +1221,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             line.append(el('span', { class: 'lin-plus' }, `+${fmt(born.length)}`), document.createTextNode(' '), el('span', { class: 'lin-minus' }, `−${fmt(lost.length)}`));
             box.append(line);
             pivots(box, n);
+            const tg = trackedGroup();
+            if (tg) box.append(groupCard(tg.x, tg.C));
             const tabs = el('div', { class: 'lin-tabs', role: 'tablist' }), body = el('div');
             for (const [v, t, ic] of [['rows', 'Rows', 'fa-table-list'], ['diff', 'Diff vs parent', 'fa-code-compare'], ['fn', 'Function', 'fa-code']]) {
                 const b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(st.dockTab === v) });
@@ -1034,7 +1238,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     lens, cats: [{ key: 'kept', label: 'Inherited', color: V.shared }, { key: 'born', label: 'Born here', color: V.born }, { key: 'died', label: 'Kept by no child', color: V.died }],
                     of: r => (p && !p.has(r) ? 'born' : kids.length && !kids.some(i => R.has(r, i)) ? 'died' : 'kept'),
                 };
-                groups(body, n, shown, C, key => (lens !== 'deltas' ? `${lens}:${key}` : key === 'born' ? `deltas:${n.id}` : null));
+                groups(body, n, shown, C, c => (lens !== 'deltas' ? c.tk : c.key === 'born' ? `deltas:${n.id}` : null));
             } else if (st.dockTab === 'diff') {
                 if (!p) { body.append(el('div', { class: 'lin-dim' }, 'The root has no parent. Pick another node.')); return; }
                 const e = st.M.inE.get(n.id), kv = el('div', { class: 'lin-kv' });
@@ -1055,9 +1259,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (const c of C.cats) {
                 const list = by.get(c.key);
                 if (!list.length) continue;
-                const gh = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), tk = trackKey(c.key);
+                const gh = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), tk = trackKey(c), lab = el('span', { class: 'lin-gn' });
                 sw.style.background = c.color;
-                gh.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(list.length)));
+                if (c.g) lab.innerHTML = gHtml(c.g); else lab.textContent = c.label;
+                gh.append(sw, lab, el('span', { class: 'lin-dim' }, fmt(list.length)));
                 if (tk) {
                     const b = el('button', { type: 'button', class: `lin-ic${st.track === tk ? ' on' : ''}`, title: 'Track this group across the tree', 'aria-label': `Track ${c.label}` });
                     b.append(el('i', { class: 'fa-solid fa-crosshairs' }));
@@ -1256,11 +1461,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function hoverLens(ev, l) {
             st.last = { edge: l.edge };
             dimRibs(d => d.cat === l.cat);
-            showTip(ev, `${name(l.source.id)} \u2192 ${name(l.target.id)}`, l.cat.color, [[l.cat.label, `${fmt(l.value)} fn kept`], ...(l.edge ? [['Similarity', l.edge.similarity]] : [])]);
+            showTip(ev, `${name(l.source.id)} \u2192 ${name(l.target.id)}`, l.cat.color, [[l.cat.label, `${fmt(l.value)} fn kept`], ...(l.edge ? [['Similarity', l.edge.similarity]] : []), ...(l.cat.g ? gTip(l.cat.g) : [])]);
         }
         function hoverLensSeg(ev, n, sg) {
             dimRibs(l => l.cat === sg.cat && (l.source === n || l.target === n));
-            showTip(ev, `${name(n.id)}: ${sg.cat.label}`, sg.cat.color, [['Functions', fmt(sg.cnt)], ['', 'click a legend chip to track the group']]);
+            showTip(ev, `${name(n.id)}: ${sg.cat.label}`, sg.cat.color, [['Functions', fmt(sg.cnt)], ...(sg.cat.g ? gTip(sg.cat.g) : []), ['', 'click a legend chip to track the group']]);
         }
         function hoverSeg(ev, sg) {
             const n = sg.n;
@@ -1398,7 +1603,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         document.addEventListener('keydown', dblClose);
 
         return {
-            setDoc(doc) {
+            setDoc(doc, lens) {
+                if (lens) st.lens = lens;
                 // same tree (a filter changed only rows.match): keep the collapsed nodes, the view and a node pick
                 const sig = d => `${d.nodes.map(n => n.id).join('|')}#${d.edges.map(e => `${e.parent}>${e.child}`).join('|')}`;
                 const same = st.doc && sig(st.doc) === sig(doc);
@@ -1411,6 +1617,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 if (!same) st.collapsed = autoCollapse(doc);
                 const { w, h } = size();
                 s.attr('width', w).attr('height', h);
+                if (doc.rows) askNames();
                 rebuild();
             },
             setLens(lens) {

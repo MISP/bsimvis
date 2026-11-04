@@ -82,7 +82,8 @@ def spanning_tree(w, root):
         j = int(np.argmax(np.where(seen, -1.0, best)))
         out.append((int(via[j]), j))
         seen[j] = True
-        closer = (w[j] > best) & ~seen
+        # ties go to the newest node: identical builds chain into one lane, not a star
+        closer = ((w[j] > best) | ((w[j] == best) & (best > 0))) & ~seen
         best[closer], via[closer] = w[j][closer], j
     return out
 
@@ -572,6 +573,11 @@ def synthetic(n, shape="tree", seed=1, base=60):
 
 
 def demo():
+    # three identical builds chain into a lane; the divergent file hangs off the root
+    lane = np.array(
+        [[0, 1, 1, 0.4], [1, 0, 1, 0.3], [1, 1, 0, 0.3], [0.4, 0.3, 0.3, 0]]
+    )
+    assert spanning_tree(lane, 0) == [(0, 1), (1, 2), (0, 3)], spanning_tree(lane, 0)
     cols = [
         {"id": i, "file_name": i, "functions": n} for i, n in zip("ABCD", (4, 5, 6, 3))
     ]

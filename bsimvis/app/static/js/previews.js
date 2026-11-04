@@ -234,13 +234,9 @@
         const extraHtml = _othersHtml(extra, others);
 
         tooltip.innerHTML = `
-            <div class="preview-card">
-                <div class="preview-header">Quick Preview: ${escapeHtml(name || id.split(':').pop())}</div>
-                <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px; margin-bottom:5px;">
-                    Addr: ${escapeHtml(addr || '---')} | Bin: ${escapeHtml(file_name || bin || '---')} | Feat: ${escapeHtml(v_size || 0)}
-                </div>
-                <div style="font-size:0.55rem; color:var(--subtle,#75715e); padding:0 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">ID: ${escapeHtml(id)}</div>
-                <div class="preview-header" style="border:none; margin-top:10px;">Loading Code...</div>
+            <div class="preview-card fp-card">
+                ${_fnHeaderHtml(name || id.split(':').pop(), null, addr, file_name || bin, v_size)}
+                <div class="fp-loading">Loading code…</div>
             </div>
             ${extraHtml}
         `;
@@ -289,27 +285,49 @@
         return `<div class="others-count-card"><span>⚡</span> And ${extra} other function${extra > 1 ? 's' : ''}...${list}${more}</div>`;
     }
 
+    // Header shared by the loading and loaded states: signature, then facts, then tags and the biggest cluster.
+    // m is null while loading, so only what the trigger passed in is shown.
+    function _fnHeaderHtml(name, m, addr, file, feat) {
+        m = m || {};
+        const params = (m.parameters || []).map(p => `<span class="token-type">${escapeHtml(typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p)}</span>`).join('<span class="fp-punct">, </span>');
+        const sig = m.return_type || m.parameters
+            ? `<div class="fp-sig">${m.return_type ? `<span class="token-type">${escapeHtml(m.return_type)}</span> ` : ''}<span class="fp-punct">(</span>${params}<span class="fp-punct">)</span>${m.calling_convention ? ` <span class="fp-cc">${escapeHtml(m.calling_convention)}</span>` : ''}</div>`
+            : '';
+        const chip = (label, val, cls = '') => (val || val === 0) && val !== '---' ? `<span class="fp-chip ${cls}"><b>${label}</b>${escapeHtml(val)}</span>` : '';
+        const facts = [
+            chip('', addr, 'fp-addr'),
+            chip('feat ', feat),
+            chip('instr ', m.instruction_count),
+            m.callers ? chip('callers ', m.callers.length) : '',
+            m.callees ? chip('callees ', m.callees.length) : '',
+            m.is_thunk === true || m.is_thunk === 'true' ? '<span class="fp-chip fp-warn">thunk</span>' : '',
+        ].join('');
+        const arr = v => Array.isArray(v) ? v : [];
+        const tags = [...arr(m.tags), ...arr(m.user_tags)].filter(t => typeof t === 'string');
+        const tagHtml = tags.slice(0, 6).map(t => {
+            const c = safeCssColor(window.TagColor ? TagColor.forTag(t) : '', 'var(--accent)');
+            return `<span class="fp-tag" style="color:${tagInk(c)}; border-color:${tagAlpha(c, 55)}; background:${tagAlpha(c, 12)}">${escapeHtml(t)}</span>`;
+        }).join('') + (tags.length > 6 ? `<span class="fp-more">+${tags.length - 6}</span>` : '');
+        const cl = arr(m.clusters)[0];
+        const clHtml = cl ? `<span class="fp-cluster">◆ ${escapeHtml(cl.cluster_name || cl.cluster_id || 'cluster')} <span class="fp-dim">· ${escapeHtml(cl.member_count || 0)} fn</span></span>` : '';
+        return `
+            <div class="fp-head">
+                <div class="fp-name">${m.namespace ? `<span class="fp-ns">${escapeHtml(m.namespace)}::</span>` : ''}${escapeHtml(name)}</div>
+                ${sig}
+                ${file ? `<div class="fp-file" title="${escapeAttr(file)}">${escapeHtml(file)}</div>` : ''}
+                <div class="fp-facts">${facts}</div>
+                ${tagHtml || clHtml ? `<div class="fp-tags">${clHtml}${tagHtml}</div>` : ''}
+            </div>`;
+    }
+
     function _renderCodePreview(tooltip, data, name, addr, bin, v_size, extra = 0, file_name = '', others = []) {
         const rows = data.rows;
         const m = data.meta || {};
-        const ns = m.namespace || '';
-        const parameters = m.parameters || [];
-        const retType = m.return_type || '';
-
-        const displayAddr = addr || m.entrypoint_address || '---';
-        const displayBin = file_name || bin || m.file_name || '---';
-        const displayFeat = v_size || m.bsim_features_count || 0;
-        const displayName = name || fnName(m) || 'Function';
         const extraHtml = _othersHtml(extra, others);
 
         let html = `
-            <div class="preview-card" style="max-height:450px; display:flex; flex-direction:column;">
-                <div style="flex-shrink:0; border-bottom: 1px solid var(--border); padding-bottom:8px; margin-bottom:8px;">
-                    <div class="preview-header" style="border:none; margin-bottom:4px; padding:0;">Quick Preview: <span style="color:#ae81ff">${retType}</span> ${ns ? `<span style="color:white">${ns}::</span>` : ''}${displayName}<span style="color:white">(</span>${parameters.map(p => `<span style="color:#ae81ff">${typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p}</span>`).join('<span style="color:white">, </span>')}<span style="color:white">)</span></div>
-                    <div style="font-size:0.65rem; color:var(--accent,#66d9ef); font-family:monospace; padding:0 8px;">
-                        Addr: ${displayAddr} | Bin: ${displayBin} | Feat: ${displayFeat}
-                    </div>
-                </div>
+            <div class="preview-card fp-card" style="max-height:450px; display:flex; flex-direction:column;">
+                ${_fnHeaderHtml(name || fnName(m) || 'Function', m, addr || m.entrypoint_address, file_name || bin || m.file_name, v_size || m.bsim_features_count)}
                 <div class="c-code-container code-preview-scroll" style="border:none; margin:0; padding:0; background:transparent; overflow-y:auto; overflow-x:auto; flex:1; min-height:0;">`;
 
         rows.forEach(row => {
@@ -328,7 +346,7 @@
         html += '</div>';
 
         if (rows.length > 18) {
-            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Wheel to view all ${rows.length} lines</div>`;
+            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding:6px 0; border-top: 1px solid var(--border); flex-shrink:0;">💡 Wheel to view all ${rows.length} lines</div>`;
         }
 
         html += '</div>';

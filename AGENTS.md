@@ -156,6 +156,19 @@ clamped to `similarity.discovery_min_score`) and `POST /api/similarity/discover/
 Binary similarity diff tables are paged, filtered and sorted **server-side**
 (`_page_diff` in `routes/bin_sim.py`). Don't reintroduce full-table client loads.
 
+## N-way lineage
+
+`GET /api/bin_sim/nway/lineage` builds the tree from every row and sends them as one
+compact column-wise `rows` list (fid, mask over `nodes`, role, region, `match` = the
+`/nway` row filter via `_filter_rows`), so the page paints any lens, filters and tracks
+without moving the tree. `/nway?order=lineage` puts the file columns in that tree's DFS
+order (`column_parents`, each column's default index as `base`). Both pages share one URL
+state: `track` (`fn:<fid>` or `<lens>:<key>`; lane hex bits and colours are over the
+default column order, `NwayColors` in `nway_colors.js`), and the lineage page keeps its
+own `layout` (tree / chain / star) and `lview`: Tree, Tracks (one lens group through the
+tree, or six small multiples) or Split (compact tree over a real `NwayPanel`, wired by
+`setTrack` / `onTrack` / `onRowHover`). Node check: `node scripts/test_nway_lineage.js`.
+
 ## Homepage and unified search
 
 `routes/home.py` backs the instance-wide homepage (`/`, view key `home`,

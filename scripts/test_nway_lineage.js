@@ -10,6 +10,7 @@ const assert = require('assert');
 
 const src = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_lineage.js', 'utf8');
 const window = {};
+new Function('window', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_colors.js', 'utf8'))(window);
 new Function('window', src)(window);
 const { buildModel, layout, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } = window.NwayLineage._layout;
 
@@ -80,14 +81,45 @@ assert.strictEqual(ab[0].edge.child, 'c:file:b');
 const info = t => { const m = trackRows(all.R, all.cats, t); return m && trackInfo(all.L, all.R, m); };
 const fn = info('fn:c:func:d:2');
 assert.strictEqual(fn.holders, 2, 'fn: matches any fid of the row');
-assert.deepStrictEqual(fn.info.get('c:file:b'), { tk: 1, born: 1, lost: 0 });
-assert.deepStrictEqual(fn.info.get('c:file:d'), { tk: 1, born: 0, lost: 0 });
-assert.deepStrictEqual(info('lanes:3').info.get('c:file:c'), { tk: 0, born: 0, lost: 1 }, 'lost: in the parent, not here');
+assert.deepStrictEqual(fn.info.get('c:file:b'), { tk: 1, born: 1, lost: 0, reborn: 0 });
+assert.deepStrictEqual(fn.info.get('c:file:d'), { tk: 1, born: 0, lost: 0, reborn: 0 });
+assert.deepStrictEqual(info('lanes:3').info.get('c:file:c'), { tk: 0, born: 0, lost: 1, reborn: 0 }, 'lost: in the parent, not here');
 assert.strictEqual(info('modules:2').holders, 2);
 assert.strictEqual(info('core:every').holders, 4);
 assert.strictEqual(info('deltas:c:file:b').holders, 2, 'deltas key is the column id, which has colons');
 assert.strictEqual(info('nope:x'), null, 'an unknown lens tracks nothing');
 const filtered = trackInfo(some.L, some.R, trackRows(some.R, some.cats, 'fn:c:func:a:1'));
 assert.strictEqual(filtered.holders, 0, 'a row the filters drop is not tracked');
+assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tracks fill bar)');
+
+// --- tracks view: a group born in two places, member ids ---------------------------
+const twice = doc(null);
+for (const [k, v] of Object.entries({ fid: 'c:func:b:6', fids: ['c:func:b:6', 'c:func:c:6'], name: 'reused', mask: '6', role: 'logic', region: 1, library: false, weight: 10 })) twice.rows[k].push(v);
+twice.rows.n = 7;
+twice.nodes[1].members = ['c:file:b', 'c:file:b2'];
+const tw = build(twice), twInfo = t => trackInfo(tw.L, tw.R, trackRows(tw.R, tw.cats, t));
+const re = twInfo('fn:c:func:c:6');
+assert.deepStrictEqual(re.info.get('c:file:b'), { tk: 1, born: 1, lost: 0, reborn: 1 }, 'born in B and in C: violet frame on both');
+assert.deepStrictEqual(re.info.get('c:file:c'), { tk: 1, born: 1, lost: 0, reborn: 1 });
+assert.strictEqual(twInfo('fn:c:func:a:1').info.get('c:file:b').reborn, 0, 'born once, in the root: not reborn');
+assert.strictEqual(twInfo('deltas:c:file:b2').holders, twInfo('deltas:c:file:b').holders, 'a deltas key may name a member file of a Same code node');
+
+// --- shared helpers -------------------------------------------------------------------
+assert.strictEqual(window.NwayColors.hue(0), 215, 'the table and the lineage share one hue formula');
+assert.strictEqual(window.NwayColors.hue(1), Math.round((137.508 + 215) % 360));
+// the table's column tree: a group of two plus a lone column; order=lineage moves them (base = default index)
+const G = [{ id: 'g', label: 'G', member_count: 2 }];
+const def = [{ id: 'a', kind: 'twin', path: G }, { id: 'b', kind: 'twin', path: G }, { id: 'c', kind: 'twin', path: [] }];
+const moved = [{ ...def[2], base: 2 }, { ...def[1], base: 1 }, { ...def[0], base: 0 }];
+const col = (cols, id) => window.NwayColors.tree(cols).colors[cols.findIndex(c => c.id === id)];
+for (const id of ['a', 'b', 'c']) assert.deepStrictEqual(col(moved, id), col(def, id), `${id} keeps its colour when order=lineage moves it`);
+assert.notDeepStrictEqual(col(def, 'a'), col(def, 'b'), 'siblings in a group differ a little');
+assert.strictEqual(col(def, 'c').h, window.NwayColors.hue(1), 'the second top-level entry takes the second hue');
+// a lineage node (path from the server, no kind) gets its column's colour
+const nodes = def.map(c => ({ id: c.id, path: c.path }));
+for (const id of ['a', 'b', 'c']) assert.deepStrictEqual(col(nodes, id), col(def, id), `lineage node ${id} = its table column`);
+const tq = window.NwayLineage.tableQs('md5s=a,b&order=chain&layout=star&lview=split&track=fn:x&root=c:file:a');
+assert.strictEqual(tq.toString(), 'md5s=a%2Cb&track=fn%3Ax&root=c%3Afile%3Aa&col_open=%5B%5D', 'lineage-only keys dropped, an old order=chain too; twins closed as here');
+assert.strictEqual(window.NwayLineage.tableQs('order=lineage&lview=tracks&col_open=x').toString(), 'order=lineage&col_open=x', "the table's own order and open columns pass through");
 
 console.log('nway lineage self-check OK');

@@ -1,8 +1,9 @@
 /**
  * Lineage chart of the files of an N-way set (GET /api/bin_sim/nway/lineage).
  *
- * NwayLineage.mount(container, opts) -> { setDoc(doc), setLens(lens), destroy() }.
- * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track).
+ * NwayLineage.mount(container, opts) -> { setDoc(doc), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
+ * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
+ * a group list beside the tree, or six mini trees), onNode(node) (true when it took the click: no dock).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
  * child" (orange); a strip on its left says what was born here (blue, hatched =
@@ -40,15 +41,22 @@
     // nway_region_service.SPECIAL
     const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
     const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5;
-    // same as nway_panel.js _fileHue: a node keeps the hue of its column in the table
-    const hueOf = i => Math.round((i * 137.508 + 215) % 360);
-    const hsl = h => `hsl(${h} 62% var(--lin-hl))`;
+    const hueOf = i => window.NwayColors.hue(i);
+    // --lin-hl is the table's top-level lightness: 52%, 44% on the light theme (.nway-sq.on)
+    const hsl = (h, l = 52) => `hsl(${h} 62% calc(var(--lin-hl) + ${l - 52}%))`;
+    // A node's colour is its column's in the table (nway_colors.js): doc.nodes are in the default
+    // column order, `path` groups them as the table's column tree does.
+    const nodeColor = (doc, i) => {
+        const T = doc._colors || (doc._colors = window.NwayColors.tree(doc.nodes.map(n => ({ id: n.id, path: n.path }))));
+        const c = T.grouped && T.colors[i];
+        return c ? hsl(c.h, c.l) : hsl(hueOf(i));
+    };
     const fmt = n => Number(n).toLocaleString();
     let uid = 0;
 
     const CSS = `
-.lin-root,.lin-vars{--lin-hl:58%;--lin-slate:#3d4a5f;--lin-slate-hi:#52617a;--lin-edge:rgba(255,255,255,.16);--lin-grey:#8b95a5;--lin-grey-d:#5d6a7e;--lin-born:#3d9be0;--lin-died:#f08a3c;--lin-reuse:#8b6fd6;--lin-card:var(--card-bg,#1e1e1e);--lin-line:var(--border,#3e3d32);--lin-halo:var(--bg,#121212);display:flex;flex-direction:column;height:100%;min-height:0;font:12.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--text,#f8f8f2);color-scheme:dark}
-html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-slate-hi:#66758f;--lin-edge:rgba(0,0,0,.2);--lin-grey:#8892a3;--lin-grey-d:#5f6b7f;--lin-born:#0072B2;--lin-died:#D55E00;--lin-reuse:#6a4fbf;--lin-hl:42%;color-scheme:light}
+.lin-root,.lin-vars{--lin-hl:52%;--lin-slate:#3d4a5f;--lin-slate-hi:#52617a;--lin-edge:rgba(255,255,255,.16);--lin-grey:#8b95a5;--lin-grey-d:#5d6a7e;--lin-born:#3d9be0;--lin-died:#f08a3c;--lin-reuse:#8b6fd6;--lin-card:var(--card-bg,#1e1e1e);--lin-line:var(--border,#3e3d32);--lin-halo:var(--bg,#121212);font:12.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--text,#f8f8f2);color-scheme:dark}
+html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-slate-hi:#66758f;--lin-edge:rgba(0,0,0,.2);--lin-grey:#8892a3;--lin-grey-d:#5f6b7f;--lin-born:#0072B2;--lin-died:#D55E00;--lin-reuse:#6a4fbf;--lin-hl:44%;color-scheme:light}
 .lin-tb{display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid var(--lin-line);background:var(--lin-card)}
 .lin-tb select,.lin-tb input{background:var(--lin-card);color:inherit;border:1px solid var(--lin-line);border-radius:8px;padding:4px 8px;font:inherit}
 .lin-tb input{width:150px}
@@ -82,7 +90,8 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-halo{paint-order:stroke;stroke:var(--lin-halo);stroke-width:3.5px;stroke-linejoin:round}
 .lin-canvas ::-webkit-scrollbar{width:10px;height:10px}
 .lin-drawer{scrollbar-width:thin;scrollbar-color:var(--lin-grey-d) transparent}
-.lin-filters{gap:8px 12px}
+.lin-root{display:flex;flex-direction:column;height:100%;min-height:0}
+.lin-filters{gap:8px 12px;flex:none}
 .lin-filters .nway-search{flex:1 1 240px;max-width:420px}
 .lin-filters .nway-search input{width:100%;border:0;padding:0}
 .lin-seg button[aria-pressed=true]{background:var(--hover,#2d2d2d);color:var(--accent,#66d9ef)}
@@ -112,6 +121,24 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-minus{color:var(--lin-died);font-weight:600}
 .lin-code{max-height:55vh;overflow:auto;margin-top:6px}
 .lin-root button:focus-visible,.lin-root select:focus-visible,.lin-root input:focus-visible{outline:2px solid var(--accent,#66d9ef);outline-offset:2px}
+.lin-tb{flex:none}
+.lin-body{flex:1;min-height:0;display:flex}
+.lin-body>.lin-canvas{min-width:0}
+.lin-glist{flex:none;width:300px;max-width:45%;overflow:auto;border-right:1px solid var(--lin-line);padding:6px 8px;background:var(--lin-card)}
+.lin-glist .lin-seg{margin:2px 0 8px}
+.lin-gi{display:flex;flex-direction:column;gap:4px;width:100%;margin-bottom:2px;text-align:left;background:none;border:1px solid transparent;border-radius:6px;color:inherit;padding:5px 7px;cursor:pointer;font:inherit}
+.lin-gi:hover{background:var(--hover,#2d2d2d)}
+.lin-gi.on{border-color:var(--accent,#66d9ef)}
+.lin-gi .t,.lin-mt .t{display:flex;gap:6px;align-items:center;min-width:0}
+.lin-gi .t b,.lin-mt .t span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.lin-gi .t .lin-dim{margin-left:auto}
+.lin-multi{flex:1;min-width:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;padding:10px;align-content:start;background:var(--lin-card)}
+.lin-mt{border:1px solid var(--lin-line);border-radius:6px;background:none;color:inherit;padding:6px 8px;cursor:pointer;text-align:left;font:inherit;display:flex;flex-direction:column;gap:4px;min-width:0}
+.lin-mt:hover{background:var(--hover,#2d2d2d)}
+.lin-mt.on{border-color:var(--accent,#66d9ef)}
+.lin-mt svg{width:100%;height:150px;display:block}
+.lin-glist[hidden],.lin-multi[hidden]{display:none}
+@media (max-width:700px){.lin-mini{display:none}.lin-body{flex-direction:column}.lin-glist{width:auto;max-width:none;max-height:35%;border-right:0;border-bottom:1px solid var(--lin-line)}}
 `;
 
     function el(tag, attrs = {}, text) {
@@ -204,7 +231,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         };
         walk(doc.root);
         const col = k => R[k] || [];
-        return { n, N, pop, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), match: r => !R.match || !!R.match[r] };
+        // a member file id -> its node id: a deltas key or a hovered table row may name files, not nodes
+        const nodeOf = new Map();
+        for (const x of doc.nodes) for (const m of [x.id, ...(x.members || [])]) nodeOf.set(m, x.id);
+        return { n, N, pop, nodeOf, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), match: r => !R.match || !!R.match[r] };
     }
 
     const presenceBand = (c, N) => (c >= N ? 'every' : c >= 0.75 * N ? 'most' : c > 2 ? 'some' : 'few');
@@ -248,7 +278,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 r => (keep.has(R.mask[r]) ? String(R.mask[r]) : 'other'), r => String(R.mask[r]));
         }
         // deltas: the node a row is born in
-        return done(doc.nodes.map((x, i) => cat(x.id, `${x.root ? 'In the root, ' : 'Born in '}${x.file_name || x.id}`, hsl(hueOf(i)))), r => (R.bornIn[r] < 0 ? '' : String(doc.nodes[R.bornIn[r]].id)));
+        return done(doc.nodes.map((x, i) => cat(x.id, `${x.root ? 'In the root, ' : 'Born in '}${x.file_name || x.id}`, nodeColor(doc, i))), r => (R.bornIn[r] < 0 ? '' : String(doc.nodes[R.bornIn[r]].id)));
     }
 
     // Rows held by each visible node; an aggregate holds what any of its files holds.
@@ -307,30 +337,38 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     function trackRows(R, catsOf, track) {
         if (!R || !track) return null;
         const mark = new Uint8Array(R.n);
-        const i = track.indexOf(':'), kind = track.slice(0, i), key = track.slice(i + 1);
+        const i = track.indexOf(':'), kind = track.slice(0, i);
+        let key = track.slice(i + 1);
         if (kind === 'fn') {
             for (let r = 0; r < R.n; r++) if (R.fid[r] === key || (R.fids && (R.fids[r] || []).includes(key))) mark[r] = 1;
         } else {
             if (!LENSES.some(l => l[0] === kind)) return null;
+            if (kind === 'deltas') key = R.nodeOf.get(key) || key;
             const C = catsOf(kind);
-            for (let r = 0; r < R.n; r++) if (C.raw(r) === key) mark[r] = 1;
+            // of(r) too: the lanes lens's "other" bucket has no raw key of its own
+            for (let r = 0; r < R.n; r++) if (C.raw(r) === key || C.of(r) === key) mark[r] = 1;
         }
         return mark;
     }
 
-    // Per visible node: tracked rows it holds (tk), born here (not in the parent), lost from the parent.
+    // Per visible node: tracked rows it holds (tk), born here (not in the parent), lost from the parent,
+    // and reborn: rows born here that are also born in another node (the root counts as a birth place):
+    // reuse or independent birth.
     function trackInfo(L, R, mark) {
-        const info = new Map();
-        let holders = 0;
+        const info = new Map(), births = new Uint16Array(R.n), bornAt = new Map();
+        let holders = 0, max = 0;
         for (const v of L.vis) {
-            const p = L.fileOf.get(L.parentOf.get(v.id));
-            let tk = 0, born = 0, lost = 0;
-            for (const r of v.rows) if (mark[r] && R.match(r)) { tk++; if (p && !p.has(r)) born++; }
+            const p = L.fileOf.get(L.parentOf.get(v.id)), here = [];
+            let tk = 0, lost = 0;
+            for (const r of v.rows) if (mark[r] && R.match(r)) { tk++; if (!p || !p.has(r)) { births[r]++; if (p) here.push(r); } }
             if (p) for (const r of p.rows) if (mark[r] && R.match(r) && !v.has(r)) lost++;
             if (tk) holders++;
-            info.set(v.id, { tk, born, lost });
+            max = Math.max(max, tk);
+            bornAt.set(v.id, here);
+            info.set(v.id, { tk, born: here.length, lost, reborn: 0 });
         }
-        return { info, holders };
+        for (const [id, here] of bornAt) info.get(id).reborn = here.filter(r => births[r] > 1).length;
+        return { info, holders, max };
     }
 
     // ---------------------------------------------------------------- layout
@@ -589,15 +627,19 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const drawer = el('div', { class: 'lin-drawer' });
         const noteBox = el('div', { class: 'lin-note', style: 'display:none' });
         const mini = el('div', { class: 'lin-mini' });
-        root.append(tb, canvas);
+        // Tracks view: the lens's groups on the left, the tree (or six mini trees) for the selected one
+        const body = el('div', { class: 'lin-body' }), side = el('nav', { class: 'lin-glist', 'aria-label': 'Groups' }), grid = el('div', { class: 'lin-multi' });
+        side.hidden = grid.hidden = true;
+        body.append(side, canvas, grid);
+        root.append(tb, body);
         container.replaceChildren(root);
 
         const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: true, sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
-            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set() };
+            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
         const world = s.append('g');
-        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gTrk = world.append('g').style('pointer-events', 'none'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none');
+        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gTrk = world.append('g').style('pointer-events', 'none'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none'), gHov = world.append('g').style('pointer-events', 'none');
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
         s.call(zoom);
         const tip = d3.select(document.body).append('div').attr('class', 'lin-vars lin-tip');
@@ -737,8 +779,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // ---- tracking ----
         function setTrack(t) {
             st.track = t;
-            applyTrack(true);
+            // before the redraw: the Tracks view may pick a group inside it, and that one must win
             if (opts.onTrack) opts.onTrack(t);
+            applyTrack(true);
         }
         function trackLabel() {
             const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
@@ -749,21 +792,30 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const lens = LENSES.find(l => l[0] === kind), c = lens && cats(kind).cats.find(x => x.key === key);
             return `${lens ? lens[1] : kind}: ${c ? c.label : key}`;
         }
-        // fade the nodes without the tracked rows, outline the holders, +born / -lost badges
+        // the colour of what is tracked: its lens group's, the accent for one function
+        function trackColor() {
+            const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
+            const c = kind !== 'fn' && LENSES.some(l => l[0] === kind) && cats(kind).cats.find(x => x.key === (kind === 'deltas' ? st.R.nodeOf.get(key) || key : key));
+            return c ? c.color : 'var(--accent,#66d9ef)';
+        }
+        // fade the nodes without the tracked rows, outline the holders, a bar for how much each holds,
+        // +born badges (violet frame: also born elsewhere = reuse or independent birth), -lost on the edges
         function applyTrack(fromUser) {
             const mark = st.R && st.track ? trackRows(st.R, cats, st.track) : null;
             st.T = mark ? trackInfo(st.L, st.R, mark) : null;
             gTrk.selectAll('*').remove();
             trackBox.replaceChildren();
             if (st.T) {
+                const col = trackColor();
                 for (const n of st.L.vis) {
-                    const t = st.T.info.get(n.id);
+                    const t = st.T.info.get(n.id), p = st.L.fileOf.get(st.L.parentOf.get(n.id));
+                    if (t.lost && p) gTrk.append('text').attr('class', 'lin-halo').attr('x', (p.x1 + n.x0) / 2).attr('y', (p.y0 + p.y1 + n.y0 + n.y1) / 4).attr('text-anchor', 'middle').attr('font-size', 11).style('fill', V.died).text(`\u2212${fmt(t.lost)} lost`);
                     if (!t.tk) continue;
                     gTrk.append('rect').attr('x', n.x0 - 3).attr('y', n.y0 - 3).attr('width', NODE_W + 6).attr('height', n.h + 6).attr('rx', 7).attr('fill', 'none')
-                        .style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 1.6).attr('stroke-dasharray', '4 2').attr('vector-effect', 'non-scaling-stroke');
-                    let y = n.y0 + 10;
-                    if (t.born) { gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x1 + 4).attr('y', y).attr('font-size', 11).style('fill', V.born).text(`+${fmt(t.born)} born`); y += 12; }
-                    if (t.lost) gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x1 + 4).attr('y', y).attr('font-size', 11).style('fill', V.died).text(`\u2212${fmt(t.lost)} lost`);
+                        .style('stroke', t.reborn ? V.reuse : 'var(--accent,#66d9ef)').attr('stroke-width', t.reborn ? 2.4 : 1.6).attr('stroke-dasharray', t.reborn ? null : '4 2').attr('vector-effect', 'non-scaling-stroke');
+                    gTrk.append('rect').attr('x', n.x0).attr('y', n.y1 + 5).attr('width', NODE_W * t.tk / st.T.max).attr('height', 4).attr('rx', 1.5).style('fill', col);
+                    gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x0).attr('y', n.y1 + 19).attr('font-size', 10.5).style('fill', 'var(--text)').text(`${fmt(t.tk)} fn`);
+                    if (t.born) gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x1 + 4).attr('y', n.y0 + 10).attr('font-size', 11).style('fill', t.reborn ? V.reuse : V.born).text(`+${fmt(t.born)} born${t.reborn ? `, ${fmt(t.reborn)} also born elsewhere` : ''}`);
                 }
                 const c = el('span', { class: 'lin-chip on' }), x = el('button', { type: 'button', class: 'lin-x2', 'aria-label': 'Stop tracking', title: 'Stop tracking' }, '\u00d7');
                 x.addEventListener('click', () => setTrack(''));
@@ -772,9 +824,97 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             } else if (st.R) trackBox.append(el('span', { class: 'lin-dim' }, 'Click a legend chip or a row in the dock to track it.'));
             if (nodeBase) { nodeBase.style('opacity', nodeOp); ribs.style('opacity', ribOp); }
             legend();
+            if (groupList()) return;
+            multiples();
             if (fromUser) {
                 schedule(true);
                 if (st.sel && st.sel.node && drawer.classList.contains('open')) openDrawer(st.sel);
+            }
+        }
+
+        // ---- tracks view: the lens's groups (matching rows), one presence square per node ----
+        function groupRows() {
+            const C = cats(st.lens), by = new Map(C.cats.map(c => [c.key, []]));
+            for (let r = 0; r < st.R.n; r++) if (st.R.match(r)) by.get(C.of(r)).push(r);
+            return C.cats.filter(c => by.get(c.key).length).map(c => ({ c, rows: by.get(c.key), tk: `${st.lens}:${c.key}` }));
+        }
+        // true when it picked the biggest group itself (that setTrack already redrew everything)
+        function groupList() {
+            side.hidden = st.view !== 'tracks';
+            side.replaceChildren();
+            if (side.hidden) return false;
+            if (!st.R) { side.append(el('div', { class: 'lin-dim' }, 'This server sends no row list: groups need it.')); return false; }
+            const list = groupRows();
+            if (!st.track && list.length) { setTrack([...list].sort((a, b) => b.rows.length - a.rows.length)[0].tk); return true; }
+            const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Group view' });
+            for (const [v, t] of [[false, 'One group'], [true, 'Small multiples']]) {
+                const b = el('button', { type: 'button', 'aria-pressed': String(st.multi === v) }, t);
+                b.addEventListener('click', () => { st.multi = v; groupList(); multiples(); });
+                seg.append(b);
+            }
+            side.append(seg);
+            for (const { c, rows, tk } of list) {
+                const b = el('button', { type: 'button', class: `lin-gi${st.track === tk ? ' on' : ''}`, 'aria-pressed': String(st.track === tk), title: 'Track this group across the tree' });
+                const t = el('span', { class: 't' }), sw = el('span', { class: 'lin-sw' }), pres = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
+                sw.style.background = c.color;
+                t.append(sw, el('b', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rows.length)));
+                for (const v of st.L.vis) {
+                    const h = rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), i = el('i', { title: `${name(v.id)}: ${fmt(h)}` });
+                    if (h) { i.style.background = nodeColor(st.doc, v.idx); i.style.opacity = (0.25 + 0.75 * h / rows.length).toFixed(2); i.style.boxShadow = 'none'; }
+                    pres.append(i);
+                }
+                b.append(t, pres);
+                b.addEventListener('click', () => { st.multi = false; setTrack(tk); });
+                side.append(b);
+            }
+            if (!list.length) side.append(el('div', { class: 'lin-dim' }, 'No group matches the filters.'));
+            return false;
+        }
+        // small multiples: the six biggest groups, each on the same layout (minimap style), fill = share held
+        function multiples() {
+            const on = st.view === 'tracks' && st.multi && !!st.R, was = canvas.style.display === 'none';
+            grid.hidden = !on;
+            canvas.style.display = on ? 'none' : '';
+            grid.replaceChildren();
+            if (!on) { if (was && st.L) fit(true); return; }
+            const L = st.L;
+            for (const { c, rows, tk } of groupRows().sort((a, b) => b.rows.length - a.rows.length).slice(0, 6)) {
+                const mark = new Uint8Array(st.R.n);
+                for (const r of rows) mark[r] = 1;
+                const cnt = new Map(L.vis.map(v => [v.id, v.rows.reduce((a, r) => a + mark[r], 0)])), max = Math.max(1, ...cnt.values());
+                const b = el('button', { type: 'button', class: `lin-mt${st.track === tk ? ' on' : ''}`, title: 'Show this group on the tree' });
+                const t = el('span', { class: 't' }), sw = el('span', { class: 'lin-sw' });
+                sw.style.background = c.color;
+                t.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rows.length)));
+                const svg = d3.create('svg').attr('viewBox', `0 0 ${L.W} ${L.H}`).attr('role', 'img').attr('aria-label', `${c.label} across the tree`);
+                for (const v of L.vis) {
+                    const p = L.fileOf.get(L.parentOf.get(v.id));
+                    if (!p) continue;
+                    const sh = v.rows.reduce((a, r) => a + (mark[r] && p.has(r) ? 1 : 0), 0), ya = (p.y0 + p.y1) / 2, yb = (v.y0 + v.y1) / 2, xm = (p.x1 + v.x0) / 2;
+                    svg.append('path').attr('d', `M${p.x1},${ya}C${xm},${ya} ${xm},${yb} ${v.x0},${yb}`).attr('fill', 'none').attr('vector-effect', 'non-scaling-stroke')
+                        .style('stroke', sh ? c.color : 'var(--lin-grey-d)').attr('stroke-width', sh ? 1 + 3 * sh / max : 1).attr('stroke-dasharray', sh ? null : '3 3').attr('opacity', sh ? 0.6 : 0.5);
+                }
+                for (const v of L.vis) {
+                    const k = cnt.get(v.id), r = svg.append('rect').attr('x', v.x0).attr('y', v.y0).attr('width', NODE_W).attr('height', Math.max(v.h, 8)).attr('rx', 6).attr('vector-effect', 'non-scaling-stroke');
+                    if (k) r.style('fill', c.color).attr('fill-opacity', (0.25 + 0.75 * k / max).toFixed(2));
+                    else r.attr('fill', 'none').style('stroke', 'var(--lin-line)').attr('stroke-dasharray', '3 3');
+                }
+                b.append(t, svg.node());
+                b.addEventListener('click', () => { st.multi = false; setTrack(tk); });
+                grid.append(b);
+            }
+        }
+
+        // a hovered table row (cells keyed by column id, files by file id): outline the nodes holding it
+        function hoverRow(row) {
+            gHov.selectAll('*').remove();
+            if (!row || !st.L || !st.R) return;
+            const ids = new Set();
+            for (const cells of [row.cells, row.files]) for (const [k, v] of Object.entries(cells || {})) if (v && (typeof v === 'string' || v.present)) ids.add(st.R.nodeOf.get(k));
+            for (const id of ids) {
+                const n = id && st.L.fileOf.get(st.M.rep.get(id));
+                if (n) gHov.append('rect').attr('x', n.x0 - 5).attr('y', n.y0 - 5).attr('width', NODE_W + 10).attr('height', n.h + 10).attr('rx', 8).attr('fill', 'none')
+                    .style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 3).attr('vector-effect', 'non-scaling-stroke');
             }
         }
 
@@ -782,7 +922,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function drawStatic() {
             const L = st.L;
             // a relayout starts from an empty scene: joins would keep the old boxes and arcs
-            for (const g of [defs, gRib, gArc, gNode, gStr, gDet, gOv, gLab]) g.selectAll('*').remove();
+            for (const g of [defs, gRib, gArc, gNode, gStr, gDet, gOv, gLab, gHov]) g.selectAll('*').remove();
             for (const [k, c] of [['born', V.born]]) {
                 const p = defs.append('pattern').attr('id', `hatch-${k}-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
                 p.append('rect').attr('width', 6).attr('height', 6).style('fill', c).attr('fill-opacity', 0.22);
@@ -817,7 +957,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 .attr('aria-label', n => `${name(n.id)}, ${n.functions} functions`);
             nodeBase.append('rect').attr('class', 'base').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => n.h).attr('rx', 6).style('fill', st.P ? 'var(--lin-card)' : V.slate);
             // the node's column hue, as in the table
-            nodeBase.append('rect').attr('x', n => n.x0).attr('y', n => n.y0 - 6).attr('width', NODE_W).attr('height', 4).attr('rx', 1.5).style('fill', n => hsl(hueOf(n.idx)));
+            nodeBase.append('rect').attr('x', n => n.x0).attr('y', n => n.y0 - 6).attr('width', NODE_W).attr('height', 4).attr('rx', 1.5).style('fill', n => nodeColor(st.doc, n.idx));
             if (st.P) nodeBase.each(function (n) {
                 const sp = st.P.segs.get(n.id), g = d3.select(this).append('g').attr('clip-path', `url(#clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'})`);
                 for (const sg of sp.m.values()) {
@@ -831,8 +971,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             rim = nodeBase.append('rect').attr('class', 'rim').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => n.h).attr('rx', 6)
                 .attr('fill', 'none').style('stroke', 'var(--lin-edge)').attr('vector-effect', 'non-scaling-stroke').style('pointer-events', 'none');
             nodeBase.on('mouseenter', (ev, n) => hoverFile(ev, n)).on('mousemove', moveTip).on('mouseleave', leave)
-                .on('click', (ev, n) => { if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pick({ node: n }); })
-                .on('keydown', (ev, n) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pick({ node: n }); } });
+                .on('click', (ev, n) => { if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pickNode(n); })
+                .on('keydown', (ev, n) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pickNode(n); } });
             nodeBase.append('title').text(n => n.agg ? `${n.file_name}: ${fmt(n.functions)} functions in all` : `${name(n.id)} (${fmt(n.functions)} functions)${twinsOf(n) ? `, same code in ${twinsOf(n).length} files` : ''}`);
             // reuse stripes
             const sdata = [...L.stripes.values()].flat();
@@ -856,6 +996,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (ribs) ribs.style('stroke', l => sel && sel.edge && l.edge === sel.edge ? 'var(--accent,#66d9ef)' : 'none').attr('stroke-width', 1.5).attr('vector-effect', 'non-scaling-stroke');
         }
         function pick(p) { st.sel = p; st.last = p; applySel(); openDrawer(p); }
+        // a node click opens the dock, or goes to opts.onNode (the split page sets the table's column)
+        function pickNode(n) { if (!(opts.onNode && opts.onNode(n))) pick({ node: n }); }
 
         // ---- dock: a node's rows by lens, its diff against the parent, a function preview ----
         function dock(n) {
@@ -865,7 +1007,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const x = el('button', { class: 'lin-x', type: 'button', 'aria-label': 'Close' }, '×');
             x.addEventListener('click', closeDock);
             const h = el('h4', {}), sw = el('span', { class: 'lin-sw', style: 'margin-right:6px' }), tw = twinsOf(n);
-            sw.style.background = hsl(hueOf(n.idx));
+            sw.style.background = nodeColor(st.doc, n.idx);
             h.append(sw, document.createTextNode(name(n.id)));
             if (tw) h.append(el('span', { style: 'color:var(--success);margin-left:6px' }, `×${tw.length}`));
             box.append(x, h);
@@ -954,7 +1096,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const s = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
             for (const v of st.L.vis) {
                 const i = el('i', { title: name(v.id) });
-                if (v.has(r)) { i.style.background = hsl(hueOf(v.idx)); i.style.boxShadow = 'none'; }
+                if (v.has(r)) { i.style.background = nodeColor(st.doc, v.idx); i.style.boxShadow = 'none'; }
                 s.append(i);
             }
             return s;
@@ -1153,7 +1295,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (st.P) {
                 const sp = st.P.segs.get(F.id);
                 ribs.style('opacity', l => (l.source === F || l.target === F ? 1 : 0.1));
-                showTip(ev, name(F.id), hsl(hueOf(F.idx)), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])]);
+                showTip(ev, name(F.id), nodeColor(st.doc, F.idx), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])]);
                 return;
             }
             // the reuse arcs that touch this file light up at once; the per-file overlay follows
@@ -1276,6 +1418,26 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.lens = lens;
                 if (st.doc) rebuild();
             },
+            // from another pane: no onTrack echo
+            setTrack(t) {
+                if ((t || '') === st.track) return;
+                st.track = t || '';
+                if (st.L) applyTrack(true);
+            },
+            // the canvas changes size with the view (group list, split pane): show the whole tree again
+            setView(v) {
+                st.view = v;
+                if (!st.L) return;
+                applyTrack(false);
+                fit(true);
+            },
+            hover: hoverRow,
+            // outline one node as picked (the split page's table column), or none
+            select(id) {
+                const n = id && st.L && st.L.fileOf.get(st.M.rep.get(st.R ? st.R.nodeOf.get(id) || id : id));
+                st.sel = n ? { node: n } : null;
+                applySel();
+            },
             zoomTo(wx, wy, k) {
                 const { w, h } = size();
                 s.call(zoom.transform, d3.zoomIdentity.translate(w / 2 - k * wx, h / 2 - k * wy).scale(k));
@@ -1294,12 +1456,12 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     }
 
     // Pivots: file page, its functions, its similar functions, and the N-way table on this
-    // column with every page param (track included; order and root are lineage-only).
+    // column with every page param (track and the table's order=lineage included; layout and lview are lineage-only).
     function pivots(box, n) {
         if (n.agg || !window.Nav) return;
         const [col, , md5] = ((n.members || [])[0] || n.id).split(':'), m = encodeURIComponent(md5);
-        const q = new URLSearchParams(location.search);
-        q.delete('order'); q.delete('root'); q.set('column', n.id);
+        const q = tableQs(location.search);
+        q.set('column', n.id);
         const go = (txt, url, type) => {
             const b = el('button', { type: 'button', class: 'lin-btn', style: 'margin:6px 6px 0 0' }, txt);
             b.addEventListener('click', ev => window.Nav.openPath(url, ev, { title: txt, type }));
@@ -1349,5 +1511,17 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
     }
 
-    window.NwayLineage = { mount, ensureCss, LENSES, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
+    // The lineage page's query as the N-way table's: its own keys (layout, lview, an old link's
+    // order=tree|chain|star) dropped, the table's order=lineage and the tree root kept. Without col_open
+    // this page shows the twin columns closed, so the table gets them closed too ([] = its depth 0, not
+    // its window fit): a column id then names the same node on both pages.
+    function tableQs(search) {
+        const q = new URLSearchParams(search);
+        q.delete('layout'); q.delete('lview');
+        if (q.get('order') !== 'lineage') q.delete('order');
+        if (!q.has('col_open')) q.set('col_open', '[]');
+        return q;
+    }
+
+    window.NwayLineage = { mount, ensureCss, LENSES, tableQs, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
 })();

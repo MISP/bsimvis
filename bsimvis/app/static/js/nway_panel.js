@@ -762,15 +762,22 @@
 
         // A group's track key, `<lens>:<key>` for the kinds a lens names: region -> modules:<region id>,
         // presence -> core:<band>, role -> triage:<role>, born -> deltas:<column id>, lane -> lanes:<mask hex,
-        // bit i = column i>. Any other kind (tier, delta, tag, prefix, same, fold, rest) keeps its group id.
+        // bit i = the column's default-order index (_base), as the lineage page's node masks>. Any other kind
+        // (tier, delta, tag, prefix, same, fold, rest) keeps its group id.
         _trackKey(gid) {
             const g = ((this.data && this.data.groups) || {})[gid];
             if (g && g.kind === 'born' && g.column) return `deltas:${g.column}`;
             const last = String(gid).split('/').pop(), i = last.indexOf(':'), kind = i > 0 ? last.slice(0, i) : '', key = last.slice(i + 1);
             const lens = { region: 'modules', presence: 'core', role: 'triage', born: 'deltas' }[kind];
             if (lens) return `${lens}:${key}`;
-            if (kind === 'lane' && /^[01]+$/.test(key)) return `lanes:${BigInt(`0b${[...key].reverse().join('')}`).toString(16)}`;
+            if (kind === 'lane' && /^[01]+$/.test(key)) return `lanes:${[...key].reduce((m, b, ci) => (b === '1' ? m | (1n << BigInt(this._base(ci))) : m), 0n).toString(16)}`;
             return String(gid);
+        }
+
+        // A column's index in the default /nway order: order=lineage moves columns and keeps it as `base`.
+        _base(i) {
+            const c = this.data.columns[i];
+            return c && c.base != null ? c.base : i;
         }
 
         // A row is tracked by any of its function ids, by a group on its path, or by its own role / region.
@@ -815,12 +822,12 @@
             if (chip) chip.outerHTML = this._trackChip(held ? held.filter(Boolean).length : undefined);
         }
 
-        // Every table param for the lineage page (track and column included). It reads `order` as its
-        // own tree layout, so the column order stays here; the lens (`group`) always goes, even emptied.
+        // Every table param for the lineage page (track, column and order=lineage included: that page keeps
+        // its own tree layout in `layout`); the lens (`group`) always goes, even emptied.
         _lineageQs() {
             const qs = this._docQs();
             for (const [k, v] of Object.entries(this.state)) {
-                if (k === 'offset' || k === 'order' || v === null || v === undefined || (v === '' && k !== 'group')) continue;
+                if (k === 'offset' || v === null || v === undefined || (v === '' && k !== 'group')) continue;
                 if (k === 'group' || k === 'columns' || String(v) !== String(DEFAULTS[k] ?? '')) qs.set(k, v);
             }
             return qs;
@@ -1838,37 +1845,13 @@
         // i is a column index (data.columns), not an index into file_columns.
         _fileHue(i) {
             const t = this._tree(), c = t.grouped && t.colors[i];
-            return c ? c.h : Math.round((i * 137.508 + 215) % 360);
+            return c ? c.h : window.NwayColors.hue(this._base(i));
         }
 
-        // The column tree rebuilt from the columns' paths: each top-level group or column gets a hue, and what is
-        // inside it shifts that hue and its lightness a little, so a sub-cluster reads as part of its parent.
+        // The column tree and its colours (nway_colors.js, shared with the lineage page).
         _tree() {
             const d = this.data;
-            if (d._tree) return d._tree;
-            const cols = d.columns, grouped = cols.some(c => c.kind || (c.path || []).length);
-            const root = { kids: [] }, byId = new Map(), colors = [];
-            const node = (parent, id, o) => {
-                let n = byId.get(id);
-                if (!n) { n = { id, kids: [], lo: Infinity, hi: -1, ...o }; parent.kids.push(n); byId.set(id, n); }
-                return n;
-            };
-            cols.forEach((c, i) => {
-                let p = root;
-                const chain = [];
-                for (const g of c.path || []) { p = node(p, g.id, { label: g.label, count: Number(g.member_count) || 0 }); chain.push(p); }
-                const label = c.kind ? c.label : (c.file_name && c.file_name !== c.md5 ? c.file_name : String(c.md5 || c.id).slice(0, 8));
-                const leaf = node(p, c.id, { label, count: c.kind ? Number(c.member_count) || 0 : 1, col: i, expandable: !!c.expandable });
-                for (const n of [...chain, leaf]) { n.lo = Math.min(n.lo, i); n.hi = Math.max(n.hi, i); }
-            });
-            const paint = (n, h, l, depth) => {
-                n.h = h; n.l = l;
-                if (n.col != null) colors[n.col] = { h, l };
-                const m = n.kids.length;
-                n.kids.forEach((k, j) => paint(k, depth === 0 ? Math.round((j * 137.508 + 215) % 360) : (h + Math.round((j - (m - 1) / 2) * 12) + 360) % 360, depth === 0 ? 52 : 46 + (j % 3) * 6, depth + 1));
-            };
-            if (grouped) paint(root, 0, 52, 0);
-            return (d._tree = { grouped, root, colors, byId });
+            return d._tree || (d._tree = window.NwayColors.tree(d.columns));
         }
 
         // A line left of each column that starts a new group; the shallower the split, the heavier the line.
@@ -3173,7 +3156,7 @@
             cols.forEach((c, i) => { const p = up(c.id); if (p) s += `<path class="nway-dline" d="M${x(at.get(p))},${y(p)}V${y(c.id) - dy / 2}H${x(i)}V${y(c.id)}"/>`; });
             cols.forEach((c, i) => {
                 const n = Number(c.member_count) || 1, many = !!c.kind && n > 1, label = this._colLabel(c);
-                s += `<g class="nway-dnode${this.state.column === c.id ? ' on' : ''}" data-dnode="${escapeAttr(c.id)}" role="button" tabindex="0" aria-label="${escapeAttr(`Only rows of ${label}`)}" style="--h:${this._fileHue(i)}"><title>${escapeHtml(`${label}${many ? ` (${n} files)` : ''}\nclick: only rows of this column`)}</title><circle cx="${x(i)}" cy="${y(c.id)}" r="${many ? 6.5 : 5}"/>${many ? `<text class="nway-dbadge" x="${x(i) + 6}" y="${y(c.id) - 5}">&times;${n}</text>` : ''}</g>`;
+                s += `<g class="nway-dnode${this.state.column === c.id ? ' on' : ''}" data-dnode="${escapeAttr(c.id)}" role="button" tabindex="0" aria-label="${escapeAttr(`Only rows of ${label}`)}" style="${this._tree().grouped ? this._sqStyle(i) : `--h:${this._fileHue(i)}`}"><title>${escapeHtml(`${label}${many ? ` (${n} files)` : ''}\nclick: only rows of this column`)}</title><circle cx="${x(i)}" cy="${y(c.id)}" r="${many ? 6.5 : 5}"/>${many ? `<text class="nway-dbadge" x="${x(i) + 6}" y="${y(c.id) - 5}">&times;${n}</text>` : ''}</g>`;
             });
             return `<tr class="nway-dendro"><th colspan="${this._lead().length}" class="dim">Lineage order &middot; click a dot to filter</th><th colspan="${cols.length}"><svg width="${cols.length * SQ_COL}" height="${H}" aria-label="Lineage tree over the columns">${s}</svg></th></tr>`;
         }

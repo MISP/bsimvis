@@ -3841,7 +3841,8 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-dendro svg { display: block; overflow: visible; }
 .nway-dline { fill: none; stroke: var(--dim); stroke-width: 1.4; opacity: 0.7; }
 .nway-dnode { cursor: pointer; outline: none; }
-.nway-dnode circle { fill: hsl(var(--h, 195) 62% 52%); stroke: var(--bg); stroke-width: 1.5; }
+.nway-dnode circle { fill: hsl(var(--h, 195) 62% var(--l, 52%)); stroke: var(--bg); stroke-width: 1.5; }
+html.light-theme .nway-dnode circle { fill: hsl(var(--h, 195) 62% var(--ll, 44%)); }
 .nway-dnode.on circle, .nway-dnode:hover circle, .nway-dnode:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
 .nway-dbadge { fill: var(--success); font-size: 9px; font-weight: 600; }
 

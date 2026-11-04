@@ -2065,7 +2065,8 @@ def _lineage_order(doc, args):
     ids = [c["id"] for c in doc["columns"]]
     return {
         **doc,
-        "columns": [doc["columns"][o] for o in order],
+        # `base`: the column's index in the default order, so its hue and lane bits stay put
+        "columns": [{**doc["columns"][o], "base": o} for o in order],
         "rows": [{**row, "mask": moved[row["mask"]]} for row in doc["rows"]],
         "column_parents": {
             ids[o]: None if parent[o] is None else ids[parent[o]] for o in order

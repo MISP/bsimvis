@@ -6685,6 +6685,18 @@ def _check_lineage_twins(base, url, tree):
         and all(x["file_name"] for x in t["nodes"]),
         f"HTTP {r.status_code} {str(t.get('nodes'))[:300]}",
     )
+    _, op = _nway(
+        tab="all", scope="all", limit=1, columns="twins", col_open=json.dumps([twin])
+    )
+    check(
+        "nway lineage twins: node path = its /nway column's path (same colours)",
+        t
+        and op
+        and [x["path"] for x in t["nodes"]]
+        == [c.get("path") or [] for c in op["columns"]]
+        and t["nodes"][0]["path"],
+        f"{[x.get('path') for x in t.get('nodes', [])]}",
+    )
     check(
         "nway lineage twins: same edge counts as the file tree",
         t
@@ -6735,6 +6747,12 @@ def _check_nway_lineage_order(tree):
     check(
         "nway order=lineage: absent by default (no column_parents, no order)",
         plain and "column_parents" not in plain and "order" not in plain,
+    )
+    check(
+        "nway order=lineage: column base = its index in the default order",
+        plain
+        and body
+        and [plain["columns"][c["base"]]["id"] for c in body["columns"]] == cols,
     )
     _, tw = _nway(tab="all", scope="all", limit=1, columns="twins", order="lineage")
     check(

@@ -279,6 +279,7 @@ def group_nodes(groups, files, rows, edges_by_pair):
             "file_name": names.get(g["members"][0]),
             "functions": held[g["id"]],
             "members": list(g["members"]),
+            "path": g.get("path") or [],
         }
         for g in groups
     ]
@@ -437,6 +438,8 @@ def build(
             "id": c["id"],
             "file_name": c.get("file_name"),
             "members": c.get("members") or [c["id"]],
+            # the table's column groups: the client colours a node as its column (NwayColors.tree)
+            "path": c.get("path") or [],
             "functions": c["functions"],
             "root": i == r,
             "died_all": died_all.get(c["id"]),

@@ -48,6 +48,18 @@
         ['lane', 'Lane', 'Bundles of rows that appear in exactly the same files, biggest bundle first. With the merge on, a merged function is bundled by all the files it covers together. A set of files only one function has gets no lane and stays a plain row beside the lanes, unless it is a bundle minus a file or two (90% or more of its files), which joins it with a chip.'],
         ['prefix', 'Prefix', 'Group by the first word of the function name (attack_*, killer_*...). Functions with no prefix, or a prefix only one function has, carry on to the next level beside the prefix groups.'],
         ['tag', 'Tag', 'Nest under the tags of one axis (origin, capa, YARA...). Something with several tags on the axis is listed under each.'],
+        ['role', 'Role', 'Triage roles in reading order: orchestrators, entry points, logic, compute, leaf helpers, plumbing, then runtime and library. Origin comes from the library analyzer, the rest from each file\'s call graph. Click a row\'s role to override it.'],
+    ];
+    // Triage roles in reading order (nway_role_service.ROLES).
+    const ROLES = [
+        ['orchestrator', 'Orchestrator', 'Calls many functions of its file: read first for the program flow.'],
+        ['entry', 'Entry point', 'No caller in the call graph: thread, signal handler or pointer-table entry.'],
+        ['logic', 'Logic', 'Calls and is called: the body of each feature.'],
+        ['compute', 'Compute', 'Large and calls nothing: decoders, checksums, crypto.'],
+        ['leaf', 'Leaf helper', 'Small and calls nothing.'],
+        ['plumbing', 'Plumbing', 'Stubs, one-call wrappers and helpers called from everywhere.'],
+        ['runtime', 'Runtime', 'C runtime start-up and teardown.'],
+        ['library', 'Library', 'Recognised by the library analyzer (FunctionID, stdlib reference).'],
     ];
     // What the sidebar's reset puts back: the row grouping it exposes, not the lane fit / tier / fold tuning.
     const GROUP_RESET = ['group', 'group_axis', 'group_axis_b', 'group_tag_depth', 'group_lane_depth'];
@@ -171,6 +183,13 @@
                 this.render();
             });
             this.el.addEventListener('change', e => this._onChange(e));
+            this.el.addEventListener('toggle', e => {
+                const box = e.target;
+                if (!box.matches || !box.matches('.nway-role[open]')) return;
+                const at = box.querySelector('summary').getBoundingClientRect(), menu = box.querySelector('.nway-ddl-menu');
+                menu.style.top = `${Math.round(at.bottom + 4)}px`;
+                menu.style.left = `${Math.round(Math.min(at.left, window.innerWidth - 200))}px`;
+            }, true);
             this.el.addEventListener('input', e => this._onInput(e));
             this._cmp = new window.NwayCompare({
                 scope: () => ({
@@ -348,6 +367,9 @@
             qs.set('limit', STR_PAGE);
             qs.set('refs', '1');
             qs.delete('group_merge');
+            // strings group by lane and prefix only
+            const lv = (qs.get('group') || '').split(',').filter(l => l === 'lane' || l === 'prefix');
+            if (lv.length) qs.set('group', lv.join(',')); else qs.delete('group');
             if (!['name', 'span', 'weight', 'cover', 'leak', 'reach', 'score'].includes(this.state.sort_col)) qs.delete('sort_col');
             try {
                 const res = await fetch(`/api/bin_sim/nway/strings?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
@@ -2580,6 +2602,8 @@
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
+            } else if (g.kind === 'role') {
+                title = `<i class="nway-rdot r-${escapeAttr(g.role)}"></i><b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
             } else if (g.kind === 'fold') {
                 title = `<b>${Number(g.lanes)} small lanes</b> <span class="dim">${Number(this.state.group_lane_fold) > 1 ? `under ${Number(this.state.group_lane_fold)} rows each` : ''}</span>`;
             } else if (g.kind === 'same') {
@@ -2635,7 +2659,7 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${g && g.kind === 'same' ? 'nway-ver ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}${this._rolePill(row)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
@@ -2657,6 +2681,28 @@
             return ['f', 'in', 'out', 'k'].map(k => lines[k]
                 ? `<tr class="nway-xrow nway-xline k-${k}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}><td class="nway-xlcell">${lines[k]}</td><td colspan="${span - 1}"></td></tr>${this._subHtml(`${k}:${key}`)}`
                 : '').join('');
+        }
+
+        // The row's triage role; a click opens the override menu (fixed-positioned: the cell clips overflow).
+        _rolePill(row) {
+            if (!row.role) return '';
+            const [key, label, tip] = ROLES.find(x => x[0] === row.role) || [row.role, row.role, ''];
+            const user = row.role_src === 'user';
+            const fids = Object.values(row.files || row.cells || {}).filter(f => typeof f === 'string');
+            const items = ROLES.map(([k, l]) => `<button type="button" class="nway-role-it${k === key ? ' on' : ''}" data-role-set="${k}"><i class="nway-rdot r-${k}"></i>${escapeHtml(l)}</button>`).join('')
+                + (user ? '<button type="button" class="nway-role-it" data-role-set=""><i class="fa-solid fa-rotate-left"></i>Back to the rules</button>' : '');
+            const why = `${tip} ${user ? 'Set by an analyst.' : 'From the library tags and call-graph rules.'} Click to change.`;
+            return `<details class="nway-ddl nway-role" data-role-pick data-role-fids="${escapeAttr(JSON.stringify(fids))}"><summary class="nway-rpill r-${escapeAttr(key)}${user ? ' user' : ''}" title="${escapeAttr(why)}"><i class="nway-rdot r-${escapeAttr(key)}"></i>${escapeHtml(label)}${user ? '<i class="fa-solid fa-user-pen"></i>' : ''}</summary><div class="nway-ddl-menu">${items}</div></details>`;
+        }
+
+        async _setRole(t) {
+            const box = t.closest('[data-role-pick]');
+            const fids = JSON.parse(box.dataset.roleFids || '[]');
+            box.removeAttribute('open');
+            const res = await fetch('/api/bin_sim/nway/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ func_ids: fids, role: t.dataset.roleSet }) }).catch(() => null);
+            if (!res || !res.ok) return showToast('Could not change the role.', 'warning');
+            this._scrollSave();
+            this.load();
         }
 
         _fnKey(row) {
@@ -3154,8 +3200,11 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
+            const t = e.target.closest('[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
             if (!t) return;
+            if (t.dataset.roleSet !== undefined) return this._setRole(t);
+            // the summary's own toggle opens the role menu; the row must not open its call graph
+            if (t.dataset.rolePick !== undefined) return;
             if (t.dataset.ftg || t.dataset.fax || t.dataset.fmore) {
                 const [set, id] = t.dataset.ftg ? [this._ftOpen, t.dataset.ftg] : t.dataset.fax ? [this._faxOpen, t.dataset.fax] : [this._fmore, t.dataset.fmore];
                 if (!set.delete(id)) set.add(id);

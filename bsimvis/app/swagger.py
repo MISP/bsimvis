@@ -2811,6 +2811,28 @@ class BinSimNwayLaneNames(Resource):
         return post_nway_lane_names()
 
 
+@ns_bin_sim.route("/nway/role")
+class BinSimNwayRole(Resource):
+    @ns_bin_sim.doc(
+        body=ns_bin_sim.model(
+            "NwayRole",
+            {
+                "func_ids": fields.List(
+                    fields.String, required=True, description="Function ids"
+                ),
+                "role": fields.String(
+                    description="orchestrator, entry, logic, compute, leaf, plumbing, runtime or library; empty clears the override"
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Override the triage role of functions (a `role:<role>` user tag); the N-way rows take it over the call-graph rules."""
+        from bsimvis.app.routes.nway import post_nway_role
+
+        return post_nway_role()
+
+
 @ns_bin_sim.route("/nway/facets/explain")
 class BinSimNwayBlockExplain(Resource):
     @ns_bin_sim.doc(

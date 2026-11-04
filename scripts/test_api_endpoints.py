@@ -5652,6 +5652,100 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_roles():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-roles – N-way triage roles, role grouping, overrides", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – role checks skipped.", YELLOW))
+        return
+    order = [
+        "orchestrator",
+        "entry",
+        "logic",
+        "compute",
+        "leaf",
+        "plumbing",
+        "runtime",
+        "library",
+    ]
+    st, body = _nway(tab="all", columns="files", scope="all")
+    rows = (body or {}).get("items", [])
+    check(
+        "nway roles: every row carries a role from the rules",
+        st == 200
+        and rows
+        and all(r.get("role") in order and r.get("role_src") == "rules" for r in rows),
+        f"status {st}, roles {sorted({str(r.get('role')) for r in rows})}",
+    )
+    st, gb = _nway(
+        tab="all", columns="files", scope="all", group="role", group_open="all"
+    )
+    kinds = [g.get("kind") for g in (gb or {}).get("groups", {}).values()]
+    seen = [g["role"] for g in (gb or {}).get("groups", {}).values()]
+    check(
+        "nway group=role: role groups in reading order",
+        st == 200
+        and kinds
+        and set(kinds) == {"role"}
+        and seen == [k for k in order if k in seen],
+        f"status {st}, groups {seen}",
+    )
+    url = f"{BASE_URL}/api/bin_sim/nway/role"
+    bad = requests.post(url, json={"func_ids": [], "role": "leaf"}, timeout=30)
+    worse = requests.post(
+        url, json={"func_ids": ["x:func:y:1"], "role": "boss"}, timeout=30
+    )
+    check(
+        "nway role: missing functions and unknown roles are refused",
+        bad.status_code == 400 and worse.status_code == 400,
+        f"{bad.status_code} / {worse.status_code}",
+    )
+    if not rows:
+        return
+    row = rows[0]
+    fids = [
+        f for f in (row.get("files") or row["cells"]).values() if isinstance(f, str)
+    ]
+    key = frozenset(fids)
+    pick = "compute" if row["role"] != "compute" else "leaf"
+
+    def again():
+        _, b = _nway(tab="all", columns="files", scope="all")
+        return next(
+            (
+                r
+                for r in (b or {}).get("items", [])
+                if frozenset(
+                    v
+                    for v in (r.get("files") or r["cells"]).values()
+                    if isinstance(v, str)
+                )
+                == key
+            ),
+            {},
+        )
+
+    set_r = requests.post(url, json={"func_ids": fids, "role": pick}, timeout=30)
+    now = again()
+    check(
+        "nway role: an override wins over the rules and shows as the analyst's",
+        set_r.status_code == 200
+        and now.get("role") == pick
+        and now.get("role_src") == "user",
+        f"{set_r.status_code}, got {now.get('role')} / {now.get('role_src')}",
+    )
+    clear = requests.post(url, json={"func_ids": fids, "role": ""}, timeout=30)
+    back = again()
+    check(
+        "nway role: clearing the override gives the rules back",
+        clear.status_code == 200
+        and back.get("role") == row["role"]
+        and back.get("role_src") == "rules",
+        f"{clear.status_code}, got {back.get('role')} / {back.get('role_src')}",
+    )
+
+
 def test_nway_indicators():
     print(_color(f"\n{'='*60}", CYAN))
     print(
@@ -11219,6 +11313,7 @@ if __name__ == "__main__":
         test_nway_diff,
         test_nway_column_groups,
         test_nway_indicators,
+        test_nway_roles,
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
@@ -11254,6 +11349,7 @@ if __name__ == "__main__":
         "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_nway_column_groups": ["test_search_filters_and_sorting"],
         "test_nway_indicators": ["test_search_filters_and_sorting"],
+        "test_nway_roles": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],

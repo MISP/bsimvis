@@ -3736,3 +3736,22 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-subfn .entity-function { width: auto; min-width: 0; }
 .nway-subfn .entity-name, .nway-schip.fn .entity-name { flex: 0 1 auto !important; }
 .nway-subfn .entity-function, .nway-schip.fn .entity-function { flex: 0 1 auto; }
+
+/* N-way triage roles: one hue per role, from the theme tokens */
+.r-orchestrator { --rc: var(--token-warning); }
+.r-entry { --rc: var(--token-instruction); }
+.r-logic { --rc: var(--accent); }
+.r-compute { --rc: var(--note-accent); }
+.r-leaf { --rc: var(--success); }
+.r-plumbing { --rc: var(--subtle); }
+.r-runtime { --rc: var(--border); }
+.r-library { --rc: var(--info); }
+.nway-rdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--rc); margin-right: 5px; flex: none; }
+.nway-role { vertical-align: middle; }
+.nway-rpill { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px; border: 1px solid color-mix(in srgb, var(--rc) 55%, transparent); background: color-mix(in srgb, var(--rc) 12%, transparent); color: var(--text); gap: 4px; }
+.nway-rpill.user { border-width: 2px; }
+.nway-role > .nway-ddl-menu { position: fixed; top: 0; left: 0; min-width: 180px; }
+.nway-role-it { all: unset; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: var(--text); }
+.nway-role-it:hover, .nway-role-it:focus-visible, .nway-role-it.on { background: var(--hover); }
+.nway-role-it .fa-solid { width: 12px; margin-right: 5px; color: var(--dim); }
+

@@ -43,9 +43,10 @@ from bsimvis.app.services.nway_diff_service import (
     _decode,
 )
 from bsimvis.app.services.nway_match import PairEdges, concat_edges
+from bsimvis.app.services import nway_role_service
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
-MODES = ("tag", "lane", "prefix")
+MODES = ("tag", "lane", "prefix", "role")
 PREFIX_MIN = 2  # functions that must share a prefix before it makes a group
 LANE_MIN = 2  # units that must share a set of files before it makes a lane
 LANE_FIT = (
@@ -620,8 +621,32 @@ def merge_units(rows, doc, r, evidence, min_link):
     return units, note
 
 
+def role_groups(units, n):
+    """One group per triage role, in reading order; units without a role go on to the next level."""
+    by = defaultdict(list)
+    loose = []
+    for u in units:
+        role = nway_role_service.unit_role(u)
+        (by[role] if role else loose).append(u)
+    out = []
+    for i, (key, label, tip) in enumerate(nway_role_service.ROLES):
+        if not by[key]:
+            continue
+        g = _meta(by[key], n)
+        g.update(id=f"role:{key}", kind="role", role=key, label=label, tip=tip)
+        g["path"] = [g["id"]]
+        # reading order, ahead of any plain row beside the groups
+        g["_rank"] = (len(nway_role_service.ROLES) - i + 10**9, 0, 0)
+        out.append((g, [(u, {}) for u in by[key]]))
+    if loose:
+        out.append(({"id": "", "path": [], "headless": True}, [(u, {}) for u in loose]))
+    return out
+
+
 def _level(mode, units, ctx):
     """The groups of one level over `units`: [(meta, [(unit, extra)])]."""
+    if mode == "role":
+        return role_groups(units, ctx["n"])
     if mode == "prefix":
         return prefix_groups(units, ctx["n"], ctx["sort"], ctx["prefix_min"])
     if mode == "lane":
@@ -777,7 +802,7 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
         nodes.append(
             {
                 "container": True,
-                "rank": _rank(g, ctx["sort"]),
+                "rank": g.pop("_rank", None) or _rank(g, ctx["sort"]),
                 "id": g["id"],
                 "pairs": pairs,
             }
@@ -1497,6 +1522,17 @@ def demo():
     assert best_name(
         [mem("a", None, 9), mem("b", None, 1)], {"nameb": {"user_name": "b"}}
     ) == ("a", None)
+    # role: groups in reading order whatever their size; a row without a role carries on
+    rr = [
+        {**row(1, 9), "role": "library"},
+        {**row(1, 1), "role": "orchestrator"},
+        row(2, 3),
+    ]
+    got = role_groups(rr, 2)
+    assert [g["id"] for g, _ in got] == ["role:orchestrator", "role:library", ""], got
+    doc = {"rows": rr, "fmeta": {}, "columns": [{"id": "A"}, {"id": "B"}], "key": None}
+    ent, gs, _ = group_rows(rr, doc, None, "role", {})
+    assert list(gs) == ["role:orchestrator", "role:library"], gs
     # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")

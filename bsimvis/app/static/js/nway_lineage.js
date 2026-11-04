@@ -1,7 +1,8 @@
 /**
  * Lineage chart of the files of an N-way set (GET /api/bin_sim/nway/lineage).
  *
- * NwayLineage.mount(container, opts) -> { setDoc(doc), destroy() }.
+ * NwayLineage.mount(container, opts) -> { setDoc(doc), setLens(lens), destroy() }.
+ * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
  * child" (orange); a strip on its left says what was born here (blue, hatched =
@@ -15,6 +16,13 @@
  * with the zoom level and only for what is on screen). Subtrees can be collapsed
  * into one aggregate node. Everything from a sample (file names, md5s) is set
  * with textContent / attributes, never innerHTML.
+ *
+ * With the doc's compact row list (`rows`, `regions`) the other lenses paint the
+ * bodies and ribbons by region, presence band, lane or role instead (Deltas is
+ * the view above). Rows failing the page filters (`rows.match`) sit faint at the
+ * bottom of each node, so filters never move the tree. `track` (fn:<fid> or
+ * <lens>:<key>) lights the nodes holding one row or group. A clicked node opens
+ * the dock: its rows by lens, its diff against the parent, a function preview.
  */
 (function () {
     const NS = 'http://www.w3.org/2000/svg';
@@ -24,12 +32,23 @@
     const DETAIL_K = 0.3, LABEL_K = 0.55, HATCH_K = 1.5;
     const V = { born: 'var(--lin-born)', died: 'var(--lin-died)', shared: 'var(--lin-grey)', fork: 'var(--lin-grey-d)', slate: 'var(--lin-slate)', slateHi: 'var(--lin-slate-hi)', reuse: 'var(--lin-reuse)' };
     const CAVEAT = 'reuse, independent birth or matcher miss';
+    // same as nway_panel.js LENSES (key, label, group preset) and its tab icons
+    const LENSES = [['modules', 'Modules', 'region,role', 'fa-diagram-project'], ['core', 'Core', 'presence,region', 'fa-bullseye'], ['deltas', 'Deltas', 'delta,region', 'fa-code-compare'], ['lanes', 'Lanes', 'lane,region', 'fa-layer-group'], ['triage', 'Triage', 'role,region', 'fa-list-ol']];
+    // same as nway_panel.js ROLES; colours as dashboard.css .r-*
+    const ROLES = [['orchestrator', 'Orchestrator', 'var(--token-warning)'], ['entry', 'Entry point', 'var(--token-instruction)'], ['logic', 'Logic', 'var(--accent)'], ['compute', 'Compute', 'var(--note-accent)'], ['leaf', 'Leaf helper', 'var(--success)'], ['plumbing', 'Plumbing', 'var(--subtle)'], ['runtime', 'Runtime', 'var(--border)'], ['library', 'Library', 'var(--info)']];
+    const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];
+    // nway_region_service.SPECIAL
+    const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
+    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5;
+    // same as nway_panel.js _fileHue: a node keeps the hue of its column in the table
+    const hueOf = i => Math.round((i * 137.508 + 215) % 360);
+    const hsl = h => `hsl(${h} 62% var(--lin-hl))`;
     const fmt = n => Number(n).toLocaleString();
     let uid = 0;
 
     const CSS = `
-.lin-root,.lin-vars{--lin-slate:#3d4a5f;--lin-slate-hi:#52617a;--lin-edge:rgba(255,255,255,.16);--lin-grey:#8b95a5;--lin-grey-d:#5d6a7e;--lin-born:#3d9be0;--lin-died:#f08a3c;--lin-reuse:#8b6fd6;--lin-card:var(--card-bg,#1e1e1e);--lin-line:var(--border,#3e3d32);--lin-halo:var(--bg,#121212);display:flex;flex-direction:column;height:100%;min-height:0;font:12.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--text,#f8f8f2);color-scheme:dark}
-html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-slate-hi:#66758f;--lin-edge:rgba(0,0,0,.2);--lin-grey:#8892a3;--lin-grey-d:#5f6b7f;--lin-born:#0072B2;--lin-died:#D55E00;--lin-reuse:#6a4fbf;color-scheme:light}
+.lin-root,.lin-vars{--lin-hl:58%;--lin-slate:#3d4a5f;--lin-slate-hi:#52617a;--lin-edge:rgba(255,255,255,.16);--lin-grey:#8b95a5;--lin-grey-d:#5d6a7e;--lin-born:#3d9be0;--lin-died:#f08a3c;--lin-reuse:#8b6fd6;--lin-card:var(--card-bg,#1e1e1e);--lin-line:var(--border,#3e3d32);--lin-halo:var(--bg,#121212);display:flex;flex-direction:column;height:100%;min-height:0;font:12.5px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-variant-numeric:tabular-nums;color:var(--text,#f8f8f2);color-scheme:dark}
+html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-slate-hi:#66758f;--lin-edge:rgba(0,0,0,.2);--lin-grey:#8892a3;--lin-grey-d:#5f6b7f;--lin-born:#0072B2;--lin-died:#D55E00;--lin-reuse:#6a4fbf;--lin-hl:42%;color-scheme:light}
 .lin-tb{display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid var(--lin-line);background:var(--lin-card)}
 .lin-tb select,.lin-tb input{background:var(--lin-card);color:inherit;border:1px solid var(--lin-line);border-radius:8px;padding:4px 8px;font:inherit}
 .lin-tb input{width:150px}
@@ -49,7 +68,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-mini svg{width:100%;height:100%;display:block;cursor:pointer;touch-action:none}
 .lin-note{position:absolute;left:12px;bottom:12px;max-width:60%;padding:4px 10px;border:1px solid var(--lin-line);border-radius:8px;background:var(--lin-card);font-size:12px;opacity:.95}
 .lin-note button{background:none;border:0;color:var(--accent,#66d9ef);cursor:pointer;font:inherit;text-decoration:underline}
-.lin-drawer{position:absolute;top:0;right:0;bottom:0;width:290px;max-width:85%;transform:translateX(102%);transition:transform .2s ease;background:var(--lin-card);border-left:1px solid var(--lin-line);padding:12px 14px;overflow:auto;z-index:5;box-shadow:-6px 0 18px rgba(0,0,0,.25)}
+.lin-drawer{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85%;transform:translateX(102%);transition:transform .2s ease;background:var(--lin-card);border-left:1px solid var(--lin-line);padding:12px 14px;overflow:auto;z-index:5;box-shadow:-6px 0 18px rgba(0,0,0,.25)}
 .lin-drawer.open{transform:none}
 .lin-drawer h4{margin:0 0 8px;font-size:13px;word-break:break-all;padding-right:22px}
 .lin-x{position:absolute;top:6px;right:8px;background:none;border:0;color:inherit;font-size:18px;cursor:pointer}
@@ -63,6 +82,35 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-halo{paint-order:stroke;stroke:var(--lin-halo);stroke-width:3.5px;stroke-linejoin:round}
 .lin-canvas ::-webkit-scrollbar{width:10px;height:10px}
 .lin-drawer{scrollbar-width:thin;scrollbar-color:var(--lin-grey-d) transparent}
+.lin-filters{gap:8px 12px}
+.lin-filters .nway-search{flex:1 1 240px;max-width:420px}
+.lin-filters .nway-search input{width:100%;border:0;padding:0}
+.lin-seg button[aria-pressed=true]{background:var(--hover,#2d2d2d);color:var(--accent,#66d9ef)}
+.lin-n{opacity:.65;margin-left:4px;font-size:11px}
+.lin-filters .nway-lenses{margin:0;border:0}
+button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:inherit}
+.lin-chip.on{border-color:var(--accent,#66d9ef);color:var(--accent,#66d9ef)}
+.lin-chip .lin-x2{background:none;border:0;color:inherit;cursor:pointer;padding:0 2px;font-size:14px;line-height:1}
+.lin-tabs{display:flex;gap:2px;border-bottom:1px solid var(--lin-line);margin:10px 0 6px}
+.lin-tabs button{background:none;border:0;border-bottom:2px solid transparent;color:inherit;padding:4px 8px;cursor:pointer;font:inherit;opacity:.75}
+.lin-tabs button[aria-selected=true]{border-bottom-color:var(--accent,#66d9ef);color:var(--accent,#66d9ef);opacity:1}
+.lin-gh{display:flex;align-items:center;gap:6px;margin:8px 0 2px;font-weight:600}
+.lin-gh .lin-dim{font-weight:400}
+.lin-ic{background:none;border:0;color:inherit;cursor:pointer;opacity:.55;padding:0 4px;margin-left:auto}
+.lin-ic:hover,.lin-ic.on{opacity:1;color:var(--accent,#66d9ef)}
+.lin-row{display:grid;grid-template-columns:minmax(0,1fr) auto 96px;gap:6px;align-items:center;width:100%;background:none;border:0;border-radius:6px;color:inherit;text-align:left;padding:2px 4px;cursor:pointer;font:inherit}
+.lin-row:hover{background:var(--hover,#2d2d2d)}
+.lin-row.on{outline:1px dashed var(--accent,#66d9ef)}
+.lin-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono,monospace);font-size:12px}
+.lin-nm .fa-solid{margin-right:5px;font-size:10px;opacity:.7}
+.lin-pres{display:flex;gap:1px;height:9px;overflow:hidden}
+.lin-pres i{flex:1 1 0;min-width:1px;max-width:9px;border-radius:1px;box-shadow:inset 0 0 0 1px var(--lin-line)}
+.lin-more{background:none;border:0;color:var(--accent,#66d9ef);cursor:pointer;font:inherit;padding:2px 4px}
+.lin-names{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 6px}
+.lin-names button{background:none;border:1px solid var(--lin-line);border-radius:6px;color:inherit;cursor:pointer;font:11.5px var(--font-mono,monospace);padding:1px 6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lin-plus{color:var(--lin-born);font-weight:600}
+.lin-minus{color:var(--lin-died);font-weight:600}
+.lin-code{max-height:55vh;overflow:auto;margin-top:6px}
 .lin-root button:focus-visible,.lin-root select:focus-visible,.lin-root input:focus-visible{outline:2px solid var(--accent,#66d9ef);outline-offset:2px}
 `;
 
@@ -122,6 +170,167 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         D = Math.max(D, 1);
         for (const [id, d] of depth) if (d === D && (kids.get(id) || []).length) out.add(id);
         return out;
+    }
+
+    // ---------------------------------------------------------------- rows (doc.rows, column-oriented)
+    // Per node row lists and a row x node bitset from the hex masks (bit i = nodes[i] holds the row).
+    function rowModel(doc, M) {
+        const R = doc.rows;
+        if (!R || !R.mask) return null;
+        const N = doc.nodes.length, B = Math.ceil(N / 8) || 1, n = R.n ?? R.mask.length;
+        const bits = new Uint8Array(n * B), pop = new Uint16Array(n), held = doc.nodes.map(() => []);
+        // lowercase, no leading zeros: the form the table's lanes:<hex> track key uses
+        const mask = Array.from(R.mask, m => String(m || '0').toLowerCase().replace(/^0+(?=.)/, ''));
+        for (let r = 0; r < n; r++) {
+            const h = mask[r] || '';
+            for (let j = 0; j < h.length; j++) {
+                const v = parseInt(h[h.length - 1 - j], 16) || 0;
+                for (let b = 0; b < 4; b++) {
+                    const i = j * 4 + b;
+                    if (!((v >> b) & 1) || i >= N) continue;
+                    bits[r * B + (i >> 3)] |= 1 << (i & 7);
+                    held[i].push(r);
+                    pop[r]++;
+                }
+            }
+        }
+        const has = (r, i) => (bits[r * B + (i >> 3)] >> (i & 7)) & 1;
+        // where a row is born: the first node in DFS order that holds it while its parent does not
+        const bornIn = new Int32Array(n).fill(-1);
+        const walk = id => {
+            const i = M.byId.get(id).idx, e = M.inE.get(id), p = e ? M.byId.get(e.parent).idx : -1;
+            for (const r of held[i]) if (bornIn[r] < 0 && (p < 0 || !has(r, p))) bornIn[r] = i;
+            for (const c of M.kids.get(id) || []) walk(c);
+        };
+        walk(doc.root);
+        const col = k => R[k] || [];
+        return { n, N, pop, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), match: r => !R.match || !!R.match[r] };
+    }
+
+    const presenceBand = (c, N) => (c >= N ? 'every' : c >= 0.75 * N ? 'most' : c > 2 ? 'some' : 'few');
+
+    // The groups of one lens: cats in display order, of(r) = the row's group key, raw(r) = the key `track` uses.
+    function lensCats(doc, R, lens) {
+        const cat = (key, label, color) => ({ key: String(key), label, color });
+        const done = (cats, of, raw = of) => ({ lens, cats, of, raw });
+        if (lens === 'core') return done(BANDS.map(([k, l, c]) => cat(k, l, c)), r => presenceBand(R.pop[r], R.N));
+        if (lens === 'triage') {
+            const known = new Set(ROLES.map(x => x[0]));
+            return done([...ROLES.map(([k, l, c]) => cat(k, l, c)), cat('', 'No role', GREY)], r => (known.has(R.role[r]) ? R.role[r] : ''));
+        }
+        if (lens === 'modules') {
+            const regs = doc.regions || {}, keys = Object.keys(regs), seen = new Set(keys), pre = new Map();
+            for (let r = 0; r < R.n; r++) {
+                const g = R.region[r] == null ? '' : String(R.region[r]);
+                if (!seen.has(g)) { seen.add(g); keys.push(g); }
+                // the server leaves call-graph regions unnamed: label them by their commonest name prefix
+                const m = /^([A-Za-z][A-Za-z0-9]*)_/.exec(R.name[r] || '');
+                if (m && !/^(FUN|sub|thunk|LAB|DAT)$/.test(m[1])) { const c = pre.get(g) || pre.set(g, new Map()).get(g); c.set(m[1], (c.get(m[1]) || 0) + 1); }
+            }
+            const prefix = k => { const c = pre.get(k); if (!c) return ''; const [p, n] = [...c.entries()].sort((a, b) => b[1] - a[1])[0]; return n > 1 ? `${p}_*` : ''; };
+            const grey = k => k === '' || k in SPECIAL || ['runtime', 'library'].includes((regs[k] || {}).kind);
+            return done(keys.map((k, i) => cat(k, (regs[k] || {}).label || SPECIAL[k] || (k ? prefix(k) || `Region ${i + 1}` : 'No region'), grey(k) ? GREY : hsl(hueOf(i)))),
+                r => (R.region[r] == null ? '' : String(R.region[r])));
+        }
+        if (lens === 'lanes') {
+            // one lane per exact file set; the biggest LANE_MAX get a colour, the rest share one
+            const cnt = new Map();
+            for (let r = 0; r < R.n; r++) cnt.set(R.mask[r], (cnt.get(R.mask[r]) || 0) + 1);
+            const top = [...cnt.entries()].sort((a, b) => b[1] - a[1]).slice(0, LANE_MAX).map(e => e[0]);
+            const first = new Map();
+            for (let r = 0; r < R.n; r++) if (!first.has(R.mask[r])) first.set(R.mask[r], r);
+            const label = m => {
+                const r = first.get(m), files = doc.nodes.filter((_, i) => R.has(r, i)).map(x => x.file_name || x.id);
+                return `${files.length} file${files.length === 1 ? '' : 's'}: ${files.slice(0, 2).join(', ')}${files.length > 2 ? ` +${files.length - 2}` : ''}`;
+            };
+            const keep = new Set(top);
+            return done([...top.map((m, i) => cat(m, label(m), hsl(hueOf(i * 3 + 1)))), ...(cnt.size > top.length ? [cat('other', `${cnt.size - top.length} smaller lanes`, GREY)] : [])],
+                r => (keep.has(R.mask[r]) ? String(R.mask[r]) : 'other'), r => String(R.mask[r]));
+        }
+        // deltas: the node a row is born in
+        return done(doc.nodes.map((x, i) => cat(x.id, `${x.root ? 'In the root, ' : 'Born in '}${x.file_name || x.id}`, hsl(hueOf(i)))), r => (R.bornIn[r] < 0 ? '' : String(doc.nodes[R.bornIn[r]].id)));
+    }
+
+    // Rows held by each visible node; an aggregate holds what any of its files holds.
+    function attachRows(M, R) {
+        for (const v of M.vis) {
+            if (!v.agg) { const i = v.idx; v.rows = R.held[i]; v.has = r => R.has(r, i) === 1; continue; }
+            const mark = new Uint8Array(R.n);
+            for (const m of v.members) for (const r of R.held[M.byId.get(m).idx]) mark[r] = 1;
+            v.rows = [];
+            mark.forEach((x, r) => { if (x) v.rows.push(r); });
+            v.has = r => mark[r] === 1;
+        }
+    }
+
+    // Node bodies cut by the lens (matching rows, then the rest faint), ribbons per group from parent to child.
+    function lensPaint(M, L, R, C) {
+        const pos = new Map(C.cats.map((c, i) => [c.key, i])), K = C.cats.length;
+        const segs = new Map(), links = [];
+        for (const v of L.vis) {
+            const cnt = new Array(K).fill(0);
+            let faint = 0;
+            for (const r of v.rows) if (R.match(r)) cnt[pos.get(C.of(r))]++; else faint++;
+            const unit = v.h / Math.max(1, v.rows.length), m = new Map();
+            let y = v.y0;
+            cnt.forEach((c, i) => { if (c) { m.set(C.cats[i].key, { cat: C.cats[i], y0: y, h: c * unit, cnt: c }); y += c * unit; } });
+            segs.set(v.id, { m, unit, faint: { y0: y, h: faint * unit, cnt: faint }, shown: v.rows.length - faint });
+        }
+        const kidsOf = new Map();
+        for (const v of L.vis) { const p = L.parentOf.get(v.id); if (p) (kidsOf.get(p) || kidsOf.set(p, []).get(p)).push(v); }
+        for (const [pid, kids] of kidsOf) {
+            const p = L.fileOf.get(pid), sp = segs.get(pid);
+            const share = kids.map(c => { const s = new Array(K).fill(0); for (const r of c.rows) if (R.match(r) && p.has(r)) s[pos.get(C.of(r))]++; return s; });
+            C.cats.forEach((cat, k) => {
+                const seg = sp.m.get(cat.key), tot = share.reduce((a, s) => a + s[k], 0);
+                if (!seg || !tot) return;
+                // the parent side squeezes when its children together keep more than it shows
+                const sc = Math.min(1, seg.cnt / tot);
+                let off = seg.y0;
+                kids.forEach((c, i) => {
+                    const v = share[i][k];
+                    if (!v) return;
+                    const sc2 = segs.get(c.id), cy = sc2.m.get(cat.key).y0, hc = v * sc2.unit, hp = v * sp.unit * sc;
+                    links.push({ cat, value: v, source: p, target: c, edge: M.inE.get(c.agg ? c.top : c.id), d: ribbon(p.x1, off, hp, c.x0, cy, hc), bb: [p.x1, Math.min(off, cy), c.x0, Math.max(off + hp, cy + hc)], fade: kids.length > FAN_FADE });
+                    off += hp;
+                });
+            });
+        }
+        return { segs, links };
+    }
+    function ribbon(x0, y0, h0, x1, y1, h1) {
+        const m = (x0 + x1) / 2;
+        return `M${x0},${y0}C${m},${y0} ${m},${y1} ${x1},${y1}L${x1},${y1 + h1}C${m},${y1 + h1} ${m},${y0 + h0} ${x0},${y0 + h0}Z`;
+    }
+
+    // Rows a `track` value names: fn:<fid> (any fid of the row) or <lens>:<key>. null when it names nothing.
+    function trackRows(R, catsOf, track) {
+        if (!R || !track) return null;
+        const mark = new Uint8Array(R.n);
+        const i = track.indexOf(':'), kind = track.slice(0, i), key = track.slice(i + 1);
+        if (kind === 'fn') {
+            for (let r = 0; r < R.n; r++) if (R.fid[r] === key || (R.fids && (R.fids[r] || []).includes(key))) mark[r] = 1;
+        } else {
+            if (!LENSES.some(l => l[0] === kind)) return null;
+            const C = catsOf(kind);
+            for (let r = 0; r < R.n; r++) if (C.raw(r) === key) mark[r] = 1;
+        }
+        return mark;
+    }
+
+    // Per visible node: tracked rows it holds (tk), born here (not in the parent), lost from the parent.
+    function trackInfo(L, R, mark) {
+        const info = new Map();
+        let holders = 0;
+        for (const v of L.vis) {
+            const p = L.fileOf.get(L.parentOf.get(v.id));
+            let tk = 0, born = 0, lost = 0;
+            for (const r of v.rows) if (mark[r] && R.match(r)) { tk++; if (p && !p.has(r)) born++; }
+            if (p) for (const r of p.rows) if (mark[r] && R.match(r) && !v.has(r)) lost++;
+            if (tk) holders++;
+            info.set(v.id, { tk, born, lost });
+        }
+        return { info, holders };
     }
 
     // ---------------------------------------------------------------- layout
@@ -274,7 +483,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             }
         }
         const W = x0Of(maxd) + NODE_W + 90, H = filesBottom + 30;
-        return { vis, fileOf, links, segs, origs, arcs, classes, stripes, W, H, ky, top };
+        return { vis, fileOf, parentOf, links, segs, origs, arcs, classes, stripes, W, H, ky, top };
     }
 
     function arcPath(A) {
@@ -363,12 +572,15 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
     }
 
     // ---------------------------------------------------------------- mount
+    function ensureCss() {
+        if (document.getElementById('nway-lineage-css')) return;
+        const css = el('style', { id: 'nway-lineage-css' });
+        css.textContent = CSS;
+        document.head.append(css);
+    }
+
     function mount(container, opts = {}) {
-        if (!document.getElementById('nway-lineage-css')) {
-            const css = el('style', { id: 'nway-lineage-css' });
-            css.textContent = CSS;
-            document.head.append(css);
-        }
+        ensureCss();
         uid++;
         const id = uid;
         const root = el('div', { class: 'lin-root' });
@@ -380,11 +592,12 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         root.append(tb, canvas);
         container.replaceChildren(root);
 
-        const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: true, sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false };
+        const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: true, sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
+            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set() };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
         const world = s.append('g');
-        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none');
+        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gTrk = world.append('g').style('pointer-events', 'none'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none');
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
         s.call(zoom);
         const tip = d3.select(document.body).append('div').attr('class', 'lin-vars lin-tip');
@@ -406,8 +619,8 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         zbtn('Selection', 'Zoom to the selected or last hovered file, edge or reuse arc', () => zoomToSel());
         tb.append(search, hits, btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
             btn('Expand all', 'Show every file', () => { st.collapsed = new Set(); rebuild(); }), reuseBtn, zgrp);
-        const legendBox = el('span', { style: 'display:contents' });
-        tb.append(legendBox);
+        const trackBox = el('span', { style: 'display:contents' }), legendBox = el('span', { style: 'display:contents' });
+        tb.append(trackBox, legendBox);
         const deepAll = () => {
             const out = new Set();
             for (const n of st.M.vis) if (!n.agg && n.d >= 2 && (st.M.kids.get(n.id) || []).length && !out.has(st.M.rep.get(n.id))) out.add(n.id);
@@ -433,22 +646,41 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         const name = id => st.names.get(id) || id;
         const names = ids => ids.slice(0, 8).map(name).join(', ') + (ids.length > 8 ? ` +${ids.length - 8} more` : '');
 
-        const openDrawer = pick => { drawer.classList.add('open'); detail(drawer, pick, name, () => drawer.classList.remove('open')); };
+        const closeDock = () => drawer.classList.remove('open');
+        const openDrawer = pick => {
+            drawer.classList.add('open');
+            if (pick.node && st.R) dock(pick.node);
+            else detail(drawer, pick, name, closeDock);
+        };
+        const lensOn = () => !!st.R && st.lens !== 'deltas' && LENSES.some(l => l[0] === st.lens);
+        const cats = lens => st.C.get(lens) || st.C.set(lens, lensCats(st.doc, st.R, lens)).get(lens);
+        const twinsOf = n => (!n.agg && (n.members || []).length > 1 ? n.members : null);
+        const md5Of = id => String(id).split(':').pop();
+        const nodeOp = n => (st.T && !(st.T.info.get(n.id) || {}).tk ? 0.3 : 1);
+        const ribOp = l => (l.fade ? 0.28 : 1) * (st.T && !(st.T.info.get(l.target.id) || {}).tk ? 0.3 : 1);
 
         // ---- build ----
         function rebuild() {
             const M = st.M = buildModel(st.doc, st.collapsed);
             const L = st.L = layout(st.doc, M);
             bundle(L.links);
+            if (st.doc.rows && !st.R) st.R = rowModel(st.doc, M);
+            if (st.R) attachRows(M, st.R);
+            st.P = lensOn() ? lensPaint(M, L, st.R, cats(st.lens)) : null;
             st.names = new Map(st.doc.nodes.map(n => [n.id, n.file_name || n.id]));
             for (const n of L.vis) if (n.agg) st.names.set(n.id, n.file_name);
             warnOverlap(L);
             drawStatic();
             drawMini();
             note();
-            legend();
+            applyTrack(false);
             if (!st.hasView) fit(false);
             schedule(true);
+            // a node pick survives a relayout when the node is still drawn
+            const keep = st.sel && st.sel.node && L.fileOf.get(st.sel.node.id);
+            if (keep) { st.sel = { node: keep }; if (drawer.classList.contains('open')) openDrawer(st.sel); }
+            else if (st.sel && st.sel.node) { st.sel = null; closeDock(); }
+            applySel();
         }
         function note() {
             noteBox.replaceChildren();
@@ -461,6 +693,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         function legend() {
             const doc = st.doc;
             legendBox.replaceChildren();
+            if (st.P) { lensLegend(); return; }
             const chip = (color, text, mode) => {
                 const c = el('span', { class: 'lin-chip' }), sw = el('span', { class: 'lin-sw' });
                 sw.style.background = mode === 'hatch' ? `repeating-linear-gradient(45deg,${color} 0 2px,transparent 2px 4px)` : mode === 'dash' ? `repeating-linear-gradient(90deg,${color} 0 4px,transparent 4px 7px)` : color;
@@ -478,6 +711,73 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             if (f) chip(V.reuse, `+${f.classes} more classes, ${fmt(f.count)} fn`);
         }
 
+        // the active lens's groups in lens order; a click tracks one through the tree
+        function lensLegend() {
+            const C = cats(st.lens), R = st.R, tot = new Map(C.cats.map(c => [c.key, 0]));
+            let faint = 0;
+            for (let r = 0; r < R.n; r++) if (R.match(r)) tot.set(C.of(r), tot.get(C.of(r)) + 1); else faint++;
+            const list = C.cats.filter(c => tot.get(c.key));
+            for (const c of list.slice(0, LEGEND_MAX)) {
+                const tk = `${st.lens}:${c.key}`, b = el('button', { type: 'button', class: `lin-chip${st.track === tk ? ' on' : ''}`, title: 'Track this group across the tree', 'aria-pressed': String(st.track === tk) });
+                const sw = el('span', { class: 'lin-sw' });
+                sw.style.background = c.color;
+                b.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(tot.get(c.key))));
+                b.addEventListener('click', () => setTrack(st.track === tk ? '' : tk));
+                legendBox.append(b);
+            }
+            if (list.length > LEGEND_MAX) legendBox.append(el('span', { class: 'lin-chip lin-dim' }, `+${list.length - LEGEND_MAX} more groups`));
+            if (faint) {
+                const c = el('span', { class: 'lin-chip' }), sw = el('span', { class: 'lin-sw' });
+                sw.style.cssText = 'background:var(--lin-grey);opacity:.35';
+                c.append(sw, el('span', {}, `filtered out ${fmt(faint)}`));
+                legendBox.append(c);
+            }
+        }
+
+        // ---- tracking ----
+        function setTrack(t) {
+            st.track = t;
+            applyTrack(true);
+            if (opts.onTrack) opts.onTrack(t);
+        }
+        function trackLabel() {
+            const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
+            if (kind === 'fn') {
+                const r = st.R.fid.indexOf(key);
+                return r >= 0 ? st.R.name[r] || key : key;
+            }
+            const lens = LENSES.find(l => l[0] === kind), c = lens && cats(kind).cats.find(x => x.key === key);
+            return `${lens ? lens[1] : kind}: ${c ? c.label : key}`;
+        }
+        // fade the nodes without the tracked rows, outline the holders, +born / -lost badges
+        function applyTrack(fromUser) {
+            const mark = st.R && st.track ? trackRows(st.R, cats, st.track) : null;
+            st.T = mark ? trackInfo(st.L, st.R, mark) : null;
+            gTrk.selectAll('*').remove();
+            trackBox.replaceChildren();
+            if (st.T) {
+                for (const n of st.L.vis) {
+                    const t = st.T.info.get(n.id);
+                    if (!t.tk) continue;
+                    gTrk.append('rect').attr('x', n.x0 - 3).attr('y', n.y0 - 3).attr('width', NODE_W + 6).attr('height', n.h + 6).attr('rx', 7).attr('fill', 'none')
+                        .style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 1.6).attr('stroke-dasharray', '4 2').attr('vector-effect', 'non-scaling-stroke');
+                    let y = n.y0 + 10;
+                    if (t.born) { gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x1 + 4).attr('y', y).attr('font-size', 11).style('fill', V.born).text(`+${fmt(t.born)} born`); y += 12; }
+                    if (t.lost) gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x1 + 4).attr('y', y).attr('font-size', 11).style('fill', V.died).text(`\u2212${fmt(t.lost)} lost`);
+                }
+                const c = el('span', { class: 'lin-chip on' }), x = el('button', { type: 'button', class: 'lin-x2', 'aria-label': 'Stop tracking', title: 'Stop tracking' }, '\u00d7');
+                x.addEventListener('click', () => setTrack(''));
+                c.append(el('i', { class: 'fa-solid fa-crosshairs' }), el('span', {}, 'Tracking'), el('b', {}, trackLabel()), el('span', { class: 'lin-dim' }, `\u00b7 in ${st.T.holders}/${st.L.vis.length} nodes`), x);
+                trackBox.append(c);
+            } else if (st.R) trackBox.append(el('span', { class: 'lin-dim' }, 'Click a legend chip or a row in the dock to track it.'));
+            if (nodeBase) { nodeBase.style('opacity', nodeOp); ribs.style('opacity', ribOp); }
+            legend();
+            if (fromUser) {
+                schedule(true);
+                if (st.sel && st.sel.node && drawer.classList.contains('open')) openDrawer(st.sel);
+            }
+        }
+
         let ribs, arcSel, nodeBase, rim, strSel;
         function drawStatic() {
             const L = st.L;
@@ -493,16 +793,20 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             ov.append('rect').attr('width', 2).attr('height', 6).attr('fill', '#fff').attr('fill-opacity', 0.28);
             for (const n of L.vis) defs.append('clipPath').attr('id', `clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'}`).append('rect').attr('x', n.x0).attr('y', n.y0).attr('width', NODE_W).attr('height', n.h).attr('rx', 6);
 
-            L.links.forEach((l, i) => {
+            if (!st.P) L.links.forEach((l, i) => {
                 const col = l.overlap ? V.fork : V.shared;
                 const g = defs.append('linearGradient').attr('id', `g-${id}-${i}`).attr('gradientUnits', 'userSpaceOnUse').attr('x1', l.source.x1).attr('x2', l.target.x0);
                 g.append('stop').attr('offset', 0).style('stop-color', col).attr('stop-opacity', 0.8);
                 g.append('stop').attr('offset', 1).style('stop-color', col).attr('stop-opacity', 0.45);
                 l.fill = `url(#g-${id}-${i})`; l.col = col;
             });
-            ribs = gRib.selectAll('path').data(L.links).join('path').attr('d', l => l.d).style('fill', l => l.fill).style('opacity', l => l.fade ? 0.28 : 1).style('cursor', 'pointer')
-                .on('mouseenter', (ev, l) => hoverRib(ev, l)).on('mousemove', moveTip).on('mouseleave', leave)
-                .on('click', (ev, l) => pick({ edge: l.edge, part: l.part }));
+            ribs = st.P
+                ? gRib.selectAll('path').data(st.P.links).join('path').attr('d', l => l.d).style('fill', l => l.cat.color).attr('fill-opacity', 0.55).style('opacity', ribOp).style('cursor', 'pointer')
+                    .on('mouseenter', (ev, l) => hoverLens(ev, l)).on('mousemove', moveTip).on('mouseleave', leave)
+                    .on('click', (ev, l) => pick({ edge: l.edge }))
+                : gRib.selectAll('path').data(L.links).join('path').attr('d', l => l.d).style('fill', l => l.fill).style('opacity', ribOp).style('cursor', 'pointer')
+                    .on('mouseenter', (ev, l) => hoverRib(ev, l)).on('mousemove', moveTip).on('mouseleave', leave)
+                    .on('click', (ev, l) => pick({ edge: l.edge, part: l.part }));
             arcSel = gArc.selectAll('g').data(L.arcs).join('g').style('cursor', 'pointer');
             arcSel.append('path').attr('d', A => A.d).attr('fill', 'none').attr('stroke', 'transparent').attr('stroke-width', A => Math.max(12, A.c.th));
             arcSel.append('path').attr('class', 'vis').attr('d', A => A.d).attr('fill', 'none').attr('stroke', V.reuse).attr('stroke-opacity', 0.8)
@@ -511,13 +815,25 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 
             nodeBase = gNode.selectAll('g').data(L.vis, n => n.id).join('g').attr('tabindex', 0).attr('role', 'button').style('cursor', 'pointer')
                 .attr('aria-label', n => `${name(n.id)}, ${n.functions} functions`);
-            nodeBase.append('rect').attr('class', 'base').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => n.h).attr('rx', 6).style('fill', V.slate);
+            nodeBase.append('rect').attr('class', 'base').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => n.h).attr('rx', 6).style('fill', st.P ? 'var(--lin-card)' : V.slate);
+            // the node's column hue, as in the table
+            nodeBase.append('rect').attr('x', n => n.x0).attr('y', n => n.y0 - 6).attr('width', NODE_W).attr('height', 4).attr('rx', 1.5).style('fill', n => hsl(hueOf(n.idx)));
+            if (st.P) nodeBase.each(function (n) {
+                const sp = st.P.segs.get(n.id), g = d3.select(this).append('g').attr('clip-path', `url(#clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'})`);
+                for (const sg of sp.m.values()) {
+                    if (sg.h < 0.3) continue;
+                    g.append('rect').attr('x', n.x0).attr('y', sg.y0).attr('width', NODE_W).attr('height', sg.h).style('fill', sg.cat.color)
+                        .on('mouseenter', ev => hoverLensSeg(ev, n, sg)).on('mousemove', moveTip).on('mouseleave', leave);
+                }
+                if (sp.faint.h >= 0.3) g.append('rect').attr('x', n.x0).attr('y', sp.faint.y0).attr('width', NODE_W).attr('height', sp.faint.h).style('fill', V.shared).attr('fill-opacity', 0.16)
+                    .on('mouseenter', ev => showTip(ev, `${name(n.id)}: filtered out`, V.shared, [['Functions', fmt(sp.faint.cnt)], ['', 'not matching the filters']])).on('mousemove', moveTip).on('mouseleave', leave);
+            });
             rim = nodeBase.append('rect').attr('class', 'rim').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => n.h).attr('rx', 6)
                 .attr('fill', 'none').style('stroke', 'var(--lin-edge)').attr('vector-effect', 'non-scaling-stroke').style('pointer-events', 'none');
             nodeBase.on('mouseenter', (ev, n) => hoverFile(ev, n)).on('mousemove', moveTip).on('mouseleave', leave)
                 .on('click', (ev, n) => { if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pick({ node: n }); })
                 .on('keydown', (ev, n) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pick({ node: n }); } });
-            nodeBase.append('title').text(n => n.agg ? `${n.file_name}: ${fmt(n.functions)} functions in all` : `${name(n.id)} (${fmt(n.functions)} functions)`);
+            nodeBase.append('title').text(n => n.agg ? `${n.file_name}: ${fmt(n.functions)} functions in all` : `${name(n.id)} (${fmt(n.functions)} functions)${twinsOf(n) ? `, same code in ${twinsOf(n).length} files` : ''}`);
             // reuse stripes
             const sdata = [...L.stripes.values()].flat();
             strSel = gStr.selectAll('rect').data(sdata).join('rect').attr('x', d => d.n.x1 - REUSE_W).attr('y', d => d.y0).attr('width', REUSE_W).attr('height', d => d.c.th)
@@ -540,6 +856,151 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             if (ribs) ribs.style('stroke', l => sel && sel.edge && l.edge === sel.edge ? 'var(--accent,#66d9ef)' : 'none').attr('stroke-width', 1.5).attr('vector-effect', 'non-scaling-stroke');
         }
         function pick(p) { st.sel = p; st.last = p; applySel(); openDrawer(p); }
+
+        // ---- dock: a node's rows by lens, its diff against the parent, a function preview ----
+        function dock(n) {
+            const R = st.R, lens = st.lens, box = drawer;
+            if (st.dockNode !== n.id) { st.dockNode = n.id; st.dockFn = null; st.dockOpen = new Map(); }
+            box.replaceChildren();
+            const x = el('button', { class: 'lin-x', type: 'button', 'aria-label': 'Close' }, '×');
+            x.addEventListener('click', closeDock);
+            const h = el('h4', {}), sw = el('span', { class: 'lin-sw', style: 'margin-right:6px' }), tw = twinsOf(n);
+            sw.style.background = hsl(hueOf(n.idx));
+            h.append(sw, document.createTextNode(name(n.id)));
+            if (tw) h.append(el('span', { style: 'color:var(--success);margin-left:6px' }, `×${tw.length}`));
+            box.append(x, h);
+            if (tw) box.append(el('div', { class: 'lin-dim', style: 'word-break:break-all;margin-bottom:6px' }, `Same code: ${tw.map(md5Of).join(', ')}`));
+            const p = st.L.fileOf.get(st.L.parentOf.get(n.id));
+            const shown = n.rows.filter(R.match);
+            const born = p ? shown.filter(r => !p.has(r)) : [], lost = p ? p.rows.filter(r => R.match(r) && !n.has(r)) : [];
+            const line = el('div', { class: 'lin-dim' }, `${fmt(shown.length)} of ${fmt(n.rows.length)} functions shown · `);
+            line.append(el('span', { class: 'lin-plus' }, `+${fmt(born.length)}`), document.createTextNode(' '), el('span', { class: 'lin-minus' }, `−${fmt(lost.length)}`));
+            box.append(line);
+            pivots(box, n);
+            const tabs = el('div', { class: 'lin-tabs', role: 'tablist' }), body = el('div');
+            for (const [v, t, ic] of [['rows', 'Rows', 'fa-table-list'], ['diff', 'Diff vs parent', 'fa-code-compare'], ['fn', 'Function', 'fa-code']]) {
+                const b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(st.dockTab === v) });
+                b.append(el('i', { class: `fa-solid ${ic}` }), document.createTextNode(` ${t}`));
+                b.addEventListener('click', () => { st.dockTab = v; dock(n); });
+                tabs.append(b);
+            }
+            box.append(tabs, body);
+            if (st.dockTab === 'rows') {
+                // Deltas: inherited / born here / kept by no child, like the node body; born here tracks as deltas:<node>
+                const kids = (st.M.kids.get(n.id) || []).map(k => st.M.byId.get(k).idx);
+                const C = lens !== 'deltas' ? cats(lens) : {
+                    lens, cats: [{ key: 'kept', label: 'Inherited', color: V.shared }, { key: 'born', label: 'Born here', color: V.born }, { key: 'died', label: 'Kept by no child', color: V.died }],
+                    of: r => (p && !p.has(r) ? 'born' : kids.length && !kids.some(i => R.has(r, i)) ? 'died' : 'kept'),
+                };
+                groups(body, n, shown, C, key => (lens !== 'deltas' ? `${lens}:${key}` : key === 'born' ? `deltas:${n.id}` : null));
+            } else if (st.dockTab === 'diff') {
+                if (!p) { body.append(el('div', { class: 'lin-dim' }, 'The root has no parent. Pick another node.')); return; }
+                const e = st.M.inE.get(n.id), kv = el('div', { class: 'lin-kv' });
+                kv.append(el('span', { class: 'k' }, 'Parent'), el('span', {}, name(p.id)), el('span', { class: 'k' }, 'Similarity'), el('span', {}, String(e ? e.similarity : '')));
+                body.append(kv);
+                const C = cats(lens === 'deltas' ? 'modules' : lens);
+                for (const [list, cls, sign, text] of [[born, 'lin-plus', '+', 'born here'], [lost, 'lin-minus', '−', 'lost from the parent']]) {
+                    const b = el('div', { style: 'margin-top:10px' });
+                    b.append(el('span', { class: cls }, `${sign}${fmt(list.length)}`), document.createTextNode(` ${text}`));
+                    body.append(b);
+                    nameGroups(body, n, list, C);
+                }
+            } else fnPreview(body, n);
+        }
+        function groups(body, n, rows, C, trackKey) {
+            const by = new Map(C.cats.map(c => [c.key, []]));
+            for (const r of rows) by.get(C.of(r)).push(r);
+            for (const c of C.cats) {
+                const list = by.get(c.key);
+                if (!list.length) continue;
+                const gh = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), tk = trackKey(c.key);
+                sw.style.background = c.color;
+                gh.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(list.length)));
+                if (tk) {
+                    const b = el('button', { type: 'button', class: `lin-ic${st.track === tk ? ' on' : ''}`, title: 'Track this group across the tree', 'aria-label': `Track ${c.label}` });
+                    b.append(el('i', { class: 'fa-solid fa-crosshairs' }));
+                    b.addEventListener('click', () => setTrack(st.track === tk ? '' : tk));
+                    gh.append(b);
+                }
+                body.append(gh);
+                const gk = `${C.lens}:${c.key}`, lim = st.dockOpen.get(gk) || DOCK_ROWS;
+                for (const r of list.slice(0, lim)) body.append(rowEl(r));
+                if (list.length > lim) {
+                    const more = el('button', { type: 'button', class: 'lin-more' }, `+ ${fmt(list.length - lim)} more`);
+                    more.addEventListener('click', () => { st.dockOpen.set(gk, lim + 50); dock(n); });
+                    body.append(more);
+                }
+            }
+            if (!rows.length) body.append(el('div', { class: 'lin-dim' }, 'No function of this file matches the filters.'));
+        }
+        // one function row, as in the N-way table: name, role, one hue square per node that holds it
+        function rowEl(r) {
+            const R = st.R, fid = R.fid[r], on = st.track === `fn:${fid}`;
+            const b = el('button', { type: 'button', class: `lin-row${on ? ' on' : ''}`, title: 'Track this function across the tree; the Function tab previews it' });
+            const nm = el('span', { class: 'lin-nm' });
+            nm.append(el('i', { class: `fa-solid ${R.library[r] ? 'fa-cubes' : 'fa-code'}` }), document.createTextNode(R.name[r] || fid));
+            b.append(nm, rolePill(R.role[r]), presence(r));
+            b.addEventListener('click', () => { st.dockFn = r; setTrack(`fn:${fid}`); });
+            return b;
+        }
+        function rolePill(role) {
+            const x = ROLES.find(o => o[0] === role);
+            if (!x) return el('span');
+            const s = el('span', { class: `nway-rpill r-${x[0]}` });
+            s.append(el('span', { class: 'nway-rdot' }), document.createTextNode(x[1]));
+            return s;
+        }
+        function presence(r) {
+            const s = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
+            for (const v of st.L.vis) {
+                const i = el('i', { title: name(v.id) });
+                if (v.has(r)) { i.style.background = hsl(hueOf(v.idx)); i.style.boxShadow = 'none'; }
+                s.append(i);
+            }
+            return s;
+        }
+        function nameGroups(body, n, list, C) {
+            const by = new Map(C.cats.map(c => [c.key, []]));
+            for (const r of list) by.get(C.of(r)).push(r);
+            for (const c of C.cats) {
+                const rs = by.get(c.key);
+                if (!rs.length) continue;
+                const gh = el('div', { class: 'lin-gh', style: 'font-weight:400' }), sw = el('span', { class: 'lin-sw' }), box = el('div', { class: 'lin-names' });
+                sw.style.background = c.color;
+                gh.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rs.length)));
+                for (const r of rs.slice(0, 8)) {
+                    const b = el('button', { type: 'button', title: 'Track this function and preview it' }, st.R.name[r] || st.R.fid[r]);
+                    b.addEventListener('click', () => { st.dockFn = r; st.dockTab = 'fn'; setTrack(`fn:${st.R.fid[r]}`); });
+                    box.append(b);
+                }
+                if (rs.length > 8) box.append(el('span', { class: 'lin-dim' }, `+${fmt(rs.length - 8)}`));
+                body.append(gh, box);
+            }
+        }
+        // same preview as the N-way table's dock Function tab (/api/function/code), this file's own function when the row has one
+        function fnPreview(body, n) {
+            const R = st.R, r = st.dockFn;
+            if (r == null || !n.has(r)) { body.append(el('div', { class: 'lin-dim' }, 'Click a row in Rows or a name in Diff to preview it here.')); return; }
+            const head = el('div', { class: 'lin-gh' });
+            head.append(el('span', { class: 'lin-nm' }, R.name[r] || R.fid[r]), rolePill(R.role[r]));
+            const held = el('div', { class: 'lin-dim', style: 'display:flex;gap:8px;align-items:center' }, 'Held by');
+            held.append(presence(r));
+            const md5s = new Set((twinsOf(n) || [n.id]).map(md5Of));
+            const fid = (R.fids && (R.fids[r] || []).find(f => md5s.has(f.split(':')[2]))) || R.fid[r];
+            const code = el('div', { class: 'c-code-container nway-dock-code lin-code' }, 'Loading…');
+            body.append(head, held, code);
+            fetch(`/api/function/code?id=${encodeURIComponent(fid)}`).then(res => { if (!res.ok) throw new Error(`Function not found (${res.status})`); return res.json(); }).then(d => {
+                code.replaceChildren();
+                for (const ln of d.rows || []) {
+                    const row = el('div', { class: 'code-line' }), gut = el('div', { class: 'gutter' }), ct = el('div', { class: 'line-content' });
+                    gut.append(el('div', { class: 'line-num' }, String(Number(ln.line_idx))));
+                    for (const t of ln.tokens || []) ct.append(el('span', { class: `token token-${t.type}` }, t.text));
+                    row.append(gut, ct);
+                    code.append(row);
+                }
+                if (!code.childElementCount) code.textContent = 'No code available.';
+            }).catch(err => { code.textContent = err.message; });
+        }
 
         // ---- minimap ----
         let miniVp, miniS = 1;
@@ -581,7 +1042,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             if (miniVp) miniVp.attr('x', 2 + vx0 * miniS + m * miniS).attr('y', 2 + vy0 * miniS + m * miniS).attr('width', Math.max(2, (w / k) * miniS)).attr('height', Math.max(2, (h / k) * miniS));
             // detail layer: only nodes on screen, and only past a zoom threshold
             const lvl = k >= HATCH_K ? 2 : 1;
-            const want = k >= DETAIL_K ? L.vis.filter(n => inV(n.x0, n.y0, n.x1, n.y1)) : [];
+            const want = k >= DETAIL_K && !st.P ? L.vis.filter(n => inV(n.x0, n.y0, n.x1, n.y1)) : [];
             const keep = new Set(want.map(n => `${n.id}|${lvl}`));
             for (const key of [...detKey.keys()]) if (!keep.has(key)) { detKey.get(key).remove(); detKey.delete(key); }
             for (const n of want) {
@@ -596,11 +1057,12 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
                 const cand = L.vis.filter(n => inV(n.x0, n.y0, n.x1, n.y1) && (n.h * k >= 10 || k >= 1.2)).sort((a, b) => b.h - a.h);
                 for (const n of cand) {
                     const f = name(n.id), txt = f.length > 22 ? `${f.slice(0, 21)}…` : f;
-                    const lw = txt.length * 7 + 56, bx = [n.x0, n.y0 - 22, n.x0 + lw, n.y0 - 4];
+                    const tw = twinsOf(n), lw = txt.length * 7 + 56 + (tw ? 26 : 0), bx = [n.x0, n.y0 - 25, n.x0 + lw, n.y0 - 7];
                     if (boxes.some(b => bx[0] < b[2] && bx[2] > b[0] && bx[1] < b[3] && bx[3] > b[1])) continue;
                     boxes.push(bx);
-                    const tx = gLab.append('text').attr('class', 'lin-halo').attr('x', n.x0).attr('y', n.y0 - 9).attr('font-size', 12.5).attr('font-weight', 600).style('fill', 'var(--text)');
+                    const tx = gLab.append('text').attr('class', 'lin-halo').attr('x', n.x0).attr('y', n.y0 - 11).attr('font-size', 12.5).attr('font-weight', 600).style('fill', 'var(--text)');
                     tx.append('tspan').text(txt);
+                    if (tw) tx.append('tspan').attr('dx', 4).style('fill', 'var(--success)').text(`\u00d7${tw.length}`);
                     tx.append('tspan').attr('dx', 6).attr('font-weight', 400).attr('font-size', 11.5).attr('fill-opacity', 0.7).text(`${fmt(n.functions)} fn`);
                     if (n.agg) tx.append('tspan').attr('dx', 6).attr('font-size', 11).text('(click to expand)');
                 }
@@ -608,7 +1070,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             hits.textContent = hits._m ? hits._m : '';
         }
         function drawDetail(n, lvl) {
-            const L = st.L, g = gDet.append('g').attr('clip-path', `url(#clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'})`);
+            const L = st.L, g = gDet.append('g').attr('clip-path', `url(#clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'})`).style('opacity', nodeOp(n));
             for (const o of L.origs.filter(o => o.n === n)) {
                 g.append('rect').attr('x', n.x0).attr('y', o.y0).attr('width', ORIG_W).attr('height', Math.max(0.5, o.y1 - o.y0))
                     .style('fill', o.kind === 'inh' ? V.slate : o.hatch && lvl === 2 ? `url(#hatch-born-${id})` : V.born).attr('fill-opacity', o.hatch && lvl === 1 ? 0.65 : 1)
@@ -635,11 +1097,11 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         }
         function leave() {
             st.hover++;
-            ribs.style('opacity', l => l.fade ? 0.28 : 1);
+            ribs.style('opacity', ribOp);
             arcSel.style('opacity', 1); strSel.style('opacity', 1);
             gOv.selectAll('*').remove();
             gDet.style('opacity', 1);
-            nodeBase.style('opacity', 1);
+            nodeBase.style('opacity', nodeOp);
             hideTip();
         }
         const partRows = p => [['Kept by', p.folded ? 'several children (folded)' : names(p.children)], ['Functions', fmt(p.count)]];
@@ -648,6 +1110,15 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             st.last = { edge: l.edge };
             dimRibs(d => d.edge === l.edge);
             showTip(ev, `${name(l.edge.parent)} → ${name(l.edge.child)}`, V.shared, [...edgeRows(l.edge), ...partRows(l.part)]);
+        }
+        function hoverLens(ev, l) {
+            st.last = { edge: l.edge };
+            dimRibs(d => d.cat === l.cat);
+            showTip(ev, `${name(l.source.id)} \u2192 ${name(l.target.id)}`, l.cat.color, [[l.cat.label, `${fmt(l.value)} fn kept`], ...(l.edge ? [['Similarity', l.edge.similarity]] : [])]);
+        }
+        function hoverLensSeg(ev, n, sg) {
+            dimRibs(l => l.cat === sg.cat && (l.source === n || l.target === n));
+            showTip(ev, `${name(n.id)}: ${sg.cat.label}`, sg.cat.color, [['Functions', fmt(sg.cnt)], ['', 'click a legend chip to track the group']]);
         }
         function hoverSeg(ev, sg) {
             const n = sg.n;
@@ -677,7 +1148,14 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
                 showTip(ev, F.file_name, V.slate, [['Functions (summed)', fmt(F.functions)], ['Born inside', fmt(F.born)], ['Kept by no child', fmt(F.died_all)], ['In reuse', fmt(F.reuse_in)], ['', 'click to expand']]);
                 return;
             }
-            const rows = [['Functions', fmt(F.functions)], ['In reuse classes', F.reuse_in == null ? 'n/a' : fmt(F.reuse_in)]];
+            const tw = twinsOf(F);
+            const rows = [['Functions', fmt(F.functions)], ['In reuse classes', F.reuse_in == null ? 'n/a' : fmt(F.reuse_in)], ...(tw ? [['Same code', names(tw.map(md5Of))]] : [])];
+            if (st.P) {
+                const sp = st.P.segs.get(F.id);
+                ribs.style('opacity', l => (l.source === F || l.target === F ? 1 : 0.1));
+                showTip(ev, name(F.id), hsl(hueOf(F.idx)), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])]);
+                return;
+            }
             // the reuse arcs that touch this file light up at once; the per-file overlay follows
             arcSel.style('opacity', A => A.r.files.includes(F.id) ? 1 : 0.12);
             strSel.style('opacity', d => d.c.r.files.includes(F.id) ? 1 : 0.25);
@@ -755,7 +1233,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             st.hl = null;
             if (!q) { hits._m = ''; hits.textContent = ''; applySel(); return; }
             if (!next) {
-                hitList = st.doc.nodes.filter(n => (n.file_name || '').toLowerCase().includes(q) || n.id.toLowerCase().includes(q)).map(n => n.id);
+                hitList = st.doc.nodes.filter(n => (n.file_name || '').toLowerCase().includes(q) || [n.id, ...(n.members || [])].some(x => x.toLowerCase().includes(q))).map(n => n.id);
                 hitAt = 0;
             } else hitAt = (hitAt + 1) % Math.max(1, hitList.length);
             hits._m = hitList.length ? `${hitAt + 1}/${hitList.length}` : 'no match';
@@ -774,20 +1252,29 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         // ---- size ----
         const ro = new ResizeObserver(() => { const { w, h } = size(); s.attr('width', w).attr('height', h); schedule(); });
         ro.observe(canvas);
-        const dblClose = ev => { if (ev.key === 'Escape') drawer.classList.remove('open'); };
+        const dblClose = ev => { if (ev.key === 'Escape') closeDock(); };
         document.addEventListener('keydown', dblClose);
 
         return {
             setDoc(doc) {
+                // same tree (a filter changed only rows.match): keep the collapsed nodes, the view and a node pick
+                const sig = d => `${d.nodes.map(n => n.id).join('|')}#${d.edges.map(e => `${e.parent}>${e.child}`).join('|')}`;
+                const same = st.doc && sig(st.doc) === sig(doc);
                 st.doc = doc;
                 st.bfCache.clear();
-                st.sel = null;
-                drawer.classList.remove('open');
+                st.R = null;
+                st.C = new Map();
+                if (!same || !(st.sel && st.sel.node)) { st.sel = null; closeDock(); }
                 st.names = new Map(doc.nodes.map(n => [n.id, n.file_name || n.id]));
-                st.collapsed = autoCollapse(doc);
+                if (!same) st.collapsed = autoCollapse(doc);
                 const { w, h } = size();
                 s.attr('width', w).attr('height', h);
                 rebuild();
+            },
+            setLens(lens) {
+                if (lens === st.lens) return;
+                st.lens = lens;
+                if (st.doc) rebuild();
             },
             zoomTo(wx, wy, k) {
                 const { w, h } = size();
@@ -804,6 +1291,24 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
                 container.replaceChildren();
             },
         };
+    }
+
+    // Pivots: file page, its functions, its similar functions, and the N-way table on this
+    // column with every page param (track included; order and root are lineage-only).
+    function pivots(box, n) {
+        if (n.agg || !window.Nav) return;
+        const [col, , md5] = ((n.members || [])[0] || n.id).split(':'), m = encodeURIComponent(md5);
+        const q = new URLSearchParams(location.search);
+        q.delete('order'); q.delete('root'); q.set('column', n.id);
+        const go = (txt, url, type) => {
+            const b = el('button', { type: 'button', class: 'lin-btn', style: 'margin:6px 6px 0 0' }, txt);
+            b.addEventListener('click', ev => window.Nav.openPath(url, ev, { title: txt, type }));
+            box.append(b);
+        };
+        go('File', window.Nav.buildUIUrl(col, ['files', md5]), 'file');
+        go('Functions', `${window.Nav.buildUIUrl(col, ['functions'])}?file_md5=${m}`, 'functions');
+        go('Similar functions', `${window.Nav.buildUIUrl(col, ['functions', 'similarities'])}?md5=${m}`, 'functions');
+        go('N-way: only this file', `/diff/nway?${q}`, 'bin_sim');
     }
 
     function detail(box, pick, nm, close) {
@@ -834,21 +1339,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             box.append(el('h4', {}, n.file_name || n.id));
             kv([['Functions', fmt(n.functions) + (n.root ? ' (root)' : '')], ...(n.died_all != null ? [['Kept by no child', fmt(n.died_all)]] : []), ['Only in this file', fmt(n.only_here)], ['In reuse classes', n.reuse_in == null ? 'n/a' : fmt(n.reuse_in)]]);
             box.append(el('div', { class: 'lin-dim', style: 'margin-top:8px;word-break:break-all' }, n.id));
-            if (!n.agg && window.Nav) {
-                // pivots: file page, its functions, its similar functions, the N-way table filtered to it
-                const [col, , md5] = n.id.split(':'), m = encodeURIComponent(md5);
-                const q = new URLSearchParams(location.search);
-                q.delete('order'); q.delete('root'); q.set('column', n.id);
-                const go = (txt, url, type) => {
-                    const b = el('button', { type: 'button', class: 'lin-btn', style: 'margin:6px 6px 0 0' }, txt);
-                    b.addEventListener('click', ev => window.Nav.openPath(url, ev, { title: txt, type }));
-                    box.append(b);
-                };
-                go('File', window.Nav.buildUIUrl(col, ['files', md5]), 'file');
-                go('Functions', `${window.Nav.buildUIUrl(col, ['functions'])}?file_md5=${m}`, 'functions');
-                go('Similar functions', `${window.Nav.buildUIUrl(col, ['functions', 'similarities'])}?md5=${m}`, 'functions');
-                go('N-way: only this file', `/diff/nway?${q}`, 'bin_sim');
-            }
+            pivots(box, n);
         } else if (pick.edge) {
             const e = pick.edge, ev = e.recall_evidence || {};
             if (pick.part) box.append(el('div', { style: 'height:10px' }));
@@ -858,5 +1349,5 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         }
     }
 
-    window.NwayLineage = { mount, _layout: { buildModel, layout, autoCollapse } }; // _layout: for the layout check
+    window.NwayLineage = { mount, ensureCss, LENSES, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
 })();

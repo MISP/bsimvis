@@ -3,7 +3,10 @@
  * /diff/nway/lineage?<same set params as /diff/nway>[&order=tree|chain|star][&root=<file id>]
  *
  * Routing, URL state and fetching only; the chart is nway_lineage.js
- * (NwayLineage.mount). order and root are written back to the URL.
+ * (NwayLineage.mount). The page reads and writes the N-way table's own params
+ * (q, scope, tab, group = the lens preset, columns = files | twins) plus track,
+ * order and root, so both pages hand every filter to each other. A filter
+ * refetches (only rows.match changes, the tree stays); a lens or track does not.
  */
 window.NwayLineageView = {
     _inst: null,
@@ -11,6 +14,7 @@ window.NwayLineageView = {
 
     destroy() {
         this._tok++;
+        clearTimeout(this._typing);
         if (this._inst) this._inst.destroy();
         this._inst = null;
     },
@@ -20,12 +24,29 @@ window.NwayLineageView = {
         const host = document.getElementById(containerId);
         if (!host) return;
         const tok = this._tok;
+        const NL = window.NwayLineage;
+        NL.ensureCss();
+        // the table's defaults: a value equal to one stays out of the URL, as the table does
+        const D = { q: '', scope: 'code', tab: 'all', group: 'region,role', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}) };
+        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track'];
         const q = new URLSearchParams(window.location.search);
         const st = { order: q.get('order') || 'tree', root: q.get('root') || '' };
+        for (const k of KEYS) st[k] = q.has(k) ? q.get(k) : String(D[k] ?? '');
+        // the lens a group string stands for: its preset, else the lens of its first level
+        const lensOf = g => {
+            const first = (g || '').split(',')[0];
+            const l = NL.LENSES.find(x => x[2] === g) || NL.LENSES.find(x => x[2].split(',')[0] === first);
+            return l ? l[0] : 'modules';
+        };
+        let twinsOk = true;
+        const cols = () => (st.columns === 'twins' && twinsOk ? 'twins' : 'files');
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
-            for (const k of ['order', 'root', 'file', 'tab', 'offset']) out.delete(k);
-            out.set('columns', 'files');
+            for (const k of ['order', 'root', 'file', 'offset', 'track']) out.delete(k);
+            for (const k of ['q', 'scope', 'tab']) if (st[k]) out.set(k, st[k]); else out.delete(k);
+            // match must be what the table shows: the server's own defaults differ (tab=core)
+            if (!out.has('k')) out.set('k', String(D.k ?? 2));
+            out.set('columns', cols());
             out.set('order', st.order);
             if (st.root) out.set('root', st.root);
             for (const [k, v] of Object.entries(extra || {})) out.set(k, v);
@@ -34,77 +55,146 @@ window.NwayLineageView = {
         const get = async extra => {
             const res = await fetch(`/api/bin_sim/nway/lineage?${apiQs(extra).toString()}`, { signal: AbortSignal.timeout(180000) });
             const doc = await res.json();
+            // a server without Same code lineage answers 400 "needs file columns": fall back to files
+            if (res.status === 400 && cols() === 'twins' && /columns/.test(doc.message || doc.error || '')) { twinsOk = false; renderBar(null); return get(extra); }
             if (!res.ok) throw new Error(doc.message || doc.error || `HTTP ${res.status}`);
             return doc;
         };
 
-        const order = document.createElement('select');
-        order.setAttribute('aria-label', 'Lineage order');
+        const mk = (tag, attrs = {}, text) => {
+            const e = document.createElement(tag);
+            for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+            if (text !== undefined) e.textContent = text;
+            return e;
+        };
+        const order = mk('select', { 'aria-label': 'Lineage order' });
         for (const [v, t] of [['tree', 'Tree'], ['chain', 'Chain'], ['star', 'Star']]) {
-            const o = document.createElement('option');
-            o.value = v; o.textContent = t; o.selected = v === st.order;
+            const o = mk('option', { value: v }, t);
+            o.selected = v === st.order;
             order.append(o);
         }
-        const rootSel = document.createElement('select');
-        rootSel.setAttribute('aria-label', 'Lineage root file');
-        const back = document.createElement('a');
-        back.className = 'lin-btn';
+        const rootSel = mk('select', { 'aria-label': 'Lineage root file' });
+        const back = mk('a', { class: 'lin-btn', title: 'Back to the N-way diff table, with the same filters, lens and track' }, '← N-way table');
         back.style.textDecoration = 'none';
-        back.textContent = '← N-way table';
-        back.title = 'Back to the N-way diff table';
-        const bq = new URLSearchParams(window.location.search);
-        bq.delete('order'); bq.delete('root');
-        back.href = window.NwayPanel ? window.NwayPanel.backUrl(bq) : `/diff/nway?${bq.toString()}`;
+        const backHref = () => {
+            const bq = new URLSearchParams(window.location.search);
+            bq.delete('order'); bq.delete('root');
+            return window.NwayPanel ? window.NwayPanel.backUrl(bq) : `/diff/nway?${bq.toString()}`;
+        };
+        back.href = backHref();
         back.addEventListener('click', e => { if (window.Nav) window.Nav.openPath(back.getAttribute('href'), e); });
-
-        host.replaceChildren();
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'flex:1;min-height:0;width:100%;position:relative;display:flex;flex-direction:column;overflow:hidden';
-        const msg = document.createElement('div');
-        msg.style.cssText = 'padding:20px;color:var(--dim)';
-        msg.textContent = 'Loading lineage...';
-        host.append(wrap);
-        wrap.append(msg);
 
         const writeUrl = () => {
             const u = new URLSearchParams(window.location.search);
             u.set('order', st.order);
             if (st.root) u.set('root', st.root); else u.delete('root');
+            for (const k of KEYS) if (st[k] !== String(D[k] ?? '')) u.set(k, st[k]); else u.delete(k);
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
+            back.href = backHref();
         };
-        let first = true;
+
+        // ---- the table's filter row: search, code axis, row tabs with counts, merge files, lens tabs ----
+        const bar = mk('div', { class: 'lin-vars lin-tb lin-filters' });
+        const sbox = mk('div', { class: 'search-input-wrapper nway-search' });
+        const search = mk('input', { type: 'text', placeholder: 'Search functions', 'aria-label': 'Search functions' });
+        search.value = st.q;
+        sbox.append(mk('i', { class: 'fa-solid fa-magnifying-glass' }), search);
+        const seg = (label, opts, key) => {
+            const g = mk('div', { class: 'lin-seg', role: 'group', 'aria-label': label });
+            const btns = opts.map(([v, t, icon]) => {
+                const b = mk('button', { type: 'button' });
+                if (icon) b.append(mk('i', { class: `fa-solid ${icon}`, style: 'margin-right:4px' }));
+                b.append(document.createTextNode(t));
+                const n = mk('span', { class: 'lin-n' });
+                b.append(n);
+                b.addEventListener('click', () => { if (st[key] === v) return; st[key] = v; writeUrl(); renderBar(null); load(); });
+                g.append(b);
+                return { v, b, n };
+            });
+            return { g, btns };
+        };
+        const scope = seg('Code axis', [['code', 'Code', 'fa-code'], ['library', 'Library', 'fa-cubes'], ['all', 'All', 'fa-layer-group']], 'scope');
+        const tabs = seg('Functions', [['all', 'All'], ['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']], 'tab');
+        const merge = mk('select', { 'aria-label': 'Merge files' });
+        for (const [v, t] of [['files', 'None'], ['twins', 'Same code']]) merge.append(mk('option', { value: v }, t));
+        merge.addEventListener('change', () => { st.columns = merge.value; st.root = ''; writeUrl(); load(); });
+        const lenses = mk('div', { class: 'bsim-tabbar nway-lenses', role: 'tablist', 'aria-label': 'Lens' });
+        const status = mk('span', { class: 'lin-dim' });
+        bar.append(sbox, mk('span', { class: 'lin-dim' }, 'Show'), scope.g, tabs.g, mk('span', { class: 'lin-dim' }, 'Merge files'), merge, lenses, status);
+        search.addEventListener('input', () => {
+            clearTimeout(this._typing);
+            this._typing = setTimeout(() => { st.q = search.value.trim(); writeUrl(); load(); }, 350);
+        });
+        let lastDoc = null;
+        const renderBar = doc => {
+            if (doc) lastDoc = doc;
+            const c = (lastDoc && lastDoc.counts) || null;
+            for (const x of scope.btns) x.b.setAttribute('aria-pressed', String(st.scope === x.v));
+            for (const x of tabs.btns) {
+                x.b.setAttribute('aria-pressed', String(st.tab === x.v));
+                const n = c && c[x.v] ? (st.scope === 'library' ? c[x.v].library : st.scope === 'all' ? c[x.v].code + c[x.v].library : c[x.v].code) : null;
+                x.n.textContent = n == null ? '' : Number(n).toLocaleString();
+            }
+            merge.value = cols();
+            merge.options[1].disabled = !twinsOk;
+            merge.options[1].title = twinsOk ? '' : 'This server builds lineage over files only';
+            // without the row list only Deltas (the lineage's own colouring) is offered
+            const rich = !!(lastDoc && lastDoc.rows);
+            const cur = rich ? lensOf(st.group) : 'deltas';
+            lenses.replaceChildren();
+            for (const [k, label, group, icon] of NL.LENSES) {
+                if (!rich && k !== 'deltas') continue;
+                const b = mk('button', { type: 'button', role: 'tab', class: `bsim-tab${k === cur ? ' active' : ''}`, 'aria-selected': String(k === cur) });
+                b.append(mk('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${label}`));
+                b.addEventListener('click', () => { st.group = group; writeUrl(); renderBar(null); if (this._inst) this._inst.setLens(k); });
+                lenses.append(b);
+            }
+        };
+        renderBar(null);
+
+        host.replaceChildren();
+        const wrap = mk('div');
+        wrap.style.cssText = 'flex:1;min-height:0;width:100%;position:relative;display:flex;flex-direction:column;overflow:hidden';
+        const msg = mk('div', {}, 'Loading lineage...');
+        msg.style.cssText = 'padding:20px;color:var(--dim)';
+        host.append(bar, wrap);
+        wrap.append(msg);
+
+        let seq = 0;
         const load = async () => {
+            const my = ++seq;
+            status.textContent = 'Loading…';
             let doc;
             try {
                 doc = await get();
             } catch (err) {
-                if (tok !== this._tok) return;
+                if (tok !== this._tok || my !== seq) return;
+                status.textContent = '';
                 if (this._inst) { this._inst.destroy(); this._inst = null; }
-                wrap.replaceChildren();
-                wrap.append(back);
-                const m = document.createElement('div');
+                wrap.replaceChildren(back);
+                const m = mk('div', {}, `${err.message || err}${cols() === 'twins' ? ' (Same code merged the files: try Merge files: None.)' : ''}`);
                 m.style.cssText = 'padding:20px;color:#f92672';
-                m.textContent = String(err.message || err);
                 wrap.append(m);
                 return;
             }
-            if (tok !== this._tok) return;
-            if (first) {
-                rootSel.replaceChildren();
-                const o0 = document.createElement('option');
-                o0.value = ''; o0.textContent = 'root: largest file';
-                rootSel.append(o0);
-                for (const n of doc.nodes) {
-                    const o = document.createElement('option');
-                    o.value = n.id; o.textContent = n.file_name || n.id; o.selected = n.id === st.root;
-                    rootSel.append(o);
-                }
+            if (tok !== this._tok || my !== seq) return;
+            status.textContent = '';
+            rootSel.replaceChildren(mk('option', { value: '' }, 'root: largest file'));
+            for (const n of doc.nodes) {
+                const o = mk('option', { value: n.id }, `${n.file_name || n.id}${(n.members || []).length > 1 ? ` ×${n.members.length}` : ''}`);
+                o.selected = n.id === st.root;
+                rootSel.append(o);
+            }
+            renderBar(doc);
+            if (!this._inst) {
                 wrap.replaceChildren();
-                this._inst = window.NwayLineage.mount(wrap, {
+                this._inst = NL.mount(wrap, {
                     toolbar: [back, order, rootSel],
                     fetchFile: id => get({ file: id }),
+                    lens: lensOf(st.group),
+                    track: st.track,
+                    onTrack: t => { st.track = t; writeUrl(); },
                 });
-                first = false;
             }
             for (const w of doc.warnings || []) console.warn('lineage:', w);
             this._inst.setDoc(doc);

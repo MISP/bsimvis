@@ -6505,6 +6505,205 @@ def test_nway_lineage():
         "nway lineage: read-only, repeat call answers the same",
         r.status_code == 200 and r.json() == got["tree"],
     )
+    _check_lineage_rows(base, url, got["tree"])
+    _check_lineage_twins(base, url, got["tree"])
+    _check_nway_lineage_order(got["tree"])
+
+
+def _check_lineage_rows(base, url, tree):
+    """Lineage `rows` are every row; `match` is the /nway row filter of the same params."""
+    rows = tree.get("rows") or {}
+    n = rows.get("n", -1)
+    vprint(
+        "lineage sample:",
+        json.dumps(
+            {
+                "rows": {
+                    k: v[:3] if isinstance(v, list) else v for k, v in rows.items()
+                },
+                "regions": tree.get("regions"),
+                "counts": tree.get("counts"),
+                "nodes": tree.get("nodes"),
+            }
+        ),
+    )
+    keys = ("fid", "fids", "name", "mask", "role", "region", "library", "weight")
+    check(
+        "nway lineage rows: column-wise lists of n entries each",
+        n > 0 and all(len(rows.get(k) or []) == n for k in keys + ("match",)),
+        str({k: len(rows.get(k) or []) for k in keys})[:200],
+    )
+    _, every = _nway(tab="all", scope="all", limit=1)
+    check(
+        "nway lineage rows: n is every row of the set (the tree ignores filters)",
+        every and n == every["total"],
+        f"{n} vs {every and every['total']}",
+    )
+    ids = [x["id"] for x in tree.get("nodes", [])]
+    check(
+        "nway lineage rows: mask is hex, bit i = nodes[i] holds the fids' file",
+        n > 0
+        and all(
+            {ids[i] for i in range(len(ids)) if int(m, 16) >> i & 1}
+            == {
+                f"{f.partition(':func:')[0]}:{f.partition(':func:')[2].partition(':')[0]}"
+                for f in fs
+            }
+            for m, fs in zip(rows["mask"], rows["fids"])
+        )
+        and all(f == fs[0] for f, fs in zip(rows["fid"], rows["fids"])),
+        str(list(zip(rows.get("mask", []), rows.get("fid", [])))[:3]),
+    )
+    check(
+        "nway lineage regions: every row region is described, with label and kind",
+        all(g in tree.get("regions", {}) for g in rows.get("region", []) if g)
+        and all(
+            set(v) == {"label", "kind"} for v in (tree.get("regions") or {}).values()
+        ),
+        str(tree.get("regions"))[:200],
+    )
+    _, page = _nway(tab="core", scope="code", limit=1)
+    check(
+        "nway lineage counts: same tab counts as /nway",
+        page and tree.get("counts") == page["counts"],
+        f"{tree.get('counts')} vs {page and page['counts']}",
+    )
+    q = next((x[:3] for x in rows.get("name", []) if len(x) >= 3), "fun").lower()
+    for params in (
+        {},
+        {"tab": "all", "scope": "all"},
+        {"tab": "unique", "scope": "all", "q": q},
+        {"tab": "all", "scope": "all", "feat_min": 10},
+    ):
+        r = requests.get(url, params={**base, **params}, timeout=60)
+        _, page = _nway(limit=1, **params)
+        got = r.json()["rows"]["match"] if r.status_code == 200 else None
+        check(
+            f"nway lineage rows: match counts the /nway filtered rows {params}",
+            got is not None and page and sum(got) == page["total"],
+            f"{got and sum(got)} vs {page and page.get('total')}",
+        )
+
+
+def _check_lineage_twins(base, url, tree):
+    """columns=twins: nodes are twin columns with their member files."""
+    r = requests.get(url, params={**base, "columns": "twins"}, timeout=60)
+    check(
+        "nway lineage twins: the fixture pair is one twin column, too few nodes -> 400",
+        r.status_code == 400,
+        f"HTTP {r.status_code}",
+    )
+    _, tw = _nway(tab="all", scope="all", limit=1, columns="twins")
+    twin = (tw or {"columns": [{}]})["columns"][0].get("id")
+    r = requests.get(
+        url,
+        params={**base, "columns": "twins", "col_open": json.dumps([twin])},
+        timeout=60,
+    )
+    t = r.json() if r.status_code == 200 else {}
+    check(
+        "nway lineage twins: opened twin -> one node per file column, members set",
+        t.get("columns_mode") == "twins"
+        and len(t["nodes"]) == 2
+        and all(x["id"].startswith(twin + "/") for x in t["nodes"])
+        and sorted(m for x in t["nodes"] for m in x["members"])
+        == sorted(x["id"] for x in tree["nodes"])
+        and all(x["file_name"] for x in t["nodes"]),
+        f"HTTP {r.status_code} {str(t.get('nodes'))[:300]}",
+    )
+    check(
+        "nway lineage twins: same edge counts as the file tree",
+        t
+        and [(e["gained"], e["lost"], e["shared"]) for e in t["edges"]]
+        == [(e["gained"], e["lost"], e["shared"]) for e in tree["edges"]]
+        and t["rows"]["n"] == tree["rows"]["n"],
+        f"{t.get('edges')} vs {tree.get('edges')}",
+    )
+    check(
+        "nway lineage files: a file node has members = [its id]",
+        all(x["members"] == [x["id"]] for x in tree.get("nodes", [])),
+    )
+
+
+def _check_nway_lineage_order(tree):
+    """/nway order=lineage: columns in lineage DFS order, column_parents, born groups."""
+    st, body = _nway(tab="all", scope="all", limit=0, order="lineage")
+    cols = [c["id"] for c in (body or {}).get("columns", [])]
+    vprint("order=lineage sample:", cols, (body or {}).get("column_parents"))
+    check(
+        "nway order=lineage: root first, column_parents = the lineage tree",
+        st == 200
+        and body.get("order") == "lineage"
+        and cols[0] == tree["root"]
+        and body["column_parents"]
+        == {
+            tree["root"]: None,
+            **{e["child"]: e["parent"] for e in tree["edges"]},
+        },
+        f"HTTP {st} {cols} {body and body.get('column_parents')}",
+    )
+    check(
+        "nway order=lineage: row masks follow the new column order",
+        body
+        and all(
+            {cols[i] for i in range(len(cols)) if x["mask"] >> i & 1} == set(x["cells"])
+            for x in body["items"]
+        ),
+    )
+    other = next(c for c in cols if c != tree["root"]) if len(cols) > 1 else None
+    _, flip = _nway(tab="all", scope="all", limit=1, order="lineage", root=other)
+    check(
+        "nway order=lineage: root= puts that file first",
+        flip and [c["id"] for c in flip["columns"]] == [other, tree["root"]],
+        str(flip and [c["id"] for c in flip["columns"]]),
+    )
+    _, plain = _nway(tab="all", scope="all", limit=1)
+    check(
+        "nway order=lineage: absent by default (no column_parents, no order)",
+        plain and "column_parents" not in plain and "order" not in plain,
+    )
+    _, tw = _nway(tab="all", scope="all", limit=1, columns="twins", order="lineage")
+    check(
+        "nway order=lineage: a single twin column has no lineage to order by",
+        tw and "column_parents" not in tw and len(tw["columns"]) == 1,
+    )
+    _, born = _nway(
+        tab="all",
+        scope="all",
+        limit=0,
+        order="lineage",
+        group="delta",
+        group_open="all",
+    )
+    gs = (born or {}).get("groups", {})
+    rows = [x for x in (born or {}).get("items", []) if not x.get("header")]
+    want = {
+        f"born:{c}": sum(1 for x in rows if x["mask"] & -x["mask"] == 1 << i)
+        for i, c in enumerate(cols)
+    }
+    check(
+        "nway order=lineage group=delta: born groups, one per column, first holder wins",
+        gs
+        and all(g["kind"] == "born" for g in gs.values())
+        and {g: m["rows"] for g, m in gs.items()}
+        == {k: v for k, v in want.items() if v}
+        and gs.get(f"born:{cols[0]}", {}).get("label", "").startswith("In the root, ")
+        and all(
+            m["label"].startswith("Born in ")
+            for g, m in gs.items()
+            if g != f"born:{cols[0]}"
+        )
+        and all(
+            x["g"] == f"born:{cols[(x['mask'] & -x['mask']).bit_length() - 1]}"
+            for x in rows
+        ),
+        str({g: (m["rows"], m["label"]) for g, m in gs.items()})[:300],
+    )
+    _, delta = _nway(tab="all", scope="all", limit=1, group="delta")
+    check(
+        "nway group=delta without order=lineage: unchanged delta groups",
+        delta and all(g["kind"] == "delta" for g in delta["groups"].values()),
+    )
 
 
 def test_nway_diff():

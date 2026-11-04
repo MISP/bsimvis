@@ -2867,11 +2867,18 @@ class BinSimNwayLineage(Resource):
             "md5s": "Same file set / scope params as /nway (collection, pool, mode, min_edge, ...)",
             "root": "Root file, md5 or collection:md5 (default: the file with most functions)",
             "file": "Big sets (more than 60 files): file id (or md5) whose per-file overlay (by_file) to include",
-            "order": "tree (maximum spanning tree, default), chain (seriation, at most 200 files) or star (every file vs root)",
+            "order": "tree (maximum spanning tree, default; `lineage` is read as tree), chain (seriation, at most 200 files) or star (every file vs root)",
+            "columns": "files (default) or twins: each node is a twin column, `nodes[i].members` its files",
+            "tab": "With q, k, scope, tags, column, feat_min, feat_max, support_min, ...: the /nway row filter, flagged per row in `rows.match` (the tree always uses every row)",
         }
     )
     def get(self):
-        """Lineage tree of the files: parent -> child edges with gained, lost, shared and recall_suspect counts."""
+        """Lineage tree of the files: parent -> child edges with gained, lost, shared and recall_suspect counts.
+
+        Also `rows` (every row, column-wise: n, fid, fids (left out on huge sets),
+        name, mask (hex, bit i = nodes[i]), role, region, library, weight, match),
+        `regions` ({id: {label, kind}}, display order) and `counts` (as /nway).
+        """
         from bsimvis.app.routes.nway import get_nway_lineage
 
         return get_nway_lineage()
@@ -2970,6 +2977,8 @@ class BinSimNway(Resource):
             "cover_min": "With family: keep rows whose cover (0-1) is at least this",
             "leak_max": "With family: keep rows whose leak rate (share of contrast files, 0-1) is at most this",
             "sort_dir": "asc or desc",
+            "order": "lineage: file or twin columns in lineage-tree DFS order (the /nway/lineage tree, most similar child first; `root` as there). Adds `column_parents` {column id: parent id or null} and `order`; group=delta then groups rows by the column they were born in (kind born). Other column modes ignore it",
+            "root": "order=lineage: root file (id or md5; default the file with most functions)",
             "group": "Group the rows: prefix (first word of the function name, e.g. `attack_*`), lane (same file set) and/or tag (nest under one tag axis), comma separated, each once, up to three; each level splits every group of the previous one. Functions a level cannot place (no prefix, a prefix held by one function) go on to the next level beside its groups. Optional when group_merge is set. Rows come back in group order with a group id `g`; `groups` describes the ones on the page. sort_col orders rows inside a group",
             "group_merge": "Merge rows that are probably one function first: name, call or name,call (shared function name, shared caller row). Rows that share a file are never merged. With a group level, the merged function is what gets grouped (it sits in the lane of all its files together); merged functions show as `same` sub-groups holding their rows, and are ordered with the plain rows by sort_col as if each were one function (span: files covered, weight: heaviest row, support/cohesion: mean)",
             "group_axis": "group=tag: origin (default), severity, category, user, capa, mitre, mbc, yara, ruleset, family or vuln",

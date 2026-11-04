@@ -404,16 +404,9 @@ def _stat_ok(st, args):
     return in_bounds(st["cover"], cmin, None) and in_bounds(st["leak_rate"], None, lmax)
 
 
-def _page(doc, args, r=None, pool_id=None):
-    """Tab counts, then filter + sort + slice one tab of the rows."""
-    nway_role_service.attach(r, doc, nway_group_service._fids)
-    if "region" in (args.get("group") or "").split(","):
-        nway_region_service.attach(doc, nway_group_service._fids)
-    rows, fmeta = doc["rows"], doc["fmeta"]
+def _tab_args(doc, args):
+    """The tab params of a request, checked: focus, twin, n, tab, k, side, scope."""
     cols = doc["columns"]
-    ctx = _lane_ctx(doc, args)
-    if ctx:
-        rows = nway_indicator_service.annotate(rows, ctx)
     # two top-level `by` groups compare like Focus / Rest (side a = first group)
     focus = doc["columns_mode"] == "focus" or (
         doc["columns_mode"] == "by"
@@ -436,8 +429,21 @@ def _page(doc, args, r=None, pool_id=None):
     scope = args.get("scope", "code")
     if scope not in ("code", "library", "all"):
         abort(400, "scope must be code, library or all")
+    return {
+        "focus": focus,
+        "twin": twin,
+        "n": n,
+        "tab": tab,
+        "k": k,
+        "side": side,
+        "scope": scope,
+    }
 
-    counts = {
+
+def _tab_counts(rows, ta):
+    """{tab: {code, library}}: the rows of each tab, before any filter."""
+    k, n, focus, twin = ta["k"], ta["n"], ta["focus"], ta["twin"]
+    return {
         t: {
             "code": sum(
                 1 for r in rows if _in_tab(r, t, k, n, focus, twin) and not r["library"]
@@ -449,6 +455,15 @@ def _page(doc, args, r=None, pool_id=None):
         for t in TABS
     }
 
+
+def _filter_rows(doc, args, rows, ctx, ta, r=None, pool_id=None):
+    """The /nway row filter (tab, side, scope, column, bounds, family, q, tags).
+
+    -> (kept rows, cluster cards when `q` attached them else None, tag facets or None).
+    """
+    fmeta = doc["fmeta"]
+    tab, k, n = ta["tab"], ta["k"], ta["n"]
+    focus, twin, side, scope = ta["focus"], ta["twin"], ta["side"], ta["scope"]
     q = (args.get("q") or "").strip().lower()
     column = args.get("column")
     tag_scope = [t.strip() for t in (args.get("tags") or "").split(",") if t.strip()]
@@ -475,7 +490,7 @@ def _page(doc, args, r=None, pool_id=None):
         return True
 
     filtered = [r for r in rows if keep(r)]
-    page_clusters = True
+    cards = None
     if q:
         # Full-text over the whole row: name, cluster names, and every function's text/tags.
         cards = _attach_clusters(r, filtered, fmeta, pool_id, args)
@@ -495,7 +510,6 @@ def _page(doc, args, r=None, pool_id=None):
             )
 
         filtered = [row for row in filtered if hit(row)]
-        page_clusters = False
 
     # tags: OR inside one axis, AND across axes; facets are counted before the cut
     facets = None
@@ -514,6 +528,25 @@ def _page(doc, args, r=None, pool_id=None):
         if args.get("facets") == "1":
             facets = _tag_facets(tagged, passes)
         filtered = [row for row, ok in zip(filtered, passes) if all(ok.values())]
+    return filtered, cards, facets
+
+
+def _page(doc, args, r=None, pool_id=None):
+    """Tab counts, then filter + sort + slice one tab of the rows."""
+    nway_role_service.attach(r, doc, nway_group_service._fids)
+    if "region" in (args.get("group") or "").split(","):
+        nway_region_service.attach(doc, nway_group_service._fids)
+    if args.get("order") == "lineage":
+        doc = _lineage_order(doc, args)
+    rows, fmeta = doc["rows"], doc["fmeta"]
+    ctx = _lane_ctx(doc, args)
+    if ctx:
+        rows = nway_indicator_service.annotate(rows, ctx)
+    ta = _tab_args(doc, args)
+    tab, k, scope = ta["tab"], ta["k"], ta["scope"]
+    counts = _tab_counts(rows, ta)
+    filtered, cards, facets = _filter_rows(doc, args, rows, ctx, ta, r, pool_id)
+    page_clusters = cards is None
 
     sort_col = args.get("sort_col")
     if ctx and sort_col in STAT_SORTS:
@@ -614,6 +647,11 @@ def _page(doc, args, r=None, pool_id=None):
         "algo": doc["algo"],
         "warnings": doc["warnings"],
         "family": _lane_info(ctx),
+        **(
+            {"order": "lineage", "column_parents": doc["column_parents"]}
+            if "column_parents" in doc
+            else {}
+        ),
     }
 
 
@@ -1981,25 +2019,126 @@ def get_function_meta():
     return out
 
 
+def _lineage_nodes(doc):
+    """(node columns, rows with fid cells, pair edges) of a files / twins doc, else None."""
+    if doc["columns_mode"] == "files":
+        return doc["columns"], doc["rows"], doc["edges"]
+    if doc["columns_mode"] == "twins":
+        return nway_lineage_service.group_nodes(
+            doc["columns"], doc["file_columns"], doc["rows"], doc["edges"]
+        )
+    return None
+
+
+def _node_of(cols, raw):
+    """The node id a `root` / `file` param names: a node id, a member file id or an md5."""
+    raw = (raw or "").strip().lower()
+    if not raw:
+        return None
+    for c in cols:
+        for m in [c["id"]] + (c.get("members") or []):
+            m = m.lower()
+            if raw == m or m.endswith(":" + raw):
+                return c["id"]
+    return raw
+
+
+def _lineage_order(doc, args):
+    """`order=lineage`: a copy of a files / twins doc, its columns in lineage DFS order.
+
+    Same tree as /nway/lineage's default (`root` honoured); the copy carries
+    `column_parents`. Other column modes come back unchanged.
+    """
+    nodes = _lineage_nodes(doc)
+    if nodes is None or len(doc["columns"]) < 2:
+        return doc
+    cols, _, edges = nodes
+    try:
+        w, root, pairs = nway_lineage_service.tree(
+            cols, edges, doc["min_edge"], _node_of(cols, args.get("root"))
+        )
+    except nway_lineage_service.BadParams as e:
+        abort(400, str(e))
+    masks = Counter(row["mask"] for row in doc["rows"])
+    order, parent = nway_lineage_service.dfs(w, root, pairs, masks)
+    moved = {m: sum(1 << j for j, o in enumerate(order) if m >> o & 1) for m in masks}
+    ids = [c["id"] for c in doc["columns"]]
+    return {
+        **doc,
+        "columns": [doc["columns"][o] for o in order],
+        "rows": [{**row, "mask": moved[row["mask"]]} for row in doc["rows"]],
+        "column_parents": {
+            ids[o]: None if parent[o] is None else ids[parent[o]] for o in order
+        },
+        # the group cache keys on it: a reordered doc must not share entries
+        "key": doc.get("key") and f"{doc['key']}:lineage:{ids[root]}",
+    }
+
+
+# ponytail: past this many function ids `rows.fids` is left out, the client keeps `fid`
+LINEAGE_FIDS_MAX = 200_000
+
+
+def _lineage_rows(doc, args, r, pool_id):
+    """Every row of the doc, compact and column-wise, flagged by the /nway row filter.
+
+    -> {rows, regions, counts}; `rows.mask` bit i = node i (the doc's column order).
+    """
+    nway_role_service.attach(r, doc, nway_group_service._fids)
+    nway_region_service.attach(doc, nway_group_service._fids)
+    rows = doc["rows"]
+    ctx = _lane_ctx(doc, args)
+    if ctx:
+        rows = nway_indicator_service.annotate(rows, ctx)
+    ta = _tab_args(doc, args)
+    kept = {id(x) for x in _filter_rows(doc, args, rows, ctx, ta, r, pool_id)[0]}
+    fids = [nway_group_service._fids(x) for x in rows]
+    out = {
+        "n": len(rows),
+        "fid": [f[0] if f else None for f in fids],
+        "fids": fids,
+        "name": [x["name"] for x in rows],
+        "mask": [format(x["mask"], "x") for x in rows],
+        "role": [x.get("role") for x in rows],
+        "region": [x.get("region") for x in rows],
+        "library": [bool(x["library"]) for x in rows],
+        "weight": [x["weight"] for x in rows],
+        "match": [id(x) in kept for x in rows],
+    }
+    if sum(map(len, fids)) > LINEAGE_FIDS_MAX:
+        del out["fids"]
+    special = {k: label for k, label, _ in nway_region_service.SPECIAL}
+    size = Counter(x["region"] for x in rows if x.get("region"))
+    keys = sorted((k for k in size if k not in special), key=lambda k: (-size[k], k))
+    keys += [k for k in special if k in size]  # region_groups' order
+    return {
+        "rows": out,
+        "regions": {
+            k: {"label": special.get(k, ""), "kind": k if k in special else ""}
+            for k in keys
+        },
+        "counts": _tab_counts(rows, ta),
+    }
+
+
 def get_nway_lineage():
-    """Lineage tree of the files of a set (same params as `/nway`, plus `root`, `order`).
+    """Lineage tree of the files (or twin columns) of a set (same params as `/nway`, plus `root`, `order`).
 
     Read-only: it annotates the rows and pair edges `/nway` already computes.
+    The tree is built from every row; `rows.match` marks the rows the /nway
+    filter params keep.
     """
     order = request.args.get("order", "tree")
-    root = (request.args.get("root") or "").strip().lower() or None
+    if order == "lineage":  # the table's order param, carried over by a pivot
+        order = "tree"
     try:
-        doc, _, _ = _load_doc()
+        doc, r, pool_id = _load_doc()
     except _Reply as e:
         return e.args[0]
-    if doc["columns_mode"] != "files":
-        abort(400, "lineage needs file columns: use columns=files")
-    cols = doc["columns"]
-    if root and ":" not in root:
-        root = next((c["id"] for c in cols if c["md5"] == root), root)
-    file = (request.args.get("file") or "").strip().lower() or None
-    if file and ":" not in file:
-        file = next((c["id"] for c in cols if c["md5"] == file), file)
+    nodes = _lineage_nodes(doc)
+    if nodes is None:
+        abort(400, "lineage needs file or twin columns: use columns=files or twins")
+    cols, rows, edges = nodes
     fmeta = doc["fmeta"]
 
     def name_of(fid):
@@ -2009,16 +2148,18 @@ def get_nway_lineage():
     try:
         out = nway_lineage_service.build(
             cols,
-            doc["rows"],
-            doc["edges"],
+            rows,
+            edges,
             doc["min_edge"],
             name_of,
-            root,
+            _node_of(cols, request.args.get("root")),
             order,
-            file,
+            _node_of(cols, request.args.get("file")),
         )
     except nway_lineage_service.BadParams as e:
         abort(400, str(e))
+    out.update(_lineage_rows(doc, request.args, r, pool_id))
+    out["columns_mode"] = doc["columns_mode"]
     out["min_edge"] = doc["min_edge"]
     out["warnings"] = doc["warnings"]
     return out

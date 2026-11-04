@@ -790,6 +790,42 @@ def delta_groups(units, n, labels):
     return _fixed(out)
 
 
+def born_groups(units, n, labels, ids):
+    """Columns in lineage DFS order (`order=lineage`): one group per column a unit was born in.
+
+    Born = held there but not by the parent column. A parent precedes its
+    children in DFS order, so the first column holding a unit is the first one
+    it was born in.
+    """
+    by = defaultdict(list)
+    for u in units:
+        by[(u["mask"] & -u["mask"]).bit_length() - 1].append(u)
+    out = []
+    for j in sorted(by):
+        if j < 0:  # held by no column
+            continue
+        g = _meta(by[j], n)
+        lab = labels[j] if j < len(labels) else f"column {j + 1}"
+        g.update(
+            id=f"born:{ids[j]}",
+            kind="born",
+            column=ids[j],
+            label=f"In the root, {lab}" if j == 0 else f"Born in {lab}",
+            tip=(
+                "Held by the root of the lineage."
+                if j == 0
+                else "First held here: the parent column does not hold it."
+            ),
+        )
+        g["path"] = [g["id"]]
+        out.append((g, [(u, {}) for u in by[j]]))
+    if by.get(-1):
+        out.append(
+            ({"id": "", "path": [], "headless": True}, [(u, {}) for u in by[-1]])
+        )
+    return _fixed(out)
+
+
 def region_groups(units, n):
     """One group per call-graph region, biggest first; library, runtime and the leftovers last."""
     special = {k: (label, tip) for k, label, tip in nway_region_service.SPECIAL}
@@ -819,6 +855,8 @@ def _level(mode, units, ctx):
     if mode == "presence":
         return presence_groups(units, ctx["n"], ctx["nfiles"])
     if mode == "delta":
+        if ctx.get("born"):
+            return born_groups(units, ctx["n"], ctx["labels"], ctx["ids"])
         return delta_groups(units, ctx["n"], ctx["labels"])
     if mode == "region":
         return region_groups(units, ctx["n"])
@@ -1215,7 +1253,15 @@ def _annotate(pairs, fmeta):
     for g, _ in pairs:
         if g.get("under_mask"):
             g["under_id"] = by_mask.get(g["under_mask"])
-        if g.get("kind") not in ("lane", "tier", "fold", "region", "presence", "delta"):
+        if g.get("kind") not in (
+            "lane",
+            "tier",
+            "fold",
+            "region",
+            "presence",
+            "delta",
+            "born",
+        ):
             continue
         best = {}
         for r in rows[g["id"]]:
@@ -1223,7 +1269,7 @@ def _annotate(pairs, fmeta):
             if r.get("name_from") != "tag" and (k := name_key(r)):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
-        if g["kind"] in ("lane", "region", "presence", "delta"):
+        if g["kind"] in ("lane", "region", "presence", "delta", "born"):
 
             def finds(r):
                 return [
@@ -1599,6 +1645,9 @@ def group_rows(rows, doc, r, mode, params):
             c.get("label") or c.get("file_name") or c.get("id") or ""
             for c in doc["columns"]
         ],
+        # columns in lineage DFS order (`order=lineage`): delta groups by born-in column
+        "born": "column_parents" in doc,
+        "ids": [c.get("id") for c in doc["columns"]],
         "sort_col": (
             params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
         ),
@@ -1789,6 +1838,13 @@ def demo():
         "delta:scattered": 1,
         "delta:kept": 1,
     }, got
+    # columns in lineage DFS order: a row goes to the first column holding it
+    got = born_groups(pr, 4, list("ABCD"), list("ABCD"))
+    assert [(g["id"], g["label"], len(m)) for g, m in got] == [
+        ("born:A", "In the root, A", 4),
+        ("born:C", "Born in C", 1),
+        ("born:D", "Born in D", 1),
+    ], got
     rew = {
         "mask": 3,
         "weight": 2,

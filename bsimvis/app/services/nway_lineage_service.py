@@ -202,15 +202,8 @@ def _components(keys, tedges):
     return list(comps.values())
 
 
-def build(
-    columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree", file=None
-):
-    """Lineage of the files `columns` (dicts with id, file_name, functions) over `rows`.
-
-    `rows` have `cells` {column id: fid}; `edges_by_pair` is the N-way pair edges
-    {(col_a, col_b): PairEdges | tuples}; `name_of(fid)` is the function's real
-    name or None. Returns {order, root, nodes, edges}.
-    """
+def tree(columns, edges_by_pair, min_edge, root=None, order="tree"):
+    """-> (similarity matrix, root index, [(parent index, child index)]) of `build`."""
     if order not in ORDERS:
         raise BadParams(f"order must be one of {', '.join(ORDERS)}")
     ids = [c["id"] for c in columns]
@@ -231,6 +224,84 @@ def build(
         pairs = chain_path(w, r)
     else:
         pairs = [(r, j) for j in range(len(ids)) if j != r]
+    return w, r, pairs
+
+
+def dfs(w, r, pairs, masks):
+    """Node indices in DFS order from `r` and each one's parent index (None for `r`).
+
+    Children go most similar first, then bigger subtree, then more shared rows:
+    the lineage page's sort. `masks` {row presence mask: rows} counts shared rows.
+    """
+    kids = {}
+    for p, c in pairs:
+        kids.setdefault(p, []).append(c)
+    size = [1] * len(w)
+    for p, c in reversed(pairs):  # a parent always comes before its child
+        size[p] += size[c]
+    order, parent, stack = [], {r: None}, [r]
+    while stack:
+        i = stack.pop()
+        order.append(i)
+        both = lambda c: sum(n for m, n in masks.items() if m >> i & 1 and m >> c & 1)
+        ks = sorted(
+            kids.get(i, ()),
+            key=lambda c: (-round(float(w[i, c]), 4), -size[c], -both(c)),
+        )
+        for c in ks:
+            parent[c] = i
+        stack += ks[::-1]
+    return order, parent
+
+
+def group_nodes(groups, files, rows, edges_by_pair):
+    """Lineage nodes for grouped columns (twins): -> (columns, rows, edges_by_pair).
+
+    A node holds a row when any of its member files does (the twin column's
+    `on`), with that file's function as its cell.
+    """
+    # ponytail: a node's pair edges are its first members', twins share their rows anyway
+    names = {c["id"]: c.get("file_name") for c in files}
+    held = Counter()
+    out = []
+    for row in rows:
+        fc = row.get("files") or row["cells"]
+        cells = {}
+        for g in groups:
+            f = next((fc[m] for m in g["members"] if m in fc), None)
+            if f is not None:
+                cells[g["id"]] = f
+                held[g["id"]] += 1
+        out.append({"cells": cells})
+    cols = [
+        {
+            "id": g["id"],
+            "file_name": names.get(g["members"][0]),
+            "functions": held[g["id"]],
+            "members": list(g["members"]),
+        }
+        for g in groups
+    ]
+    rep = {g["members"][0]: g["id"] for g in groups}
+    edges = {
+        (rep[x], rep[y]): e
+        for (x, y), e in edges_by_pair.items()
+        if x in rep and y in rep
+    }
+    return cols, out, edges
+
+
+def build(
+    columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree", file=None
+):
+    """Lineage of the files `columns` (dicts with id, file_name, functions) over `rows`.
+
+    `rows` have `cells` {column id: fid}; `edges_by_pair` is the N-way pair edges
+    {(col_a, col_b): PairEdges | tuples}; `name_of(fid)` is the function's real
+    name or None. Returns {order, root, nodes, edges}.
+    """
+    ids = [c["id"] for c in columns]
+    w, r, pairs = tree(columns, edges_by_pair, min_edge, root, order)
 
     # one pass over the rows: per edge, shared rows and the lost / gained functions
     adj = {}
@@ -365,6 +436,7 @@ def build(
         {
             "id": c["id"],
             "file_name": c.get("file_name"),
+            "members": c.get("members") or [c["id"]],
             "functions": c["functions"],
             "root": i == r,
             "died_all": died_all.get(c["id"]),
@@ -578,6 +650,23 @@ def demo():
         [[0, 1, 1, 0.4], [1, 0, 1, 0.3], [1, 1, 0, 0.3], [0.4, 0.3, 0.3, 0]]
     )
     assert spanning_tree(lane, 0) == [(0, 1), (1, 2), (0, 3)], spanning_tree(lane, 0)
+    # DFS: the most similar child first, whatever the edge order
+    assert dfs(lane, 0, [(0, 3), (0, 1), (1, 2)], {}) == (
+        [0, 1, 2, 3],
+        {0: None, 3: 0, 1: 0, 2: 1},
+    )
+    # twin columns: a node holds what any member holds, edges come from first members
+    gc, gr, ge = group_nodes(
+        [{"id": "T", "members": ["A", "B"]}, {"id": "C", "members": ["C"]}],
+        [{"id": i, "file_name": i.lower()} for i in "ABC"],
+        [{"files": {"A": "a1", "B": "b1", "C": "c1"}}, {"files": {"B": "b2"}}],
+        {("A", "C"): "e1", ("B", "C"): "e2"},
+    )
+    assert [(c["id"], c["file_name"], c["functions"]) for c in gc] == [
+        ("T", "a", 2),
+        ("C", "c", 1),
+    ]
+    assert gr[1] == {"cells": {"T": "b2"}} and ge == {("T", "C"): "e1"}
     cols = [
         {"id": i, "file_name": i, "functions": n} for i, n in zip("ABCD", (4, 5, 6, 3))
     ]

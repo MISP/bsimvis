@@ -839,6 +839,7 @@ def _fn_meta(meta):
             "parameters",
             "return_type",
             "bsim_features_count",
+            "instruction_count",
         )
         if k in meta
     }

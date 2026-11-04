@@ -5652,6 +5652,174 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_roles():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-roles – N-way triage roles, role grouping, overrides", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – role checks skipped.", YELLOW))
+        return
+    order = [
+        "orchestrator",
+        "entry",
+        "logic",
+        "compute",
+        "leaf",
+        "plumbing",
+        "runtime",
+        "library",
+    ]
+    st, body = _nway(tab="all", columns="files", scope="all")
+    rows = (body or {}).get("items", [])
+    check(
+        "nway roles: every row carries a role from the rules",
+        st == 200
+        and rows
+        and all(r.get("role") in order and r.get("role_src") == "rules" for r in rows),
+        f"status {st}, roles {sorted({str(r.get('role')) for r in rows})}",
+    )
+    st, gb = _nway(
+        tab="all", columns="files", scope="all", group="role", group_open="all"
+    )
+    kinds = [g.get("kind") for g in (gb or {}).get("groups", {}).values()]
+    seen = [g["role"] for g in (gb or {}).get("groups", {}).values()]
+    check(
+        "nway group=role: role groups in reading order",
+        st == 200
+        and kinds
+        and set(kinds) == {"role"}
+        and seen == [k for k in order if k in seen],
+        f"status {st}, groups {seen}",
+    )
+    # lens levels: every header fills the row columns (ranges, means, heat per column)
+    for level, kind in (
+        ("presence", "presence"),
+        ("delta", "delta"),
+        ("region", "region"),
+    ):
+        st, lb = _nway(
+            tab="all", columns="files", scope="all", group=level, group_open="all"
+        )
+        gs = list((lb or {}).get("groups", {}).values())
+        ncol = len((lb or {}).get("columns") or [])
+        check(
+            f"nway group={level}: {kind} headers carry span, features and heat",
+            st == 200
+            and gs
+            and all(g.get("kind") == kind for g in gs)
+            and all(
+                "span_lo" in g and "w_lo" in g and len(g.get("heat") or []) == ncol
+                for g in gs
+            ),
+            f"status {st}, kinds {sorted({str(g.get('kind')) for g in gs})}",
+        )
+        if level == "region":
+            held = sum(g["units"] for g in gs)
+            check(
+                "nway group=region: the regions hold every row once",
+                held == lb.get("total", 0) - len(gs),
+                f"{held} units in {len(gs)} regions, total {lb.get('total')}",
+            )
+    # no lone function at the top level: every row sits in a group
+    for level in ("lane", "prefix", "region"):
+        st, nb = _nway(
+            tab="all", columns="files", scope="all", group=level, group_open="all"
+        )
+        items = (nb or {}).get("items", [])
+        check(
+            f"nway group={level}: no row sits outside a group",
+            st == 200 and items and all(it.get("g") for it in items),
+            f"status {st}, {sum(1 for it in items if not it.get('g'))} top-level rows",
+        )
+    # nor beside sub-groups deeper down: a group holding sub-groups holds no row of its own
+    for chain, extra in (
+        ("lane,region", {"group_lane_tier": "0.8", "group_split_min": "0"}),
+        ("presence,region", {"group_split_min": "0"}),
+    ):
+        st, nb = _nway(
+            tab="all",
+            columns="files",
+            scope="all",
+            group=chain,
+            group_open="all",
+            **extra,
+        )
+        gs = (nb or {}).get("groups", {})
+        parents = {p for g in gs.values() for p in g["path"][:-1]}
+        mixed = [
+            it["g"]
+            for it in (nb or {}).get("items", [])
+            if not it.get("header") and it.get("g") in parents
+        ]
+        check(
+            f"nway group={chain}: no row sits beside sub-groups",
+            st == 200 and gs and not mixed,
+            f"status {st}, rows beside sub-groups under {sorted(set(mixed))[:3]}",
+        )
+    st, pb = _nway(tab="all", columns="files", scope="all", group="presence")
+    check(
+        "nway group=presence: bands count files",
+        st == 200
+        and all("files" in g["label"] for g in (pb or {}).get("groups", {}).values()),
+        str([g.get("label") for g in (pb or {}).get("groups", {}).values()]),
+    )
+    st, _ = _nway(tab="all", columns="files", group="region,role", group_split_min="x")
+    check("nway group_split_min: not an integer is refused", st == 400, f"status {st}")
+    url = f"{BASE_URL}/api/bin_sim/nway/role"
+    bad = requests.post(url, json={"func_ids": [], "role": "leaf"}, timeout=30)
+    worse = requests.post(
+        url, json={"func_ids": ["x:func:y:1"], "role": "boss"}, timeout=30
+    )
+    check(
+        "nway role: missing functions and unknown roles are refused",
+        bad.status_code == 400 and worse.status_code == 400,
+        f"{bad.status_code} / {worse.status_code}",
+    )
+    if not rows:
+        return
+    row = rows[0]
+    fids = [
+        f for f in (row.get("files") or row["cells"]).values() if isinstance(f, str)
+    ]
+    key = frozenset(fids)
+    pick = "compute" if row["role"] != "compute" else "leaf"
+
+    def again():
+        _, b = _nway(tab="all", columns="files", scope="all")
+        return next(
+            (
+                r
+                for r in (b or {}).get("items", [])
+                if frozenset(
+                    v
+                    for v in (r.get("files") or r["cells"]).values()
+                    if isinstance(v, str)
+                )
+                == key
+            ),
+            {},
+        )
+
+    set_r = requests.post(url, json={"func_ids": fids, "role": pick}, timeout=30)
+    now = again()
+    check(
+        "nway role: an override wins over the rules and shows as the analyst's",
+        set_r.status_code == 200
+        and now.get("role") == pick
+        and now.get("role_src") == "user",
+        f"{set_r.status_code}, got {now.get('role')} / {now.get('role_src')}",
+    )
+    clear = requests.post(url, json={"func_ids": fids, "role": ""}, timeout=30)
+    back = again()
+    check(
+        "nway role: clearing the override gives the rules back",
+        clear.status_code == 200
+        and back.get("role") == row["role"]
+        and back.get("role_src") == "rules",
+        f"{clear.status_code}, got {back.get('role')} / {back.get('role_src')}",
+    )
+
+
 def test_nway_indicators():
     print(_color(f"\n{'='*60}", CYAN))
     print(
@@ -6865,9 +7033,12 @@ def test_nway_diff():
             f"{_label}: every row names a group on the page (or none, at the top)",
             all(i.get("g") in _groups or i.get("g") == "" for i in _items),
         )
+        _tops = [k for k, m in _groups.items() if len(m["path"]) == 1]
         check(
-            f"{_label}: no catch-all group",
-            all(m["kind"] not in ("other", "rest") for m in _groups.values()),
+            f"{_label}: what no group takes sits in one Other group, listed last",
+            all(m["kind"] != "other" for m in _groups.values())
+            and ("rest" not in _tops or _tops[-1] == "rest"),
+            str(_tops),
         )
         # Collapsed (the default): one header per group, no rows.
         _, _shut = _nway(tab="all", scope="all", limit=1000, group=_mode, **_extra)
@@ -7269,7 +7440,11 @@ def test_nway_diff():
     # Groups of every kind at one level are ordered together, file coverage first by default.
     for _chain in ("lane", "prefix", "prefix,lane"):
         _, _o = _nway(tab="all", scope="all", limit=1000, group=_chain)
-        _tops = [m["files"] for m in _o["groups"].values() if len(m["path"]) == 1]
+        _tops = [
+            m["files"]
+            for m in _o["groups"].values()
+            if len(m["path"]) == 1 and m["kind"] != "rest"
+        ]
         check(
             f"nway group={_chain}: top groups are ordered by file coverage",
             _tops and _tops == sorted(_tops, reverse=True),
@@ -7282,8 +7457,8 @@ def test_nway_diff():
         _ws and _ws == sorted(_ws, reverse=True),
         str(_ws),
     )
-    # Plain rows are siblings of the groups: ordered with them, not appended after them.
-    for _gs, _want in (("weight", "before"), ("files", "after")):
+    # No lone row at the top: rows no lane takes sit in "Other functions", after the lanes.
+    for _gs in ("weight", "files"):
         _, _mix = _nway(
             tab="all",
             scope="all",
@@ -7294,7 +7469,9 @@ def test_nway_diff():
             group_open="all",
         )
         _its = _mix["items"]
-        _plain = [n for n, i in enumerate(_its) if not i.get("header") and i["g"] == ""]
+        _plain = [
+            n for n, i in enumerate(_its) if not i.get("header") and i["g"] == "rest"
+        ]
         _wide = next(
             (
                 n
@@ -7304,10 +7481,8 @@ def test_nway_diff():
             None,
         )
         check(
-            f"nway group: plain rows are ordered with the lanes (group_sort={_gs})",
-            _plain
-            and _wide is not None
-            and (min(_plain) < _wide if _want == "before" else min(_plain) > _wide),
+            f"nway group: rows no lane takes sit in Other functions, after the lanes (group_sort={_gs})",
+            _plain and _wide is not None and min(_plain) > _wide,
             f"plain rows at {_plain[:3]}, 2-file lane at {_wide}",
         )
     check(
@@ -11320,6 +11495,7 @@ if __name__ == "__main__":
         test_nway_diff,
         test_nway_column_groups,
         test_nway_indicators,
+        test_nway_roles,
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
@@ -11356,6 +11532,7 @@ if __name__ == "__main__":
         "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_nway_column_groups": ["test_search_filters_and_sorting"],
         "test_nway_indicators": ["test_search_filters_and_sorting"],
+        "test_nway_roles": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],

@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 
 from flask import current_app, request
 from flask_restx import abort
@@ -15,6 +15,8 @@ from bsimvis.app.services import (
     nway_group_service,
     nway_indicator_service,
     nway_lineage_service,
+    nway_region_service,
+    nway_role_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.bin_sim_service import _origin_coll
@@ -404,6 +406,9 @@ def _stat_ok(st, args):
 
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
+    nway_role_service.attach(r, doc, nway_group_service._fids)
+    if "region" in (args.get("group") or "").split(","):
+        nway_region_service.attach(doc, nway_group_service._fids)
     rows, fmeta = doc["rows"], doc["fmeta"]
     cols = doc["columns"]
     ctx = _lane_ctx(doc, args)
@@ -610,6 +615,50 @@ def _page(doc, args, r=None, pool_id=None):
         "warnings": doc["warnings"],
         "family": _lane_info(ctx),
     }
+
+
+def post_nway_role():
+    """Set the analyst's triage role of functions (`role:<role>` user tag); an empty role clears it."""
+    from bsimvis.app.services.tag_service import tag_service
+
+    data = request.json or {}
+    fids = [
+        f for f in data.get("func_ids") or [] if isinstance(f, str) and ":func:" in f
+    ]
+    role = data.get("role") or ""
+    if not fids:
+        return {"error": "func_ids is required"}, 400
+    if role and role not in nway_role_service.RANK:
+        return {
+            "error": f"role must be one of {nway_role_service.ROLE_IDS} or empty"
+        }, 400
+    r = get_redis()
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{f}:meta")
+    drop = defaultdict(list)  # (collection, old tag) -> fids carrying it
+    for f, raw in zip(fids, pipe.execute()):
+        meta = json.loads(raw) if raw else {}
+        meta = meta[0] if isinstance(meta, list) and meta else meta
+        for t in merge_tag_fields(meta):
+            if (
+                t.startswith(nway_role_service.TAG)
+                and t != nway_role_service.TAG + role
+            ):
+                drop[(f.partition(":func:")[0], t)].append(f)
+    for (coll, tag), ids in drop.items():
+        tag_service.bulk_remove_user_tag(coll, "function", ids, tag)
+    if role:
+        by_coll = defaultdict(list)
+        for f in fids:
+            by_coll[f.partition(":func:")[0]].append(f)
+        for coll, ids in by_coll.items():
+            if not tag_service.bulk_add_user_tag(
+                coll, "function", ids, nway_role_service.TAG + role
+            ):
+                return {"error": "Could not tag the functions"}, 500
+    nway_diff_service.invalidate()
+    return {"status": "success", "role": role or None, "count": len(fids)}
 
 
 class _Cancelled(Exception):

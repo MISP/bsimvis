@@ -82,7 +82,8 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
         const size = new Map();
         const sz = id => { if (!size.has(id)) size.set(id, 1 + (kids.get(id) || []).reduce((a, c) => a + sz(c), 0)); return size.get(id); };
         sz(doc.root);
-        for (const l of kids.values()) l.sort((a, b) => size.get(b) - size.get(a) || (inE.get(b).shared - inE.get(a).shared));
+        // first child continues the parent's lane: most similar build first, divergent ones below
+        for (const l of kids.values()) l.sort((a, b) => (inE.get(b).similarity ?? 0) - (inE.get(a).similarity ?? 0) || size.get(b) - size.get(a) || (inE.get(b).shared - inE.get(a).shared));
         const rep = new Map(), vis = [];
         const members = (id, out = []) => { out.push(id); for (const c of kids.get(id) || []) members(c, out); return out; };
         const walk = (id, d) => {
@@ -127,6 +128,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
     function layout(doc, M) {
         const { vis, rep, kids, inE } = M;
         const fileOf = new Map(vis.map(n => [n.id, n]));
+        const visPos = new Map(vis.map((n, i) => [n.id, i]));
         const repOf = id => fileOf.get(rep.get(id));
         const maxd = Math.max(...vis.map(n => n.d));
         const colSum = new Map();
@@ -229,7 +231,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
             }
             const ps = partsOf.get(n.id);
             if (!ps) continue;
-            const pos = c => fileOf.get(rep.get(c)).idx;
+            const pos = c => visPos.get(rep.get(c));
             const cmp = (a, b) => {
                 const x = a.children.map(pos), y = b.children.map(pos);
                 for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i];

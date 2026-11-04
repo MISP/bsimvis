@@ -15,6 +15,7 @@ from bsimvis.app.services import (
     nway_group_service,
     nway_indicator_service,
     nway_lineage_service,
+    nway_region_service,
     nway_role_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
@@ -406,6 +407,8 @@ def _stat_ok(st, args):
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     nway_role_service.attach(r, doc, nway_group_service._fids)
+    if "region" in (args.get("group") or "").split(","):
+        nway_region_service.attach(doc, nway_group_service._fids)
     rows, fmeta = doc["rows"], doc["fmeta"]
     cols = doc["columns"]
     ctx = _lane_ctx(doc, args)

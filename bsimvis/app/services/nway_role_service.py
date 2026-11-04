@@ -128,8 +128,11 @@ def _size(meta):
     return float(meta.get("instruction_count") or meta.get("bsim_features_count") or 0)
 
 
-def function_roles(r, fmeta):
-    """{fid: (role, source)}, source "user" / "tag" / "graph"; {} over MAX_FIDS."""
+def function_roles(r, fmeta, calls=None):
+    """{fid: (role, source)}, source "user" / "tag" / "graph"; {} over MAX_FIDS.
+
+    `calls`, when given, is filled with each function's internal callees.
+    """
     fids = list(fmeta)
     if len(fids) > MAX_FIDS:
         return {}
@@ -146,7 +149,10 @@ def function_roles(r, fmeta):
             callees.discard(f)
             ext = sum(1 for c in callees if c.startswith("ext:"))
             deg[f] = (len(callees) - ext, ext)
-            n_in.update(c for c in callees if c in fmeta)
+            inner = [c for c in callees if c in fmeta]
+            n_in.update(inner)
+            if calls is not None:
+                calls[f] = inner
     deg = {f: (n_in[f], o, x) for f, (o, x) in deg.items()}
     by_file = defaultdict(list)
     for f in fids:
@@ -183,7 +189,10 @@ def vote(pairs):
 def attach(r, doc, fids_of):
     """Set `role` / `role_src` on every row of `doc` once (cached on the doc)."""
     if "_roles" not in doc:
-        doc["_roles"] = function_roles(r, doc["fmeta"]) if r is not None else {}
+        doc["_calls"] = {}
+        doc["_roles"] = (
+            function_roles(r, doc["fmeta"], doc["_calls"]) if r is not None else {}
+        )
     roles = doc["_roles"]
     if not roles:
         return

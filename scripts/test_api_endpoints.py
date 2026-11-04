@@ -5691,6 +5691,37 @@ def test_nway_roles():
         and seen == [k for k in order if k in seen],
         f"status {st}, groups {seen}",
     )
+    # lens levels: every header fills the row columns (ranges, means, heat per column)
+    for level, kind in (
+        ("presence", "presence"),
+        ("delta", "delta"),
+        ("region", "region"),
+    ):
+        st, lb = _nway(
+            tab="all", columns="files", scope="all", group=level, group_open="all"
+        )
+        gs = list((lb or {}).get("groups", {}).values())
+        ncol = len((lb or {}).get("columns") or [])
+        check(
+            f"nway group={level}: {kind} headers carry span, features and heat",
+            st == 200
+            and gs
+            and all(g.get("kind") == kind for g in gs)
+            and all(
+                "span_lo" in g and "w_lo" in g and len(g.get("heat") or []) == ncol
+                for g in gs
+            ),
+            f"status {st}, kinds {sorted({str(g.get('kind')) for g in gs})}",
+        )
+        if level == "region":
+            held = sum(g["units"] for g in gs)
+            check(
+                "nway group=region: the regions hold every row once",
+                held == lb.get("total", 0) - len(gs),
+                f"{held} units in {len(gs)} regions, total {lb.get('total')}",
+            )
+    st, _ = _nway(tab="all", columns="files", group="region,role", group_split_min="x")
+    check("nway group_split_min: not an integer is refused", st == 400, f"status {st}")
     url = f"{BASE_URL}/api/bin_sim/nway/role"
     bad = requests.post(url, json={"func_ids": [], "role": "leaf"}, timeout=30)
     worse = requests.post(

@@ -3755,3 +3755,15 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-role-it:hover, .nway-role-it:focus-visible, .nway-role-it.on { background: var(--hover); }
 .nway-role-it .fa-solid { width: 12px; margin-right: 5px; color: var(--dim); }
 
+/* N-way lens tabs and layout A headers */
+.nway-lenses { display: flex; align-items: center; gap: 2px; margin: 6px 0 4px; flex-wrap: wrap; }
+.nway-lens { all: unset; cursor: pointer; padding: 4px 12px; font-size: 13px; border-bottom: 2px solid transparent; color: var(--dim); }
+.nway-lens:hover { color: var(--text); }
+.nway-lens.on { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.nway-lens:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.nway-lens-custom { font-size: 12px; color: var(--dim); padding: 0 8px; font-style: italic; }
+.nway-table td.nway-gnum { font-size: 12px; color: var(--dim); vertical-align: middle; }
+.nway-gmin { margin-left: 4px; font-size: 10.5px; color: var(--dim); }
+.nway-rmix { display: flex; width: 90px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }
+.nway-rmix i { display: block; height: 100%; background: var(--rc); }
+

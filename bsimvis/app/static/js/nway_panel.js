@@ -61,16 +61,42 @@
         ['lanes', 'Lanes', 'lane,region', 'Core, common and rare tiers, then lanes of exactly the same files; a lane above the split threshold is split by region.'],
         ['triage', 'Triage', 'role,region', 'What to read first: roles in reading order, library and runtime last; a role above the threshold is split by region.'],
     ];
+    // Group header icons by kind and key: tiers, presence bands, deltas, special regions.
+    const BAND_ICONS = {
+        core: 'fa-bullseye', common: 'fa-circle-half-stroke', rare: 'fa-circle-dot',
+        every: 'fa-bullseye', most: 'fa-chart-pie', some: 'fa-circle-half-stroke', few: 'fa-circle-dot',
+        added: 'fa-plus', dropped: 'fa-minus', rewritten: 'fa-pen-to-square', span: 'fa-arrows-left-right', scattered: 'fa-shuffle', kept: 'fa-equals',
+        small: 'fa-cubes', none: 'fa-link-slash', runtime: 'fa-gears', library: 'fa-book', rest: 'fa-ellipsis',
+    };
+    // An LLM name's icon, from the first theme its words match; the sparkle marks the rest.
+    const NAME_ICONS = [
+        [/runtime|start-?up|teardown|shutdown|\binit|compiler|crt\b/i, 'fa-gears'],
+        [/libc|library|standard|stdlib/i, 'fa-book'],
+        [/crypt|cipher|hash|rc4|aes|\btea\b|xor|encod|decod|obfusc/i, 'fa-lock'],
+        [/exploit|shell|payload|download|dropper|loader/i, 'fa-bug'],
+        [/flood|attack|ddos/i, 'fa-bolt'],
+        [/scan|brute|telnet|ssh|credential|login/i, 'fa-magnifying-glass'],
+        [/kill/i, 'fa-skull-crossbones'],
+        [/network|socket|connect|tcp|udp|http|dns|\bc2\b|command and control|beacon/i, 'fa-network-wired'],
+        [/file|path|director|persist/i, 'fa-folder-open'],
+        [/process|thread|daemon|fork|signal/i, 'fa-microchip'],
+        [/memory|alloc|heap/i, 'fa-memory'],
+        [/string|text|format|print/i, 'fa-font'],
+        [/math|arithmetic|division|float|algorithm|sort/i, 'fa-calculator'],
+        [/random/i, 'fa-dice'],
+        [/time|clock|sleep/i, 'fa-clock'],
+        [/config|setting/i, 'fa-sliders'],
+    ];
     // Triage roles in reading order (nway_role_service.ROLES).
     const ROLES = [
-        ['orchestrator', 'Orchestrator', 'Calls many functions of its file: read first for the program flow.'],
-        ['entry', 'Entry point', 'No caller in the call graph: thread, signal handler or pointer-table entry.'],
-        ['logic', 'Logic', 'Calls and is called: the body of each feature.'],
-        ['compute', 'Compute', 'Large and calls nothing: decoders, checksums, crypto.'],
-        ['leaf', 'Leaf helper', 'Small and calls nothing.'],
-        ['plumbing', 'Plumbing', 'Stubs, one-call wrappers and helpers called from everywhere.'],
-        ['runtime', 'Runtime', 'C runtime start-up and teardown.'],
-        ['library', 'Library', 'Recognised by the library analyzer (FunctionID, stdlib reference).'],
+        ['orchestrator', 'Orchestrator', 'Calls many functions of its file: read first for the program flow.', 'fa-sitemap'],
+        ['entry', 'Entry point', 'No caller in the call graph: thread, signal handler or pointer-table entry.', 'fa-door-open'],
+        ['logic', 'Logic', 'Calls and is called: the body of each feature.', 'fa-code'],
+        ['compute', 'Compute', 'Large and calls nothing: decoders, checksums, crypto.', 'fa-calculator'],
+        ['leaf', 'Leaf helper', 'Small and calls nothing.', 'fa-leaf'],
+        ['plumbing', 'Plumbing', 'Stubs, one-call wrappers and helpers called from everywhere.', 'fa-plug'],
+        ['runtime', 'Runtime', 'C runtime start-up and teardown.', 'fa-gears'],
+        ['library', 'Library', 'Recognised by the library analyzer (FunctionID, stdlib reference).', 'fa-book'],
     ];
     // What the sidebar's reset puts back: the row grouping it exposes, not the lane fit / tier / fold tuning.
     const GROUP_RESET = ['group', 'group_axis', 'group_axis_b', 'group_tag_depth', 'group_lane_depth'];
@@ -2475,7 +2501,7 @@
             const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
             const off = this.state.lane_names === 'off' || this.data.llm_names === false;
             const fb = !name && !wait && !off && this._lnDone ? this._laneFallback(g) : '';
-            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
+            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${name ? this._nameIcon(name) : ''}${escapeHtml(name || fb)}</span>`;
         }
 
         // A lane the model could not describe (the call failed): its main library calls, else a plain note.
@@ -2564,7 +2590,7 @@
                         const name = this._shownName(this._laneNames[el.dataset.lname]);
                         if (!name) return;
                         el.classList.remove('wait', 'fb');
-                        el.textContent = name;
+                        el.innerHTML = this._nameIcon(name) + escapeHtml(name);
                     });
                     this.el.querySelectorAll('[data-lpar]').forEach(el => {
                         const g = groups[el.dataset.lpar];
@@ -2613,16 +2639,16 @@
                 title = `${this._laneName(g)}<span class="nway-lcount">${have} of ${cov.length} files</span>${mix}${under}`;
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
-                title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo && hi > lo ? `${lo}\u2013${hi} files` : hi <= 1 ? '1 file' : lo ? `${lo} files` : `up to ${hi} files`}</span>`;
+                title = `${this._bandIcon(g)}<b>${escapeHtml(g.label)}</b> <span class="dim">${lo && hi > lo ? `${lo}\u2013${hi} files` : hi <= 1 ? '1 file' : lo ? `${lo} files` : `up to ${hi} files`}</span>`;
             } else if (g.kind === 'presence' || g.kind === 'delta') {
-                title = `<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}<span class="nway-gsum">${this._laneName(g)}</span>`;
+                title = `${this._bandIcon(g)}<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}<span class="nway-gsum">${this._laneName(g)}</span>`;
             } else if (g.kind === 'rest' || (g.kind === 'region' && g.label)) {
-                title = `<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
+                title = `${this._bandIcon(g)}<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
             } else if (g.kind === 'region') {
                 const peek = (g.hint ? [g.hint] : []).concat((g.sample || []).slice(0, 3)).join(', ');
                 title = `${this._laneName(g)}<span class="nway-lcount" title="Region: rows whose functions call each other">${escapeHtml(peek || 'region')}</span>`;
             } else if (g.kind === 'role') {
-                title = `<i class="nway-rdot r-${escapeAttr(g.role)}"></i><b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
+                title = `${this._roleIcon(g.role)}<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
             } else if (g.kind === 'fold') {
                 title = `<b>${Number(g.lanes)} small lanes</b> <span class="dim">${Number(this.state.group_lane_fold) > 1 ? `under ${Number(this.state.group_lane_fold)} rows each` : ''}</span>`;
             } else if (g.kind === 'same') {
@@ -2707,6 +2733,25 @@
                 : '').join('');
         }
 
+        _roleIcon(role) {
+            const r = ROLES.find(x => x[0] === role);
+            return r ? `<i class="fa-solid ${r[3]} nway-ricon r-${r[0]}"></i>` : '';
+        }
+
+        // A group header's icon: its tier, band, delta pattern or special region.
+        _bandIcon(g) {
+            const last = String(g.id).split('/').pop();
+            const key = g.kind === 'region' ? g.region : last.slice(last.indexOf(':') + 1).split('-')[0];
+            const icon = BAND_ICONS[key];
+            return icon ? `<i class="fa-solid ${icon} nway-bicon"></i>` : '';
+        }
+
+        // The icon in front of an LLM name: its theme, else a sparkle that says the model wrote it.
+        _nameIcon(name) {
+            const hit = NAME_ICONS.find(([re]) => re.test(name));
+            return `<i class="fa-solid ${hit ? hit[1] : 'fa-wand-magic-sparkles'} nway-lico" title="Named by the language model"></i>`;
+        }
+
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
             if (this.state.view === 'strings') return '';
@@ -2746,10 +2791,10 @@
             const [key, label, tip] = ROLES.find(x => x[0] === row.role) || [row.role, row.role, ''];
             const user = row.role_src === 'user';
             const fids = Object.values(row.files || row.cells || {}).filter(f => typeof f === 'string');
-            const items = ROLES.map(([k, l]) => `<button type="button" class="nway-role-it${k === key ? ' on' : ''}" data-role-set="${k}"><i class="nway-rdot r-${k}"></i>${escapeHtml(l)}</button>`).join('')
+            const items = ROLES.map(([k, l]) => `<button type="button" class="nway-role-it${k === key ? ' on' : ''}" data-role-set="${k}">${this._roleIcon(k)}${escapeHtml(l)}</button>`).join('')
                 + (user ? '<button type="button" class="nway-role-it" data-role-set=""><i class="fa-solid fa-rotate-left"></i>Back to the rules</button>' : '');
             const why = `${tip} ${user ? 'Set by an analyst.' : 'From the library tags and call-graph rules.'} Click to change.`;
-            return `<details class="nway-ddl nway-role" data-role-pick data-role-fids="${escapeAttr(JSON.stringify(fids))}"><summary class="nway-rpill r-${escapeAttr(key)}${user ? ' user' : ''}" title="${escapeAttr(why)}"><i class="nway-rdot r-${escapeAttr(key)}"></i>${escapeHtml(label)}${user ? '<i class="fa-solid fa-user-pen"></i>' : ''}</summary><div class="nway-ddl-menu">${items}</div></details>`;
+            return `<details class="nway-ddl nway-role" data-role-pick data-role-fids="${escapeAttr(JSON.stringify(fids))}"><summary class="nway-rpill r-${escapeAttr(key)}${user ? ' user' : ''}" title="${escapeAttr(why)}">${this._roleIcon(key)}${escapeHtml(label)}${user ? '<i class="fa-solid fa-user-pen"></i>' : ''}</summary><div class="nway-ddl-menu">${items}</div></details>`;
         }
 
         async _setRole(t) {

@@ -3770,3 +3770,8 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-rmix i { display: block; height: 100%; background: var(--rc); }
 /* group header stat cells: the header row's padding: 0 is for its full-width title cell */
 .nway-table tr.nway-grow td.nway-gnum { padding: 6px 8px; }
+/* N-way icons: roles (in their colour), bands, and LLM names */
+.nway-ricon { color: var(--rc); width: 14px; margin-right: 5px; text-align: center; font-size: 11px; }
+.nway-bicon { color: var(--accent); width: 14px; margin-right: 6px; text-align: center; font-size: 12px; opacity: 0.85; }
+.nway-lico { color: var(--info); margin-right: 5px; font-size: 11px; font-style: normal; }
+

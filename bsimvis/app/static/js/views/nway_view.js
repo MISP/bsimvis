@@ -480,6 +480,10 @@ window.NwayView = {
         const plural = (n, w) => `${Number(n)} ${w}${n === 1 ? '' : 's'}`;
         const kind = s.cluster_uuid ? 'Binary cluster' : s.batch ? 'Batch' : 'File set';
         const where = s.cluster_uuid ? `cluster ${s.cluster_uuid.slice(0, 8)}` : s.batch ? `batch ${s.batch.slice(0, 8)}` : 'your selection';
+        // Back to where the set came from: the cluster, the batch's files, else the previous page.
+        const back = s.cluster_uuid ? NwayPanel.backUrl(new URLSearchParams(window.location.search))
+            : s.batch ? `${window.Nav.buildUIUrl(s.collection || (s.md5s[0] ? this._split(s.md5s[0]).coll : ''), ['files'])}?batch_uuid=${encodeURIComponent(s.batch)}` : '';
+        const backBtn = back || history.length > 1 ? UI.Button.render({ className: 'btn-code-action', icon: 'fa-solid fa-arrow-left', label: back ? kind : 'Back', tooltip: back ? `Back to the ${s.cluster_uuid ? 'cluster' : 'batch'}` : 'Back to the previous page', attr: { 'data-nway-back': '' } }) : '';
         const colls = [...new Set(files.map(f => f.collection).filter(Boolean))];
         const archs = [...new Set(files.map(f => (f.language_id || '').split(':')[0]).filter(Boolean))];
         const funcs = files.reduce((n, f) => n + (Number(f.functions) || 0), 0);
@@ -499,9 +503,15 @@ window.NwayView = {
         if (st && st.scored < st.total) warns.push(`${st.total - st.scored} pairs unscored`);
         const parts = [plural(files.length, 'file'), `${funcs.toLocaleString()} functions`, plural(colls.length, 'collection'), archs.join(' · ')].filter(Boolean);
         el.hidden = false;
-        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
+        el.innerHTML = `<div class="nway-hero-top">${backBtn}<span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
             <div class="nway-hero-meta dim">${comp}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
+        el.onclick = e => {
+            if (!e.target.closest('[data-nway-back]')) return;
+            if (back) return window.Nav.openPath(back, e);
+            e.preventDefault();
+            history.back();
+        };
     },
 
     // `coll:md5` (or a bare md5) -> its collection and md5.

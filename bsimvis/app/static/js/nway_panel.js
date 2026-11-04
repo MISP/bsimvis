@@ -267,6 +267,12 @@
             if (this._fitRo) this._fitRo.disconnect();
             if (this._dw && !this.cgInit) window.clearCallsPanel();
             this._cg = null;
+            clearTimeout(this._tipShowT);
+            if (this._laneTipEl) {
+                this._laneTipEl.remove();
+                this._laneTipEl = null;
+                for (const ev of ['wheel', 'scroll', 'pointerdown']) window.removeEventListener(ev, this._tipDrop, true);
+            }
         }
 
         _set(patch) {
@@ -1245,13 +1251,22 @@
 
         _cgTipLater() {
             clearTimeout(this._tipT);
+            clearTimeout(this._tipShowT);
             this._tipT = setTimeout(() => { if (this._laneTipEl) this._laneTipEl.style.display = 'none'; }, 250);
         }
 
         // Hover a lane label: what the lane's files have in common (the bar's tick is the share across all files).
         // `preset`: the files of the lane as booleans, for a table group header (the graph lanes look theirs up).
+        // Shown after a short dwell so a pointer crossing headers does not pop it; instant while one is open.
         _cgLaneTip(lbl, preset) {
             clearTimeout(this._tipT);
+            clearTimeout(this._tipShowT);
+            if (this._laneTipEl && this._laneTipEl.style.display === 'block') return this._cgLaneTipNow(lbl, preset);
+            this._tipShowT = setTimeout(() => this._cgLaneTipNow(lbl, preset), 500);
+        }
+
+        _cgLaneTipNow(lbl, preset) {
+            if (!lbl.isConnected) return;
             const files = this._cgFiles(), mask = preset || (this._cgLaneFiles || [])[Number(lbl.dataset.lane)];
             if (!mask) return;
             const lane = files.filter((_, k) => mask[k]);
@@ -1269,6 +1284,9 @@
                     if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => {});
                 };
                 document.body.appendChild(t);
+                // Scrolling or clicking anywhere else drops it, so it never sits over what the user reaches for.
+                this._tipDrop = e => { if (!t.contains(e.target)) { clearTimeout(this._tipShowT); t.style.display = 'none'; } };
+                for (const ev of ['wheel', 'scroll', 'pointerdown']) window.addEventListener(ev, this._tipDrop, { capture: true, passive: true });
             }
             this._tipFiles = lane;
             const size = c => { const n = Number(c.file_size); if (!n) return null; return n < 16384 ? '<16 KB' : n < 65536 ? '16-64 KB' : n < 262144 ? '64-256 KB' : n < 1048576 ? '256 KB-1 MB' : n < 4194304 ? '1-4 MB' : '>4 MB'; };

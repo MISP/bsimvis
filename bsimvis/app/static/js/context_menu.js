@@ -147,6 +147,8 @@
                 norm.tag_id = data.tag_id || norm.id;
                 norm.uuid = data.uuid || data.cluster_uuid;
                 norm.name = data.name || data.cluster_name || norm.uuid || norm.id;
+                // Which cluster to rename, independent of the page the menu opened on.
+                norm.rctx = JSON.stringify({ uuid: norm.uuid, collection: data.collection, pool: data.pool, axis: data.axis, node_type: data.node_type });
             }
         } else if (type === 'node' || type === 'function') {
             resolvedType = 'function';
@@ -617,7 +619,7 @@
                 <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, JSON.parse(${escapeAttr(jsString(norm.rctx || '{}'))}))">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -633,7 +635,7 @@
                 <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, JSON.parse(${escapeAttr(jsString(norm.rctx || '{}'))}))">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>

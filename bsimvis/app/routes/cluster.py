@@ -1029,15 +1029,24 @@ def update_cluster_meta():
     collection = data.get("collection", "main")
     algo = resolve_collection_algo(collection, data.get("algo"))
     cluster_id = data.get("cluster_id")
-    cluster_name = data.get("cluster_name")
+    cluster_name = (data.get("cluster_name") or "").strip()
 
     pool_id = data.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
 
-    if not cluster_id or not cluster_name:
-        return {"error": "cluster_id and cluster_name required"}, 400
-
     r = get_redis()
+    if not cluster_id and data.get("cluster_uuid"):
+        from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
+
+        cluster_id = resolve_cluster_id_by_uuid(
+            r,
+            f"global:pool:{pool_id}" if is_pool else collection,
+            algo,
+            data["cluster_uuid"],
+        )
+    if not cluster_id:
+        return {"error": "cluster_id or cluster_uuid required"}, 400
+
     if is_pool:
         meta_key = f"global:pool:{pool_id}:cluster:{algo}:{cluster_id}:meta"
         collection_for_tags = f"global:pool:{pool_id}"
@@ -1045,14 +1054,21 @@ def update_cluster_meta():
         meta_key = f"{collection}:cluster:{algo}:{cluster_id}:meta"
         collection_for_tags = collection
 
-    if not r.exists(meta_key):
+    meta_val = r.get(meta_key)
+    if not meta_val:
         return {"error": "Cluster meta not found"}, 404
 
-    meta_val = r.get(meta_key)
-    if meta_val:
-        meta_doc = json.loads(meta_val)
-        meta_doc["cluster_name"] = cluster_name
-        r.set(meta_key, json.dumps(meta_doc))
+    # Empty name = back to the name the build gave it.
+    meta_doc = json.loads(meta_val)
+    if not cluster_name:
+        cluster_name = meta_doc.get("auto_name") or f"Cluster {cluster_id}"
+        meta_doc["is_custom_name"] = False
+    else:
+        if not meta_doc.get("is_custom_name"):
+            meta_doc["auto_name"] = meta_doc.get("cluster_name")
+        meta_doc["is_custom_name"] = True
+    meta_doc["cluster_name"] = cluster_name
+    r.set(meta_key, json.dumps(meta_doc))
 
     # Propagate name to all member functions for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
@@ -1062,6 +1078,16 @@ def update_cluster_meta():
     else:
         members_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
     members = r.smembers(members_key)
+    from bsimvis.app.services.cluster_utils import save_cluster_name
+
+    save_cluster_name(
+        r,
+        collection_for_tags,
+        "func",
+        algo,
+        [m.decode() if isinstance(m, bytes) else str(m) for m in members],
+        cluster_name if meta_doc["is_custom_name"] else "",
+    )
 
     # Get old name to unindex
     old_meta = json.loads(meta_val) if meta_val else {}

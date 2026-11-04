@@ -557,7 +557,7 @@ window.ClusterDetailView = {
                 <div class="bsim-node ${isSelected ? 'selected' : ''}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}" style="padding-left: ${12 + depth * 16}px;" onclick="ClusterDetailView.openNode('${c.cluster_uuid}', event)">
                     ${icon}
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); font-size:0.75rem;"></i>
-                    <span class="bsim-node-label" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
+                    <span class="bsim-node-label" data-cluster-name="${escapeAttr(c.cluster_uuid || '')}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
                         ${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}
                     </span>
                     ${this.cohesionBadge(c)}
@@ -595,6 +595,23 @@ window.ClusterDetailView = {
         if (topId !== null) html += buildHtml(topId, 0);
 
         treeContainer.innerHTML = html;
+    },
+
+    // The cluster the page is centred on, renamed through the shared dashboard call.
+    rename() {
+        const self = this.clusterMapByUuid[this.selectedClusterUuid];
+        if (!self) return;
+        const ctx = { uuid: self.cluster_uuid, collection: this.collection, pool: this.params && this.params.pool, algo: this.algo || undefined };
+        if (this.isBinary) Object.assign(ctx, { axis: this.axis, node_type: this.nodeType || 'file' });
+        (this.isBinary ? renameBinCluster : renameCluster)(self.cluster_id, self.cluster_name || '', ctx);
+    },
+
+    // Keep the cached cluster and breadcrumb in step with a rename done anywhere.
+    onRenamed(key, name) {
+        const c = this.clusterMapByUuid[key] || this.clusterMapById[key];
+        if (!c) return;
+        c.cluster_name = name;
+        if (c.cluster_uuid === this.selectedClusterUuid) this.setBreadcrumb(c);
     },
 
     setBreadcrumb(self) {
@@ -835,7 +852,8 @@ window.ClusterDetailView = {
         <div id="cluster-hero" class="cluster-hero${this.heroCompact ? ' compact' : ''}" style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
-                <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
+                <span data-cluster-name="${escapeAttr(self.cluster_uuid || '')}" style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
+                <button class="btn-action" title="Rename cluster (empty name resets)" onclick="ClusterDetailView.rename()"><i class="fa-solid fa-pen"></i></button>
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}

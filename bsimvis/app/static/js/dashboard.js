@@ -4336,77 +4336,60 @@ function updateD3ClusterName(cid, newName) {
     });
 }
 
-async function renameBinCluster(clusterId, currentName) {
-    const newName = prompt(`Enter new name for binary cluster ${clusterId}:`, currentName);
-    if (!newName || newName === currentName) return;
+// One rename for function and file clusters. `ctx` (all optional) names the cluster
+// when the page URL does not: {uuid, collection, pool, algo, axis, node_type}.
+// An empty name resets the cluster to the name its build gave it.
+async function renameAnyCluster(isBin, clusterId, currentName, ctx = {}) {
+    const label = isBin ? 'binary cluster' : 'cluster';
+    const input = prompt(`New name for ${label} ${ctx.uuid || clusterId} (empty = reset):`, currentName);
+    if (input === null) return;
+    const newName = input.trim();
+    if (newName === (currentName || '')) return;
 
     const { collection, params } = getRoutingState();
-    const algo = params.get('algo') || 'unweighted_cosine';
-    const nodeType = params.get('node_type') || 'file';
-
+    const body = {
+        collection: ctx.collection || collection,
+        pool: ctx.pool || undefined,
+        algo: ctx.algo || params.get('algo') || 'unweighted_cosine',
+        cluster_name: newName
+    };
+    if (ctx.uuid) body.cluster_uuid = ctx.uuid; else body.cluster_id = clusterId;
+    if (isBin) {
+        body.node_type = ctx.node_type || params.get('node_type') || 'file';
+        body.axis = ctx.axis || params.get('axis') || 'overall';
+    }
     try {
-        const res = await fetch('/api/bin_cluster/meta', {
+        const res = await fetch(isBin ? '/api/bin_cluster/meta' : '/api/cluster/meta', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection, algo, node_type: nodeType, cluster_id: clusterId, cluster_name: newName })
+            body: JSON.stringify(body)
         });
-        const data = await res.json();
-        if (data.status === 'success') {
-            const el = document.getElementById(`name-display-bin-${clusterId}`);
-            if (el) el.innerText = newName;
-            updateD3ClusterName(clusterId, newName);
-            if (typeof showToast === 'function') {
-                showToast(`Binary cluster renamed to ${newName}`, 'success');
-            }
-        } else {
-            if (typeof showToast === 'function') {
-                showToast(`Rename failed: ${data.error}`, 'error');
-            }
-        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+        const name = data.cluster_name || newName;
+        document.dispatchEvent(new CustomEvent('cluster-renamed', { detail: { isBin, id: String(clusterId), uuid: ctx.uuid || '', name } }));
+        if (typeof showToast === 'function') showToast(`Renamed to ${name}`, 'success');
     } catch (err) {
-        if (typeof showToast === 'function') {
-            showToast(`Error renaming binary cluster: ${err}`, 'error');
-        }
+        if (typeof showToast === 'function') showToast(`Rename failed: ${err.message || err}`, 'error');
     }
 }
 
-async function renameCluster(clusterId, currentName) {
-    const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
-    if (!newName || newName === currentName) return;
+// Every copy of the name on screen is tagged data-cluster-name="<uuid or id>".
+document.addEventListener('cluster-renamed', e => {
+    const { isBin, id, uuid, name } = e.detail;
+    document.querySelectorAll('[data-cluster-name]').forEach(el => {
+        const k = el.dataset.clusterName;
+        if (k === uuid || k === id) el.textContent = name;
+    });
+    const el = document.getElementById(isBin ? `name-display-bin-${id}` : `name-display-${id}`);
+    if (el) el.innerText = name;
+    updateD3ClusterName(id, name);
+    if (uuid) updateD3ClusterName(uuid, name);
+    if (window.ClusterDetailView && ClusterDetailView.onRenamed) ClusterDetailView.onRenamed(uuid || id, name);
+});
 
-    const { collection, params } = getRoutingState();
-    const algo = params.get('algo') || 'unweighted_cosine';
-
-    try {
-        const res = await fetch('/api/cluster/meta', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                collection,
-                algo,
-                cluster_id: clusterId,
-                cluster_name: newName
-            })
-        });
-        if (res.ok) {
-            const el = document.getElementById(`name-display-${clusterId}`);
-            if (el) el.innerText = newName;
-            updateD3ClusterName(clusterId, newName);
-            if (typeof showToast === 'function') {
-                showToast(`Cluster renamed to ${newName}`, 'success');
-            }
-        } else {
-            if (typeof showToast === 'function') {
-                showToast("Failed to rename cluster", "error");
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        if (typeof showToast === 'function') {
-            showToast("Error renaming cluster", "error");
-        }
-    }
-}
+const renameBinCluster = (clusterId, currentName, ctx) => renameAnyCluster(true, clusterId, currentName, ctx);
+const renameCluster = (clusterId, currentName, ctx) => renameAnyCluster(false, clusterId, currentName, ctx);
 
 function switchClusterView(mode) {
     const { viewKey, params } = getRoutingState();
@@ -4603,6 +4586,7 @@ window.applyCollectionSearch = applyCollectionSearch;
 window.applyPoolSearch = applyPoolSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
+window.renameBinCluster = renameBinCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
 window.resetColumnWidths = resetColumnWidths;

@@ -777,6 +777,80 @@ def test_cluster_tags():
         pool_service.delete_pool(pool_id)
 
 
+def test_cluster_rename():
+    """Renaming a cluster by uuid sticks, is remembered for rebuilds, and resets."""
+    from bsimvis.app.services.cluster_utils import ClusterNameKeeper
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Cluster rename", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    collection = f"rename_{uuid.uuid4().hex[:8]}"
+    algo = resolve_collection_algo(collection, None)
+    fids = [f"{collection}:func:md5{i}:0x{i}" for i in range(3)]
+    c_uuid = "rn" + uuid.uuid4().hex[:8]
+    meta_key = f"{collection}:cluster:{algo}:9:meta"
+    keys = [f"{f}:meta" for f in fids] + [
+        meta_key,
+        f"{collection}:cluster:{algo}:9:members",
+        f"{collection}:cluster:list:{algo}",
+        f"{collection}:cluster_names:func",
+    ]
+    try:
+        for f in fids:
+            r.set(f"{f}:meta", json.dumps({"function_name": "f"}))
+        r.sadd(f"{collection}:cluster:{algo}:9:members", *fids)
+        r.sadd(f"{collection}:cluster:list:{algo}", "9")
+        r.set(
+            meta_key,
+            json.dumps(
+                {"cluster_id": "9", "cluster_uuid": c_uuid, "cluster_name": "auto"}
+            ),
+        )
+        body = {"collection": collection, "algo": algo, "cluster_uuid": c_uuid}
+        res = test_endpoint(
+            "POST",
+            "/api/cluster/meta",
+            data={**body, "cluster_name": "analyst name"},
+            label="POST /api/cluster/meta (by uuid)",
+        )
+        check(
+            "rename by uuid succeeds", (res or {}).get("status") == "success", str(res)
+        )
+        meta = json.loads(r.get(meta_key))
+        check(
+            "renamed cluster is flagged custom",
+            meta.get("cluster_name") == "analyst name" and meta.get("is_custom_name"),
+            str(meta),
+        )
+        # A rebuild gives the same members a new cluster label: the name follows them.
+        keeper = ClusterNameKeeper(r, collection, "func", algo, {"77": fids})
+        check(
+            "analyst name is remembered for the next build",
+            keeper.pick("77", "auto") == ("analyst name", True),
+            str(keeper.names),
+        )
+        res = test_endpoint(
+            "POST",
+            "/api/cluster/meta",
+            data={**body, "cluster_name": ""},
+            label="POST /api/cluster/meta (reset)",
+        )
+        meta = json.loads(r.get(meta_key))
+        check(
+            "empty name resets to the build name",
+            meta.get("cluster_name") == "auto" and not meta.get("is_custom_name"),
+            str(meta),
+        )
+        keeper = ClusterNameKeeper(r, collection, "func", algo, {"77": fids})
+        check("reset forgets the saved name", not keeper.names, str(keeper.names))
+    finally:
+        r.delete(*keys)
+
+
 def test_function_search_unindexed_cluster():
     """?cluster_uuid= / ?cluster_id= find a cluster with no idx:func bucket.
 
@@ -11680,6 +11754,7 @@ if __name__ == "__main__":
         test_pool_member_removal,
         test_pool_hierarchical_axis_fanout,
         test_cluster_tags,
+        test_cluster_rename,
         test_entrypoint_backfill,
         test_incremental_hierarchical_cluster_equivalence,
         test_function_search_unindexed_cluster,

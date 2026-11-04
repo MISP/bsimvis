@@ -691,6 +691,8 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
             return `
             <span class="${cardClass}"
                   data-filter-value="${escapeAttr(uuid)}"
+                  data-entity-data='${escapeAttr(JSON.stringify({ cluster_id: c.cluster_id, cluster_uuid: uuid, cluster_name: name, tag_id: c.tag_id, axis: c.axis, node_type: c.node_type, collection: c.collection, pool: c.pool }))}'
+                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, '${isBinary ? 'bin_cluster' : 'cluster'}', this)"
                   onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
                   onmouseleave="hideClusterCardTooltip(event)"
                   onmousemove="moveClusterCardTooltip(event)"
@@ -707,6 +709,8 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
         return `
         <span class="${cardClass}"
               data-filter-value="${escapeAttr(uuid)}"
+              data-entity-data='${escapeAttr(JSON.stringify({ cluster_id: c.cluster_id, cluster_uuid: uuid, cluster_name: name, tag_id: c.tag_id, axis: c.axis, node_type: c.node_type, collection: c.collection, pool: c.pool }))}'
+              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, '${isBinary ? 'bin_cluster' : 'cluster'}', this)"
               onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
@@ -717,7 +721,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
                 <circle cx="12" cy="12" r="10"></circle>
                 <circle cx="12" cy="12" r="4"></circle>
             </svg>
-            <span style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
+            <span data-cluster-name="${escapeAttr(uuid)}" style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
             <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
         </span>`;
     };

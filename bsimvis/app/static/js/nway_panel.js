@@ -179,6 +179,12 @@
             };
             document.addEventListener('function-renamed', this._onRenamed);
             this.el.addEventListener('click', e => this._onClick(e));
+            this.el.addEventListener('click', e => {
+                const x = e.target.closest('[data-note-x]');
+                if (!x) return;
+                (this._noteOff || (this._noteOff = new Set())).add(x.dataset.noteX);
+                x.parentElement.remove();
+            });
             // a built large set: pick another build depth, then reload the table
             this.el.addEventListener('click', e => {
                 const b = e.target.closest('[data-nway-rebuild]');
@@ -653,7 +659,7 @@
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
                 ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}${inl}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
             // Compare and Family are rarely used: both live in the ... menu, lit while either is on.
-            const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}</div></details>`;
+            const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}${this.data && this.data.large ? '<div><button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>' : ''}</div></details>`;
             return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._trackChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
                 <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
         }
@@ -1040,16 +1046,16 @@
         }
 
         _notes() {
-            const d = this.data;
+            const d = this.data, off = this._noteOff || (this._noteOff = new Set());
+            // each note can be closed; the choice lasts until the page reloads
+            const note = (key, cls, inner) => off.has(key) ? '' : `<div class="nway-note${cls ? ' ' + cls : ''}">${inner}<button type="button" class="nway-note-x" data-note-x="${escapeAttr(key)}" title="Close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></div>`;
             let html = '';
-            if (d.mode !== this.state.mode) html += `<div class="nway-note">Ran in <b>${escapeHtml(d.mode)}</b> mode: files span several collections.</div>`;
-            if (d.fallback_pairs) html += `<div class="nway-note">${Number(d.fallback_pairs)} pairs computed on the fly (no stored pair doc).</div>`;
-            if ((d.warnings || []).length) {
-                html += `<div class="nway-note warn">${d.warnings.map(w => `<div>${escapeHtml(w)}</div>`).join('')}</div>`;
-            }
+            if (d.mode !== this.state.mode) html += note('mode', '', `Ran in <b>${escapeHtml(d.mode)}</b> mode: files span several collections.`);
+            if (d.fallback_pairs) html += note('fallback', '', `${Number(d.fallback_pairs)} pairs computed on the fly (no stored pair doc).`);
+            for (const w of d.warnings || []) html += note('w:' + w.replace(/[\d,]+/g, '#'), 'warn', escapeHtml(w));
             if (d.large) {
                 const cur = (d.large.depths || []).find(x => Number(x.pair_k) === Number(d.large.pair_k));
-                html += `<div class="nway-note">Large set built at <b>${escapeHtml(cur ? cur.label : d.large.pair_k ? 'k=' + Number(d.large.pair_k) : 'Deep')}</b> depth. <button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>`;
+                html += note('large', '', `Large set built at <b>${escapeHtml(cur ? cur.label : d.large.pair_k ? 'k=' + Number(d.large.pair_k) : 'Deep')}</b> depth. <button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div>`);
             }
             return html;
         }

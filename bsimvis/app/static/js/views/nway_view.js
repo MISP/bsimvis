@@ -42,7 +42,7 @@ window.NwayView = {
             axis: q.get('axis') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_split_min', 'group_lane_fit', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'cmp', 'col_pick', 'col_rest', 'family', 'ignore', 'view', 'cover_min', 'leak_max']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_split_min', 'group_lane_fit', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'cmp', 'col_pick', 'col_rest', 'family', 'ignore', 'view', 'cover_min', 'leak_max', 'feat_min', 'feat_max', 'support_min']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;
@@ -455,7 +455,7 @@ window.NwayView = {
             onSource: ids => { this._set.md5s = ids.split(','); this._set.batch = ''; this._set.cluster_uuid = ''; this._renderSet(); },
             onData: d => this._renderFileHero(d),
             onSlot: (slot, actions) => {
-                // Compare and Lineage sit at the right of the file-set header
+                // the ... menu (Compare, Family) sits at the right of the file-set header
                 const home = document.querySelector('[data-hero-actions]');
                 if (home && actions) home.replaceChildren(actions);
                 const edit = this._editEl;

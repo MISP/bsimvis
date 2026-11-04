@@ -35,11 +35,11 @@
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
-        family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '',
+        family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '', feat_min: '', feat_max: '', support_min: '',
         group: 'region,role', group_split_min: '', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts'];
+    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min'];
     // Family stats columns: Cover, Leak, Score (+ Reach for strings).
     const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
     const STR_PAGE = 100;
@@ -192,7 +192,10 @@
             document.addEventListener('click', this._ddClose);
             this.el.addEventListener('mouseover', e => this._gTip(e, true));
             this.el.addEventListener('mouseout', e => this._gTip(e, false));
-            this.el.addEventListener('pointerdown', e => { if (e.target.closest('.nway-colgrip')) this._fnGrip(e); });
+            this.el.addEventListener('pointerdown', e => {
+                if (e.target.closest('.nway-colgrip')) this._fnGrip(e);
+                else if (e.target.closest('.nway-lsplit')) this._lsplitDrag(e);
+            });
             // the grip sits in the sortable header: its click must not sort
             this.el.addEventListener('click', e => { if (e.target.closest('.nway-colgrip')) e.stopPropagation(); }, true);
             this.el.addEventListener('dblclick', e => {
@@ -230,6 +233,7 @@
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
                 if (e.target.matches('details.nway-match')) this._matchOpen = e.target.open;
                 if (e.target.matches('details.nway-adv')) this._advOpen = e.target.open;
+                if (e.target.matches('details.nway-ffilter')) this._ffOpen = e.target.open;
             }, true);
             this.el.addEventListener('contextmenu', e => {
                 const file = e.target.closest('[data-nway-file]');
@@ -260,6 +264,7 @@
             document.removeEventListener('click', this._ddClose);
             clearTimeout(this._debounce);
             if (this._io) this._io.disconnect();
+            if (this._fitRo) this._fitRo.disconnect();
             if (this._dw && !this.cgInit) window.clearCallsPanel();
             this._cg = null;
         }
@@ -596,15 +601,26 @@
             const lv = (s.group || '').split(',').filter(Boolean);
             const moreSum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, lv.length ? lv.join(' > ') : '', d.columns_mode === 'focus' ? 'focus' : ''].filter(Boolean).join(' · ');
             const stats = `<button type="button" class="nway-chip${this._statsOff() ? ' on' : ''}" data-stats-toggle title="Hide or show the Span, Features, Support, Cohesion and Cluster columns, to focus on the matrix."><i class="fa-solid fa-table-columns"></i> Stats <span class="dim">${this._statsOff() ? 'hidden' : 'shown'}</span></button>`;
-            const inl = [['calls', 'Calls', 'fa-solid fa-diagram-project', 'Show the rows each function calls and is called by, under it'], ['consts', 'Constants', 'fa-solid fa-hashtag', 'Show the constants each function uses, under it']]
-                .map(([k, label, icon, tip]) => `<button type="button" class="nway-chip${s[k] === '1' ? ' on' : ''}" data-inl="${k}" title="${tip}"><i class="${icon}"></i> ${label}</button>`).join('');
-            const lineage = `<button type="button" class="nway-chip" data-lineage title="Open the lineage of these files as a full page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
+            const inl = s.view === 'strings' ? '' : [['calls', 'Calls', 'Show the rows each function calls and is called by, under it'], ['consts', 'Constants', 'Show the constants each function uses, under it']]
+                .map(([k, label, tip]) => `<label class="nway-gtog${s[k] === '1' ? ' on' : ''}" title="${tip}"><input type="checkbox" data-inl="${k}"${s[k] === '1' ? ' checked' : ''}> ${label}</label>`).join('');
             const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
             const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
-                ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
-            return `<div class="nway-tabrow">${search}${this._columnChip()}${this._tagChip()}${this._famChip()}${moreBtn}</div>${this._lensBar()}
-                <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${s.view === 'strings' ? '' : inl}${this._compareBox()}${lineage}</span></div>${parts.byRow}${more}`;
+                ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}${inl}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
+            // Compare and Family are rarely used: both live in the ... menu, lit while either is on.
+            const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}</div></details>`;
+            return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
+                <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
+        }
+
+        // Small function filter: feature and support bounds the server already applies (feat_min / feat_max / support_min).
+        _fnFilter() {
+            if (this.state.view === 'strings') return '';
+            const s = this.state, keys = [['feat_min', 'Min features', '1'], ['feat_max', 'Max features', '1'], ['support_min', 'Min support', '0.05']];
+            const on = keys.filter(([k]) => s[k] !== '' && s[k] != null);
+            const box = ([k, label, step]) => `<label class="nway-ffield">${label}<input type="number" min="0" step="${step}" data-text="${k}" value="${escapeAttr(s[k] ?? '')}" placeholder="any"></label>`;
+            return `<details class="nway-pop nway-ffilter"${this._ffOpen ? ' open' : ''}><summary class="nway-chip${on.length ? ' on' : ''}" title="Filter the functions by size and support"><i class="fa-solid fa-filter"></i> Filter${on.length ? ` <span class="dim">${on.length}</span>` : ''}</summary>
+                <div class="nway-match-body">${keys.map(box).join('')}<span class="dim">Enter applies.</span>${on.length ? '<button type="button" class="nway-blink" data-ff-clear>clear</button>' : ''}</div></details>`;
         }
 
         // The group controls in three parts: merge files (always shown), the metadata controls
@@ -777,6 +793,7 @@
             this._cmp.bind(node);
             node.addEventListener('toggle', e => {
                 if (e.target.matches('details.nway-focus')) this._focusOpen = e.target.open;
+                if (e.target.matches('details.nway-kebab')) this._kebabOpen = e.target.open;
             }, true);
         }
 
@@ -1121,9 +1138,9 @@
         _dockDraw() {
             const { row, cells } = this._dockRow, tab = this._dockTab;
             this._dockEl.innerHTML = `<div class="nway-dock-grip" title="Drag to resize"></div><div class="nway-dock-head"><b class="nway-dock-name" title="${escapeAttr(row.name)}">${this._fnSig(row, { noClick: true })}</b>
-                <div class="view-toggle" style="margin:0">${[['preview', 'Function'], ['graph', 'Call graph']].map(([v, t]) => `<button class="view-btn${tab === v ? ' active' : ''}" data-dock-tab="${v}">${t}</button>`).join('')}</div>
-                <button class="nway-chip" data-dock-full title="Open the detailed N-way function view"><i class="fa-solid fa-up-right-from-square"></i></button>
+                ${tab === 'preview' ? '<button class="nway-chip" data-dock-full title="Open the detailed N-way function view"><i class="fa-solid fa-up-right-from-square"></i></button>' : ''}
                 <button class="nway-chip" data-dock-close title="Close">&times;</button></div>
+                <div class="bsim-tabbar nway-dock-tabs" role="tablist">${[['preview', 'Function', 'fa-code'], ['graph', 'Call graph', 'fa-diagram-project']].map(([v, t, i]) => `<button type="button" role="tab" class="bsim-tab${tab === v ? ' active' : ''}" aria-selected="${tab === v}" data-dock-tab="${v}"><i class="fa-solid ${i}"></i> ${t}</button>`).join('')}</div>
                 <div class="nway-dock-body"></div>`;
             const body = this._dockEl.querySelector('.nway-dock-body');
             if (tab === 'graph') {
@@ -1167,7 +1184,7 @@
             const prev = this._cg || {};
             this._cg = {
                 stack: [{ name, cells, pieces: init.pieces, name_from: init.name_from, row: init.row, lane: init.lane, laneRow: init.laneRow }],
-                view: init.view || prev.view || 'graph',
+                view: init.lean ? 'graph' : init.view || prev.view || 'graph',
                 scope: init.scope || prev.scope || this.state.scope || 'code',
                 outside: init.outside || prev.outside || 'merge',
                 depth: Number(init.depth || prev.depth || 1),
@@ -1178,6 +1195,7 @@
                 suggest: prev.suggest === undefined ? 'comp' : prev.suggest,
                 nb: null,
                 lean: !!init.lean,
+                zoom: prev.zoom || 1,
             };
             this._dw = host;
             this._applyHue();
@@ -1191,9 +1209,38 @@
                 const rz = e.target.closest('.nway-rz'), card = rz && rz.closest('.nway-node');
                 if (card && this._cg.sz) { delete this._cg.sz[`${card.dataset.side}|${card.dataset.key}`]; this._cgShow(); }
             };
+            // Ctrl+wheel (or a trackpad pinch) zooms around the pointer; the plain wheel still scrolls
+            host.onwheel = e => {
+                if (!(e.ctrlKey || e.metaKey) || !e.target.closest('.nway-cg-body')) return;
+                e.preventDefault();
+                this._cgZoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, { x: e.clientX, y: e.clientY });
+            };
             host.onmouseover = e => { const l = e.target.closest('.nway-lane-lbl'); if (l) this._cgLaneTip(l); };
             host.onmouseout = e => { if (e.target.closest('.nway-lane-lbl')) this._cgTipLater(); };
             this._cgShow();
+        }
+
+        // Zoom the graph by `f` (0 resets) around `at` (client coords; default the view's center), keeping that point still.
+        _cgZoom(f, at) {
+            const body = this._dw && this._dw.querySelector('.nway-cg-body'), g = body && body.querySelector('.nway-graph');
+            if (!g) return;
+            const z0 = this._cg.zoom || 1, z = f ? Math.min(2.5, Math.max(0.2, z0 * f)) : 1;
+            const br = body.getBoundingClientRect();
+            const px = at ? at.x - br.left : body.clientWidth / 2, py = at ? at.y - br.top : body.clientHeight / 2;
+            const cx = (body.scrollLeft + px) / z0, cy = (body.scrollTop + py) / z0;
+            this._cg.zoom = z;
+            g.style.zoom = z === 1 ? '' : String(z);
+            body.scrollLeft = cx * z - px;
+            body.scrollTop = cy * z - py;
+            const lbl = this._dw.querySelector('[data-cg-zoom="0"]');
+            if (lbl) lbl.textContent = `${Math.round(z * 100)}%`;
+        }
+
+        // Bottom right of the graph: zoom buttons and the big way to its own page.
+        _cgCorner() {
+            if (this._cg.view !== 'graph') return '';
+            const pop = this.cgInit ? '' : '<button type="button" class="nway-cg-open" data-cg-pop title="Open this call graph in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i> Open full graph</button>';
+            return `<div class="nway-cg-corner"><div class="nway-cg-zoom"><button type="button" data-cg-zoom="-1" title="Zoom out (Ctrl+wheel)" aria-label="Zoom out">&minus;</button><button type="button" data-cg-zoom="0" title="Reset the zoom">${Math.round((this._cg.zoom || 1) * 100)}%</button><button type="button" data-cg-zoom="1" title="Zoom in (Ctrl+wheel)" aria-label="Zoom in">+</button></div>${pop}</div>`;
         }
 
         _cgTipLater() {
@@ -1424,6 +1471,7 @@
             if (f.row !== undefined) qs.set('cg_row', f.row);
             for (const k of ['view', 'scope', 'depth']) qs.set(`cg_${k}`, st[k]);
             if (st.co) qs.set('cg_co', '1');
+            qs.set('fx_tab', 'graph');
             return `/diff/nway/graph?${qs.toString()}`;
         }
 
@@ -2084,6 +2132,7 @@
         _cgEdges() {
             const g = this._dw && this._dw.querySelector('.nway-graph');
             if (!g) return;
+            g.style.zoom = '';
             const gr = g.getBoundingClientRect();
             const center = g.querySelector('.nway-node.center');
             const byKey = {};
@@ -2191,6 +2240,7 @@
                 const d = left ? -1 : 1, x1 = (left ? a.left : a.right) - gr.left, y1 = a.top + a.height / 2 - gr.top + 6;
                 stubs.push(`<g class="nway-stub other" data-node="${escapeAttr(n.dataset.side + '|' + n.dataset.key)}"><title>${k} other ${left ? 'callers' : 'callees'} (besides the focus): click the card to recenter</title><path d="M${x1},${y1} C${x1 + d * 22},${y1} ${x1 + d * 30},${y1 + 6} ${x1 + d * 30},${y1 + 18}"/><text x="${x1 + d * 30}" y="${y1 + 29}" text-anchor="middle">${k}</text></g>`);
             });
+            if (this._cg.zoom && this._cg.zoom !== 1) g.style.zoom = String(this._cg.zoom);
             svg.innerHTML = '<defs><marker id="cgarrow" viewBox="0 0 10 10" refX="8" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto"><path d="M1,1 L8,5 L1,9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>' + paths.join('') + backPaths.join('') + stubs.join('');
             this._cgHover(g, center, meta, backs);
         }
@@ -2259,12 +2309,12 @@
             else body = `<div class="dim nway-cg-legend"><i class="fa-solid fa-file-code"></i> files that have the function (color: how many) &middot; dot: the focus function there calls it &middot; <i class="fa-solid fa-link"></i> calls from the focus${st.view === 'graph' ? ' (edge width)' : ''}. Click to recenter.${st.co ? ' Dashed lines: other callers of the same callee.' : ''}${st.depth > 1 ? (st.view === 'graph' ? ' Further hops show in-scope rows only.' : ' The list shows the first hop; depth applies to the graph.') : ''}</div>` + (st.view === 'graph' ? this._cgGraph(st.nb, focus, files) : this._cgList(st.nb, focus, files));
             // The dock keeps the essentials: the axis is the table's, the rest lives in the full view.
             const head = st.lean
-                ? `<div class="nway-cg-crumbs${st.lean ? ' lean' : ''}">${crumbs}</div>${depthCtl}<div class="view-toggle" style="margin:0">${toggle.replace(/<button[^>]*data-cg-view="lanes"[^>]*>.*?<\/button>/, '')}</div>`
+                ? `<div class="nway-cg-crumbs lean">${crumbs}</div>`
                 : `<div class="nway-cg-crumbs${st.lean ? ' lean' : ''}">${crumbs}</div><div class="nway-pills" title="Code: the program's own functions. Library: library code and imports. All: both.">${scopeToggle}</div>${depthCtl}${suggestCtl}${detailsCtl}${hueCtl}${selCtl}<div class="view-toggle" style="margin:0">${toggle}</div>`;
-            this._dw.innerHTML = `<div class="nway-cg-head">${title}${head}${this.cgInit || st.lean ? '' : '<button class="nway-chip" data-cg-pop title="Open in its own page (keeps history)"><i class="fa-solid fa-up-right-from-square"></i></button><button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
+            this._dw.innerHTML = `<div class="nway-cg-head">${title}${head}${this.cgInit || st.lean ? '' : '<button class="nway-chip" data-cg-close title="Hide the panel (the N-WAY CALLS handle reopens it)">&times;</button>'}</div>
                 ${st.view === 'list' ? `<div class="nway-cg-focus">${this._nameSig({ name: focus.name, cells: focus.cells, name_from: focus.name_from }, { noClick: true })}<div>${fs.html} <span class="dim">present in ${fs.n}/${files.length} files</span></div></div>` : ''}
                 <div class="nway-cg-selbar" hidden></div>
-                <div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>`;
+                <div class="nway-cg-stage"><div class="nway-cg-body${st.selMode ? ' selmode' : ''}">${body}</div>${this._cgCorner()}</div>`;
             const cr = this._dw.querySelector('.nway-cg-crumbs');
             if (cr) cr.scrollLeft = cr.scrollWidth;
             this._cgFillSims();
@@ -2295,12 +2345,13 @@
                 if (!sel.delete(k)) sel.add(k);
                 return this._cgSelSync();
             }
-            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-more],[data-cg-member],[data-cg-suggest],[data-cg-details],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
+            const t = e.target.closest('[data-cg-go],[data-cg-view],[data-cg-scope],[data-cg-expand],[data-cg-crumb],[data-cg-close],[data-cg-pop],[data-cg-zoom],[data-cg-more],[data-cg-member],[data-cg-suggest],[data-cg-details],[data-cg-hue],[data-cg-focusgrp],[data-cg-mergefocus],[data-cg-deeper]');
             if (!t || !this._cg) return;
             if (t.dataset.cgClose !== undefined) return window.closeCallsPanel();
+            if (t.dataset.cgZoom !== undefined) return this._cgZoom(Number(t.dataset.cgZoom) ? 1.2 ** Number(t.dataset.cgZoom) : 0);
             if (t.dataset.cgPop !== undefined) {
                 const url = this._cgUrl();
-                window.closeCallsPanel();
+                if (!this._cg.lean && window.closeCallsPanel) window.closeCallsPanel();
                 return window.Nav.openPath(url, e);
             }
             if (t.dataset.cgView) {
@@ -2729,12 +2780,14 @@
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
-            if (this.state.view === 'strings') return '';
+            const lineage = `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
+            if (this.state.view === 'strings') return `<div class="bsim-tabbar nway-lenses" role="tablist">${lineage}</div>`;
             const cur = this.state.group || '';
             const icons = { modules: 'fa-diagram-project', core: 'fa-bullseye', deltas: 'fa-code-compare', lanes: 'fa-layer-group', triage: 'fa-list-ol' };
             const tabs = LENSES.map(([k, label, group, tip]) => `<button type="button" role="tab" class="bsim-tab${cur === group ? ' active' : ''}" aria-selected="${cur === group}" data-lens="${k}" title="${escapeAttr(tip)}"><i class="fa-solid ${icons[k]}"></i> ${escapeHtml(label)}</button>`).join('');
-            const custom = LENSES.some(l => l[2] === cur) ? '' : '<span class="nway-lens-custom">custom grouping</span>';
-            return `<div class="bsim-tabbar nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}</div>`;
+            // any other nesting is the Custom tab; clicking it opens the Group by controls under More options
+            const custom = LENSES.some(l => l[2] === cur) ? '' : `<button type="button" role="tab" class="bsim-tab active" aria-selected="true" data-more-toggle title="Rows grouped by hand (${escapeAttr(cur || 'no grouping')}). Click for the Group by controls."><i class="fa-solid fa-sliders"></i> Custom</button>`;
+            return `<div class="bsim-tabbar nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}${lineage}</div>`;
         }
 
         // A header's role mix: one stripe per role, as wide as its share.
@@ -2895,6 +2948,17 @@
             return this._lead().reduce((a, b) => a + b, 0) + SQ_COL * this.data.columns.length;
         }
 
+        // While the dock is open the Function column gives up width (down to 260px) so the file columns stay in view.
+        _fitDock() {
+            const sc = this.el.querySelector('.nway-scroll'), table = sc && sc.querySelector('#nway-table'), col = table && table.querySelector('colgroup col');
+            if (!col) return;
+            const full = this._tableWidth(), fw = this._fnW();
+            const over = this._dockEl && this._dockEl.isConnected ? full - sc.clientWidth : 0;
+            const w = Math.max(260, fw - Math.max(0, over));
+            col.style.width = `${w}px`;
+            table.style.width = `${full - fw + w}px`;
+        }
+
         _colgroup() {
             return `<colgroup>${this._lead().map(w => `<col style="width:${w}px">`).join('')}${`<col style="width:${SQ_COL}px">`.repeat(this.data.columns.length)}</colgroup>`;
         }
@@ -3000,7 +3064,29 @@
             const facets = rows ? this._facets() : '';
             if (!t.grouped && !rows) return '';
             const off = (!t.grouped || this._legOff) && (!rows || this._grpOff) && (!facets || this._facOff);
-            return `<aside class="nway-legend${off ? ' off' : ''}">${t.grouped ? this._colOutline(t) : ''}${rows ? this._groupSide() : ''}${facets}</aside>`;
+            // two panes, the column tree over the row grouping and tags, split by a drag handle
+            const top = t.grouped ? this._colOutline(t) : '', bottom = (rows ? this._groupSide() : '') + facets;
+            if (this._lsplit == null) { try { this._lsplit = Number(localStorage.getItem('nway.lsplit')) || 50; } catch (e) { this._lsplit = 50; } }
+            const body = top && bottom
+                ? `<div class="nway-lpane" style="--lsplit:${Number(this._lsplit)}%">${top}</div><div class="nway-lsplit" title="Drag to resize"></div><div class="nway-lpane">${bottom}</div>`
+                : `<div class="nway-lpane">${top}${bottom}</div>`;
+            return `<aside class="nway-legend${off ? ' off' : ''}">${body}</aside>`;
+        }
+
+        _lsplitDrag(e) {
+            const aside = e.target.closest('.nway-legend'), pane = aside.querySelector('.nway-lpane'), r = aside.getBoundingClientRect();
+            e.preventDefault();
+            const move = ev => {
+                this._lsplit = Math.round(Math.max(10, Math.min(90, (100 * (ev.clientY - r.top)) / r.height)));
+                pane.style.setProperty('--lsplit', `${this._lsplit}%`);
+            };
+            const up = () => {
+                document.removeEventListener('pointermove', move);
+                document.removeEventListener('pointerup', up);
+                try { localStorage.setItem('nway.lsplit', String(this._lsplit)); } catch (err) { /* not saved */ }
+            };
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', up);
         }
 
         // Row grouping from the sidebar: each level toggles, ⇄ swaps two neighbours, lane depth beside it.
@@ -3143,6 +3229,10 @@
                 // the code axis changed in the table: the dock graph follows it
                 if (this._cg && this._cg.lean && this._cg.scope !== this.state.scope) { this._cg.scope = this.state.scope; this._cgShow(); }
             }
+            // the dock shares the table's width: refit whenever the table's room changes
+            if (this._fitRo) this._fitRo.disconnect();
+            const room = this.el.querySelector('.nway-scroll');
+            if (room && window.ResizeObserver) { this._fitRo = new ResizeObserver(() => this._fitDock()); this._fitRo.observe(room); }
             this._mark(this.el.querySelector('#nway-table'));
             this._watch();
             this._scrollRestore();
@@ -3286,7 +3376,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
+            const t = e.target.closest('[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-ff-clear],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
             if (!t) return;
             if (t.dataset.lens) {
                 const lens = LENSES.find(l => l[0] === t.dataset.lens);
@@ -3344,6 +3434,7 @@
                 this._scrollSave();
                 return this.render();
             }
+            if (t.dataset.ffClear !== undefined) return this._set({ feat_min: '', feat_max: '', support_min: '', offset: 0 });
             if (t.dataset.inl) return this._set({ [t.dataset.inl]: this.state[t.dataset.inl] === '1' ? '' : '1' });
             if (t.dataset.roleToggle !== undefined) {
                 this._ro = !this._roleOn();

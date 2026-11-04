@@ -972,13 +972,13 @@ window.ClusterDetailView = {
         });
     },
 
-    /** The Functions tab on its own page (/diff/nway), with the tab's current controls. */
-    openFunctionsFull(event) {
+    /** The Functions tab on its own page (/diff/nway), with the tab's current controls, or `state` when given. */
+    openFunctionsFull(event, state) {
         const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, axis: this.axis });
         if (this.params && this.params.pool) qs.set('pool', this.params.pool);
         else qs.set('collection', this.collection || '');
         const def = window.NwayPanel.DEFAULTS;
-        Object.entries((this._nway && this._nway.state) || {}).forEach(([k, v]) => {
+        Object.entries(state || (this._nway && this._nway.state) || {}).forEach(([k, v]) => {
             if (v != null && String(v) !== String(def[k] ?? '')) qs.set(k, v);
         });
         Nav.openPath(`/diff/nway?${qs}`, event);

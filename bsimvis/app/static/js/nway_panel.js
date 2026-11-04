@@ -68,25 +68,6 @@
         added: 'fa-plus', dropped: 'fa-minus', rewritten: 'fa-pen-to-square', span: 'fa-arrows-left-right', scattered: 'fa-shuffle', kept: 'fa-equals',
         small: 'fa-cubes', none: 'fa-link-slash', runtime: 'fa-gears', library: 'fa-book', rest: 'fa-ellipsis',
     };
-    // An LLM name's icon, from the first theme its words match; the sparkle marks the rest.
-    const NAME_ICONS = [
-        [/runtime|start-?up|teardown|shutdown|\binit|compiler|crt\b/i, 'fa-gears'],
-        [/libc|library|standard|stdlib/i, 'fa-book'],
-        [/crypt|cipher|hash|rc4|aes|\btea\b|xor|encod|decod|obfusc/i, 'fa-lock'],
-        [/exploit|shell|payload|download|dropper|loader/i, 'fa-bug'],
-        [/flood|attack|ddos/i, 'fa-bolt'],
-        [/scan|brute|telnet|ssh|credential|login/i, 'fa-magnifying-glass'],
-        [/kill/i, 'fa-skull-crossbones'],
-        [/network|socket|connect|tcp|udp|http|dns|\bc2\b|command and control|beacon/i, 'fa-network-wired'],
-        [/file|path|director|persist/i, 'fa-folder-open'],
-        [/process|thread|daemon|fork|signal/i, 'fa-microchip'],
-        [/memory|alloc|heap/i, 'fa-memory'],
-        [/string|text|format|print/i, 'fa-font'],
-        [/math|arithmetic|division|float|algorithm|sort/i, 'fa-calculator'],
-        [/random/i, 'fa-dice'],
-        [/time|clock|sleep/i, 'fa-clock'],
-        [/config|setting/i, 'fa-sliders'],
-    ];
     // Triage roles in reading order (nway_role_service.ROLES).
     const ROLES = [
         ['orchestrator', 'Orchestrator', 'Calls many functions of its file: read first for the program flow.', 'fa-sitemap'],
@@ -2501,7 +2482,7 @@
             const wait = this._lnBusy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
             const off = this.state.lane_names === 'off' || this.data.llm_names === false;
             const fb = !name && !wait && !off && this._lnDone ? this._laneFallback(g) : '';
-            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${name ? this._nameIcon(name) : ''}${escapeHtml(name || fb)}</span>`;
+            return `<span class="nway-lname${wait ? ' wait' : ''}${off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
         }
 
         // A lane the model could not describe (the call failed): its main library calls, else a plain note.
@@ -2590,7 +2571,7 @@
                         const name = this._shownName(this._laneNames[el.dataset.lname]);
                         if (!name) return;
                         el.classList.remove('wait', 'fb');
-                        el.innerHTML = this._nameIcon(name) + escapeHtml(name);
+                        el.textContent = name;
                     });
                     this.el.querySelectorAll('[data-lpar]').forEach(el => {
                         const g = groups[el.dataset.lpar];
@@ -2744,12 +2725,6 @@
             const key = g.kind === 'region' ? g.region : last.slice(last.indexOf(':') + 1).split('-')[0];
             const icon = BAND_ICONS[key];
             return icon ? `<i class="fa-solid ${icon} nway-bicon"></i>` : '';
-        }
-
-        // The icon in front of an LLM name: its theme, else a sparkle that says the model wrote it.
-        _nameIcon(name) {
-            const hit = NAME_ICONS.find(([re]) => re.test(name));
-            return `<i class="fa-solid ${hit ? hit[1] : 'fa-wand-magic-sparkles'} nway-lico" title="Named by the language model"></i>`;
         }
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.

@@ -5720,6 +5720,24 @@ def test_nway_roles():
                 held == lb.get("total", 0) - len(gs),
                 f"{held} units in {len(gs)} regions, total {lb.get('total')}",
             )
+    # no lone function at the top level: every row sits in a group
+    for level in ("lane", "prefix", "region"):
+        st, nb = _nway(
+            tab="all", columns="files", scope="all", group=level, group_open="all"
+        )
+        items = (nb or {}).get("items", [])
+        check(
+            f"nway group={level}: no row sits outside a group",
+            st == 200 and items and all(it.get("g") for it in items),
+            f"status {st}, {sum(1 for it in items if not it.get('g'))} top-level rows",
+        )
+    st, pb = _nway(tab="all", columns="files", scope="all", group="presence")
+    check(
+        "nway group=presence: bands count files",
+        st == 200
+        and all("files" in g["label"] for g in (pb or {}).get("groups", {}).values()),
+        str([g.get("label") for g in (pb or {}).get("groups", {}).values()]),
+    )
     st, _ = _nway(tab="all", columns="files", group="region,role", group_split_min="x")
     check("nway group_split_min: not an integer is refused", st == 400, f"status {st}")
     url = f"{BASE_URL}/api/bin_sim/nway/role"
@@ -6990,9 +7008,12 @@ def test_nway_diff():
             f"{_label}: every row names a group on the page (or none, at the top)",
             all(i.get("g") in _groups or i.get("g") == "" for i in _items),
         )
+        _tops = [k for k, m in _groups.items() if len(m["path"]) == 1]
         check(
-            f"{_label}: no catch-all group",
-            all(m["kind"] not in ("other", "rest") for m in _groups.values()),
+            f"{_label}: what no group takes sits in one Other group, listed last",
+            all(m["kind"] != "other" for m in _groups.values())
+            and ("rest" not in _tops or _tops[-1] == "rest"),
+            str(_tops),
         )
         # Collapsed (the default): one header per group, no rows.
         _, _shut = _nway(tab="all", scope="all", limit=1000, group=_mode, **_extra)
@@ -7394,7 +7415,11 @@ def test_nway_diff():
     # Groups of every kind at one level are ordered together, file coverage first by default.
     for _chain in ("lane", "prefix", "prefix,lane"):
         _, _o = _nway(tab="all", scope="all", limit=1000, group=_chain)
-        _tops = [m["files"] for m in _o["groups"].values() if len(m["path"]) == 1]
+        _tops = [
+            m["files"]
+            for m in _o["groups"].values()
+            if len(m["path"]) == 1 and m["kind"] != "rest"
+        ]
         check(
             f"nway group={_chain}: top groups are ordered by file coverage",
             _tops and _tops == sorted(_tops, reverse=True),
@@ -7407,8 +7432,8 @@ def test_nway_diff():
         _ws and _ws == sorted(_ws, reverse=True),
         str(_ws),
     )
-    # Plain rows are siblings of the groups: ordered with them, not appended after them.
-    for _gs, _want in (("weight", "before"), ("files", "after")):
+    # No lone row at the top: rows no lane takes sit in "Other functions", after the lanes.
+    for _gs in ("weight", "files"):
         _, _mix = _nway(
             tab="all",
             scope="all",
@@ -7419,7 +7444,9 @@ def test_nway_diff():
             group_open="all",
         )
         _its = _mix["items"]
-        _plain = [n for n, i in enumerate(_its) if not i.get("header") and i["g"] == ""]
+        _plain = [
+            n for n, i in enumerate(_its) if not i.get("header") and i["g"] == "rest"
+        ]
         _wide = next(
             (
                 n
@@ -7429,10 +7456,8 @@ def test_nway_diff():
             None,
         )
         check(
-            f"nway group: plain rows are ordered with the lanes (group_sort={_gs})",
-            _plain
-            and _wide is not None
-            and (min(_plain) < _wide if _want == "before" else min(_plain) > _wide),
+            f"nway group: rows no lane takes sit in Other functions, after the lanes (group_sort={_gs})",
+            _plain and _wide is not None and min(_plain) > _wide,
             f"plain rows at {_plain[:3]}, 2-file lane at {_wide}",
         )
     check(

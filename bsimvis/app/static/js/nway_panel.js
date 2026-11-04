@@ -56,9 +56,9 @@
     // Row lenses: one question each, as a preset of group levels.
     const LENSES = [
         ['modules', 'Modules', 'region,role', 'Which subsystems are there? Call-graph regions named by the LLM; a region above the split threshold is split by role.'],
-        ['core', 'Core', 'presence,region', 'What do the columns share? Bands by how many columns hold a row; a band above the threshold is split by region.'],
+        ['core', 'Core', 'presence,region', 'What do the files share? Bands by how many files hold a row, each with a short summary; a band above the threshold is split by region.'],
         ['deltas', 'Deltas', 'delta,region', 'What changed along the column order? New, added, dropped, rewritten and kept rows, over the columns shown (files or column groups).'],
-        ['lanes', 'Lanes', 'lane', 'Rows bundled by exactly the same set of files, with tiers and folds.'],
+        ['lanes', 'Lanes', 'lane,region', 'Core, common and rare tiers, then lanes of exactly the same files; a lane above the split threshold is split by region.'],
         ['triage', 'Triage', 'role,region', 'What to read first: roles in reading order, library and runtime last; a role above the threshold is split by region.'],
     ];
     // Triage roles in reading order (nway_role_service.ROLES).
@@ -78,6 +78,7 @@
     // Widths in px: Function, Span, Features, Support, Cohesion, Cluster, then one square column per file.
     const DATA_COLS = [380, 64, 90, 90, 90, 210];
     const SQ_COL = 28;
+    const ROLE_COL = 120;
     // Names a lane focus in the call graph: not one function, so no signature and no rename.
     const LANE_MARK = '\u29c9 ';
     const BAND_H = 18;
@@ -2536,8 +2537,8 @@
             const d = this.data, groups = d && this.state.lane_names !== 'off' ? Object.values(d.groups || {}) : [];
             // real file counts: in a grouped-columns table a mask bit is a column group, not a file
             const nFiles = d ? (d.file_columns || d.columns.filter(c => !c.kind)).length : 0;
-            const lanes = groups.filter(g => (g.kind === 'lane' || (g.kind === 'region' && !g.label)) && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length)).slice(0, 40)
-                .map(g => ({ id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0, ...(this.state.view === 'strings' ? { kind: 'string' } : {}) }));
+            const lanes = groups.filter(g => (g.kind === 'lane' || g.kind === 'presence' || g.kind === 'delta' || (g.kind === 'region' && !g.label)) && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length)).slice(0, 40)
+                .map(g => ({ id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0, ...(this.state.view === 'strings' ? { kind: 'string' } : g.kind === 'presence' || g.kind === 'delta' ? { kind: 'summary' } : {}) }));
             // function and string lanes can share an id: keep their names apart
             const kind = this.state.view === 'strings' ? 's' : 'f';
             if (this._lnKind !== kind) { this._lnKind = kind; this._laneNames = {}; this._laneEvid = {}; this._lnSig = ''; }
@@ -2613,7 +2614,9 @@
             } else if (g.kind === 'tier') {
                 const hi = Number(g.max), lo = Number(g.min);
                 title = `<b>${escapeHtml(g.label)}</b> <span class="dim">${lo ? (hi > lo ? `${lo}\u2013${hi}` : `${lo}`) : `up to ${hi}`} files</span>`;
-            } else if (g.kind === 'presence' || g.kind === 'delta' || (g.kind === 'region' && g.label)) {
+            } else if (g.kind === 'presence' || g.kind === 'delta') {
+                title = `<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}<span class="nway-gsum">${this._laneName(g)}</span>`;
+            } else if (g.kind === 'rest' || (g.kind === 'region' && g.label)) {
                 title = `<b>${escapeHtml(g.label)}</b>${this._tip(g.tip)}`;
             } else if (g.kind === 'region') {
                 const peek = (g.hint ? [g.hint] : []).concat((g.sample || []).slice(0, 3)).join(', ');
@@ -2679,12 +2682,13 @@
             const g = row.g && (this.data.groups || {})[row.g], depth = g ? g.path.length : 0;
             const rc = this._ratioCls(Number(row.file_span || row.span) || 0);
             return `<tr class="${depth ? 'nway-in ' : ''}${g && g.kind === 'same' ? 'nway-ver ' : ''}${rc}"${depth ? ` style="--gd:${depth}" data-g="${escapeAttr(row.g)}"` : ''}>
-                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}${this._rolePill(row)}</span></td>
+                <td class="nway-open" data-fn-open title="Show this row's call graph (Ctrl-click: compare its functions in a full page)" style="min-width:260px; max-width:420px;">${this._nameSig(row, { noClick: true })}<span class="nway-name">${this._nameConflict(row.name_conflict)}${low}${also}${this._missChip(row.sub, row.miss)}</span></td>
                 ${this._statsOff() ? '' : `<td class="num">${Number(row.file_span || row.span)}</td>
                 <td class="num">${Number(row.weight).toFixed(0)}</td>
                 <td class="num">${this._score(row.support)}</td>
                 <td class="num">${this._score(row.cohesion)}</td>
                 <td class="cluster-cards-cell">${window.EntityRenderer.renderClusterCard((row.clusters || []).map(u => this.data.clusters[u]).filter(Boolean))}</td>`}
+                ${this._roleOn() ? `<td class="nway-rcell">${this._rolePill(row)}</td>` : ''}
                 ${this._famCells(row.stats)}
                 ${cols.map((c, ci) => this._cell(row, c, ci)).join('')}
             </tr>${this._fnLineRows(row)}`;
@@ -2707,9 +2711,10 @@
         _lensBar() {
             if (this.state.view === 'strings') return '';
             const cur = this.state.group || '';
-            const tabs = LENSES.map(([k, label, group, tip]) => `<button type="button" role="tab" class="nway-lens${cur === group ? ' on' : ''}" aria-selected="${cur === group}" data-lens="${k}" title="${escapeAttr(tip)}">${escapeHtml(label)}</button>`).join('');
-            const custom = LENSES.some(l => l[2] === cur) ? '' : '<span class="nway-lens-custom">custom</span>';
-            return `<div class="nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}</div>`;
+            const icons = { modules: 'fa-diagram-project', core: 'fa-bullseye', deltas: 'fa-code-compare', lanes: 'fa-layer-group', triage: 'fa-list-ol' };
+            const tabs = LENSES.map(([k, label, group, tip]) => `<button type="button" role="tab" class="bsim-tab${cur === group ? ' active' : ''}" aria-selected="${cur === group}" data-lens="${k}" title="${escapeAttr(tip)}"><i class="fa-solid ${icons[k]}"></i> ${escapeHtml(label)}</button>`).join('');
+            const custom = LENSES.some(l => l[2] === cur) ? '' : '<span class="nway-lens-custom">custom grouping</span>';
+            return `<div class="bsim-tabbar nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}</div>`;
         }
 
         // A header's role mix: one stripe per role, as wide as its share.
@@ -2721,18 +2726,18 @@
 
         // A group header fills the row columns: span and feature ranges, mean support, mean (and lowest) cohesion, role mix.
         _headStats(g) {
-            const lead = this._lead().length;
-            if (this.state.view === 'strings' || this._statsOff()) return { span: lead, cells: '' };
+            const lead = this._lead().length, stats = !this._statsOff(), role = this._roleOn();
+            if (this.state.view === 'strings' || (!stats && !role)) return { span: lead, cells: '' };
             const range = (a, b) => (a == null ? '' : a === b ? `${Number(a)}` : `${Number(a)}\u2013${Number(b)}`);
             const feat = g.kind === 'same' ? range(Math.round(g.w_lo), Math.round(g.w_hi)) : Number(g.weight || 0).toFixed(0);
             const low = g.cohesion_min != null && g.cohesion != null && g.cohesion_min < g.cohesion - 0.005
                 ? `<span class="nway-gmin" title="Lowest cohesion in the group">\u2193${pct(g.cohesion_min)}</span>` : '';
-            const mix = g.roles && !['same', 'role'].includes(g.kind) ? this._roleMix(g.roles) : '';
-            const fam = lead - 6;
-            return {
-                span: 1,
-                cells: `<td class="num nway-gnum">${range(g.span_lo, g.span_hi)}</td><td class="num nway-gnum">${feat}</td><td class="num nway-gnum">${g.support == null ? '' : this._score(g.support)}</td><td class="num nway-gnum">${g.cohesion == null ? '' : this._score(g.cohesion)}${low}</td><td class="nway-gnum">${mix}</td>${fam > 0 ? `<td colspan="${fam}"></td>` : ''}`,
-            };
+            let cells = stats
+                ? `<td class="num nway-gnum">${range(g.span_lo, g.span_hi)}</td><td class="num nway-gnum">${feat}</td><td class="num nway-gnum">${g.support == null ? '' : this._score(g.support)}</td><td class="num nway-gnum">${g.cohesion == null ? '' : this._score(g.cohesion)}${low}</td><td></td>`
+                : '';
+            if (role) cells += `<td class="nway-gnum">${g.roles ? this._roleMix(g.roles) : ''}</td>`;
+            const fam = lead - 1 - (stats ? 5 : 0) - (role ? 1 : 0);
+            return { span: 1, cells: cells + (fam > 0 ? `<td colspan="${fam}"></td>` : '') };
         }
 
         // The row's triage role; a click opens the override menu (fixed-positioned: the cell clips overflow).
@@ -2808,6 +2813,15 @@
             return this._so;
         }
 
+        // The Role column, shown unless hidden from its header button; remembered per browser.
+        _roleOn() {
+            if (this.state.view === 'strings') return false;
+            if (this._ro == null) {
+                try { this._ro = localStorage.getItem('nway.role') !== '0'; } catch (e) { this._ro = true; }
+            }
+            return this._ro;
+        }
+
         // File squares coloured by how many files hold the row (as in the graph view) instead of one colour per file or cluster.
         _sqLane() {
             if (this._sl == null) {
@@ -2834,7 +2848,7 @@
         _lead() {
             if (this.state.view === 'strings') return [this._fnW(), ...(this._famOn() ? [70, 80, 80, 70] : []), 64];
             const cols = [this._fnW(), ...DATA_COLS.slice(1)];
-            return (this._statsOff() ? cols.slice(0, 1) : cols).concat(this._famOn() ? [70, 80, 70] : []);
+            return (this._statsOff() ? cols.slice(0, 1) : cols).concat(this._roleOn() ? [ROLE_COL] : [], this._famOn() ? [70, 80, 70] : []);
         }
 
         _fnGrip(e) {
@@ -2900,12 +2914,12 @@
             const foldBtns = s.group || s.group_merge
                 ? '<span class="nway-fold"><button type="button" data-gall="open" title="Expand every group"><i class="fa-solid fa-angles-down"></i></button><button type="button" data-gall="close" title="Collapse every group"><i class="fa-solid fa-angles-up"></i></button></span>'
                 : '';
-            const hdrBtns = `<span class="nway-fold"><button type="button" class="${this._statsOff() ? '' : 'on'}" data-stats-toggle title="${this._statsOff() ? 'Show' : 'Hide'} the Span, Features, Support, Cohesion and Cluster columns"><i class="fa-solid fa-table-columns"></i></button><button type="button" class="${this._sqLane() ? 'on' : ''}" data-sqmode title="${this._sqLane() ? 'Squares coloured by how many files have the function. Click for one colour per file or cluster.' : 'Squares coloured per file or cluster. Click to colour by how many files have the function.'}"><i class="fa-solid fa-palette"></i></button></span>`;
+            const hdrBtns = `<span class="nway-fold"><button type="button" class="${this._statsOff() ? '' : 'on'}" data-stats-toggle title="${this._statsOff() ? 'Show' : 'Hide'} the Span, Features, Support, Cohesion and Cluster columns"><i class="fa-solid fa-table-columns"></i></button><button type="button" class="${this._roleOn() ? 'on' : ''}" data-role-toggle title="${this._roleOn() ? 'Hide' : 'Show'} the Role column"><i class="fa-solid fa-list-ol"></i></button><button type="button" class="${this._sqLane() ? 'on' : ''}" data-sqmode title="${this._sqLane() ? 'Squares coloured by how many files have the function. Click for one colour per file or cluster.' : 'Squares coloured per file or cluster. Click to colour by how many files have the function.'}"><i class="fa-solid fa-palette"></i></button></span>`;
             const th0 = c => th(c).replace('</th>', `${hdrBtns}${foldBtns}<span class="nway-colgrip" title="Drag to resize the Function column (double-click to reset)"></span></th>`);
             const famTh = ([key, label, tip]) => th([key, label]).replace('<th ', `<th title="${escapeAttr(tip)}" `);
             const lead = this.state.view === 'strings'
                 ? th(['name', 'String']).replace('</th>', `${foldBtns}</th>`) + (this._famOn() ? [...FAM_COLS.slice(0, 2), ['reach', 'Reach', 'Files of the collection outside this table that also hold the string'], FAM_COLS[2]].map(famTh).join('') : '') + th(['span', 'Files'])
-                : (this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>') + (this._famOn() ? FAM_COLS.map(famTh).join('') : '');
+                : (this._statsOff() ? th0(SORTS[0]) : th0(SORTS[0]) + SORTS.slice(1).map(th).join('') + '<th>Cluster</th>') + (this._roleOn() ? '<th title="Triage role: library and runtime from the library analyzer, the rest from the call graph. Click a row\'s role to override it.">Role</th>' : '') + (this._famOn() ? FAM_COLS.map(famTh).join('') : '');
             if (this._tree().grouped) {
                 const bands = this._bands();
                 return `${bands.html}<tr style="--bt:${bands.n * BAND_H}px">${lead}${this.data.columns.map((c, ci) => this._numHead(c, ci)).join('')}</tr>`;
@@ -3252,7 +3266,7 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
+            const t = e.target.closest('[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear]');
             if (!t) return;
             if (t.dataset.lens) {
                 const lens = LENSES.find(l => l[0] === t.dataset.lens);
@@ -3311,6 +3325,12 @@
                 return this.render();
             }
             if (t.dataset.inl) return this._set({ [t.dataset.inl]: this.state[t.dataset.inl] === '1' ? '' : '1' });
+            if (t.dataset.roleToggle !== undefined) {
+                this._ro = !this._roleOn();
+                try { localStorage.setItem('nway.role', this._ro ? '1' : '0'); } catch (err) { /* storage blocked */ }
+                this._scrollSave();
+                return this.render();
+            }
             if (t.dataset.statsToggle !== undefined) {
                 this._so = !this._statsOff();
                 try { localStorage.setItem('nway.stats', this._so ? '0' : '1'); } catch (err) { /* storage blocked */ }

@@ -3748,20 +3748,22 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .r-library { --rc: var(--info); }
 .nway-rdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--rc); margin-right: 5px; flex: none; }
 .nway-role { vertical-align: middle; }
-.nway-rpill { font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px; border: 1px solid color-mix(in srgb, var(--rc) 55%, transparent); background: color-mix(in srgb, var(--rc) 12%, transparent); color: var(--text); gap: 4px; }
-.nway-rpill.user { border-width: 2px; }
+.nway-rpill { font-size: 12px; line-height: 18px; color: var(--text); gap: 4px; }
+.nway-rpill:hover { color: var(--accent); }
+.nway-rpill.user .fa-user-pen { color: var(--accent); font-size: 10px; }
+.nway-table td.nway-rcell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nway-rmix { width: 100%; max-width: 100px; }
 .nway-role > .nway-ddl-menu { position: fixed; top: 0; left: 0; min-width: 180px; }
 .nway-role-it { all: unset; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: var(--text); }
 .nway-role-it:hover, .nway-role-it:focus-visible, .nway-role-it.on { background: var(--hover); }
 .nway-role-it .fa-solid { width: 12px; margin-right: 5px; color: var(--dim); }
 
 /* N-way lens tabs and layout A headers */
-.nway-lenses { display: flex; align-items: center; gap: 2px; margin: 6px 0 4px; flex-wrap: wrap; }
-.nway-lens { all: unset; cursor: pointer; padding: 4px 12px; font-size: 13px; border-bottom: 2px solid transparent; color: var(--dim); }
-.nway-lens:hover { color: var(--text); }
-.nway-lens.on { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
-.nway-lens:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.nway-lens-custom { font-size: 12px; color: var(--dim); padding: 0 8px; font-style: italic; }
+.nway-panel .bsim-tabbar.nway-lenses { margin: 8px 0 10px; align-items: center; flex-wrap: wrap; }
+.nway-lenses .bsim-tab .fa-solid { margin-right: 4px; opacity: 0.8; }
+.nway-lens-custom { font-size: 12px; color: var(--dim); padding: 0 10px; font-style: italic; }
+.nway-gsum { margin-left: 8px; color: var(--dim); font-style: italic; }
+.nway-gsum .nway-lname:not(:empty)::before { content: "\2014  "; font-style: normal; }
 .nway-table td.nway-gnum { font-size: 12px; color: var(--dim); vertical-align: middle; }
 .nway-gmin { margin-left: 4px; font-size: 10.5px; color: var(--dim); }
 .nway-rmix { display: flex; width: 90px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }

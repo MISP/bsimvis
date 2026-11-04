@@ -696,18 +696,18 @@ def _band(span, n):
     return "most" if span >= math.ceil(0.75 * n) else "some"
 
 
-def presence_groups(units, n):
-    """Bands by how many columns hold a unit: every, most (75%+), some, one or two."""
-    most = max(3, math.ceil(0.75 * n))
+def presence_groups(units, n, nfiles):
+    """Bands by how many files hold a unit: every, most (75%+), some, one or two."""
+    most = max(3, math.ceil(0.75 * nfiles))
     text = {
-        "every": (f"In all {n} columns", "The core every column shares."),
-        "most": (f"In {most}\u2013{n - 1} columns", "Missing from a few columns."),
-        "some": (f"In 3\u2013{most - 1} columns", "Held by part of the set."),
-        "few": ("In one or two columns", "Specific to one or two columns."),
+        "every": (f"In all {nfiles} files", "The core every file shares."),
+        "most": (f"In {most}\u2013{nfiles - 1} files", "Missing from a few files."),
+        "some": (f"In 3\u2013{most - 1} files", "Held by part of the set."),
+        "few": ("In one or two files", "Specific to one or two files."),
     }
     by = defaultdict(list)
     for u in units:
-        by[_band(_pop(u["mask"]), n)].append(u)
+        by[_band(_unit_span(u), nfiles)].append(u)
     out = []
     for key in ("every", "most", "some", "few"):
         if by[key]:
@@ -817,7 +817,7 @@ def _level(mode, units, ctx):
     if mode == "role":
         return role_groups(units, ctx["n"])
     if mode == "presence":
-        return presence_groups(units, ctx["n"])
+        return presence_groups(units, ctx["n"], ctx["nfiles"])
     if mode == "delta":
         return delta_groups(units, ctx["n"], ctx["labels"])
     if mode == "region":
@@ -837,6 +837,39 @@ def _level(mode, units, ctx):
         ctx["axis_b"],
         ctx["tag_depth"],
     )
+
+
+def _no_lone(nodes, ctx):
+    """Top level: the functions no group took become one "Other functions" group, listed last."""
+    loose = [n for n in nodes if not n["container"]]
+    if not loose:
+        return nodes
+    units = [n["unit"] for n in loose]
+    g = _rest(units, ctx)
+    inner = _expand(
+        units, ctx, g["id"], g["path"], {id(n["unit"]): n["extra"] for n in loose}
+    )
+    box = {
+        "container": True,
+        "rank": g.pop("_rank"),
+        "id": g["id"],
+        "pairs": [(g, [])] + _flat(inner, ctx),
+    }
+    return [n for n in nodes if n["container"]] + [box]
+
+
+def _rest(units, ctx):
+    """The top-level group of what a level could not place, listed after the others."""
+    g = _meta(units, ctx["n"])
+    g.update(
+        id="rest",
+        kind="rest",
+        label="Other functions",
+        tip="Functions this grouping does not place.",
+    )
+    g["path"] = [g["id"]]
+    g["_rank"] = (-2, -2, -2)
+    return g
 
 
 def _graft(g, parent_id, parent_path):
@@ -936,6 +969,8 @@ def _expand(units, ctx, parent_id, parent_path, carried):
             pair = (_graft(m, parent_id, parent_path), [(row, {}) for row in members])
         node = {
             "container": False,
+            "unit": u,
+            "extra": carried.get(id(u), {}),
             "rank": _unit_rank(u, ctx),
             "key": _unit_sortkey(u, ctx),
             "pairs": [pair],
@@ -1174,7 +1209,7 @@ def _annotate(pairs, fmeta):
     for g, _ in pairs:
         if g.get("under_mask"):
             g["under_id"] = by_mask.get(g["under_mask"])
-        if g.get("kind") not in ("lane", "tier", "fold", "region"):
+        if g.get("kind") not in ("lane", "tier", "fold", "region", "presence", "delta"):
             continue
         best = {}
         for r in rows[g["id"]]:
@@ -1182,7 +1217,7 @@ def _annotate(pairs, fmeta):
             if r.get("name_from") != "tag" and (k := name_key(r)):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
-        if g["kind"] in ("lane", "region"):
+        if g["kind"] in ("lane", "region", "presence", "delta"):
 
             def finds(r):
                 return [
@@ -1343,6 +1378,13 @@ def _lane_evidence(l):
             else f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
         )
     ]
+    if l.get("kind") == "summary":
+        # a band of the table, not a lane: it spans several modules
+        out.append(
+            "These functions span several modules: describe the group as a whole in "
+            "general terms (for example 'core bot logic and libc', 'attack and "
+            "scanner code'), not one of its capabilities."
+        )
     if platform:
         out.append("Platform: " + platform.most_common(1)[0][0])
     if sample and not by_string:
@@ -1445,8 +1487,8 @@ def lane_names(lanes):
             "tag_rows": tag_rows,
             "v": 9,  # bump when the prompt changes, so cached names are redone
         }
-        if l.get("kind") == "string":
-            item["kind"] = "string"
+        if l.get("kind") in ("string", "summary"):
+            item["kind"] = l["kind"]
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()
@@ -1546,6 +1588,7 @@ def group_rows(rows, doc, r, mode, params):
         "lane_tier": 0.0,
         "lane_fold": 0,
         "split_min": SPLIT_MIN,
+        "nfiles": len(doc.get("file_columns") or doc["columns"]),
         "labels": [
             c.get("label") or c.get("file_name") or c.get("id") or ""
             for c in doc["columns"]
@@ -1615,7 +1658,10 @@ def group_rows(rows, doc, r, mode, params):
         except ValueError:
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
-    pairs = _nest(units, levels, ctx, "", [], {})
+    nodes = _nodes(units, levels, ctx, "", [], {})
+    if levels:
+        nodes = _no_lone(nodes, ctx)
+    pairs = _flat(nodes, ctx)
     _annotate(pairs, doc["fmeta"])
     # `fcover`: the files the group holds, one 0/1 per file column. Child and twin columns stand for
     # several files, so the column-level `union` alone would show a half-covered column as full.
@@ -1720,10 +1766,10 @@ def demo():
     assert [g["id"] for g, _ in got] == ["role:orchestrator", "role:library", ""], got
     doc = {"rows": rr, "fmeta": {}, "columns": [{"id": "A"}, {"id": "B"}], "key": None}
     ent, gs, _ = group_rows(rr, doc, None, "role", {})
-    assert list(gs) == ["role:orchestrator", "role:library"], gs
+    assert list(gs) == ["role:orchestrator", "role:library", "rest"], gs
     # presence bands over 4 columns; deltas along the column order
     pr = [row(15, 1), row(7, 1), row(1, 1), row(8, 1), row(12, 1), row(5, 1)]
-    assert [g["id"] for g, _ in presence_groups(pr, 4)] == [
+    assert [g["id"] for g, _ in presence_groups(pr, 4, 4)] == [
         "presence:every",
         "presence:most",
         "presence:few",
@@ -1777,6 +1823,16 @@ def demo():
     assert list(gs) == ["region:r1"], gs
     _, gs, _ = group_rows(small, doc, None, "region,role", {"group_split_min": "1"})
     assert "region:r1/role:logic" in gs, gs
+    # no lone function at the top level: a prefix level's leftovers go into "Other functions"
+    lone = [row(1, 1, "attack_a"), row(1, 1, "attack_b"), row(1, 1, "main")]
+    _, gs, _ = group_rows(
+        lone,
+        {"rows": lone, "fmeta": {}, "columns": [{"id": "A"}], "key": None},
+        None,
+        "prefix",
+        {},
+    )
+    assert list(gs) == ["prefix:attack_", "rest"], gs
     # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")

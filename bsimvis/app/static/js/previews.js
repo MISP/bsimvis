@@ -328,7 +328,7 @@
         html += '</div>';
 
         if (rows.length > 18) {
-            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Use scroll wheel to view all ${rows.length} lines</div>`;
+            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Shift+wheel to view all ${rows.length} lines</div>`;
         }
 
         html += '</div>';
@@ -420,12 +420,31 @@
         lastTriggerElement = null;
     };
 
+    // --- Auto-hide: scrolling, clicking elsewhere or navigating drops the hover previews ---
+    const TIP_SEL = '#code-preview-tooltip, #diff-preview-tooltip, #note-preview-tooltip, #hierarchy-tooltip, #bin-hierarchy-tooltip, #binary-preview-tooltip, #tag-tooltip, #token-tooltip, #graph-context-menu';
+    const anyTipShown = () => [...document.querySelectorAll(TIP_SEL)].some(el => el.id !== 'graph-context-menu' && el.style.display && el.style.display !== 'none');
+    const dropTips = e => {
+        if (e.target && e.target.closest && e.target.closest(TIP_SEL)) return;
+        if (anyTipShown()) window.hideAllTooltips(true);
+    };
+    window.addEventListener('scroll', dropTips, true);
+    window.addEventListener('pointerdown', dropTips, true);
+    window.addEventListener('popstate', () => window.hideAllTooltips(true));
+
     // --- Wheel scroll intercept for preview tooltips ---
+    // Plain wheel scrolls the page and drops the previews; Shift+wheel scrolls inside one, Ctrl+wheel cycles.
     window.addEventListener('wheel', e => {
         if (e.target.closest && e.target.closest('#fn-cg-container')) return; // let Pivotick's own zoom-on-wheel handle the call graph
+        if (!e.shiftKey && !e.ctrlKey && !(e.target.closest && e.target.closest(TIP_SEL))) {
+            if (anyTipShown()) window.hideAllTooltips(true);
+            return;
+        }
+        // Shift+wheel arrives as horizontal on most platforms.
+        const dy = e.deltaY || (e.shiftKey ? e.deltaX : 0);
+        const dx = e.shiftKey ? 0 : e.deltaX;
         const codeTooltip = document.getElementById('code-preview-tooltip');
         const diffTooltip = document.getElementById('diff-preview-tooltip');
-        
+
         const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
         const hierTooltip = targetWindow.document.getElementById('hierarchy-tooltip');
         const binHierTooltip = targetWindow.document.getElementById('bin-hierarchy-tooltip');
@@ -437,7 +456,7 @@
             if (noteScroll) {
                 e.preventDefault();
                 e.stopPropagation();
-                noteScroll.scrollTop += e.deltaY;
+                noteScroll.scrollTop += dy;
                 return;
             }
         }
@@ -456,7 +475,7 @@
                 if (!e.ctrlKey) {
                     const codeScrollEl = activeTooltip.querySelector(isHierActive ? '#hier-snippet-container .c-code-container' : '#bin-hier-snippet-container');
                     if (codeScrollEl) {
-                        codeScrollEl.scrollTop += e.deltaY;
+                        codeScrollEl.scrollTop += dy;
                         if (isHierActive && targetWindow.hierarchyInstance) {
                             targetWindow.hierarchyInstance._codeScrollTop = codeScrollEl.scrollTop;
                         }
@@ -477,7 +496,7 @@
 
                 if (activeInstance && activeInstance._activeD) {
                     const d = activeInstance._activeD;
-                    const delta = Math.sign(e.deltaY);
+                    const delta = Math.sign(dy);
                     const members = d.data.runtime_members || [];
                     if (members.length === 0) return;
 
@@ -494,13 +513,13 @@
             if (isDiffActive) {
                 if (!e.ctrlKey) {
                     if (scrollContainer) {
-                        scrollContainer.scrollTop += e.deltaY;
-                        if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;
+                        scrollContainer.scrollTop += dy;
+                        if (dx) scrollContainer.scrollLeft += dx;
                     }
                 } else {
                     const diffPairs = targetWindow.diffPreviewPairs || window.diffPreviewPairs;
                     if (diffPairs && diffPairs.length > 1) {
-                        const delta = Math.sign(e.deltaY);
+                        const delta = Math.sign(dy);
                         let idx = targetWindow.diffPreviewIndex !== undefined ? targetWindow.diffPreviewIndex : (window.diffPreviewIndex || 0);
                         idx = Math.max(0, Math.min(diffPairs.length - 1, idx + delta));
                         if (targetWindow.diffPreviewIndex !== undefined) targetWindow.diffPreviewIndex = idx;
@@ -511,13 +530,13 @@
                         const showFunc = targetWindow.showDiffPreview || window.showDiffPreview;
                         if (showFunc) showFunc(p.id1, p.n1, p.id2, p.n2, p.score, e, extra);
                     } else if (scrollContainer) {
-                        scrollContainer.scrollTop += e.deltaY;
-                        if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;
+                        scrollContainer.scrollTop += dy;
+                        if (dx) scrollContainer.scrollLeft += dx;
                     }
                 }
             } else if (scrollContainer) {
-                scrollContainer.scrollTop += e.deltaY;
-                if (e.deltaX) scrollContainer.scrollLeft += e.deltaX;
+                scrollContainer.scrollTop += dy;
+                if (dx) scrollContainer.scrollLeft += dx;
             }
         }
     }, { passive: false, capture: true });

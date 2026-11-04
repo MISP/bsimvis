@@ -1561,7 +1561,7 @@ window.showNoteTooltip = async function(id, modeArg, e) {
                     `;
                 }).join('');
                 if (notes.length > 1) {
-                    scrollContainer.innerHTML += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle); margin-top:8px;">💡 Use scroll wheel to read all notes</div>`;
+                    scrollContainer.innerHTML += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle); margin-top:8px;">💡 Shift+wheel to read all notes</div>`;
                 }
             }
         }

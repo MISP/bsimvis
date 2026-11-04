@@ -399,6 +399,12 @@ tr:nth-child(even) {
     cursor: pointer;
 }
 
+/* Hover previews wait for a short dwell: hidden (and click-through) for 400ms each time they are shown. */
+#code-preview-tooltip, #diff-preview-tooltip, #note-preview-tooltip, #hierarchy-tooltip, #bin-hierarchy-tooltip, #binary-preview-tooltip, #tag-tooltip {
+    animation: tip-dwell 0s linear 0.4s both;
+}
+@keyframes tip-dwell { from { visibility: hidden; } to { visibility: visible; } }
+
 /* Code Preview Tooltip Wrapper */
 #code-preview-tooltip {
     position: fixed;

@@ -6580,6 +6580,7 @@ def test_nway_lineage():
         r.status_code == 200 and r.json() == got["tree"],
     )
     _check_lineage_rows(base, url, got["tree"])
+    _check_lineage_groups(base, url, got["tree"])
     _check_lineage_twins(base, url, got["tree"])
     _check_nway_lineage_order(got["tree"])
 
@@ -6657,6 +6658,64 @@ def _check_lineage_rows(base, url, tree):
             got is not None and page and sum(got) == page["total"],
             f"{got and sum(got)} vs {page and page.get('total')}",
         )
+
+
+def _check_lineage_groups(base, url, tree):
+    """`group=<lens preset>`: the /nway groups of the first level, rows.group = a row's deepest one."""
+    check(
+        "nway lineage groups: none without a group param",
+        "groups" not in tree and "group" not in tree.get("rows", {}),
+    )
+    # the table's own grouping params (its client defaults)
+    table = {
+        "tab": "all",
+        "scope": "code",
+        "group_merge": "name,call",
+        "group_sort": "lanes",
+        "group_lane_link": 0.5,
+        "group_lane_tier": 0.8,
+        "group_lane_fold": 3,
+    }
+    q = next((x[:3] for x in tree["rows"]["name"] if len(x) >= 3), "fun").lower()
+    for group in ("region,role", "lane,region", "presence,region", "role,region"):
+        for extra in ({}, {"q": q}):
+            params = {**table, **extra, "group": group}
+            r = requests.get(url, params={**base, **params}, timeout=60)
+            t = r.json() if r.status_code == 200 else {}
+            _, page = _nway(**params, group_open="all", limit=0)
+            listed, rows = t.get("groups") or [], t.get("rows") or {}
+            idx, match = rows.get("group") or [], rows.get("match") or []
+            ng = (page or {}).get("groups") or {}
+            vprint(
+                f"lineage groups {group} {extra}:",
+                json.dumps([[g["id"], g.get("label"), g["rows"]] for g in listed]),
+            )
+            check(
+                f"nway lineage groups {group} {extra}: the /nway groups, same meta",
+                r.status_code == 200
+                and t.get("group") == group
+                and t.get("nfiles") == 2
+                and listed
+                and all(g == ng.get(g["id"]) for g in listed),
+                f"HTTP {r.status_code} {[g['id'] for g in listed]} vs {list(ng)}",
+            )
+            check(
+                f"nway lineage groups {group} {extra}: a matching row has a group, a filtered one none",
+                len(idx) == rows.get("n")
+                and all(
+                    (i is not None) == bool(m) and (i is None or 0 <= i < len(listed))
+                    for i, m in zip(idx, match)
+                ),
+            )
+            first = {g["id"] for g in listed}
+            check(
+                f"nway lineage groups {group} {extra}: first level only, top groups split the matching rows",
+                all(set(g["path"]) <= first for g in listed)
+                and sum(g["rows"] for g in listed if len(g["path"]) == 1) == sum(match),
+                str([(g["id"], g["rows"]) for g in listed]),
+            )
+    r = requests.get(url, params={**base, "group": "bogus"}, timeout=60)
+    check("nway lineage groups: a bad group is a 400", r.status_code == 400)
 
 
 def _check_lineage_twins(base, url, tree):

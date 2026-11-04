@@ -531,6 +531,30 @@ def _filter_rows(doc, args, rows, ctx, ta, r=None, pool_id=None):
     return filtered, cards, facets
 
 
+def _sort_rows(rows, args, ctx):
+    """The table's row order: a family stat or a row column (group samples follow it)."""
+    sort_col = args.get("sort_col")
+    if ctx and sort_col in STAT_SORTS:
+        return sorted(
+            rows,
+            key=lambda r: r["stats"][STAT_SORTS[sort_col]] or 0,
+            reverse=args.get("sort_dir", "desc") != "asc",
+        )
+    if sort_col in ("span", "weight", "support", "cohesion", "name"):
+        return sorted(
+            rows,
+            key=lambda r: (
+                str(r[sort_col]).lower()
+                if sort_col == "name"
+                else (
+                    r.get("file_span", r["span"]) if sort_col == "span" else r[sort_col]
+                )
+            ),
+            reverse=args.get("sort_dir", "desc") != "asc",
+        )
+    return rows
+
+
 def _page(doc, args, r=None, pool_id=None):
     """Tab counts, then filter + sort + slice one tab of the rows."""
     nway_role_service.attach(r, doc, nway_group_service._fids)
@@ -547,26 +571,7 @@ def _page(doc, args, r=None, pool_id=None):
     counts = _tab_counts(rows, ta)
     filtered, cards, facets = _filter_rows(doc, args, rows, ctx, ta, r, pool_id)
     page_clusters = cards is None
-
-    sort_col = args.get("sort_col")
-    if ctx and sort_col in STAT_SORTS:
-        filtered = sorted(
-            filtered,
-            key=lambda r: r["stats"][STAT_SORTS[sort_col]] or 0,
-            reverse=args.get("sort_dir", "desc") != "asc",
-        )
-    elif sort_col in ("span", "weight", "support", "cohesion", "name"):
-        filtered = sorted(
-            filtered,
-            key=lambda r: (
-                str(r[sort_col]).lower()
-                if sort_col == "name"
-                else (
-                    r.get("file_span", r["span"]) if sort_col == "span" else r[sort_col]
-                )
-            ),
-            reverse=args.get("sort_dir", "desc") != "asc",
-        )
+    filtered = _sort_rows(filtered, args, ctx)
 
     try:
         offset = max(0, int(args.get("offset", 0)))
@@ -2092,7 +2097,8 @@ def _lineage_rows(doc, args, r, pool_id):
     if ctx:
         rows = nway_indicator_service.annotate(rows, ctx)
     ta = _tab_args(doc, args)
-    kept = {id(x) for x in _filter_rows(doc, args, rows, ctx, ta, r, pool_id)[0]}
+    filtered = _filter_rows(doc, args, rows, ctx, ta, r, pool_id)[0]
+    kept = {id(x) for x in filtered}
     fids = [nway_group_service._fids(x) for x in rows]
     out = {
         "n": len(rows),
@@ -2108,6 +2114,18 @@ def _lineage_rows(doc, args, r, pool_id):
     }
     if sum(map(len, fids)) > LINEAGE_FIDS_MAX:
         del out["fids"]
+    groups = {}
+    if args.get("group"):
+        listed, member, note = _lineage_groups(
+            _sort_rows(filtered, args, ctx), doc, r, args
+        )
+        out["group"] = [member.get(id(x)) for x in rows]
+        groups = {
+            "group": args["group"],
+            "groups": listed,
+            "group_note": note,
+            "nfiles": len(doc.get("file_columns") or doc["columns"]),
+        }
     special = {k: label for k, label, _ in nway_region_service.SPECIAL}
     size = Counter(x["region"] for x in rows if x.get("region"))
     keys = sorted((k for k in size if k not in special), key=lambda k: (-size[k], k))
@@ -2119,7 +2137,63 @@ def _lineage_rows(doc, args, r, pool_id):
             for k in keys
         },
         "counts": _tab_counts(rows, ta),
+        **groups,
     }
+
+
+# the kinds a group of each first level comes in (a lane level has tiers, mixes and folds)
+LEVEL_KINDS = {
+    "lane": {"tier", "lane", "fold"},
+    "delta": {"delta", "born"},
+}
+
+
+def _lineage_groups(rows, doc, r, args):
+    """The /nway groups of the first level over `rows` (its filtered, sorted rows).
+
+    -> (groups in display order, {id(row): index of its deepest such group}, note).
+    The same `group_rows` call as /nway (its cache), every group open and folds
+    too, so a group's id, label and naming evidence are the table's.
+    """
+    mode = args["group"]
+    try:
+        entries, groups, note = nway_group_service.group_rows(
+            rows, doc, r, mode, {**args, "group_open": "all", "group_flip": "[]"}
+        )
+        folds = [g for g, m in groups.items() if m.get("kind") == "fold"]
+        if folds:
+            entries, groups, note = nway_group_service.group_rows(
+                rows,
+                doc,
+                r,
+                mode,
+                {**args, "group_open": "all", "group_flip": json.dumps(folds)},
+            )
+    except nway_diff_service.BadParams as e:
+        abort(400, str(e))
+    level = mode.split(",")[0]
+    kinds = LEVEL_KINDS.get(level, {level})
+
+    def first(g):
+        g = groups.get(g)
+        return g and (
+            g.get("kind") in kinds or (g.get("kind") == "rest" and len(g["path"]) == 1)
+        )
+
+    listed = [g for gid, g in groups.items() if all(map(first, g["path"]))]
+    at = {g["id"]: i for i, g in enumerate(listed)}
+    member = {}
+    for gid, row, _ in entries:
+        if row is None or gid not in groups:
+            continue
+        top = None
+        for p in groups[gid]["path"]:
+            if not first(p):
+                break
+            top = p
+        if top:
+            member.setdefault(id(row), at[top])
+    return listed, member, note
 
 
 def get_nway_lineage():

@@ -289,6 +289,7 @@ window.NwayLineageView = {
                 });
             }
             for (const w of doc.warnings || []) console.warn('lineage:', w);
+            doc.scope = st.scope;
             this._inst.setDoc(doc, lensOf(st.group));
             if (this._panel) this._inst.select(st.column);
         };

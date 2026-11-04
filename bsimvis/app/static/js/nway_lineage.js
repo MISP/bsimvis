@@ -700,7 +700,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
         const world = s.append('g');
-        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gTrk = world.append('g').style('pointer-events', 'none'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none'), gHov = world.append('g').style('pointer-events', 'none');
+        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gLib = world.append('g').style('pointer-events', 'none'), gTrk = world.append('g').style('pointer-events', 'none'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none'), gHov = world.append('g').style('pointer-events', 'none');
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
         s.call(zoom);
         const tip = d3.select(document.body).append('div').attr('class', 'lin-vars lin-tip');
@@ -850,6 +850,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             chip(V.shared, 'shared'); chip(V.fork, 'kept by several children');
             chip(V.born, `born ${fmt(born)} fn`); chip(V.born, 'hatched: likely matcher miss', 'hatch');
             chip(V.died, `died ${fmt(died)} fn (kept by no child)`);
+            if (st.R && st.R.library.some(Boolean)) chip(V.shared, 'library code (bottom of a file)', doc.scope === 'code' ? 'dash' : 'hatch');
             if (doc.reuse_skipped) { chip(V.reuse, 'reuse off: too many files'); return; }
             chip(V.reuse, `reused outside the tree path ${fmt(doc.reuse_total || 0)} fn`);
             chip(V.reuse, 'same level'); chip(V.reuse, 'across depth', 'dash');
@@ -1124,7 +1125,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function drawStatic() {
             const L = st.L;
             // a relayout starts from an empty scene: joins would keep the old boxes and arcs
-            for (const g of [defs, gRib, gArc, gNode, gStr, gDet, gOv, gLab, gHov]) g.selectAll('*').remove();
+            for (const g of [defs, gRib, gArc, gNode, gStr, gLib, gDet, gOv, gLab, gHov]) g.selectAll('*').remove();
             for (const [k, c] of [['born', V.born]]) {
                 const p = defs.append('pattern').attr('id', `hatch-${k}-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
                 p.append('rect').attr('width', 6).attr('height', 6).style('fill', c).attr('fill-opacity', 0.22);
@@ -1172,6 +1173,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             });
             rim = nodeBase.append('rect').attr('class', 'rim').attr('x', n => n.x0).attr('y', n => n.y0).attr('width', NODE_W).attr('height', n => n.h).attr('rx', 6)
                 .attr('fill', 'none').style('stroke', 'var(--lin-edge)').attr('vector-effect', 'non-scaling-stroke').style('pointer-events', 'none');
+            drawLib();
             nodeBase.on('mouseenter', (ev, n) => hoverFile(ev, n)).on('mousemove', moveTip).on('mouseleave', leave)
                 .on('click', (ev, n) => { if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pickNode(n); })
                 .on('keydown', (ev, n) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pickNode(n); } });
@@ -1415,6 +1417,23 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 }
             }
             hits.textContent = hits._m ? hits._m : '';
+        }
+        // Library share of each file: zebra stripes on the bottom band, a dashed ghost box on the Code axis
+        function drawLib() {
+            const R = st.R, ghost = st.doc.scope === 'code';
+            if (!R || !R.library.length) return;
+            const z = defs.append('pattern').attr('id', `lib-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
+            z.append('rect').attr('width', 3).attr('height', 6).attr('fill', '#fff').attr('fill-opacity', 0.38);
+            for (const n of st.L.vis) {
+                if (n.agg) continue;
+                const held = R.held[n.idx], lib = held.reduce((a, r) => a + (R.library[r] ? 1 : 0), 0);
+                const h = held.length ? Math.min(n.h, n.h * lib / held.length) : 0;
+                if (h < 1) continue;
+                const r = gLib.append('rect').attr('x', n.x0).attr('y', n.y1 - h).attr('width', NODE_W).attr('height', h);
+                if (ghost) r.attr('fill', 'none').style('stroke', V.shared).attr('stroke-dasharray', '4 3').attr('vector-effect', 'non-scaling-stroke').attr('stroke-opacity', 0.9);
+                else r.attr('fill', `url(#lib-${id})`);
+                gLib.append('title').text(`${fmt(lib)} library functions`);
+            }
         }
         function drawDetail(n, lvl) {
             const L = st.L, g = gDet.append('g').attr('clip-path', `url(#clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'})`).style('opacity', nodeOp(n));

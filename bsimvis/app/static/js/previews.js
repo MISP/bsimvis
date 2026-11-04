@@ -328,7 +328,7 @@
         html += '</div>';
 
         if (rows.length > 18) {
-            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Shift+wheel to view all ${rows.length} lines</div>`;
+            html += `<div style="text-align:center; font-size:0.65rem; color:var(--subtle,#75715e); padding-top:8px; border-top: 1px solid var(--border); flex-shrink:0;">💡 Wheel to view all ${rows.length} lines</div>`;
         }
 
         html += '</div>';
@@ -432,16 +432,13 @@
     window.addEventListener('popstate', () => window.hideAllTooltips(true));
 
     // --- Wheel scroll intercept for preview tooltips ---
-    // Plain wheel scrolls the page and drops the previews; Shift+wheel scrolls inside one, Ctrl+wheel cycles.
+    // Wheel scrolls inside a shown preview (both axes), Ctrl+wheel cycles. During the dwell the page scrolls and drops it.
+    const inDwell = () => [...document.querySelectorAll(TIP_SEL)].some(el => el.style.display && el.style.display !== 'none' && getComputedStyle(el).visibility === 'hidden');
     window.addEventListener('wheel', e => {
         if (e.target.closest && e.target.closest('#fn-cg-container')) return; // let Pivotick's own zoom-on-wheel handle the call graph
-        if (!e.shiftKey && !e.ctrlKey && !(e.target.closest && e.target.closest(TIP_SEL))) {
-            if (anyTipShown()) window.hideAllTooltips(true);
-            return;
-        }
-        // Shift+wheel arrives as horizontal on most platforms.
-        const dy = e.deltaY || (e.shiftKey ? e.deltaX : 0);
-        const dx = e.shiftKey ? 0 : e.deltaX;
+        if (inDwell()) return;
+        const dy = e.deltaY;
+        const dx = e.deltaX;
         const codeTooltip = document.getElementById('code-preview-tooltip');
         const diffTooltip = document.getElementById('diff-preview-tooltip');
 

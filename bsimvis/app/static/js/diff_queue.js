@@ -632,7 +632,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
 
                 ${rows.length > 12 ? `
                 <div style="background:var(--border); text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top: 1px solid var(--border); flex-shrink:0;">
-                    💡 Shift+wheel to scroll code
+                    💡 Wheel to scroll code, Shift+wheel sideways
                 </div>` : ''}
             </div>
         </div>

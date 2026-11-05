@@ -4,7 +4,7 @@
  * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
- * ring {nest, focus, arc, min}, onRing(state)), onNode(node) (true when it took the click: no dock),
+ * ring {nest, focus, arc, min, list}, onRing(state)), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -700,7 +700,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         container.replaceChildren(root);
 
         const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: true, sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
-            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false,
+            lens: opts.lens || 'modules', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false, ringList: !!(opts.ring && opts.ring.list),
             // the model's group names (NwayGroups naming state) and one-line function summaries by fid
             S: { names: {}, evid: {}, busy: false, done: false, off: opts.laneNames === false }, lnSig: '', sums: new Map() };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
@@ -739,8 +739,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         canvas.append(zgrp);
         tb.append(search, hits, chartPop);
         const trackBox = el('span', { style: 'display:contents' }), legendBox = el('span', { style: 'display:contents' });
-        const ringBox = el('span', { style: 'display:none;gap:8px;align-items:center' });
-        tb.append(trackBox, legendBox, ringBox);
+        // the Ring's controls sit in the same flex row as the others; its "More" row wraps below
+        const ringBox = el('span', { style: 'display:none' }), ringBox2 = el('div', { style: 'display:none' });
+        tb.append(trackBox, legendBox, ringBox, ringBox2);
         const deepAll = () => {
             const out = new Set();
             for (const n of st.M.vis) if (!n.agg && n.d >= 2 && (st.M.kids.get(n.id) || []).length && !out.has(st.M.rep.get(n.id))) out.add(n.id);
@@ -1638,13 +1639,15 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             gTree.style('display', on ? 'none' : null);
             gRingG.style('display', on ? null : 'none');
             mini.style.display = on ? 'none' : '';
-            ringBox.style.display = on ? 'inline-flex' : 'none';
+            ringBox.style.display = on ? 'contents' : 'none';
+            // the chip legend is the Ring's optional "Module list"
+            legendBox.style.display = on && !(opts.ring && st.ringList) ? 'none' : 'contents';
             if (!on) { if (st.ring) st.ring.show(false); return; }
             if (!st.ring) {
                 st.ring = window.NwayRing.mount({
-                    g: gRingG.node(), svg: s.node(), host: canvas, controls: ringBox, opts: opts.ring || {},
+                    g: gRingG.node(), svg: s.node(), host: canvas, controls: ringBox, controls2: ringBox2, opts: opts.ring || {},
                     getDoc: () => st.doc, getR: () => st.R, getCats: () => cats(st.lens), lens: () => st.lens, getTrack: () => st.track,
-                    setTrack, onOpt: o => { if (opts.onRing) opts.onRing(o); },
+                    setTrack, onOpt: o => { st.ringList = !!o.list; legendBox.style.display = st.ringList ? 'contents' : 'none'; if (opts.onRing) opts.onRing(o); },
                     onFile: id => {
                         const top = st.M.rep.get(st.R ? st.R.nodeOf.get(id) || id : id);
                         if (top && top.startsWith('agg:')) { st.collapsed = new Set(); rebuild(); }
@@ -1852,7 +1855,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin');
+        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

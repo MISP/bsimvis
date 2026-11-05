@@ -29,7 +29,7 @@
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
         OUTWARD_KEEP: 0.4, // share of a ring kept free on its outward side (away from the other clusters); cross-family arcs use the rest
-        ARC_DEFAULT: 'partner', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
+        ARC_DEFAULT: 'group', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
@@ -755,7 +755,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
      * ctx: { g (svg group inside the zoomed world), svg (the svg element), host (the canvas div, for the note),
      *   getDoc(), getR(), getCats() -> lensCats or null, getTrack(), setTrack(tk), onFile(nodeId),
      *   showTip(ev, title, colour, rows), moveTip(ev), hideTip(), fmt, name(id), nodeColor(i), tree(), hsl(h, l), hue(i),
-     *   grey, controls (element for the buttons), opts: { nest, focus, arc: 'partner' | 'group' | 'one', min (percent) }, onOpt({nest, focus, arc, min}), fit() }
+     *   grey, controls (the always-visible controls), controls2 (the row behind "More"),
+     *   opts: { nest, focus, arc: 'partner' | 'group' | 'one', min (percent), list }, onOpt({nest, focus, arc, min, list}), fit() }
      */
     function mount(ctx) {
         ensureCss();
@@ -766,39 +767,66 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT };
-        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min });
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list };
+        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min, list: S.list });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
-        // ---- controls
-        const nestBtn = document.createElement('button'), resetBtn = document.createElement('button'), focusBtn = document.createElement('button'), arcSel = document.createElement('select');
-        nestBtn.type = resetBtn.type = focusBtn.type = 'button';
-        nestBtn.className = resetBtn.className = focusBtn.className = 'lin-btn';
-        focusBtn.textContent = 'Focus';
-        focusBtn.title = 'Hover or pin a module to see only its chain';
-        arcSel.setAttribute('aria-label', 'Arcs');
-        arcSel.title = 'How many ring segments a module gets on a circle: one per partner family, one per group of nearby partners, or one for all of them';
-        for (const [v, t] of [['partner', 'Arcs: per partner'], ['group', 'Arcs: grouped'], ['one', 'Arcs: one per module']]) { const op = document.createElement('option'); op.value = v; op.textContent = t; arcSel.appendChild(op); }
-        nestBtn.textContent = 'Nested clusters';
-        nestBtn.title = 'Show the sub-clusters of each family as circles inside it, with lanes on each level';
-        const minSel = document.createElement('select');
-        minSel.setAttribute('aria-label', 'Minimum size');
-        for (const v of RING.MIN_OPTS) { const op = document.createElement('option'); op.value = String(v); op.textContent = v ? `Min size ${v}%` : 'Min size: off'; minSel.appendChild(op); }
+        // ---- controls: the lineage page's own segmented switches (.lin-seg, buttons with aria-pressed); the tunables sit behind "More"
+        const seg = (label, tip, options, get, set) => {
+            const wrap = document.createElement('span'), lab = document.createElement('span'), box = document.createElement('div');
+            wrap.setAttribute('style', 'display:inline-flex;align-items:center;gap:6px');
+            lab.className = 'lin-dim';
+            lab.textContent = label;
+            box.className = 'lin-seg';
+            box.setAttribute('role', 'group');
+            box.setAttribute('aria-label', label);
+            box.setAttribute('title', tip);
+            const btns = options.map(([v, text]) => {
+                const b = document.createElement('button');
+                b.setAttribute('type', 'button');
+                b.textContent = text;
+                b.addEventListener('click', () => { set(v); paintSegs(); });
+                box.appendChild(b);
+                return [v, b];
+            });
+            const paint = () => btns.forEach(([v, b]) => b.setAttribute('aria-pressed', String(String(get()) === String(v))));
+            wrap.append(lab, box);
+            segs.push(paint);
+            paint();
+            return wrap;
+        };
+        const segs = [], paintSegs = () => segs.forEach(f => f());
+        const onOff = (label, tip, get, set) => seg(label, tip, [[false, 'Off'], [true, 'On']], get, set);
+        const applyOpt = rebuild => { ctx.onOpt(opt()); root.classList.toggle('ring-focus', S.focus); if (rebuild) { M = null; S.sim.reset(); full(); ctx.fit(); } };
+        const focusSeg = onOff('Focus', 'Hover or pin a module to see only its chain', () => S.focus, v => { S.focus = v; applyOpt(false); card(); });
+        const minSeg = seg('Min size', 'Hide modules and lanes with fewer functions than this share of all functions in the set.', RING.MIN_OPTS.map(v => [v, v ? `${v}%` : 'Off']), () => S.min, v => { S.min = v; applyOpt(true); });
         if (!RING.MIN_OPTS.includes(S.min)) S.min = RING.MIN_PCT;
-        minSel.value = String(S.min);
-        minSel.title = 'Hide modules and lanes with fewer functions than this share of all functions in the set.';
-        minSel.addEventListener('change', () => { S.min = Number(minSel.value); ctx.onOpt(opt()); M = null; S.sim.reset(); full(); ctx.fit(); });
+        const resetBtn = document.createElement('button');
+        resetBtn.setAttribute('type', 'button');
+        resetBtn.className = 'lin-btn';
         resetBtn.textContent = 'Reset layout';
         resetBtn.title = 'Put every circle and ribbon back where it was computed';
-        const sync = () => { nestBtn.setAttribute('aria-pressed', String(S.nested)); focusBtn.setAttribute('aria-pressed', String(S.focus)); arcSel.value = S.arc; root.classList.toggle('ring-focus', S.focus); };
-        nestBtn.addEventListener('click', () => { S.nested = !S.nested; sync(); ctx.onOpt(opt()); S.sim.reset(); full(); ctx.fit(); });
-        focusBtn.addEventListener('click', () => { S.focus = !S.focus; sync(); ctx.onOpt(opt()); card(); });
-        arcSel.addEventListener('change', () => { S.arc = arcSel.value; ctx.onOpt(opt()); M = null; S.sim.reset(); full(); ctx.fit(); });
         resetBtn.addEventListener('click', () => { S.sim.reset(); S.open.clear(); full(); ctx.fit(); });
-        sync();
-        ctx.controls.replaceChildren(minSel, arcSel, nestBtn, focusBtn, resetBtn);
+        const moreBtn = document.createElement('button'), chev = document.createElement('i'), moreTxt = document.createElement('span');
+        moreBtn.setAttribute('type', 'button');
+        moreBtn.className = 'lin-btn';
+        moreBtn.title = 'More Ring settings: arcs, nested clusters, module list';
+        moreTxt.textContent = ' More';
+        moreBtn.append(chev, moreTxt);
+        const arcSeg = seg('Arcs', 'How many ring segments a module gets on a circle: one per partner family, one per group of nearby partners, or one for all of them', [['partner', 'Per partner'], ['group', 'Grouped'], ['one', 'One per module']], () => S.arc, v => { S.arc = v; applyOpt(true); });
+        const nestSeg = onOff('Nested clusters', 'Show the sub-clusters of each family as circles inside it, with lanes on each level', () => S.nested, v => { S.nested = v; S.sim.reset(); applyOpt(false); full(); ctx.fit(); });
+        const listSeg = onOff('Module list', 'Show the chips of the lens groups above the chart', () => S.list, v => { S.list = v; applyOpt(false); });
+        // advanced settings that differ from their defaults start open, so the state is visible
+        let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list;
+        const syncMore = () => { moreBtn.setAttribute('aria-expanded', String(more)); chev.className = `fa-solid fa-chevron-${more ? 'up' : 'down'}`; ctx.controls2.style.display = more ? 'flex' : 'none'; };
+        moreBtn.addEventListener('click', () => { more = !more; syncMore(); });
+        ctx.controls.replaceChildren(focusSeg, minSeg, resetBtn, moreBtn);
+        ctx.controls2.replaceChildren(arcSeg, nestSeg, listSeg);
+        ctx.controls2.setAttribute('style', `display:${more ? 'flex' : 'none'};flex:0 0 100%;flex-wrap:wrap;gap:8px 10px;align-items:center`);
+        root.classList.toggle('ring-focus', S.focus);
+        syncMore();
 
         // ---- tooltips
         const modTip = (ev, b, pr, prs) => {
@@ -924,7 +952,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             cur = M.modeOf(S.nested);
             paint();
             const gateMsg = M.hidden ? `${M.hidden} module${M.hidden === 1 ? '' : 's'} hidden under ${S.min}% of functions (${ctx.fmt(M.nFuncs)} functions in total); ${mods.length} shown.` : '';
-            minSel.title = `Hide modules and lanes with fewer functions than this share of all functions in the set.${gateMsg ? ` ${gateMsg}` : ` ${mods.length} shown.`}`;
+            minSeg.kids[1].setAttribute("title", `Hide modules and lanes with fewer functions than this share of all functions in the set.${gateMsg ? ` ${gateMsg}` : ` ${mods.length} shown.`}`);
             const msg = !mods.length ? (ctx.getR() ? 'No group of this lens has functions in the files.' : 'This server sends no row list: modules need it, only the clusters are shown.')
                 : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : '', gateMsg].filter(Boolean).join(' ');
             note.textContent = msg;
@@ -1010,7 +1038,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             reset() { S.sim.reset(); full(); },
             // bounding box of everything drawn, for Fit
             box() { return frame ? frame.fit : null; },
-            show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; ctx.controls.style.display = on ? '' : 'none'; },
+            show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; ctx.controls2.style.display = on && more ? 'flex' : 'none'; },
             state: S,
             frame: () => frame,
             destroy() {
@@ -1024,6 +1052,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 cardEl.remove();
                 document.body.classList.remove('ring-dragging');
                 ctx.controls.replaceChildren();
+                ctx.controls2.replaceChildren();
                 root.remove(); note.remove();
                 nodes = new Map(); byMod = new Map(); holdEls = new Map(); lit = []; frame = null; M = null;
             },

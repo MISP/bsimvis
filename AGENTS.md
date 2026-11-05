@@ -201,7 +201,15 @@ are hidden and how many are shown. Scale and floor widths are computed after the
 **Focus** (toolbar toggle, `rfocus=1`): hovering or pinning a module lights only its chain
 (opacity .04 for the rest, still hit-testable) through one root class and the per-module
 element index; a corner card names it with its shared functions per family pair; Escape or
-a second click clears the pin. **Arcs** (select, `rarc=partner|group|one`, default `RING.ARC_DEFAULT` = partner): how many ring
+a second click clears the pin. **Toolbar.** The Ring controls use the lineage page's own switches: `.lin-seg` groups of buttons with
+`aria-pressed` (on/off switches are two buttons, Off / On), never selects. Visible: Focus, Min size
+(Off, 0.25 ... 5%), Reset layout and a "More" `.lin-btn` (`aria-expanded`). Behind "More" (a row that
+wraps below): Arcs, Nested clusters, Module list (the lens chip legend, hidden by default). More
+starts open when the URL carries a non-default advanced key. Defaults: Arcs = grouped, Min size 0.5%,
+Focus off, Nested on, Module list off; a key equal to its default stays out of the URL
+(`rarc`, `rnest`, `rfocus`, `rmin`, `rlist`), and none of them reaches the table or API links.
+
+**Arcs** (`rarc=partner|group|one`, default `RING.ARC_DEFAULT` = group): how many ring
 segments a cross-family module gets on a circle. `partner`: one per partner family. `group`: partners
 seen from the circle's home position closer than `GROUP_DEG` (40) degrees share one arc.
 `one`: one arc for all. A shared arc is sized by the sum of its pair rows, its ribbons leave it as
@@ -210,7 +218,7 @@ that arc. `ORDER_SWEEPS` (6; 0 = order by direction only): the arcs of each ring
 by the barycentre of the arcs they connect to on the other rings. Measured on the saved real sets
 (yara modules/lanes, alois): per partner has the fewest crossings (yara modules 2219 against 3325 grouped
 and 4100 one-arc), grouped cuts the segments about 40-50% for about 50% more crossings, the sweeps help
-grouped and one-arc by 5-35% and are neutral for per partner, which is why it stays the default.
+grouped and one-arc by 5-35% and are neutral for per partner. Grouped is the default by the user's choice; per partner has the fewest crossings.
 
 **Colours:** a module or lane is painted exactly with its lens group's colour (`cat.color`, the
 same string the Tree uses; grey stays grey where the lens says so), never tinted by cluster; a

@@ -183,7 +183,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         };
         const build = (d, lens, o = {}) => {
             const LM = buildModel(d, new Set()), R = rowModel(d, LM), C = lensCats(d, R, lens);
-            return { R, C, M: RL.buildModel(d, R, C, { hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, tree: window.NwayColors.tree(d.nodes.map(n => ({ id: n.id, path: n.path }))), nodeColor: () => '#888', ...o }) };
+            return { R, C, M: RL.buildModel(d, R, C, { hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, tree: window.NwayColors.tree(d.nodes.map(n => ({ id: n.id, path: n.path }))), nodeColor: () => '#888', arc: 'partner', ...o }) };
         };
         const draw = (M, nested = true, sim = RL.newSim(), mode) => ({ sim, g: RL.geometry(M, { sim, nested, open: new Set() }, mode == null ? {} : { mode }) });
         const d = rdoc(true);
@@ -319,7 +319,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
 
         // one arc per module (test option): exactly one ring segment per module on each circle, ribbons still equal at both ends and one per family pair
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
-            const per = build(dd, lens), one = build(dd, lens, { oneArc: true });
+            const per = build(dd, lens), one = build(dd, lens, { arc: 'one' });
             const gp = RL.geometry(per.M, { sim: RL.newSim(), nested: true, open: new Set() }), go = RL.geometry(one.M, { sim: RL.newSim(), nested: true, open: new Set() });
             const segCount = new Map();
             for (const e of go.els) if (e.id.startsWith('s:')) { const [, c, k] = e.id.split(':'); segCount.set(`${c}|${k}`, (segCount.get(`${c}|${k}`) || 0) + 1); }
@@ -437,7 +437,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         }
         assert.ok(build(yara, 'modules', { minPct: 5 }).M.hidden > 0 && build(yara, 'modules').M.hidden === 0, 'the fixture has modules under 5%');
         assert.strictEqual(window.NwayLineage.tableQs('md5s=a&rmin=1&rfocus=1&rarc=one').toString().includes('rmin'), false, 'rmin is not forwarded to the table');
-        assert.ok(/'rarc', 'rmin', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
+        assert.ok(/'rarc', 'rmin', 'rlist', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
 
         // focus mode and the pin, on a stub DOM: a hover touches only the module's own elements
         {
@@ -445,6 +445,9 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                 constructor(tag) { this.tag = tag; this.attrs = {}; this.st = {}; this.style = { setProperty: (k, v) => (this.st[k] = v) }; this.kids = []; this.dataset = {}; this.ls = {}; this.cls = new Set(); this.parent = null; this._t = '';
                     this.classList = { add: c => this.cls.add(c), remove: c => this.cls.delete(c), contains: c => this.cls.has(c), toggle: (c, on) => (on ? this.cls.add(c) : this.cls.delete(c)) }; }
                 setAttribute(k, v) { this.attrs[k] = String(v); } removeAttribute(k) { delete this.attrs[k]; }
+                append(...c) { c.forEach(x => this.appendChild(x)); }
+                set className(v) { this.cn = v; } get className() { return this.cn; }
+                set title(v) { this.attrs.title = v; } get title() { return this.attrs.title; }
                 appendChild(c) { c.parent = this; this.kids.push(c); return c; } replaceChildren(...c) { this.kids = []; c.forEach(x => this.appendChild(x)); }
                 remove() { if (this.parent) this.parent.kids = this.parent.kids.filter(k => k !== this); }
                 addEventListener(t, f) { (this.ls[t] = this.ls[t] || []).push(f); } removeEventListener() {}
@@ -457,8 +460,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             window.addEventListener = () => {}; window.removeEventListener = () => {}; global.cancelAnimationFrame = () => {};
             const b = build(yara, 'modules');
             let track = '', cardShown = [];
-            const g0 = new El('g'), controls = new El('span'), host = new El('div');
-            const ring = window.NwayRing.mount({ g: g0, svg: new El('svg'), host, controls, opts: { nest: true, focus: true }, getDoc: () => yara, getR: () => b.R, getCats: () => b.C, lens: () => 'modules', getTrack: () => track, setTrack: t => (track = t), onOpt() {}, onFile() {},
+            const g0 = new El('g'), controls = new El('span'), controls2 = new El('div'), host = new El('div');
+            const ring = window.NwayRing.mount({ g: g0, svg: new El('svg'), host, controls, controls2, opts: { nest: true, focus: true }, getDoc: () => yara, getR: () => b.R, getCats: () => b.C, lens: () => 'modules', getTrack: () => track, setTrack: t => (track = t), onOpt() {}, onFile() {},
                 showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
             ring.draw();
             const root = g0.kids[0];
@@ -477,6 +480,49 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             docL.keydown({ key: 'Escape' });
             assert.strictEqual(track, '', 'Escape clears the pin');
             ring.destroy();
+
+            // the toolbar: lineage-style segmented switches, the tunables behind "More"
+            const mountBar = (opts, sink = []) => {
+                const c1 = new El('span'), c2 = new El('div'), g1 = new El('g');
+                const r = window.NwayRing.mount({ g: g1, svg: new El('svg'), host: new El('div'), controls: c1, controls2: c2, opts, getDoc: () => yara, getR: () => b.R, getCats: () => b.C, lens: () => 'modules', getTrack: () => '', setTrack() {}, onOpt: o => sink.push(o), onFile() {},
+                    showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
+                const all = n => [n, ...n.kids.flatMap(all)];
+                return { r, c1, c2, els: [...all(c1), ...all(c2)], sink };
+            };
+            const bar = mountBar({});
+            assert.ok(!bar.els.some(e => e.tag === 'select'), 'no <select> in the Ring toolbar');
+            const segs = bar.els.filter(e => e.cn === 'lin-seg');
+            assert.deepStrictEqual(segs.map(e => e.attrs['aria-label']), ['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Module list'], 'the controls, in order');
+            for (const sg of segs) {   // the markup of the lineage page's own seg (view buttons, Group view): div.lin-seg[role=group][aria-label] > button[type=button][aria-pressed]
+                assert.strictEqual(sg.tag, 'div'); assert.strictEqual(sg.attrs.role, 'group'); assert.ok(sg.attrs.title, 'a tooltip');
+                assert.ok(sg.kids.length >= 2 && sg.kids.every(k => k.tag === 'button' && k.attrs.type === 'button' && /^(true|false)$/.test(k.attrs['aria-pressed'])), 'buttons carry aria-pressed');
+                assert.strictEqual(sg.kids.filter(k => k.attrs['aria-pressed'] === 'true').length, 1, 'exactly one pressed');
+            }
+            const pressed = label => segs.find(e => e.attrs['aria-label'] === label).kids.find(k => k.attrs['aria-pressed'] === 'true').textContent;
+            assert.deepStrictEqual(['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Module list'].map(pressed), ['Off', '0.5%', 'Grouped', 'On', 'Off'], 'defaults: focus off, min size 0.5%, grouped arcs, nested on, no module list');
+            assert.deepStrictEqual(bar.c1.kids.map(k => (k.tag === 'span' ? k.kids[0].textContent : k.textContent || k.kids[1].textContent)), ['Focus', 'Min size', 'Reset layout', ' More'], 'visible: Focus, Min size, Reset layout, More');
+            assert.strictEqual(bar.c2.style.display, 'none', 'the advanced row is hidden by default');
+            const more = bar.c1.kids[3];
+            assert.strictEqual(more.attrs['aria-expanded'], 'false');
+            more.ls.click[0]();
+            assert.strictEqual(more.attrs['aria-expanded'], 'true');
+            assert.strictEqual(bar.c2.style.display, 'flex', 'More opens the row');
+            for (const [opts, why] of [[{ arc: 'one' }, 'rarc=one'], [{ nest: false }, 'rnest=0'], [{ list: true }, 'rlist=1']]) {
+                const o = mountBar(opts);
+                assert.strictEqual(o.c1.kids[3].attrs['aria-expanded'], 'true', `${why} opens More`);
+                o.r.destroy();
+            }
+            const lst = segs.find(e => e.attrs['aria-label'] === 'Module list');
+            lst.kids[1].ls.click[0]();
+            assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');
+            assert.strictEqual(lst.kids[1].attrs['aria-pressed'], 'true');
+            bar.r.destroy();
+            // URL keys: omitted at their defaults, stripped from table links
+            assert.strictEqual(window.NwayRing.RING.ARC_DEFAULT, 'group');
+            const tq = window.NwayLineage.tableQs('md5s=a&rarc=one&rnest=0&rfocus=1&rmin=2&rlist=1').toString();
+            assert.ok(!/r(arc|nest|focus|min|list)=/.test(tq), 'table links drop the ring keys');
+            assert.ok(/rarc: window\.NwayRing \? window\.NwayRing\.RING\.ARC_DEFAULT/.test(viewSrc) && /rmin: '0\.5'/.test(viewSrc) && /rnest: '1', rfocus: ''/.test(viewSrc) && /for \(const k of KEYS\) if \(st\[k\] !== String\(D\[k\]/.test(viewSrc), 'keys equal to their defaults stay out of the URL');
+            assert.ok(/'rlist', 'root', 'file'/.test(viewSrc), 'the API query drops rlist');
             delete global.document; delete global.cancelAnimationFrame;
         }
     }

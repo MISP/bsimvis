@@ -204,10 +204,26 @@ element index; a corner card names it with its shared functions per family pair;
 a second click clears the pin. **Toolbar.** The Ring controls use the lineage page's own switches: `.lin-seg` groups of buttons with
 `aria-pressed` (on/off switches are two buttons, Off / On), never selects. Visible: Focus, Min size
 (Off, 0.25 ... 5%), Reset layout and a "More" `.lin-btn` (`aria-expanded`). Behind "More" (a row that
-wraps below): Arcs, Nested clusters, Module list (the lens chip legend, hidden by default). More
+wraps below): Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list (the lens chip legend, hidden by default). More
 starts open when the URL carries a non-default advanced key. Defaults: Arcs = grouped, Min size 0.5%,
 Focus off, Nested on, Module list off; a key equal to its default stays out of the URL
-(`rarc`, `rnest`, `rfocus`, `rmin`, `rlist`), and none of them reaches the table or API links.
+(`rarc`, `rnest`, `rfocus`, `rmin`, `rlist`, `rtier`, `rbundle`), and none of them reaches the table or API links.
+
+**Tier buckets** (More row, `rtier=hide`, default Show): in the Lanes lens the server's `tier` / `fold`
+groups that hold rows of their own (rows in no lane) are buckets (`b.bucket`): neutral grey (the one
+exception to the lens-colour rule), fainter and thinner than lanes, drawn behind them, labelled
+"<Tier>: rows in no lane" / "slim lanes folded". They take part in hover, pin and Focus. Hide removes
+them like the Min size gate (never merged into "other") and the canvas note counts them. The switch is
+disabled on lenses without tier groups.
+
+**Bundle ribbons** (More row, `rbundle=0`, default On): the outer ribbons of one cluster pair are drawn
+as one bundle: each module's stripe leaves its slot, joins a straight parallel run on the axis between
+the two centres (`min(0.25 * distance, 80)` px beyond each ring), and diverges to its slot on the other
+ring; ends are arc-exact and equal; stripe order is by lateral slot position. A stripe is still the
+module's `o:` element (same id and `data-m`); one drag handle per pair (`rb:X:Y`); the tooltip adds
+"X + Y: N modules, M shared functions". Pairs too close for a bundle fall back to plain ribbons.
+Stripes of a pair can still cross where the two rings order their slots differently (see the numbers
+in the commit message).
 
 **Arcs** (`rarc=partner|group|one`, default `RING.ARC_DEFAULT` = group): how many ring
 segments a cross-family module gets on a circle. `partner`: one per partner family. `group`: partners

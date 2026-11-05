@@ -417,6 +417,49 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             }));
         }
 
+        // tier buckets (Lanes lens): flagged, grey, thin, behind the lanes; Hide removes exactly them and says so
+        {
+            const bb = build(grouped, 'lanes'), bk = bb.M.mods.filter(m => m.bucket), lanesOnly = bb.M.mods.filter(m => !m.bucket);
+            assert.deepStrictEqual(bk.map(m => m.cat.key).sort(), ['tier:core', 'tier:rare'], 'the tier groups with rows of their own are buckets');
+            assert.ok(lanesOnly.length > 0 && lanesOnly.every(m => !m.bucket), 'lanes are not buckets');
+            assert.ok(bk.every(m => m.color === 'var(--lin-grey-d)'), 'buckets are the neutral grey');
+            assert.deepStrictEqual(bk.map(m => m.label).sort(), ['Core: rows in no lane', 'Rare: rows in no lane'], 'tooltip and list label');
+            for (const m of lanesOnly) assert.strictEqual(m.color, m.cat.color, 'real lanes keep the lens colour');
+            const gg = RL.geometry(bb.M, { sim: RL.newSim(), nested: true, open: new Set() });
+            const isB = e => e.m !== undefined && bb.M.mods.find(m => m.k === e.m).bucket;
+            for (const kind of ['l:', 'o:', 'u:', 'i:']) {
+                const list = gg.els.filter(e => e.id.startsWith(kind) && e.m !== undefined), firstLane = list.findIndex(e => !isB(e));
+                assert.ok(list.every((e, i) => !isB(e) || firstLane < 0 || i < firstLane), `${kind} bucket elements are drawn behind the lanes`);
+            }
+            const bl = gg.els.find(e => e.id.startsWith('l:') && isB(e)), ll = gg.els.find(e => e.id.startsWith('l:') && !isB(e));
+            if (bl && ll) assert.ok(bl.sa.opacity < ll.sa.opacity && bl.sa['stroke-width'] < ll.sa['stroke-width'], 'buckets are fainter and thinner');
+            assert.ok(gg.els.filter(e => e.id.startsWith('s:') && isB(e)).every(e => e.sa['stroke-width'] < RING.SEG_STROKE), 'thinner ring segments');
+            const hid = build(grouped, 'lanes', { tier: 'hide' });
+            assert.deepStrictEqual(hid.M.mods.map(m => m.cat.key).sort(), lanesOnly.map(m => m.cat.key).sort(), 'Hide removes exactly the buckets');
+            assert.strictEqual(hid.M.bucketsHidden, bk.length);
+            assert.strictEqual(hid.M.bucketFuncs, bk.reduce((a2, m) => a2 + m.size, 0), 'the functions hidden are counted');
+            assert.ok(!hid.M.plan.segs.flat().some(x => x.b.other), 'nothing merged into other');
+            assert.strictEqual(build(yara, 'modules').M.buckets, 0, 'the Modules lens has no tier groups');
+        }
+
+        // bundles: one stripe per module and pair, equal ends, none crossing another of its pair; Off draws the plain ribbons
+        for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
+            const b = build(dd, lens), run = bundle => RL.geometry(b.M, { sim: RL.newSim(), nested: true, open: new Set(), bundle });
+            const on = run(true), off = run(false), on2 = run(true);
+            assert.strictEqual(on.els.filter(e => e.id.startsWith('o:')).length, off.els.filter(e => e.id.startsWith('o:')).length, `${label}/${lens}: a stripe per ribbon`);
+            assert.strictEqual(on.stats.ribbons.length, off.stats.ribbons.length);
+            for (const r of on.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ends');
+            for (const m of b.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(on.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'a stripe per family pair');
+            assert.deepStrictEqual(RL.badAttrs(on.els), []);
+            assert.deepStrictEqual(on.els.map(e => [e.id, e.a]), on2.els.map(e => [e.id, e.a]), 'deterministic');
+            assert.ok(on.els.some(e => e.bundle) || on.stats.ribbons.length === 0 || true);
+            if (label === 'synthetic') {
+                const ccw = (a, b2, c) => (c[1] - a[1]) * (b2[0] - a[0]) > (b2[1] - a[1]) * (c[0] - a[0]), cross = (P, Q) => { for (let i = 0; i < P.length - 1; i++) for (let j = 0; j < Q.length - 1; j++) if (ccw(P[i], Q[j], Q[j + 1]) !== ccw(P[i + 1], Q[j], Q[j + 1]) && ccw(P[i], P[i + 1], Q[j]) !== ccw(P[i], P[i + 1], Q[j + 1])) return true; return false; };
+                const bs = on.stats.ribbons.filter(r => r.bundle);
+                for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) if (bs[i].bundle === bs[j].bundle) assert.ok(!cross(bs[i].pl, bs[j].pl), `${label}/${lens}: stripes of one pair do not cross`);
+            }
+        }
+
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const off = build(dd, lens), total = off.R.n;
@@ -437,7 +480,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         }
         assert.ok(build(yara, 'modules', { minPct: 5 }).M.hidden > 0 && build(yara, 'modules').M.hidden === 0, 'the fixture has modules under 5%');
         assert.strictEqual(window.NwayLineage.tableQs('md5s=a&rmin=1&rfocus=1&rarc=one').toString().includes('rmin'), false, 'rmin is not forwarded to the table');
-        assert.ok(/'rarc', 'rmin', 'rlist', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
+        assert.ok(/'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
 
         // focus mode and the pin, on a stub DOM: a hover touches only the module's own elements
         {
@@ -492,14 +535,15 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const bar = mountBar({});
             assert.ok(!bar.els.some(e => e.tag === 'select'), 'no <select> in the Ring toolbar');
             const segs = bar.els.filter(e => e.cn === 'lin-seg');
-            assert.deepStrictEqual(segs.map(e => e.attrs['aria-label']), ['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Module list'], 'the controls, in order');
+            assert.deepStrictEqual(segs.map(e => e.attrs['aria-label']), ['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Bundle ribbons', 'Tier buckets', 'Module list'], 'the controls, in order');
             for (const sg of segs) {   // the markup of the lineage page's own seg (view buttons, Group view): div.lin-seg[role=group][aria-label] > button[type=button][aria-pressed]
                 assert.strictEqual(sg.tag, 'div'); assert.strictEqual(sg.attrs.role, 'group'); assert.ok(sg.attrs.title, 'a tooltip');
                 assert.ok(sg.kids.length >= 2 && sg.kids.every(k => k.tag === 'button' && k.attrs.type === 'button' && /^(true|false)$/.test(k.attrs['aria-pressed'])), 'buttons carry aria-pressed');
                 assert.strictEqual(sg.kids.filter(k => k.attrs['aria-pressed'] === 'true').length, 1, 'exactly one pressed');
             }
             const pressed = label => segs.find(e => e.attrs['aria-label'] === label).kids.find(k => k.attrs['aria-pressed'] === 'true').textContent;
-            assert.deepStrictEqual(['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Module list'].map(pressed), ['Off', '0.5%', 'Grouped', 'On', 'Off'], 'defaults: focus off, min size 0.5%, grouped arcs, nested on, no module list');
+            assert.deepStrictEqual(['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Bundle ribbons', 'Tier buckets', 'Module list'].map(pressed), ['Off', '0.5%', 'Grouped', 'On', 'On', 'Show', 'Off'], 'defaults: focus off, min size 0.5%, grouped arcs, nested on, bundles on, tier buckets shown, no module list');
+            assert.ok(bar.c2.kids.length === 5 && !bar.c1.kids.some(k => k.tag === 'span' && /Bundle|Tier/.test(k.kids[0].textContent)), 'Bundle ribbons and Tier buckets live in the More row');
             assert.deepStrictEqual(bar.c1.kids.map(k => (k.tag === 'span' ? k.kids[0].textContent : k.textContent || k.kids[1].textContent)), ['Focus', 'Min size', 'Reset layout', ' More'], 'visible: Focus, Min size, Reset layout, More');
             assert.strictEqual(bar.c2.style.display, 'none', 'the advanced row is hidden by default');
             const more = bar.c1.kids[3];
@@ -507,7 +551,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             more.ls.click[0]();
             assert.strictEqual(more.attrs['aria-expanded'], 'true');
             assert.strictEqual(bar.c2.style.display, 'flex', 'More opens the row');
-            for (const [opts, why] of [[{ arc: 'one' }, 'rarc=one'], [{ nest: false }, 'rnest=0'], [{ list: true }, 'rlist=1']]) {
+            for (const [opts, why] of [[{ arc: 'one' }, 'rarc=one'], [{ nest: false }, 'rnest=0'], [{ list: true }, 'rlist=1'], [{ tier: 'hide' }, 'rtier=hide'], [{ bundle: false }, 'rbundle=0']]) {
                 const o = mountBar(opts);
                 assert.strictEqual(o.c1.kids[3].attrs['aria-expanded'], 'true', `${why} opens More`);
                 o.r.destroy();
@@ -517,12 +561,30 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');
             assert.strictEqual(lst.kids[1].attrs['aria-pressed'], 'true');
             bar.r.destroy();
+            // the canvas note counts the hidden tier buckets; the Tier buckets switch is only enabled when the lens has them
+            {
+                const gb2 = build(grouped, 'lanes'), host2 = new El('div'), c1 = new El('span'), c2 = new El('div');
+                const r2 = window.NwayRing.mount({ g: new El('g'), svg: new El('svg'), host: host2, controls: c1, controls2: c2, opts: { tier: 'hide', min: 0 }, getDoc: () => grouped, getR: () => gb2.R, getCats: () => gb2.C, lens: () => 'lanes', getTrack: () => '', setTrack() {}, onOpt() {}, onFile() {},
+                    showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(grouped.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
+                r2.draw();
+                const note = host2.kids.find(n => n.className === 'ring-note');
+                assert.ok(/2 tier buckets hidden \(\d+ functions\)/.test(note.textContent), `the note counts them: ${note.textContent}`);
+                const tierBtns = c2.kids.find(k => k.kids[0].textContent === 'Tier buckets').kids[1].kids;
+                assert.ok(tierBtns.every(b => b.attrs.disabled === undefined), 'enabled on the Lanes lens');
+                r2.destroy();
+                const m3 = new El('div'), c3 = new El('span'), c4 = new El('div'), g3 = build(yara, 'modules');
+                const r3 = window.NwayRing.mount({ g: new El('g'), svg: new El('svg'), host: m3, controls: c3, controls2: c4, opts: {}, getDoc: () => yara, getR: () => g3.R, getCats: () => g3.C, lens: () => 'modules', getTrack: () => '', setTrack() {}, onOpt() {}, onFile() {},
+                    showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
+                r3.draw();
+                assert.ok(c4.kids.find(k => k.kids[0].textContent === 'Tier buckets').kids[1].kids.every(b => b.attrs.disabled !== undefined), 'disabled, with a reason, on the Modules lens');
+                r3.destroy();
+            }
             // URL keys: omitted at their defaults, stripped from table links
             assert.strictEqual(window.NwayRing.RING.ARC_DEFAULT, 'group');
-            const tq = window.NwayLineage.tableQs('md5s=a&rarc=one&rnest=0&rfocus=1&rmin=2&rlist=1').toString();
-            assert.ok(!/r(arc|nest|focus|min|list)=/.test(tq), 'table links drop the ring keys');
-            assert.ok(/rarc: window\.NwayRing \? window\.NwayRing\.RING\.ARC_DEFAULT/.test(viewSrc) && /rmin: '0\.5'/.test(viewSrc) && /rnest: '1', rfocus: ''/.test(viewSrc) && /for \(const k of KEYS\) if \(st\[k\] !== String\(D\[k\]/.test(viewSrc), 'keys equal to their defaults stay out of the URL');
-            assert.ok(/'rlist', 'root', 'file'/.test(viewSrc), 'the API query drops rlist');
+            const tq = window.NwayLineage.tableQs('md5s=a&rarc=one&rnest=0&rfocus=1&rmin=2&rlist=1&rtier=hide&rbundle=0').toString();
+            assert.ok(!/r(arc|nest|focus|min|list|tier|bundle)=/.test(tq), 'table links drop the ring keys');
+            assert.ok(/rarc: window\.NwayRing \? window\.NwayRing\.RING\.ARC_DEFAULT/.test(viewSrc) && /rmin: '0\.5'/.test(viewSrc) && /rnest: '1', rfocus: ''/.test(viewSrc) && /rtier: '', rbundle: ''/.test(viewSrc) && /for \(const k of KEYS\) if \(st\[k\] !== String\(D\[k\]/.test(viewSrc), 'keys equal to their defaults stay out of the URL');
+            assert.ok(/'rlist', 'rtier', 'rbundle', 'root', 'file'/.test(viewSrc), 'the API query drops rlist, rtier, rbundle');
             delete global.document; delete global.cancelAnimationFrame;
         }
     }

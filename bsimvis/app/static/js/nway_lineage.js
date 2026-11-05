@@ -4,7 +4,7 @@
  * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
- * ring {nest, focus, arc, min, list}, onRing(state)), onNode(node) (true when it took the click: no dock),
+ * ring {nest, focus, arc, min, list, tier, bundle}, onRing(state)), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -911,7 +911,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const tk = c.tk, b = el('button', { type: 'button', class: `lin-chip${st.track === tk ? ' on' : ''}`, title: c.g ? `${c.label}\n${gTip(c.g).map(([k, v]) => `${k}: ${v}`).join('\n')}\nClick to track it across the tree.` : 'Track this group across the tree', 'aria-pressed': String(st.track === tk) });
                 const sw = el('span', { class: 'lin-sw' }), lab = el('span', { class: 'lin-gn' });
                 sw.style.background = c.color;
-                if (c.g) lab.innerHTML = gHtml(c.g); else lab.textContent = c.label;
+                if (c.g && (c.g.kind === 'tier' || c.g.kind === 'fold')) lab.textContent = c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || c.label}: rows in no lane`;
+                else if (c.g) lab.innerHTML = gHtml(c.g); else lab.textContent = c.label;
                 b.append(sw, lab, el('span', { class: 'lin-dim' }, fmt(tot.get(c.key))));
                 b.addEventListener('click', () => setTrack(st.track === tk ? '' : tk));
                 legendBox.append(b);
@@ -1855,7 +1856,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist');
+        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

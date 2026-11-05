@@ -29,6 +29,7 @@
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
         OUTWARD_KEEP: 0.4, // share of a ring kept free on its outward side (away from the other clusters); cross-family arcs use the rest
+        BUCKET_FADE: 0.45, // opacity of the tier buckets next to real lanes
         ARC_DEFAULT: 'group', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
@@ -192,21 +193,25 @@
             }
         }
         const mods = [], gate = ((o.minPct || 0) / 100) * R.n;
-        let hidden = 0;
+        let hidden = 0, buckets = 0, bucketsHidden = 0, bucketFuncs = 0;
         C.cats.forEach((c, g) => {
             if (!size[g]) return;
             const mem = [];
             for (let i = 0; i < N; i++) if (has[g * N + i]) mem.push(i);
             // the gate: a module's own rows against all functions of the set, before any split between families
             if (mem.length && size[g] < gate) { hidden++; return; }
-            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, get label() { return this.cat.label; } });
+            // the tier / fold groups of the Lanes lens that hold rows of their own: remainders, not lanes
+            const bucket = !!(c.g && (c.g.kind === 'tier' || c.g.kind === 'fold'));
+            if (mem.length && bucket) buckets++;
+            if (mem.length && bucket && o.tier === 'hide') { bucketsHidden++; bucketFuncs += size[g]; return; }
+            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
         });
-        mods.hidden = hidden;
+        mods.hidden = hidden; mods.buckets = buckets; mods.bucketsHidden = bucketsHidden; mods.bucketFuncs = bucketFuncs;
         return mods;
     }
 
     // ---------------------------------------------------------------- the model
-    // o: { minPct (gate, percent of all functions), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey }
+    // o: { minPct (gate, percent of all functions), tier ('hide' drops the tier buckets), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey }
     function buildModel(doc, R, C, o = {}) {
         const N = doc.nodes.length, T = clusterTree(doc), roots = T.roots, hsl = o.hsl || ((h, l) => `hsl(${h},62%,${l}%)`);
         roots.forEach(sizeNode);
@@ -224,9 +229,9 @@
             b.pairRows = (x, y) => b.pair.get(`${Math.min(x, y)}|${Math.max(x, y)}`) || 0;
             b.fam = b.fams.length === 1 ? b.fams[0] : null;
             // exactly the colour the Tree gives the group (grey stays grey where the lens says so); a golden-angle hue only when the lens gives none
-            b.color = b.cat.color || hsl(Math.round((k * 137.508 + 40) % 360), 52);
+            b.color = b.bucket ? o.grey || b.cat.color : b.cat.color || hsl(Math.round((k * 137.508 + 40) % 360), 52);
         });
-        const M = { doc, N, T, roots, modeOf, arcMode: o.arc || (o.oneArc ? 'one' : RING.ARC_DEFAULT), hidden: mods.hidden || 0, nFuncs: R ? R.n : 0, minPct: o.minPct || 0, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
+        const M = { doc, N, T, roots, modeOf, arcMode: o.arc || (o.oneArc ? 'one' : RING.ARC_DEFAULT), hidden: mods.hidden || 0, buckets: mods.buckets || 0, bucketsHidden: mods.bucketsHidden || 0, bucketFuncs: mods.bucketFuncs || 0, nFuncs: R ? R.n : 0, minPct: o.minPct || 0, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
         M.homes = placeFamilies(M);
         M.plan = plan(M);
         M.lanePx = lanePx(M);
@@ -417,6 +422,7 @@
         sim.begin();
         const add = (id, tag, a, extra = {}) => { els.push({ id, tag, a, ...extra }); return els[els.length - 1]; };
         const key = n => `f:${n.id}`;
+        const fade = b => (b.bucket ? RING.BUCKET_FADE : 1);
         const holdsOf = new Map();
         for (const b of mods) for (const i of b.mem) (holdsOf.get(i) || holdsOf.set(i, []).get(i)).push(b.k);
         const out = { els, nc: {}, pos: {}, cen: {}, stats: { ribbons: [], lanes: [], laneFit: 1 } };
@@ -608,11 +614,15 @@
                 a += w;
             }
         }));
+        const entries = [];
         for (const b of mods) {
             if (b.fam != null) continue;
             for (let u = 0; u < b.fams.length; u++) for (let v = u + 1; v < b.fams.length; v++) {
                 const [X, Y] = [b.fams[u], b.fams[v]], sx = slots[`${b.k}|${X}|${Y}`], sy = slots[`${b.k}|${Y}|${X}`];
-                if (!sx || !sy) continue;
+                if (sx && sy) entries.push({ b, X, Y, sx, sy });
+            }
+        }
+        const plainRibbon = ({ b, X, Y, sx, sy }) => {
                 const roX = rg(roots[X]).ro, roY = rg(roots[Y]).ro;
                 const x0 = ptAt(cen[X], roX, sx[0]), x1 = ptAt(cen[X], roX, sx[1]), y0 = ptAt(cen[Y], roY, sy[0]), y1 = ptAt(cen[Y], roY, sy[1]), mx = (sx[0] + sx[1]) / 2, my = (sy[0] + sy[1]) / 2, wpx = (sx[1] - sx[0]) * roX;
                 const hk = `r:${b.k}:${X}:${Y}`, hm = sim.d(hk, (x0[0] + y0[0]) / 2, (x0[1] + y0[1]) / 2);
@@ -628,9 +638,56 @@
                 for (let t = 0; t <= 1.0001; t += 1 / 16) { const pa = bez(x1, c1, c2, ya, t), pb = bez(yb, c3, c4, x0, 1 - t); minW = Math.min(minW, Math.hypot(pa[0] - pb[0], pa[1] - pb[1])); }
                 const mxp = ptAt(cen[X], roX, mx), myp = ptAt(cen[Y], roY, my), ccl = [mxp, cb(mxp, mx), cb(myp, my), myp];
                 out.stats.ribbons.push({ cl: ccl, k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(yb[0] - ya[0], yb[1] - ya[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
-                add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5, 'stroke-width': 0.6 }, m: b.k, drag: hk, pair: { X, Y, n: b.pairRows(X, Y) } });
+                add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5 * fade(b), 'stroke-width': 0.6 }, m: b.k, bucket: b.bucket, drag: hk, pair: { X, Y, n: b.pairRows(X, Y) } });
+        };
+        // a bundle: the ribbons of one cluster pair leave their slots, run side by side along the axis between the two centres and come back apart
+        const bundle = list => {
+            const { X, Y } = list[0], roX = rg(roots[X]).ro, roY = rg(roots[Y]).ro, cx = cen[X], cy = cen[Y];
+            const dx = cy[0] - cx[0], dy = cy[1] - cx[1], dist = Math.hypot(dx, dy) || 1, u = [dx / dist, dy / dist], nrm = [-u[1], u[0]], d = Math.min(0.25 * dist, 80);
+            if (dist < roX + roY + 2 * d + 10) return false;
+            const hk = `rb:${X}:${Y}`, hm = sim.d(hk, (cx[0] + cy[0]) / 2, (cx[1] + cy[1]) / 2);
+            const EX = [cx[0] + u[0] * (roX + d) + hm[0], cx[1] + u[1] * (roX + d) + hm[1]], EY = [cy[0] - u[0] * (roY + d) + hm[0], cy[1] - u[1] * (roY + d) + hm[1]];
+            const dot = (a, b2) => a[0] * b2[0] + a[1] * b2[1];
+            const st = list.map(e => {
+                const mx = (e.sx[0] + e.sx[1]) / 2, my = (e.sy[0] + e.sy[1]) / 2, PX = ptAt(cx, roX, mx), PY = ptAt(cy, roY, my);
+                return { ...e, mx, my, PX, PY, w: (e.sx[1] - e.sx[0]) * roX, lat: dot([PX[0] - cx[0], PX[1] - cx[1]], nrm) + dot([PY[0] - cy[0], PY[1] - cy[1]], nrm) };
+            }).sort((a, b2) => a.lat - b2.lat || a.b.k - b2.b.k);
+            const total = sum(st, q => q.w) + (st.length - 1);
+            const shared = sum(st, q => q.b.pairRows(X, Y));
+            let off = -total / 2;
+            for (const q of st) {
+                const c = off + q.w / 2;
+                off += q.w + 1;
+                const Ein = [EX[0] + nrm[0] * c, EX[1] + nrm[1] * c], Eout = [EY[0] + nrm[0] * c, EY[1] + nrm[1] * c];
+                const h1 = 0.4 * Math.hypot(Ein[0] - q.PX[0], Ein[1] - q.PX[1]), h2 = 0.4 * Math.hypot(q.PY[0] - Eout[0], q.PY[1] - Eout[1]);
+                const a1 = [q.PX, [q.PX[0] + Math.cos(q.mx) * h1, q.PX[1] + Math.sin(q.mx) * h1], [Ein[0] - u[0] * h1, Ein[1] - u[1] * h1], Ein];
+                const a3 = [Eout, [Eout[0] + u[0] * h2, Eout[1] + u[1] * h2], [q.PY[0] + Math.cos(q.my) * h2, q.PY[1] + Math.sin(q.my) * h2], q.PY];
+                const pts = [];
+                for (let i = 0; i <= 8; i++) pts.push(bez(...a1, i / 8));
+                for (let i = 0; i <= 8; i++) pts.push(bez(...a3, i / 8));
+                const L = [], Rr = [];
+                pts.forEach((p, i) => {
+                    const a = pts[Math.max(0, i - 1)], b2 = pts[Math.min(pts.length - 1, i + 1)], tx = b2[0] - a[0], ty = b2[1] - a[1], tl = Math.hypot(tx, ty) || 1, nx = -ty / tl, ny = tx / tl;
+                    L.push([p[0] + (nx * q.w) / 2, p[1] + (ny * q.w) / 2]); Rr.push([p[0] - (nx * q.w) / 2, p[1] - (ny * q.w) / 2]);
+                });
+                const x0 = ptAt(cx, roX, q.sx[0]), x1 = ptAt(cx, roX, q.sx[1]), y0 = ptAt(cy, roY, q.sy[0]), y1 = ptAt(cy, roY, q.sy[1]), last = pts.length - 1;
+                const dd = (a, b2) => Math.hypot(a[0] - b2[0], a[1] - b2[1]);
+                // each edge starts at the slot end nearest to it, and ends at the nearest end of the other slot
+                const lx0 = dd(L[0], x0) <= dd(L[0], x1), ly0 = dd(L[last], y0) <= dd(L[last], y1);
+                L[0] = lx0 ? x0 : x1; Rr[0] = lx0 ? x1 : x0; L[last] = ly0 ? y0 : y1; Rr[last] = ly0 ? y1 : y0;
+                const A = lx0 ? L : Rr, B = lx0 ? Rr : L, bEndIsY0 = (lx0 ? !ly0 : ly0) ? true : false;
+                // A starts at x0, B at x1; B ends at y1' = the Y end it reaches, A at the other
+                const bEnd = B[last], arcSweep = bEnd === y0 ? 1 : 0;
+                const dstr = `M${P(x0)} A${f1(roX)},${f1(roX)} 0 0 1 ${P(x1)} ${B.map(p => `L${P(p)}`).join(' ')} A${f1(roY)},${f1(roY)} 0 0 ${arcSweep} ${P(A[last])} ${A.slice(0, last).reverse().map(p => `L${P(p)}`).join(' ')}Z`;
+                void bEndIsY0;
+                out.stats.ribbons.push({ cl: [pts[0], pts[0], pts[0], pts[0]], pl: pts, k: q.b.k, X, Y, wX: dd(x0, x1), wY: dd(y0, y1), arcX: (q.sx[1] - q.sx[0]) * roX, arcY: (q.sy[1] - q.sy[0]) * roY, minW: Math.min(...L.map((p, i) => dd(p, Rr[i]))), bundle: `${X}|${Y}` });
+                add(`o:${q.b.k}:${X}:${Y}`, 'path', { d: dstr }, { s: { fill: q.b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5 * fade(q.b), 'stroke-width': 0.6 }, m: q.b.k, bucket: q.b.bucket, drag: hk, pair: { X, Y, n: q.b.pairRows(X, Y) }, bundle: { X, Y, n: st.length, m: shared } });
             }
-        }
+            return true;
+        };
+        const byPair = new Map();
+        for (const e of entries) (byPair.get(`${e.X}|${e.Y}`) || byPair.set(`${e.X}|${e.Y}`, []).get(`${e.X}|${e.Y}`)).push(e);
+        for (const list of byPair.values()) if (!(S.bundle !== false && bundle(list))) list.forEach(plainRibbon);
 
         // ribbons inside clusters: a segment fans to the files of a leaf cluster, sized by slot, tapering to the file
         const inner = (center, rr, a0, a1, files, x, dragKey, famN) => {
@@ -643,7 +700,7 @@
                 const dxt = t[0] - sm[0], dyt = t[1] - sm[1], dl = Math.hypot(dxt, dyt) || 1, ud = [dxt / dl, dyt / dl], nr = [-ud[1], ud[0]], uin = [(center[0] - sm[0]) / rr, (center[1] - sm[1]) / rr], hh = Math.max(14, dl * 0.4);
                 const sd = (p0[0] - sm[0]) * nr[0] + (p0[1] - sm[1]) * nr[1] > 0 ? 1 : -1, fa = [t[0] + nr[0] * we / 2 * sd, t[1] + nr[1] * we / 2 * sd], fb = [t[0] - nr[0] * we / 2 * sd, t[1] - nr[1] * we / 2 * sd];
                 const ar = (p, u) => [p[0] + u[0] * hh, p[1] + u[1] * hh], br = f => [f[0] - ud[0] * hh, f[1] - ud[1] * hh];
-                add(`i:${sk}:${dragKey}:${i}`, 'path', { d: `M${P(p0)} A${f1(rr)},${f1(rr)} 0 0 1 ${P(p1)} C${P(ar(p1, uin))} ${P(br(fb))} ${P(fb)} L${P(fa)} C${P(br(fa))} ${P(ar(p0, uin))} ${P(p0)}Z` }, { s: { fill: b.color }, sa: { opacity: (0.16 + 0.26 * (1 - fs.length / Math.max(1, famN))).toFixed(3) }, m: b.k, drag: dragKey, f: i });
+                add(`i:${sk}:${dragKey}:${i}`, 'path', { d: `M${P(p0)} A${f1(rr)},${f1(rr)} 0 0 1 ${P(p1)} C${P(ar(p1, uin))} ${P(br(fb))} ${P(fb)} L${P(fa)} C${P(br(fa))} ${P(ar(p0, uin))} ${P(p0)}Z` }, { s: { fill: b.color }, sa: { opacity: ((0.16 + 0.26 * (1 - fs.length / Math.max(1, famN))) * fade(b)).toFixed(3) }, m: b.k, bucket: b.bucket, drag: dragKey, f: i });
             });
         };
         // routing: family ring -> lane on each cluster level -> files; a cluster without sub-clusters fans straight to its files
@@ -671,9 +728,9 @@
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                     const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
-                    add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
+                    add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: 1 }, m: b.k, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
@@ -712,11 +769,20 @@
             const { rm, ro } = rg(f);
             segs[c].forEach(x => {
                 const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), a0 = x.a0 + pd, a1 = x.a1 - pd, wide = (x.a1 - x.a0) * ro > RING.SEG_STROKE + 2;
-                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: 1 }, m: x.b.k, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
+                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             add(`fl:${c}`, 'text', { x: f1(tx), y: f1(ty), 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600 }, { text: `${f.label}  ${f.files.length} files`, cls: 'ring-fam', drag: `f:${f.id}` });
         });
+        // tier buckets sit behind the real lanes: same kinds of element, buckets first
+        for (const kind of ['o:', 'u:', 'l:', 'i:']) {
+            const idx = [];
+            els.forEach((e, i) => { if (e.id.startsWith(kind)) idx.push(i); });
+            const vals = idx.map(i => els[i]);
+            if (!vals.some(e => e.bucket)) continue;
+            vals.sort((a, b2) => (b2.bucket ? 1 : 0) - (a.bucket ? 1 : 0));
+            idx.forEach((i, k) => (els[i] = vals[k]));
+        }
         return out;
     }
 
@@ -767,8 +833,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list };
-        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min, list: S.list });
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle !== false };
+        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
@@ -818,24 +884,27 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         const arcSeg = seg('Arcs', 'How many ring segments a module gets on a circle: one per partner family, one per group of nearby partners, or one for all of them', [['partner', 'Per partner'], ['group', 'Grouped'], ['one', 'One per module']], () => S.arc, v => { S.arc = v; applyOpt(true); });
         const nestSeg = onOff('Nested clusters', 'Show the sub-clusters of each family as circles inside it, with lanes on each level', () => S.nested, v => { S.nested = v; S.sim.reset(); applyOpt(false); full(); ctx.fit(); });
         const listSeg = onOff('Module list', 'Show the chips of the lens groups above the chart', () => S.list, v => { S.list = v; applyOpt(false); });
+        const tierSeg = seg('Tier buckets', 'The Core / Common / Rare remainders of the Lanes lens (rows that are in no lane): shown in grey behind the lanes, or hidden', [['show', 'Show'], ['hide', 'Hide']], () => S.tier, v => { S.tier = v; applyOpt(true); });
+        const bundleSeg = seg('Bundle ribbons', 'Draw the ribbons between two clusters as one bundle of parallel stripes, one per module', [[true, 'On'], [false, 'Off']], () => S.bundle, v => { S.bundle = v; applyOpt(false); paint(); });
         // advanced settings that differ from their defaults start open, so the state is visible
-        let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list;
+        let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list || S.tier === 'hide' || !S.bundle;
         const syncMore = () => { moreBtn.setAttribute('aria-expanded', String(more)); chev.className = `fa-solid fa-chevron-${more ? 'up' : 'down'}`; ctx.controls2.style.display = more ? 'flex' : 'none'; };
         moreBtn.addEventListener('click', () => { more = !more; syncMore(); });
         ctx.controls.replaceChildren(focusSeg, minSeg, resetBtn, moreBtn);
-        ctx.controls2.replaceChildren(arcSeg, nestSeg, listSeg);
+        ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
         ctx.controls2.setAttribute('style', `display:${more ? 'flex' : 'none'};flex:0 0 100%;flex-wrap:wrap;gap:8px 10px;align-items:center`);
         root.classList.toggle('ring-focus', S.focus);
         syncMore();
 
         // ---- tooltips
-        const modTip = (ev, b, pr, prs) => {
+        const modTip = (ev, b, pr, prs, bu) => {
             if (!b) return;
             const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
             const lab = c => M.roots[c].label;
             ctx.showTip(ev, b.label, b.color, [
                 pr ? ['Shared', `${ctx.fmt(pr.n)} functions shared between ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)} in the module)`] : ['Functions', ctx.fmt(b.size)],
                 ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
+                ...(bu ? [['Bundle', `${M.roots[bu.X].label} + ${M.roots[bu.Y].label}: ${bu.n} modules, ${ctx.fmt(bu.m)} shared functions`]] : []),
                 ...(b.fam != null ? [['Only in cluster', M.roots[b.fam].label]] : []),
                 ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
                 ['', 'A file holds a module when it has at least one of its functions.']]);
@@ -889,7 +958,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.m !== undefined) {
                 node.dataset.m = String(e.m);
                 node.style.cursor = 'pointer';
-                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs); });
+                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs, e.bundle); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
                 node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
@@ -953,8 +1022,12 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             paint();
             const gateMsg = M.hidden ? `${M.hidden} module${M.hidden === 1 ? '' : 's'} hidden under ${S.min}% of functions (${ctx.fmt(M.nFuncs)} functions in total); ${mods.length} shown.` : '';
             minSeg.kids[1].setAttribute("title", `Hide modules and lanes with fewer functions than this share of all functions in the set.${gateMsg ? ` ${gateMsg}` : ` ${mods.length} shown.`}`);
+            const tierMsg = M.bucketsHidden ? `${M.bucketsHidden} tier bucket${M.bucketsHidden === 1 ? '' : 's'} hidden (${ctx.fmt(M.bucketFuncs)} functions).` : '';
+            // the Tier buckets switch only means something when the lens has such groups
+            for (const b of tierSeg.kids[1].kids) { if (M.buckets || M.bucketsHidden) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); }
+            tierSeg.kids[1].setAttribute('title', M.buckets || M.bucketsHidden ? 'The Core / Common / Rare remainders of the Lanes lens (rows that are in no lane): shown in grey behind the lanes, or hidden' : 'This lens has no tier groups: only the Lanes lens does');
             const msg = !mods.length ? (ctx.getR() ? 'No group of this lens has functions in the files.' : 'This server sends no row list: modules need it, only the clusters are shown.')
-                : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : '', gateMsg].filter(Boolean).join(' ');
+                : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : '', gateMsg, tierMsg].filter(Boolean).join(' ');
             note.textContent = msg;
             note.style.display = msg ? '' : 'none';
         }
@@ -963,10 +1036,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!doc) { M = null; return; }
             let h = 0;
             if (R) for (let r = 0; r < R.n; r++) h = (h * 31 + (R.match(r) ? 1 : 0)) | 0;
-            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, S.min, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
+            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, S.min, S.tier, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
-            M = buildModel(doc, R, C, { minPct: S.min, arc: S.arc, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
+            M = buildModel(doc, R, C, { minPct: S.min, tier: S.tier, arc: S.arc, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
         }
 

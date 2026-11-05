@@ -3,7 +3,8 @@
  *
  * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
- * a group list beside the tree, or six mini trees), onNode(node) (true when it took the click: no dock),
+ * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
+ * ring {hold, nest}, onRing(state)), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -704,9 +705,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             S: { names: {}, evid: {}, busy: false, done: false, off: opts.laneNames === false }, lnSig: '', sums: new Map() };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
-        const world = s.append('g');
-        const gRib = world.append('g'), gArc = world.append('g'), gNode = world.append('g'), gDet = world.append('g'), gStr = world.append('g'), gLib = world.append('g').style('pointer-events', 'none'), gTrk = world.append('g').style('pointer-events', 'none'), gOv = world.append('g').style('pointer-events', 'none'), gLab = world.append('g').style('pointer-events', 'none'), gHov = world.append('g').style('pointer-events', 'none');
+        const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none');
+        const gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
+        // in the Ring view a press on a draggable shape drags it; the rest still pans
+        zoom.filter(ev => (!ev.ctrlKey || ev.type === 'wheel') && !ev.button && !(st.view === 'ring' && ev.type !== 'wheel' && ev.target.closest && ev.target.closest('[data-drag]')));
         s.call(zoom);
         const tip = d3.select(document.body).append('div').attr('class', 'lin-vars lin-tip');
         canvas.append(noteBox, mini, drawer);
@@ -736,7 +739,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         canvas.append(zgrp);
         tb.append(search, hits, chartPop);
         const trackBox = el('span', { style: 'display:contents' }), legendBox = el('span', { style: 'display:contents' });
-        tb.append(trackBox, legendBox);
+        const ringBox = el('span', { style: 'display:none;gap:8px;align-items:center' });
+        tb.append(trackBox, legendBox, ringBox);
         const deepAll = () => {
             const out = new Set();
             for (const n of st.M.vis) if (!n.agg && n.d >= 2 && (st.M.kids.get(n.id) || []).length && !out.has(st.M.rep.get(n.id))) out.add(n.id);
@@ -857,6 +861,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             drawMini();
             note();
             applyTrack(false);
+            ringDraw();
             if (!st.hasView) fit(false);
             schedule(true);
             // a node pick survives a relayout when the node is still drawn
@@ -926,7 +931,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (opts.onTrack) opts.onTrack(t);
             applyTrack(true);
             // a group tracked here gets its card in the dock (the Tracks view shows it beside its list)
-            if (trackedGroup() && st.view === 'tree' && !(st.sel && st.sel.node && drawer.classList.contains('open'))) { st.sel = { group: true }; openDrawer(st.sel); }
+            if (trackedGroup() && (st.view === 'tree' || st.view === 'ring') && !(st.sel && st.sel.node && drawer.classList.contains('open'))) { st.sel = { group: true }; openDrawer(st.sel); }
         }
         function trackLabel() {
             const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
@@ -969,6 +974,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 trackBox.append(c);
             } else if (st.R) trackBox.append(el('span', { class: 'lin-dim' }, 'Click a legend chip or a row in the dock to track it.'));
             if (nodeBase) { nodeBase.style('opacity', nodeOp); ribs.style('opacity', ribOp); applySel(); }
+            if (st.ring) st.ring.setTrack();
             legend();
             if (groupList()) return;
             multiples();
@@ -1112,6 +1118,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function relabel() {
             if (!st.L || !st.R || st.dead) return;
             applyTrack(false);
+            if (st.ring && st.view === 'ring') st.ring.draw();
             if (drawer.classList.contains('open') && st.sel && (st.sel.node || st.sel.group)) openDrawer(st.sel);
         }
 
@@ -1625,8 +1632,42 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             return d;
         }
 
+        // ---- ring view (nway_ring.js): clusters as circles, modules as rings and ribbons ----
+        function ringDraw() {
+            const on = st.view === 'ring' && !!window.NwayRing;
+            gTree.style('display', on ? 'none' : null);
+            gRingG.style('display', on ? null : 'none');
+            mini.style.display = on ? 'none' : '';
+            ringBox.style.display = on ? 'inline-flex' : 'none';
+            if (!on) { if (st.ring) st.ring.show(false); return; }
+            if (!st.ring) {
+                st.ring = window.NwayRing.mount({
+                    g: gRingG.node(), svg: s.node(), host: canvas, controls: ringBox, opts: opts.ring || {},
+                    getDoc: () => st.doc, getR: () => st.R, getCats: () => cats(st.lens), lens: () => st.lens, getTrack: () => st.track,
+                    setTrack, onOpt: o => { if (opts.onRing) opts.onRing(o); },
+                    onFile: id => {
+                        const top = st.M.rep.get(st.R ? st.R.nodeOf.get(id) || id : id);
+                        if (top && top.startsWith('agg:')) { st.collapsed = new Set(); rebuild(); }
+                        const n = st.L.fileOf.get(top && top.startsWith('agg:') ? id : top);
+                        if (n) pickNode(n);
+                    },
+                    showTip, moveTip, hideTip, fmt, name: nameOf, nodeColor: i => nodeColor(st.doc, i),
+                    tree: () => st.doc._colors || (st.doc._colors = window.NwayColors.tree(st.doc.nodes.map(n => ({ id: n.id, path: n.path })))),
+                    hsl, hue: hueOf, grey: GREY, fit: () => fit(true),
+                });
+            }
+            st.ring.show(true);
+            st.ring.draw();
+        }
+        const nameOf = id => st.names.get(id) || id;
         // ---- zoom helpers ----
         function fit(animate) {
+            if (st.view === 'ring' && st.ring && st.ring.box()) {
+                const b = st.ring.box(), { w, h } = size(), bw = b.x1 - b.x0, bh = b.y1 - b.y0, k = Math.max(K_MIN, Math.min(1, 0.95 * Math.min(w / bw, h / bh)));
+                st.hasView = true;
+                (animate ? s.transition().duration(400) : s).call(zoom.transform, d3.zoomIdentity.translate(w / 2 - (k * (b.x0 + b.x1)) / 2, h / 2 - (k * (b.y0 + b.y1)) / 2).scale(k));
+                return;
+            }
             const { w, h } = size(), { W, H } = st.L;
             const kf = Math.min(w / W, h / H, 1);
             // the first view keeps a readable scale: the minimap and Fit cover the rest
@@ -1721,6 +1762,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.view = v;
                 if (!st.L) return;
                 applyTrack(false);
+                ringDraw();
                 fit(true);
             },
             hover: hoverRow,
@@ -1737,6 +1779,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             state: st,
             destroy() {
                 st.dead = true;
+                if (st.ring) st.ring.destroy();
                 cancelAnimationFrame(st.raf);
                 ro.disconnect();
                 document.removeEventListener('keydown', dblClose);
@@ -1809,7 +1852,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview');
+        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

@@ -183,13 +183,23 @@ lineage's); pin = the table's `track`. The first half of the file is DOM-free
 (`clusterTree`, `modulesOf`, `buildModel`, `plan`, `geometry`, `newSim`) and checked in
 Node; `geometry` returns one frame as a flat element list, the renderer only diffs attributes.
 Clusters come from `node.path`, else the lineage tree is cut at weak edges. Modules are the
-current lens's groups; a file holds one when it has `HOLD_MIN` of the best holder's rows
-(counts are one pass over `rows.mask`, never `rowModel.held`). URL keys `rhold`, `rnest`.
-All constants are in `RING`: `HOLD_MIN` 0.05 (real sets share little across families: 0.5 gave 2 ribbons on a 45-file set, 0.05 gives 37), `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120
-files), `LEAF_MAX` 24 (larger leaves are one circle until clicked), `CAP` 14 (layers), `CAP_CROSS` 30 (cross-family segments), `OTHER_MAX` 0.25 segments per ring
-(rest = "other"), `MIN_SEG_PX` 14, `PX_MAX` 2.5, `LANE_W` 0.12 (shrunk by `lanePx` to fit),
-`LANE_FIT` 0.85, `BUDGET` [1200, 2500] estimated elements (above: no per-file ribbons; above
-the second: clusters and family ribbons only), the redraw loop stops after 240 frames or 4 s.
+current lens's groups. **A file holds a module when it has at least one of its functions**
+(no threshold, no control). Counts come from one pass over `rows.mask` (never
+`rowModel.held`): per module `rowsIn[family]` and `pair[x|y]`, the rows held by a file of
+both families. A cross-family segment is sized by the rows shared with its partner, so both
+ends of a ribbon are equal; a single-family module by its rows in the family. URL key `rnest`.
+
+**Nothing is dropped.** Every module keeps its ring segment, its parent -> lane -> file chain
+and one outer ribbon per family pair it spans. A segment thinner than the scale gives is
+drawn `FLOOR` (2 px, less on a genuinely full ring); the px-per-function scale shrinks
+instead. Only `RIBBON_SAFE` (5000 ribbons) can omit ribbons, with a note in the canvas.
+Constants are all in `RING`: `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120 files),
+`LEAF_MAX` 60 (larger leaves are one circle until clicked), `FAM_MAX` 24, `PX_MAX` 2.5,
+`LANE_W` 0.12 (shrunk by `lanePx` to fit), `LANE_FIT` 0.85, `CROSS_COLORS` 12 (more
+cross modules get golden-angle hues; grey only for groups grey on purpose), `BUDGET`
+[6000, 12000] estimated elements (above: no parent-to-lane bands; above the second:
+clusters and family ribbons only; the mode is shown in the canvas note). The redraw loop
+stops after 240 frames or 4 s.
 
 ## Homepage and unified search
 

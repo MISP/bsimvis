@@ -6,7 +6,7 @@
  *
  * The first half is DOM-free (the layout check runs it in Node, scripts/test_nway_lineage.js):
  *   clusterTree  node.path -> nested clusters (no path: a cut of the lineage tree at weak edges),
- *   modulesOf    the groups of the current lens -> modules, holders by RING.HOLD_MIN,
+ *   modulesOf    the groups of the current lens -> modules (a file holds one with at least one of its functions),
  *   buildModel   both + sizes + family homes,
  *   plan         which segment goes on which family ring, one px-per-function scale for all,
  *   geometry     every shape of one frame as a plain list of elements (ring segments, outer ribbons,
@@ -19,23 +19,21 @@
     const TAU = 2 * Math.PI;
     // every tuned number of the view
     const RING = {
-        HOLD_MIN: 0.05, // a file holds a module when it has this share of what the best holder has; real sets share little across families, so low
-        HOLD_OPTS: [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1],
         DEPTH: 3, DEPTH_BIG: 2, BIG_FILES: 120, // cluster levels drawn; fewer above BIG_FILES files
-        LEAF_MAX: 24, // a leaf cluster with more files is one circle with a count until clicked
-        FAM_MAX: 12, // families beyond this many merge into "Other files"
+        LEAF_MAX: 60, // a leaf cluster with more files is one circle with a count until clicked
+        FAM_MAX: 24, // families beyond this many merge into "Other files"
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
         R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, // circle radius a + b*sqrt(files)
         RI: 6, RM: 14, RO: 22, // ring radii beyond the circle: inner, centre, outer
-        SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, CAP: 14, CAP_CROSS: 30, MIN_SEG_PX: 14, MIN_CROSS_PX: 6, OTHER_MAX: 0.25, SEG_STROKE: 12, // ring segments
+        SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, FLOOR: 2, SEG_STROKE: 12, // ring segments; no segment is ever dropped, the thinnest are drawn FLOOR px wide (1 when a ring is full)
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
-        CROSS_COLORS: 12, MAX_RIBBONS: 160, // coloured cross modules; outer ribbons drawn
+        CROSS_COLORS: 12, RIBBON_SAFE: 5000, // cross modules in the lens colour (then golden-angle hues); safety limit of outer ribbons, with a note when it triggers
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7, LANE_SHADE: [1, 0.7, 0.45],
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
-        BUDGET: [1200, 2500], // estimated elements above which the drawing gets lighter: no per-file fans; clusters and family ribbons only
+        BUDGET: [6000, 12000], // estimated elements above which the drawing gets lighter: no parent-to-lane bands, then clusters, rings and family ribbons only
         FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 33, // a redraw loop stops after this many frames or ms; at most 30 frames a second
         MIN_FILL: [0.09, 0.12, 0.16],
     };
@@ -159,39 +157,48 @@
     }
 
     // ---------------------------------------------------------------- modules
-    // The groups of the lens (C = lensCats) that have rows, with the nodes that hold them: a node holds a
-    // module when at least `hold` of the module's matching rows are in it.
-    function modulesOf(R, C, N, o = {}) {
-        const hold = o.hold ?? RING.HOLD_MIN, K = C.cats.length, at = new Map(C.cats.map((c, i) => [c.key, i]));
-        const size = new Uint32Array(K), cnt = new Uint32Array(K * N);
-        // one pass over the row masks: rows of each group, and how many of them each file holds
+    // The groups of the lens (C = lensCats) that have rows. A file holds a module when it has at least one of its functions.
+    // One pass over the row masks gives, per module: size (rows), rowsIn[f] (rows held by a file of family f), pair[x|y]
+    // (rows held by a file of x and a file of y) and the files of x holding such a row (hold[x|y]).
+    function modulesOf(R, C, N, famOf, F, o = {}) {
+        const K = C.cats.length, at = new Map(C.cats.map((c, i) => [c.key, i]));
+        const size = new Uint32Array(K), has = new Uint8Array(K * N), rowsIn = new Uint32Array(K * F), pair = C.cats.map(() => new Map()), hold = C.cats.map(() => new Map());
+        const inRow = [], fams = [];
         for (let r = 0; r < R.n; r++) {
             if (!R.match(r)) continue;
             const g = at.get(C.of(r));
             if (g == null) continue;
             size[g]++;
-            const h = R.mask[r] || '', base = g * N;
+            inRow.length = 0;
+            const h = R.mask[r] || '';
             for (let j = h.length - 1, i0 = 0; j >= 0; j--, i0 += 4) {
                 const v = parseInt(h[j], 16) || 0;
                 if (!v) continue;
-                for (let b = 0; b < 4; b++) if ((v >> b) & 1 && i0 + b < N) cnt[base + i0 + b]++;
+                for (let b = 0; b < 4; b++) if ((v >> b) & 1 && i0 + b < N) { inRow.push(i0 + b); has[g * N + i0 + b] = 1; }
+            }
+            fams.length = 0;
+            for (const i of inRow) if (!fams.includes(famOf[i])) fams.push(famOf[i]);
+            for (const f of fams) rowsIn[g * F + f]++;
+            for (const x of fams) for (const y of fams) {
+                if (x === y) continue;
+                const k = `${x}|${y}`;
+                if (x < y) pair[g].set(k, (pair[g].get(k) || 0) + 1);
+                const set = hold[g].get(k) || hold[g].set(k, new Set()).get(k);
+                for (const i of inRow) if (famOf[i] === x) set.add(i);
             }
         }
         const mods = [];
         C.cats.forEach((c, g) => {
             if (!size[g]) return;
-            // relative to the best holder, so a group spread over many files (a role, a band) still has holders
-            let top = 0;
-            for (let i = 0; i < N; i++) top = Math.max(top, cnt[g * N + i]);
-            const need = Math.max(1, Math.ceil(hold * top - 1e-9)), mem = [];
-            for (let i = 0; i < N; i++) if (cnt[g * N + i] >= need) mem.push(i);
-            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, grey: !!o.grey && c.color === o.grey, get label() { return this.cat.label; } });
+            const mem = [];
+            for (let i = 0; i < N; i++) if (has[g * N + i]) mem.push(i);
+            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, get label() { return this.cat.label; } });
         });
         return mods;
     }
 
     // ---------------------------------------------------------------- the model
-    // o: { hold, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey, neutral }
+    // o: { hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey, neutral }
     function buildModel(doc, R, C, o = {}) {
         const N = doc.nodes.length, T = clusterTree(doc), roots = T.roots, hsl = o.hsl || ((h, l) => `hsl(${h},62%,${l}%)`);
         roots.forEach(sizeNode);
@@ -201,18 +208,19 @@
             return t && t.h != null ? hsl(t.h, t.l) : hsl(o.hue ? o.hue(fi) : (fi * 137) % 360, 52 - 4 * Math.min(c.level, 2));
         };
         roots.forEach((f, fi) => { const walk = c => { c.col = colour(c, fi); c.kids.forEach(walk); }; walk(f); f.famCol = f.other ? 'var(--lin-grey)' : f.col; });
-        const mods = R && C ? modulesOf(R, C, N, o) : [];
-        // cross modules in size order get the lens colour; the rest, and grey groups, one neutral
+        const mods = R && C ? modulesOf(R, C, N, T.famOf, roots.length, o) : [];
+        // cross modules in size order get the lens colour; past RING.CROSS_COLORS they get golden-angle hues of their own; grey stays for groups that are grey on purpose
         const neutral = o.neutral || 'var(--lin-grey)';
         mods.sort((a, b) => b.size - a.size);
         let cross = 0;
         mods.forEach((b, k) => {
             b.k = k;
             b.fams = [...new Set(b.mem.map(i => T.famOf[i]))].sort((x, y) => x - y);
+            b.pairRows = (x, y) => b.pair.get(`${Math.min(x, y)}|${Math.max(x, y)}`) || 0;
             b.fam = b.fams.length === 1 ? b.fams[0] : null;
-            b.color = b.fam != null ? roots[b.fam].famCol : !b.grey && cross++ < RING.CROSS_COLORS ? b.cat.color : neutral;
+            b.color = b.fam != null ? roots[b.fam].famCol : b.grey ? neutral : cross++ < RING.CROSS_COLORS ? b.cat.color : hsl(Math.round((cross * 137.508 + 40) % 360), 52);
         });
-        const M = { doc, N, T, roots, modeOf, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), hold: o.hold ?? RING.HOLD_MIN, nodeColor: o.nodeColor || (() => '#888') };
+        const M = { doc, N, T, roots, modeOf, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
         M.plan = plan(M);
         M.homes = placeFamilies(M);
         M.lanePx = lanePx(M);
@@ -220,82 +228,67 @@
     }
 
     // estimated elements of a full drawing, and the lighter mode that keeps it under RING.BUDGET:
-    // 0 everything, 1 no per-file ribbons, 2 clusters, rings and family ribbons only
+    // 0 everything, 1 no parent-to-lane bands and file labels, 2 clusters, rings and family ribbons only
     function modeOf(nested) {
         const M = this, nCl = nested ? M.byId.size : M.roots.length;
-        let pairs = 0, fans = 0, lanes = 0;
-        for (const b of M.mods) {
-            if (b.fam == null) pairs += (b.fams.length * (b.fams.length - 1)) / 2;
-            fans += b.mem.length;
-            lanes += nested ? 2 * Math.min(b.mem.length, nCl) : 0;
-        }
-        const segs = sum(M.plan.segs, l => l.length), base = 2 * nCl + segs + pairs + M.N * 2;
-        const est = base + lanes + fans;
+        const segs = sum(M.plan.segs, l => l.length), fans = sum(M.plan.segs, l => sum(l, x => x.hold.size)), pairs = M.plan.ribbons;
+        const est = 2 * nCl + segs + pairs + M.N * 2 + (nested ? 4 * segs : 0) + fans;
         return { est, mode: est > RING.BUDGET[1] ? 2 : est > RING.BUDGET[0] ? 1 : 0 };
     }
 
     // the radii of a family's rings
     const rg = f => ({ ri: f.r + RING.RI, rm: f.r + RING.RM, ro: f.r + RING.RO });
 
-    // Which segment sits on which family ring, and the one px-per-function scale of all of them. A cross module
-    // gets one segment per partner family; a ring keeps its RING.CAP biggest segments, the rest become "other",
-    // and so do segments narrower than RING.MIN_SEG_PX. A ribbon exists only when both its ends do, so every
-    // ribbon has the same width at both ends.
+    // The segments of every family ring, and the one px-per-function scale of all of them. Nothing is dropped: a layer module has
+    // one segment (size = its rows held in the family), a cross module one per partner family (size = the rows held by a file
+    // of each of the two, so both ends of a ribbon are equal). A segment thinner than the scale gives is drawn FLOOR px wide
+    // (less when a ring is genuinely full); the scale shrinks until every ring fits.
     function plan(M) {
-        const { roots, mods } = M, drop = new Set();
-        const pk = (b, x, y) => `${b.k}|${Math.min(x, y)}|${Math.max(x, y)}`;
-        // the outer ribbons drawn are capped: biggest modules first
-        let pairs = 0;
-        for (const b of mods) if (b.fam == null) {
-            const n = (b.fams.length * (b.fams.length - 1)) / 2;
-            pairs += n;
-            if (pairs > RING.MAX_RIBBONS) for (const x of b.fams) for (const y of b.fams) if (x < y) drop.add(pk(b, x, y));
+        const { roots, mods } = M;
+        const all = [];
+        for (const b of mods) if (b.fam == null) for (let u = 0; u < b.fams.length; u++) for (let v = u + 1; v < b.fams.length; v++) all.push([b, b.fams[u], b.fams[v], b.pairRows(b.fams[u], b.fams[v])]);
+        // the safety limit of outer ribbons: the smallest are left out, on both ends
+        const skip = new Set();
+        let truncated = 0;
+        if (all.length > RING.RIBBON_SAFE) {
+            all.slice().sort((a, b2) => b2[3] - a[3]).slice(RING.RIBBON_SAFE).forEach(([b, x, y]) => { skip.add(`${b.k}|${x}|${y}`); truncated++; });
         }
-        // each ring: segments kept (biggest first) and the size of what was dropped
-        const rings = () => roots.map((f, c) => {
-            const keep = [];
-            let lost = 0, nLost = 0;
+        const segs = roots.map((f, c) => {
+            const l = [];
             for (const b of mods) {
                 if (!b.fams.includes(c)) continue;
-                if (b.fam != null) { if (drop.has(`L|${b.k}`)) { lost += b.size; nLost++; } else keep.push({ b, size: b.size }); continue; }
-                for (const p of b.fams) {
-                    if (p === c) continue;
-                    if (drop.has(pk(b, c, p))) { lost += b.size / (b.fams.length - 1); nLost++; } else keep.push({ b, partner: p, size: b.size / (b.fams.length - 1) });
-                }
+                if (b.fam != null) { l.push({ b, size: b.rowsIn[c], hold: new Set(b.mem.filter(i => M.famOf[i] === c)) }); continue; }
+                for (const p of b.fams) if (p !== c && !skip.has(`${b.k}|${Math.min(c, p)}|${Math.max(c, p)}`)) l.push({ b, partner: p, size: b.pairRows(c, p), hold: b.hold.get(`${c}|${p}`) || new Set() });
             }
-            keep.sort((a, b2) => b2.size - a.size);
-            return { keep, lost, nLost };
+            l.sort((a, b2) => b2.size - a.size);
+            return l;
         });
-        const dropSeg = (c, s) => drop.add(s.partner == null ? `L|${s.b.k}` : pk(s.b, c, s.partner));
-        const fit = (r, f) => { const { ro } = rg(f), kept = sum(r.keep, s => s.size), tot = kept + Math.min(r.lost, RING.OTHER_MAX * kept); return tot ? (RING.FILL * TAU * ro - RING.SEG_GAP * ro * (r.keep.length + (r.lost ? 1 : 0) + 1)) / tot : Infinity; };
-        let R, px = 1;
-        for (let pass = 0; pass < 12; pass++) {
-            R = rings();
-            let changed = false;
-            R.forEach((r, c) => {
-                // layers and cross-family segments are capped apart, so the many small cross segments are not crowded out by big layers
-                for (const s of r.keep.filter(x => x.b.fam != null).slice(RING.CAP)) { dropSeg(c, s); changed = true; }
-                for (const s of r.keep.filter(x => x.b.fam == null).slice(RING.CAP_CROSS)) { dropSeg(c, s); changed = true; }
-            });
-            if (changed) continue;
-            const sc = R.map((r, c) => fit(r, roots[c])).filter(Number.isFinite);
-            px = sc.length ? Math.min(RING.PX_MAX, Math.max(1e-6, Math.min(...sc))) : 1;
-            R.forEach((r, c) => { for (const s of r.keep) if (s.size * px < (s.b.fam == null ? RING.MIN_CROSS_PX : RING.MIN_SEG_PX)) { dropSeg(c, s); changed = true; } });
-            if (!changed) break;
-        }
-        const segs = R.map((r, c) => [...r.keep, ...(r.lost ? [{ b: { k: `o${c}`, other: true, fam: c, size: r.lost, mem: [], fams: [c], label: `${r.nLost} smaller module${r.nLost === 1 ? '' : 's'}`, color: roots[c].famCol }, size: Math.min(r.lost, RING.OTHER_MAX * sum(r.keep, s => s.size)) }] : [])]);
-        return { segs, px };
+        const avail = segs.map((l, c) => RING.FILL * TAU * rg(roots[c]).ro);
+        // gap between segments: the usual one, less on a crowded ring
+        const gaps = segs.map((l, c) => (l.length ? Math.min(RING.SEG_GAP * rg(roots[c]).ro, (0.2 * avail[c]) / l.length) : 0));
+        let floor = RING.FLOOR;
+        segs.forEach((l, c) => { const room = avail[c] - gaps[c] * l.length; if (l.length * floor > room) floor = Math.min(floor, Math.max(0.2, (0.9 * room) / l.length)); });
+        let px = RING.PX_MAX;
+        segs.forEach((l, c) => {
+            const room = avail[c] - gaps[c] * l.length, used = q => sum(l, s => Math.max(s.size * q, floor));
+            if (used(px) <= room) return;
+            let lo = 0, hi = px;
+            for (let it = 0; it < 40; it++) { const mid = (lo + hi) / 2; if (used(mid) <= room) lo = mid; else hi = mid; }
+            px = lo;
+        });
+        const floorHits = sum(segs, l => l.filter(s => s.size * px < floor).length);
+        return { segs, px, floor, gaps: gaps.map((g, c) => g / rg(roots[c]).ro), floorHits, ribbons: all.length - truncated, truncated };
     }
 
     // One px-per-function for every lane: RING.LANE_W, or less when the lanes of some cluster would not fit its ring.
     function lanePx(M) {
         let px = RING.LANE_W;
-        const kept = M.plan.segs.flat().filter(x => !x.b.other);
+        const kept = M.plan.segs.flat();
         for (const n of M.byId.values()) {
             if (n.level < 1) continue;
-            const here = new Set(n.files), fed = kept.filter(x => x.b.mem.some(i => here.has(i)));
+            const fed = kept.filter(x => n.files.some(i => x.hold.has(i)));
             if (!fed.length) continue;
-            const rp = n.r + RING.LANE_OFF, tot = sum(fed, x => x.size);
+            const rp = n.r + RING.LANE_OFF, tot = sum(fed, x => Math.max(x.size, 1));
             px = Math.min(px, (RING.LANE_FIT * TAU * rp - fed.length * RING.LANE_GAP * rp) / tot);
         }
         return Math.max(px, 1e-4);
@@ -457,10 +450,9 @@
             tos[c] = sim.dir[c];
             segs[c] = pl.segs[c].map(s => ({ ...s, want: s.partner == null ? 0 : norm(angTo(cen[c], cen[s.partner]) - (tos[c] + Math.PI)) }));
         });
-        const GAP = RING.SEG_GAP;
         roots.forEach((f, c) => {
-            const { ro } = rg(f), A = s => (s * px) / ro;
-            const hs = x => x.b.mem.filter(i => M.famOf[i] === c);
+            const { ro } = rg(f), GAP = pl.gaps[c], A = s => Math.max(s * px, pl.floor) / ro;
+            const hs = x => [...x.hold];
             const side = x => { const h = hs(x); if (!h.length) return 0; const vx = sum(h, i => Math.cos(angTo(cen[c], pos[i]))), vy = sum(h, i => Math.sin(angTo(cen[c], pos[i]))); return Math.hypot(vx, vy) / h.length < 0.25 ? 0 : norm(Math.atan2(vy, vx) - tos[c]); };
             const inner_ = segs[c].filter(x => x.b.fam != null).map(x => ({ x, s: side(x) })).sort((p, q) => p.s - q.s || q.x.size - p.x.size).map(q => q.x), cross = segs[c].filter(x => x.b.fam == null);
             const span = sum(inner_, x => A(x.size)) + GAP * Math.max(0, inner_.length - 1);
@@ -477,6 +469,9 @@
                 }
                 cross.forEach(x => (x.c = Math.max(-hw + x.w / 2, Math.min(hw - x.w / 2, x.c))));
             }
+            // a last sweep each way guarantees no overlap when the segments fit the ring
+            for (let k = 1; k < cross.length; k++) cross[k].c = Math.max(cross[k].c, cross[k - 1].c + cross[k - 1].w / 2 + GAP + cross[k].w / 2);
+            for (let k = cross.length - 2; k >= 0; k--) cross[k].c = Math.min(cross[k].c, cross[k + 1].c - cross[k + 1].w / 2 - GAP - cross[k].w / 2);
             cross.forEach(x => { x.a0 = mid0 + x.c - x.w / 2; x.a1 = mid0 + x.c + x.w / 2; });
             segs[c] = [...inner_, ...cross];
         });
@@ -504,13 +499,14 @@
                 let minW = Infinity;
                 for (let t = 0; t <= 1.0001; t += 1 / 16) { const pa = bez(x1, c1, c2, ya, t), pb = bez(yb, c3, c4, x0, 1 - t); minW = Math.min(minW, Math.hypot(pa[0] - pb[0], pa[1] - pb[1])); }
                 out.stats.ribbons.push({ k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(yb[0] - ya[0], yb[1] - ya[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
-                add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5, 'stroke-width': 0.6 }, m: b.k, drag: hk });
+                add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5, 'stroke-width': 0.6 }, m: b.k, drag: hk, pair: { X, Y, n: b.pairRows(X, Y) } });
             }
         }
 
         // ribbons inside clusters: a segment fans to the files of a leaf cluster, sized by slot, tapering to the file
-        const inner = (center, rr, a0, a1, files, b, dragKey, famN) => {
-            if (light || !files.length) return;
+        const inner = (center, rr, a0, a1, files, x, dragKey, famN) => {
+            const b = x.b, sk = `${b.k}.${x.partner ?? ''}`;
+            if (!files.length) return;
             const mA = (a0 + a1) / 2, fs = files.slice().sort((p, q) => norm(angTo(center, pos[p]) - mA) - norm(angTo(center, pos[q]) - mA)), w = (a1 - a0) / fs.length;
             fs.forEach((i, n) => {
                 const s0 = a0 + n * w, s1 = s0 + w, p0 = ptAt(center, rr, s0), p1 = ptAt(center, rr, s1), t = pos[i], sm = ptAt(center, rr, (s0 + s1) / 2);
@@ -518,15 +514,15 @@
                 const dxt = t[0] - sm[0], dyt = t[1] - sm[1], dl = Math.hypot(dxt, dyt) || 1, ud = [dxt / dl, dyt / dl], nr = [-ud[1], ud[0]], uin = [(center[0] - sm[0]) / rr, (center[1] - sm[1]) / rr], hh = Math.max(14, dl * 0.4);
                 const sd = (p0[0] - sm[0]) * nr[0] + (p0[1] - sm[1]) * nr[1] > 0 ? 1 : -1, fa = [t[0] + nr[0] * we / 2 * sd, t[1] + nr[1] * we / 2 * sd], fb = [t[0] - nr[0] * we / 2 * sd, t[1] - nr[1] * we / 2 * sd];
                 const ar = (p, u) => [p[0] + u[0] * hh, p[1] + u[1] * hh], br = f => [f[0] - ud[0] * hh, f[1] - ud[1] * hh];
-                add(`i:${b.k}:${dragKey}:${i}`, 'path', { d: `M${P(p0)} A${f1(rr)},${f1(rr)} 0 0 1 ${P(p1)} C${P(ar(p1, uin))} ${P(br(fb))} ${P(fb)} L${P(fa)} C${P(br(fa))} ${P(ar(p0, uin))} ${P(p0)}Z` }, { s: { fill: b.color }, sa: { opacity: (0.16 + 0.26 * (1 - fs.length / Math.max(1, famN))).toFixed(3) }, m: b.k, drag: dragKey, f: i });
+                add(`i:${sk}:${dragKey}:${i}`, 'path', { d: `M${P(p0)} A${f1(rr)},${f1(rr)} 0 0 1 ${P(p1)} C${P(ar(p1, uin))} ${P(br(fb))} ${P(fb)} L${P(fa)} C${P(br(fa))} ${P(ar(p0, uin))} ${P(p0)}Z` }, { s: { fill: b.color }, sa: { opacity: (0.16 + 0.26 * (1 - fs.length / Math.max(1, famN))).toFixed(3) }, m: b.k, drag: dragKey, f: i });
             });
         };
         // routing: family ring -> lane on each cluster level -> files; a cluster without sub-clusters fans straight to its files
-        const holdersIn = (n, b) => (b.other ? [] : n.files.filter(i => b.mem.includes(i)));
+        const holdersIn = (n, x) => n.files.filter(i => x.hold.has(i));
         const laneOf = new Map();
         const routeNode = (X, feeds) => {
             if (!feeds.length) return;
-            const C = nc[X.id], rp = X.r + RING.LANE_OFF, ports = feeds.map(fd => ({ ...fd, wp: fd.x.size * M.lanePx }));
+            const C = nc[X.id], rp = X.r + RING.LANE_OFF, ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx }));
             const fsc = Math.min(1, (RING.LANE_FIT * TAU * rp - ports.length * RING.LANE_GAP * rp) / sum(ports, p => p.wp));
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
@@ -539,32 +535,31 @@
             }
             const kidFeeds = new Map(X.kids.map(K => [K, []]));
             ports.forEach(p => {
-                const b = p.x.b, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2, P1 = ptAt(C, rp + 4, p.c), P0 = p.from;
+                const b = p.x.b, sk = `${b.k}.${p.x.partner ?? ''}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2, P1 = ptAt(C, rp + 4, p.c), P0 = p.from;
                 const dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                 const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
-                add(`u:${b.k}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId });
+                if (!light) add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 const lane = (laneOf.get(`${b.fam}|${X.id}`) || 0);
-                add(`l:${b.k}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: b.fam != null ? RING.LANE_SHADE[lane % 3] : 1 }, m: b.k, drag: key(X), lane: X.id });
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: b.fam != null ? RING.LANE_SHADE[lane % 3] : 1 }, m: b.k, drag: key(X), lane: X.id, sk, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined });
                 if (b.fam != null) laneOf.set(`${b.fam}|${X.id}`, lane + 1);
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp });
                 if (X.kids.length) {
-                    const here = X.kids.filter(K => holdersIn(K, b).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
+                    const here = X.kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
                     here.forEach((K, n) => { const sw = p.w / here.length; kidFeeds.get(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + (n + 0.5) * sw), slot: sw * (rp - 3.5), srcDrag: key(X), srcId: `${X.id}`, centre: C }); });
-                } else if (!agg(X)) inner(C, rp - 3.5, a0, a1, holdersIn(X, b), b, key(X), M.famFiles[X.famIdx]);
+                } else if (!agg(X)) inner(C, rp - 3.5, a0, a1, holdersIn(X, p.x), p.x, key(X), M.famFiles[X.famIdx]);
             });
             X.kids.forEach(K => routeNode(K, kidFeeds.get(K)));
         };
         if (!lean) roots.forEach((f, c) => {
-            const { ri } = rg(f), hs = x => x.b.mem.filter(i => M.famOf[i] === c);
+            const { ri } = rg(f), hs = x => [...x.hold];
             if (!nested || !f.kids.length) {
                 if (agg(f)) return;
-                segs[c].forEach(x => { if (!x.b.other) inner(cen[c], ri, x.a0, x.a1, hs(x), x.b, `f:${f.id}`, M.famFiles[c]); });
+                segs[c].forEach(x => inner(cen[c], ri, x.a0, x.a1, hs(x), x, `f:${f.id}`, M.famFiles[c]));
                 return;
             }
             const kidFeeds = new Map(f.kids.map(K => [K, []]));
             segs[c].forEach(x => {
-                if (x.b.other) return;
-                const mA = (x.a0 + x.a1) / 2, here = f.kids.filter(K => holdersIn(K, x.b).length).sort((u, v) => norm(angTo(cen[c], nc[u.id]) - mA) - norm(angTo(cen[c], nc[v.id]) - mA));
+                const mA = (x.a0 + x.a1) / 2, here = f.kids.filter(K => holdersIn(K, x).length).sort((u, v) => norm(angTo(cen[c], nc[u.id]) - mA) - norm(angTo(cen[c], nc[v.id]) - mA));
                 here.forEach((K, n) => { const sw = (x.a1 - x.a0) / here.length; kidFeeds.get(K).push({ x, from: ptAt(cen[c], ri, x.a0 + (n + 0.5) * sw), slot: sw * ri, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c] }); });
             });
             f.kids.forEach(K => routeNode(K, kidFeeds.get(K)));
@@ -575,7 +570,7 @@
             if (aggOf[i]) continue;
             const rr = RING.FILE_R[0] + Math.sqrt(M.doc.nodes[i].functions || 0) * RING.FILE_R[1] * (nested ? 1 : 1.4);
             add(`n:${i}`, 'circle', { cx: f1(pos[i][0]), cy: f1(pos[i][1]), r: f1(rr) }, { s: { fill: M.nodeColor(i), stroke: 'var(--lin-card)' }, sa: { 'stroke-width': 1.5 }, cls: 'hold', h: (holdsOf.get(i) || []).join(' '), drag: `n:${i}`, file: i });
-            if (M.N <= RING.HIDE_FILES) add(`nl:${i}`, 'text', { x: f1(pos[i][0]), y: f1(pos[i][1] + 3), 'text-anchor': 'middle', 'font-size': RING.FILE_FONT }, { text: (M.doc.nodes[i].file_name || M.doc.nodes[i].id).slice(0, 4), cls: 'ring-fl' });
+            if (!light && M.N <= RING.HIDE_FILES) add(`nl:${i}`, 'text', { x: f1(pos[i][0]), y: f1(pos[i][1] + 3), 'text-anchor': 'middle', 'font-size': RING.FILE_FONT }, { text: (M.doc.nodes[i].file_name || M.doc.nodes[i].id).slice(0, 4), cls: 'ring-fl' });
         }
 
         // family rings (rounded arcs) and labels
@@ -583,8 +578,8 @@
             const { rm, ro } = rg(f);
             let lane = 0;
             segs[c].forEach(x => {
-                const pd = RING.SEG_PAD, a0 = x.a0 + pd, a1 = Math.max(a0 + 0.008, x.a1 - pd);
-                add(`s:${c}:${x.b.k}:${x.partner ?? ''}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': 'round', opacity: x.b.fam != null ? RING.LANE_SHADE[lane++ % 3] * (x.b.other ? 0.5 : 1) : 1 }, m: x.b.other ? undefined : x.b.k, other: x.b.other ? x.b : undefined, drag: `f:${f.id}`, seg: c });
+                const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), a0 = x.a0 + pd, a1 = x.a1 - pd, wide = (x.a1 - x.a0) * ro > RING.SEG_STROKE + 2;
+                add(`s:${c}:${x.b.k}:${x.partner ?? ''}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: x.b.fam != null ? RING.LANE_SHADE[lane++ % 3] : 1 }, m: x.b.k, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             add(`fl:${c}`, 'text', { x: f1(tx), y: f1(ty), 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600 }, { text: `${f.label}  ${f.files.length} files`, cls: 'ring-fam', drag: `f:${f.id}` });
@@ -623,7 +618,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
      * ctx: { g (svg group inside the zoomed world), svg (the svg element), host (the canvas div, for the note),
      *   getDoc(), getR(), getCats() -> lensCats or null, getTrack(), setTrack(tk), onFile(nodeId),
      *   showTip(ev, title, colour, rows), moveTip(ev), hideTip(), fmt, name(id), nodeColor(i), tree(), hsl(h, l), hue(i),
-     *   grey, controls (element for the buttons), opts: { hold, nest }, onOpt({hold, nest}), fit() }
+     *   grey, controls (element for the buttons), opts: { nest }, onOpt({nest}), fit() }
      */
     function mount(ctx) {
         ensureCss();
@@ -634,37 +629,34 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), hold: ctx.opts.hold ?? RING.HOLD_MIN };
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set() };
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
         // ---- controls
-        const nestBtn = document.createElement('button'), resetBtn = document.createElement('button'), holdSel = document.createElement('select');
+        const nestBtn = document.createElement('button'), resetBtn = document.createElement('button');
         nestBtn.type = resetBtn.type = 'button';
         nestBtn.className = resetBtn.className = 'lin-btn';
         nestBtn.textContent = 'Nested clusters';
         nestBtn.title = 'Show the sub-clusters of each family as circles inside it, with lanes on each level';
         resetBtn.textContent = 'Reset layout';
         resetBtn.title = 'Put every circle and ribbon back where it was computed';
-        holdSel.title = 'A file holds a module when it has at least this share of the module’s functions';
-        holdSel.setAttribute('aria-label', 'Holder threshold');
-        for (const v of RING.HOLD_OPTS) { const op = document.createElement('option'); op.value = String(v); op.textContent = `holds ≥ ${Math.round(v * 100)}%`; holdSel.appendChild(op); }
-        holdSel.value = String(S.hold);
-        if (![...holdSel.options].some(o => o.value === holdSel.value)) holdSel.value = String(RING.HOLD_MIN);
         const sync = () => nestBtn.setAttribute('aria-pressed', String(S.nested));
-        nestBtn.addEventListener('click', () => { S.nested = !S.nested; sync(); ctx.onOpt({ hold: S.hold, nest: S.nested }); S.sim.reset(); full(); ctx.fit(); });
+        nestBtn.addEventListener('click', () => { S.nested = !S.nested; sync(); ctx.onOpt({ nest: S.nested }); S.sim.reset(); full(); ctx.fit(); });
         resetBtn.addEventListener('click', () => { S.sim.reset(); S.open.clear(); full(); ctx.fit(); });
-        holdSel.addEventListener('change', () => { S.hold = Number(holdSel.value); ctx.onOpt({ hold: S.hold, nest: S.nested }); M = null; full(); ctx.fit(); });
         sync();
-        ctx.controls.replaceChildren(holdSel, nestBtn, resetBtn);
+        ctx.controls.replaceChildren(nestBtn, resetBtn);
 
         // ---- tooltips
-        const modTip = (ev, b) => {
+        const modTip = (ev, b, pr) => {
             if (!b) return;
-            if (b.other) { ctx.showTip(ev, b.label, b.color, [['Functions', ctx.fmt(Math.round(b.size))]]); return; }
             const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
-            ctx.showTip(ev, b.label, b.color, [['Functions', ctx.fmt(b.size)], ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names]]);
+            const lab = c => M.roots[c].label;
+            ctx.showTip(ev, b.label, b.color, [
+                pr ? ['Shared', `${ctx.fmt(pr.n)} functions shared between ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)} in the module)`] : ['Functions', ctx.fmt(b.size)],
+                ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
+                ['', 'A file holds a module when it has at least one of its functions.']]);
         };
         const fileTip = (ev, i) => {
             const n = M.doc.nodes[i], held = mods.filter(b => b.mem.includes(i)).sort((a, b) => b.size - a.size);
@@ -696,14 +688,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.m !== undefined) {
                 node.dataset.m = String(e.m);
                 node.style.cursor = 'pointer';
-                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m)); });
+                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
                 node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
-            } else if (e.other) {
-                node.addEventListener('mouseenter', ev => modTip(ev, e.other));
-                node.addEventListener('mousemove', ctx.moveTip);
-                node.addEventListener('mouseleave', ctx.hideTip);
             } else if (e.file !== undefined) {
                 node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; fileTip(ev, e.file); });
                 node.addEventListener('mousemove', ctx.moveTip);
@@ -762,8 +750,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!M) return;
             cur = M.modeOf(S.nested);
             paint();
-            const msg = !mods.length ? (ctx.getR() ? 'No module holds enough of its functions in one file: try a lower threshold.' : 'This server sends no row list: modules need it, only the clusters are shown.')
-                : cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no ribbons to single files.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '';
+            const msg = !mods.length ? (ctx.getR() ? 'No group of this lens has functions in the files.' : 'This server sends no row list: modules need it, only the clusters are shown.')
+                : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : ''].filter(Boolean).join(' ');
             note.textContent = msg;
             note.style.display = msg ? '' : 'none';
         }
@@ -772,10 +760,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!doc) { M = null; return; }
             let h = 0;
             if (R) for (let r = 0; r < R.n; r++) h = (h * 31 + (R.match(r) ? 1 : 0)) | 0;
-            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.hold, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
+            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
-            M = buildModel(doc, R, C, { hold: S.hold, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
+            M = buildModel(doc, R, C, { hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
         }
 

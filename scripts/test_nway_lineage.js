@@ -207,7 +207,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         // lanes: one feeding ribbon each, all lanes of a ring inside 85% of it
         const lanes = g.els.filter(e => e.id.startsWith('l:')), ups = g.els.filter(e => e.id.startsWith('u:'));
         assert.ok(lanes.length > 0);
-        for (const l of lanes) assert.strictEqual(ups.filter(u => u.m === l.m && u.lane === l.lane).length, 1, `lane ${l.id} has one feeding ribbon`);
+        for (const l of lanes) assert.strictEqual(ups.filter(u => u.sk === l.sk && u.lane === l.lane).length, 1, `lane ${l.id} has one feeding ribbon`);
         const perNode = new Map();
         for (const l of g.stats.lanes) perNode.set(l.node, (perNode.get(l.node) || 0) + l.w);
         for (const [n, w] of perNode) assert.ok(w <= RING.LANE_FIT * 2 * Math.PI + 1e-6, `lanes of ${n} fit`);
@@ -258,7 +258,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         // degrade ladder: above the budget, no ribbons to single files; above the second one, clusters and family ribbons only
         const rows = g.els.length, inner0 = inner.length;
         const light = draw(M, true, RL.newSim(), 1).g, lean = draw(M, true, RL.newSim(), 2).g;
-        assert.ok(light.els.length < rows && light.els.every(e => !e.id.startsWith('i:')) && light.els.some(e => e.id.startsWith('l:')), 'mode 1: lanes stay, fans to files go');
+        assert.ok(light.els.length < rows && light.els.every(e => !e.id.startsWith('u:') && !e.id.startsWith('nl:')) && light.els.some(e => e.id.startsWith('l:')) && light.els.some(e => e.id.startsWith('i:')), 'mode 1: lanes and fans to files stay, bands and file labels go');
         assert.ok(lean.els.every(e => !/^[iunl]:/.test(e.id)) && lean.els.some(e => e.id.startsWith('o:')), 'mode 2: clusters, rings and family ribbons');
         assert.strictEqual(M.modeOf(true).mode, 0, 'a small set draws everything');
         const saved = RING.BUDGET.slice();
@@ -268,6 +268,53 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         RING.BUDGET[0] = saved[0]; RING.BUDGET[1] = saved[1];
         void inner0;
         void nodeOf;
+
+        // nothing is hidden: every module has its segment, every cross-family module its ribbons, equal at both ends, on both lenses
+        const rnd = (() => { let x = 12345; return () => (x = (x * 1103515245 + 12345) % 2147483648) / 2147483648; })();
+        const yara = (() => {   // the shape of a real set: 35 files in 6 families, 21 call-graph regions, most of them in several families
+            const fm = [10, 8, 6, 5, 4, 2], nodes = [];
+            fm.forEach((n, f) => { for (let k = 0; k < n; k++) nodes.push({ id: `y:file:${nodes.length}`, file_name: `y${nodes.length}`, functions: 30, members: [], path: [{ id: `fam${f}`, label: `F${f}` }] }); });
+            const edges = nodes.slice(1).map((n, i) => ({ parent: nodes[i].id, child: n.id, similarity: 0.9, gained: 1, lost: 1, shared: 1, recall_suspect: 0 }));
+            const masks = [], region = [];
+            for (let r = 0; r < 600; r++) {
+                const reg = r % 21, home = reg % 6; let m = 0n;
+                for (let i = 0; i < nodes.length; i++) if (rnd() < (fm.reduce((a, b, f) => a + (f < home ? b : 0), 0) <= i && i < fm.slice(0, home + 1).reduce((a, b) => a + b, 0) ? 0.5 : 0.06)) m |= 1n << BigInt(i);
+                masks.push((m || 1n).toString(16)); region.push(`r${reg}`);
+            }
+            const regions = {}; for (let k = 0; k < 21; k++) regions[`r${k}`] = { label: `Region ${k}`, kind: '' };
+            return { root: nodes[0].id, nodes, edges, partitions: [], reuse: [], rows: { n: masks.length, mask: masks, fid: masks.map((_, r) => `y${r}`), name: masks.map((_, r) => `fn${r}`), role: masks.map(() => 'logic'), region, library: masks.map(() => false), weight: masks.map(() => 1), match: null }, regions };
+        })();
+        for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
+            const b = build(dd, lens), gg = RL.geometry(b.M, { sim: RL.newSim(), nested: true, open: new Set() });
+            const segMods = new Set(b.M.plan.segs.flat().map(x => x.b.k)), cross = b.M.mods.filter(m => m.fam == null);
+            assert.strictEqual(segMods.size, b.M.mods.length, `${label}/${lens}: every module has a ring segment`);
+            if (label === 'real-shaped' && lens === 'modules') assert.ok(b.M.mods.length === 21 && cross.length >= 10 && b.M.roots.length === 6, `fixture shape: ${b.M.mods.length} modules, ${cross.length} cross, ${b.M.roots.length} families`);
+            assert.ok(!b.M.plan.segs.flat().some(x => x.b.other), 'no merged other segment');
+            const ribKs = new Set(gg.els.filter(e => e.id.startsWith('o:')).map(e => Number(e.id.split(':')[1])));
+            for (const m of cross) assert.ok(ribKs.has(m.k), `${label}/${lens}: cross module ${m.label} has an outer ribbon`);
+            for (const m of cross) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(gg.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'one ribbon per family pair');
+            for (const r of gg.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'both ends of a ribbon have the same width');
+            assert.deepStrictEqual(RL.badAttrs(gg.els), [], `${label}/${lens}: finite attributes`);
+            assert.ok(b.M.modeOf(true).est < RING.BUDGET[0] && b.M.modeOf(true).mode === 0, `${label}/${lens}: full drawing under the budget`);
+            const thin = b.M.plan.segs.flat().filter(x => Math.max(x.size * b.M.plan.px, b.M.plan.floor) < 1).length;
+            assert.strictEqual(thin, 0, 'no segment thinner than 1 px');
+            assert.ok(gg.stats.laneFit >= 0.99, 'lanes fit');
+            if (lens === 'modules') for (const m of b.M.mods) for (const c of m.fams) assert.ok(m.rowsIn[c] > 0, 'rows per family counted');
+        }
+        // shared functions size the segments: a cross segment counts the rows held by both families, the same at both ends
+        {
+            const b = build(yara, 'modules'), M2 = b.M, m = M2.mods.find(x => x.fam == null), [x, y] = m.fams;
+            const sx = M2.plan.segs[x].find(s => s.b === m && s.partner === y), sy = M2.plan.segs[y].find(s => s.b === m && s.partner === x);
+            assert.strictEqual(sx.size, sy.size, 'equal at both ends');
+            assert.strictEqual(sx.size, m.pairRows(x, y));
+            assert.ok(sx.size <= Math.min(m.rowsIn[x], m.rowsIn[y]) && m.rowsIn[x] <= m.size, 'shared <= held per family <= module');
+            assert.strictEqual(M2.plan.truncated, 0, 'the safety limit does not trigger on a real-sized set');
+        }
+        // the removed holder control and its URL key stay removed; the rule is one function
+        const ringSrc = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_ring.js', 'utf8'), viewSrc = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
+        assert.ok(!/HOLD_|holdSel|Holder threshold|CAP_CROSS|MIN_SEG_PX|OTHER_MAX|MAX_RIBBONS/.test(ringSrc), 'no holder control, no pruning constants');
+        assert.ok(!/KEYS = \[[^\]]*rhold/.test(viewSrc) && !/rhold: /.test(viewSrc), 'rhold is not a page key');
+        assert.ok(window.NwayRing.RING.BUDGET[0] >= 6000 && !('CAP' in window.NwayRing.RING));
     }
     console.log('nway lineage self-check OK');
 })().catch(e => { console.error(e); process.exit(1); });

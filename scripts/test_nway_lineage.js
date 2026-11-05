@@ -335,6 +335,34 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok([...lk.values()].every(n => n === 1), 'ids are unique');
         }
 
+        // grouped arcs and the crossing-minimising order, on every arc mode
+        {
+            const crossings = gg => {
+                const P = gg.stats.ribbons.map(r => { const [p0, c0, c1, p1] = r.cl, o = []; for (let i = 0; i <= 10; i++) { const t = i / 10, m = 1 - t; o.push([m * m * m * p0[0] + 3 * m * m * t * c0[0] + 3 * m * t * t * c1[0] + t * t * t * p1[0], m * m * m * p0[1] + 3 * m * m * t * c0[1] + 3 * m * t * t * c1[1] + t * t * t * p1[1]]); } return o; });
+                const ccw = (a, b, c) => (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
+                let n = 0;
+                for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) { let hit = false; for (let u = 0; u < 10 && !hit; u++) for (let v = 0; v < 10; v++) { const a = P[i][u], b = P[i][u + 1], c = P[j][v], e = P[j][v + 1]; if (ccw(a, c, e) !== ccw(b, c, e) && ccw(a, b, c) !== ccw(a, b, e)) { hit = true; break; } } if (hit) n++; }
+                return n;
+            };
+            const run = (b, sweeps) => { const k = RING.ORDER_SWEEPS; RING.ORDER_SWEEPS = sweeps; try { return RL.geometry(b.M, { sim: RL.newSim(), nested: true, open: new Set() }); } finally { RING.ORDER_SWEEPS = k; } };
+            for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
+                const arcs = {}, builds = {};
+                for (const mode of ['partner', 'group', 'one']) {
+                    builds[mode] = build(dd, lens, { arc: mode });
+                    const g1 = run(builds[mode], 6), g2 = run(builds[mode], 6);
+                    arcs[mode] = g1.els.filter(e => e.id.startsWith('s:')).length;
+                    assert.deepStrictEqual(g1.els.map(e => [e.id, e.a]), g2.els.map(e => [e.id, e.a]), `${label}/${lens}/${mode}: two runs are identical`);
+                    assert.deepStrictEqual(RL.badAttrs(g1.els), []);
+                    for (const r of g1.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends');
+                    for (const m of builds[mode].M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(g1.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), `${label}/${lens}/${mode}: a ribbon per family pair`);
+                    const ids = g1.els.map(e => e.id);
+                    assert.strictEqual(new Set(ids).size, ids.length, 'ids are unique');
+                }
+                assert.ok(arcs.one <= arcs.group && arcs.group <= arcs.partner, `${label}/${lens}: one <= grouped <= per partner (${arcs.one}, ${arcs.group}, ${arcs.partner})`);
+                if (label === 'real-shaped') for (const mode of ['partner', 'group', 'one']) assert.ok(crossings(run(builds[mode], 6)) <= crossings(run(builds[mode], 0)), `${label}/${lens}/${mode}: sweeps do not add crossings`);
+            }
+        }
+
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const off = build(dd, lens), total = off.R.n;

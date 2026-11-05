@@ -34,7 +34,7 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'region,role', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', rnest: '1', rfocus: '', rarc: '', rmin: '0.5' };
+        const D = { q: '', scope: 'code', tab: 'all', group: 'region,role', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', rnest: '1', rfocus: '', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'partner', rmin: '0.5' };
         // rnest, rfocus, rarc: the Ring view's nested clusters, focus mode and one-arc test (lineage-only keys, like lview)
         const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'rnest', 'rfocus', 'rarc', 'rmin'];
         const q = new URLSearchParams(window.location.search);
@@ -211,7 +211,7 @@ window.NwayLineageView = {
                     track: st.track,
                     view: chartView(),
                     ring: { nest: st.rnest !== '0', focus: st.rfocus === '1', arc: st.rarc, min: Number(st.rmin) },
-                    onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rfocus = o.focus ? '1' : ''; st.rarc = o.arc === 'one' ? 'one' : ''; st.rmin = String(o.min); writeUrl(); },
+                    onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rfocus = o.focus ? '1' : ''; st.rarc = o.arc; st.rmin = String(o.min); writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page
                     onGroup: (what, tk) => {

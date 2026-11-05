@@ -110,7 +110,8 @@ window.NwayLineageView = {
             if (st.layout !== 'tree') u.set('layout', st.layout); else u.delete('layout');
             if (u.get('order') !== 'lineage') u.delete('order');
             if (st.root) u.set('root', st.root); else u.delete('root');
-            for (const k of KEYS) if (st[k] !== String(D[k] ?? '') && !(k === 'lview' && st.auto)) u.set(k, st[k]); else u.delete(k);
+            // an explicit view always goes into the URL, Tree included (without it the link would be auto-chosen); the automatic one writes nothing
+            for (const k of KEYS) if (k === 'lview' ? !st.auto : st[k] !== String(D[k] ?? '')) u.set(k, st[k]); else u.delete(k);
             u.delete('rhold'); u.delete('rfocus');
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
         };

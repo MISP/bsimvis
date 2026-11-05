@@ -638,7 +638,13 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.deepStrictEqual(NR.chooseView('bogus', 'nope', mkDoc([12])), { view: 'tree', auto: true }, 'unknown values are ignored');
             const vs2 = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
             assert.ok(/st\.auto = !q\.has\('lview'\) && !store\.get\('nway\.lview'\)/.test(vs2) && /chooseView\('', '', doc\)\.view; applyView\(\); \}\n\s+if \(!this\._inst\) \{/.test(vs2), 'the choice is made after the fetch and before the first draw');
-            assert.ok(/!\(k === 'lview' && st\.auto\)/.test(vs2), 'an automatic choice is not written to the URL');
+            assert.ok(/k === 'lview' \? !st\.auto : st\[k\] !== String\(D\[k\]/.test(vs2), 'an explicit view, Tree included, is always written; an automatic one is not');
+            // the rule of that line, run: explicit tree stays in the URL, auto writes nothing, an lview=tree link on a six-family set stays Tree
+            const wr = (auto, lview) => { const u = new URLSearchParams(); for (const k of ['lview']) if (k === 'lview' ? !auto : false) u.set(k, lview); return u.toString(); };
+            assert.deepStrictEqual([wr(false, 'tree'), wr(true, 'ring'), wr(false, 'ring')], ['lview=tree', '', 'lview=ring']);
+            assert.deepStrictEqual(NR.chooseView('tree', '', yara), { view: 'tree', auto: false }, 'lview=tree on a six-family set stays Tree');
+            assert.ok(/'lview', 'rhold'/.test(vs2) && /'rhold', 'rnest'/.test(vs2) === false || /for \(const k of \['order', 'layout', 'lview'/.test(vs2), 'lview is still stripped from the API query');
+            assert.ok(!/lview/.test(window.NwayLineage.tableQs('md5s=a&lview=tree').toString()), 'and from the table links');
         }
 
         // navigation: the lineage page goes back to the N-way TABLE (a cluster_uuid stays a plain param); the table's Lineage button remembers the view
@@ -784,7 +790,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.strictEqual(window.NwayRing.RING.ARC_DEFAULT, 'group');
             const tq = window.NwayLineage.tableQs('md5s=a&rarc=one&rnest=0&rfocus=1&rmin=2&rlist=1&rtier=hide&rbundle=0').toString();
             assert.ok(!/r(arc|nest|focus|min|list|tier|bundle)=/.test(tq), 'table links drop the ring keys');
-            assert.ok(/rarc: window\.NwayRing \? window\.NwayRing\.RING\.ARC_DEFAULT/.test(viewSrc) && /rmin: '0\.5'/.test(viewSrc) && /rnest: '1', rarc:/.test(viewSrc) && /rtier: '', rbundle: ''/.test(viewSrc) && /for \(const k of KEYS\) if \(st\[k\] !== String\(D\[k\]/.test(viewSrc), 'keys equal to their defaults stay out of the URL');
+            assert.ok(/rarc: window\.NwayRing \? window\.NwayRing\.RING\.ARC_DEFAULT/.test(viewSrc) && /rmin: '0\.5'/.test(viewSrc) && /rnest: '1', rarc:/.test(viewSrc) && /rtier: '', rbundle: ''/.test(viewSrc) && /st\[k\] !== String\(D\[k\]/.test(viewSrc), 'keys equal to their defaults stay out of the URL');
             assert.ok(/'rlist', 'rtier', 'rbundle', 'root', 'file'/.test(viewSrc), 'the API query drops rlist, rtier, rbundle');
             delete global.document; delete global.cancelAnimationFrame;
         }

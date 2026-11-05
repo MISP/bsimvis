@@ -687,6 +687,61 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(/store\.set\('nway\.lview', k\)/.test(viewS) && /store\.set\('nway\.ring'/.test(viewS) && /get: k => \{ try \{ return localStorage\.getItem\(k\)/.test(viewS), 'a pick is remembered, storage wrapped in try/catch');
         }
 
+        // "Open in table": the pivot asks for the focus (tfocus=1), the table brings the group in, scrolls to it, pulses it and shows only it
+        {
+            const lin = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_lineage.js', 'utf8'), vw = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
+            assert.ok(/q\.set\('track', x\.tk\);\s*q\.set\('tfocus', '1'\);/.test(lin), 'the pivot URL carries tfocus=1');
+            assert.ok(!/tfocus/.test(window.NwayLineage.tableQs('md5s=a&tfocus=1&track_only=1').toString()) , 'tfocus is not forwarded by the table links');
+            assert.ok(/'tfocus', 'track_only', 'root', 'file'/.test(vw), 'nor to the lineage API');
+            assert.ok(/highlighted and scrolled into view, showing only its functions/.test(lin), 'clear tooltips on both buttons');
+            // the table side, on a bare panel object
+            const pw = {}; global.escapeHtml = global.escapeAttr = String; global.document = { createElement: () => ({}), addEventListener() {}, head: { appendChild() {} }, getElementById: () => null };
+            new Function('window', 'document', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_panel.js', 'utf8'))(Object.assign(pw, { NwayGroups: window.NwayGroups, NwayColors: window.NwayColors, escapeHtml: String, escapeAttr: String }), global.document);
+            const NP = pw.NwayPanel, mkEl = (cls = [], ds = {}) => { const e = { cls: new Set(cls), dataset: ds, scrolled: null, classList: { add: c => e.cls.add(c), remove: c => e.cls.delete(c), contains: c => e.cls.has(c), toggle: (c, on) => (on ? e.cls.add(c) : e.cls.delete(c)) }, closest: () => null, querySelectorAll: () => [], scrollIntoView: o => (e.scrolled = o) }; return e; };
+            const groups = { 'tier:rare': { id: 'tier:rare', kind: 'tier', path: ['tier:rare'] }, 'tier:rare/lane:011': { id: 'tier:rare/lane:011', kind: 'lane', path: ['tier:rare', 'tier:rare/lane:011'], mask: '011' } };
+            const mkPanel = (g, items) => {
+                const P2 = Object.create(NP.prototype);
+                Object.assign(P2, { state: { track: 'tier:rare', track_only: '', tfocus: '1', view: 'functions', offset: 0 }, data: { groups: g, columns: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], items }, _gdef: 'all', _gflip: new Set(), _rowAuto: true, _keep: 0, loads: 0, states: [] });
+                P2.load = function () { this.loads++; };
+                P2.onState = st2 => P2.states.push(st2);
+                return P2;
+            };
+            const rowsData = [{ header: true, g: 'tier:rare' }, { cells: { a: 'f1' }, g: 'tier:rare/lane:011' }, { cells: { b: 'f2' }, g: 'tier:rare/lane:011' }, { cells: { c: 'f3' }, g: 'elsewhere' }];
+            // 1: the group is not on the loaded page: one load with every header
+            const P1 = mkPanel({}, rowsData.slice(0, 1));
+            P1._takePivot();
+            assert.strictEqual(P1.state.tfocus, '', 'tfocus is used once'); assert.strictEqual(P1.state.track_only, '1', 'Only these is on after a pivot'); assert.strictEqual(P1.states.length, 1, 'the URL state is rewritten without it');
+            P1._trackFocusStep();
+            assert.deepStrictEqual([P1.loads, P1._keep, P1._gdef, P1._gflip.size], [1, 100000, 'none', 0], 'a load with every header and no page limit');
+            // 2: now the group is known: open it and its sub-groups (a tier starts open, the lane does not), all rows
+            P1.data = { groups, columns: P1.data.columns, items: rowsData };
+            P1._trackFocusStep();
+            assert.deepStrictEqual([...P1._gflip], ['tier:rare/lane:011'], 'only the lane is flipped open'); assert.strictEqual(P1.loads, 2); assert.strictEqual(P1._tf, 3);
+            // 3: painted: scrolled to the first tracked row, the tracked rows pulse, the table shows only them
+            const trs = [mkEl(['nway-grow'], { gtoggle: 'tier:rare' }), mkEl(), mkEl(), mkEl()], tds = trs.slice(1).map((tr, i) => Object.assign(mkEl(), { parentElement: tr, i }));
+            const table = Object.assign(mkEl(), { querySelector: sel => (sel === 'tr.nway-trk' ? trs.find(t3 => t3.cls.has('nway-trk')) || null : null), querySelectorAll: sel => (sel === 'td[data-fn-open]' ? tds : sel === 'tr.nway-grow' ? [trs[0]] : sel === 'tr' ? trs : sel === 'tr.nway-trk' ? trs.filter(t3 => t3.cls.has('nway-trk')) : []) });
+            const chipHost = { outerHTML: '' };
+            P1.el = { querySelector: sel => (sel === '#nway-table' ? table : sel === '[data-trk-chip]' ? chipHost : null) };
+            const timers = []; const realST = global.setTimeout; global.setTimeout = f => timers.push(f);
+            P1._trackFocusStep();
+            global.setTimeout = realST;
+            assert.strictEqual(P1._tf, 0);
+            assert.ok(trs[0].cls.has('nway-trk') && trs[1].cls.has('nway-trk') && trs[2].cls.has('nway-trk') && !trs[3].cls.has('nway-trk'), 'the tracked header and rows are marked');
+            assert.deepStrictEqual(trs[0].scrolled && trs[0].scrolled.block, 'center', 'the first tracked row is scrolled to the middle');
+            assert.ok(trs[0].cls.has('nway-pulse') && trs[1].cls.has('nway-pulse') && !trs[3].cls.has('nway-pulse'), 'the tracked rows pulse'); timers.forEach(f => f()); assert.ok(!trs[0].cls.has('nway-pulse'), 'and stop');
+            assert.ok(table.cls.has('nway-only'), 'the table hides the rest');
+            assert.ok(/data-trk-only[^>]*>.*Show all/.test(chipHost.outerHTML) && /2 of 3 rows/.test(chipHost.outerHTML), 'the chip says Show all and 2 of 3 rows');
+            // Show all / Only these toggles the state and the class
+            P1._trackOnly(); assert.strictEqual(P1.state.track_only, ''); assert.ok(!table.cls.has('nway-only'), 'Show all');
+            assert.ok(/data-trk-only[^>]*>.*Only these/.test(chipHost.outerHTML));
+            // a function track skips the loading and just shows
+            const PF = mkPanel(groups, rowsData); PF.state.track = 'fn:f1'; PF.state.tfocus = '1'; PF._takePivot(); assert.strictEqual(PF.state.track_only, '', 'a function track is not filtered'); PF.el = P1.el; PF._trackFocusStep(); assert.strictEqual(PF.loads, 0);
+            // the css: only-these, pulse, reduced motion
+            const css = fs.readFileSync(__dirname + '/../bsimvis/app/static/css/dashboard.css', 'utf8');
+            assert.ok(/\.nway-table\.nway-only tbody tr:not\(\.nway-trk\):not\(\.nway-trkin\) \{ display: none; \}/.test(css) && /@keyframes nway-pulse/.test(css) && /prefers-reduced-motion: reduce\) \{ \.nway-table tr\.nway-pulse/.test(css), 'css');
+            delete global.document; delete global.escapeHtml; delete global.escapeAttr;
+        }
+
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const off = build(dd, lens), total = off.R.n;
@@ -707,7 +762,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         }
         assert.ok(build(yara, 'modules', { minPct: 5 }).M.hidden > 0 && build(yara, 'modules').M.hidden === 0, 'the fixture has modules under 5%');
         assert.strictEqual(window.NwayLineage.tableQs('md5s=a&rmin=1&rfocus=1&rarc=one').toString().includes('rmin'), false, 'rmin is not forwarded to the table');
-        assert.ok(/'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
+        assert.ok(/'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
 
         // focus mode and the pin, on a stub DOM: a hover touches only the module's own elements
         {
@@ -818,7 +873,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const tq = window.NwayLineage.tableQs('md5s=a&rarc=one&rnest=0&rfocus=1&rmin=2&rlist=1&rtier=hide&rbundle=0').toString();
             assert.ok(!/r(arc|nest|focus|min|list|tier|bundle)=/.test(tq), 'table links drop the ring keys');
             assert.ok(/rarc: window\.NwayRing \? window\.NwayRing\.RING\.ARC_DEFAULT/.test(viewSrc) && /rmin: '0\.5'/.test(viewSrc) && /rnest: '1', rarc:/.test(viewSrc) && /rtier: '', rbundle: ''/.test(viewSrc) && /st\[k\] !== String\(D\[k\]/.test(viewSrc), 'keys equal to their defaults stay out of the URL');
-            assert.ok(/'rlist', 'rtier', 'rbundle', 'root', 'file'/.test(viewSrc), 'the API query drops rlist, rtier, rbundle');
+            assert.ok(/'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file'/.test(viewSrc), 'the API query drops rlist, rtier, rbundle');
             delete global.document; delete global.cancelAnimationFrame;
         }
     }

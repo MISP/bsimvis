@@ -184,6 +184,24 @@ answers 400 for children (old server, no shared cluster). Opening a cluster node
 Node check: `node scripts/test_nway_lineage.js`; the service self-check: `uv run python -I
 bsimvis/app/services/nway_lineage_service.py`.
 
+**Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
+`lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the
+file they start in (`added-N`, `dropped-N`, `span-N-M` take node N's Tree colour; kept / scattered / rewritten are grey).
+Tree, Tracks and Split keep painting Deltas by the node a row is born in (`st.C` is keyed `deltas:ring` for the Ring and
+rebuilt when the view changes). The group card is only in the left pane (a second copy in the drawer was the duplicate
+buttons). It ends with "All functions (N)", collapsed, filled on first open, 200 rows at a time (`ALL_ROWS`).
+
+**Open in table / Call graph** (the lane card): the URL carries `track`, `group` and the lineage page's `columns` /
+`col_open` plus `tfocus=1` (lineage-only: stripped from table and API links). The table (`nway_panel.js`) consumes it
+once (`_takePivot`, the URL loses it): `track_only=1` (default on after a pivot, in the URL otherwise off), then
+`_trackFocusStep`: a load with every header (`_keep` = no page limit, groups closed) so the tracked group is known
+whichever page it is on, then a load that opens only that group and its sub-groups (`_gdef = 'none'` + `_gflip`, the
+table's own group open/close mechanism, all their rows), then `_trackShow`: scroll the first tracked row to the middle,
+pulse the tracked rows 1.5 s (`nway-pulse`, no animation under `prefers-reduced-motion`). The Tracking chip has "Only
+these" / "Show all" (`nway-only` on the table hides every row and header that is not tracked, client side) and "N of M
+rows". Lane track keys (`lanes:<hex>`, `tier:*`, `delta:*`) are computed over the default column order on both pages and
+were checked equal on a twins and a children table.
+
 **Default view.** With no `lview` in the URL and no remembered pick (`localStorage` `nway.lview`; the Ring's
 settings are `nway.ring`; a URL param always wins) the page chooses once its doc is here, before the first
 draw: `NwayRing.autoView(doc)` = Ring with at least `RING.AUTO.FAMILIES` (3) families, or `FILES` (30)

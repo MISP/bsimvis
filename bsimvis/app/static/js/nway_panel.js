@@ -41,7 +41,7 @@
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
         family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '', feat_min: '', feat_max: '', support_min: '',
         group: 'region,role', group_split_min: '', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
-        track: '', order: '', lane_graph: '',
+        track: '', order: '', lane_graph: '', track_only: '', tfocus: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
     const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min', 'order'];
@@ -440,6 +440,67 @@
                 if (this.onState) this.onState({ ...this.state });
                 this.laneGraph(lg);
             }
+            // a pivot from the lineage page (tfocus=1): the tracked group's rows come in, scroll into view and pulse, and the table shows only them
+            this._takePivot();
+            if (this._tf) this._trackFocusStep();
+        }
+
+        // tfocus=1 arrives once (the URL loses it); the table then shows only the tracked group
+        _takePivot() {
+            if (!this.state.tfocus || !this.data) return;
+            this.state.tfocus = '';
+            this.state.track_only = this.state.track && !this.state.track.startsWith('fn:') ? '1' : '';
+            this._tf = 1;
+            if (this.onState) this.onState({ ...this.state });
+        }
+
+        // Bring a tracked group's rows into the table: one load with every header (so the group is known whichever page it
+        // is on), one that opens only it and its sub-groups (all their rows, not a page), then scroll and pulse.
+        _trackFocusStep() {
+            const t = this.state.track, d = this.data;
+            if (!t || !d || this.noTable) { this._tf = 0; return; }
+            if (t.startsWith('fn:')) { this._tf = 0; this._trackShow(); return; }
+            const groups = d.groups || {}, g = Object.values(groups).find(x => this._trackKey(x.id) === t);
+            if (!g) {
+                if (this._tf === 1) {
+                    this._tf = 2;
+                    this._rowAuto = false; this._gdef = 'none'; this._gflip.clear(); this._keep = 100000; this.state.offset = 0;
+                    this.load();
+                    return;
+                }
+                this._tf = 0;
+                return;
+            }
+            if (this._tf !== 3) {
+                const under = Object.values(groups).filter(x => x.id === g.id || (x.path || []).includes(g.id)).map(x => x.id);
+                this._rowAuto = false; this._gdef = 'none'; this._gflip.clear();
+                for (const id of under) if (!this._gOpen(id)) this._gflip.add(id);
+                this._tf = 3;
+                this._keep = 100000; this.state.offset = 0;
+                this.load();
+                return;
+            }
+            this._tf = 0;
+            this._trackShow();
+        }
+
+        // Scroll the first tracked row or header to the middle and pulse the tracked rows (not for people who asked for less motion).
+        _trackShow() {
+            this._paintTrack();
+            const table = this.el.querySelector('#nway-table');
+            if (!table) return;
+            const first = table.querySelector('tr.nway-trk');
+            if (first && first.scrollIntoView) first.scrollIntoView({ block: 'center', behavior: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            const rows = [...table.querySelectorAll('tr.nway-trk')];
+            rows.forEach(tr => tr.classList.add('nway-pulse'));
+            setTimeout(() => rows.forEach(tr => tr.classList.remove('nway-pulse')), 1600);
+        }
+
+        // "Only these" / "Show all": the table hides every row and header that is not the tracked group's (client side, `track_only`).
+        _trackOnly() {
+            this.state.track_only = this.state.track_only === '1' ? '' : '1';
+            if (this.onState) this.onState({ ...this.state });
+            if (this.state.track_only === '1' && this.state.track && !this.state.track.startsWith('fn:')) { this._tf = 1; this._trackFocusStep(); } else this._paintTrack();
         }
 
         // The call graph of the shown group with this id or track key, as its header's button opens it.
@@ -770,9 +831,13 @@
         }
 
         // "Tracking <label> · in x/N columns": the count is filled in by _paintTrack.
-        _trackChip(n) {
-            if (!this.state.track || !this.data) return '<span data-trk-chip hidden></span>';
-            return `<button type="button" class="nway-chip on nway-trkchip" data-trk-chip data-trk="" title="Stop tracking"><i class="fa-solid fa-crosshairs"></i> Tracking <b>${escapeHtml(this._trackLabel())}</b>${n == null ? '' : ` <span class="dim">&middot; in ${Number(n)}/${this.data.columns.length} columns</span>`} &times;</button>`;
+        _trackChip(n, rows) {
+            const t = this.state.track;
+            if (!t || !this.data) return '<span data-trk-chip hidden></span>';
+            const on = this.state.track_only === '1';
+            const chip = `<button type="button" class="nway-chip on nway-trkchip" data-trk="" title="Stop tracking"><i class="fa-solid fa-crosshairs"></i> Tracking <b>${escapeHtml(this._trackLabel())}</b>${n == null ? '' : ` <span class="dim">&middot; in ${Number(n)}/${this.data.columns.length} columns</span>`} &times;</button>`;
+            const only = this.lean ? '' : `<button type="button" class="nway-chip${on ? ' on' : ''}" data-trk-only title="${on ? 'Show every row again' : 'Hide every row and group that is not this one'}"><i class="fa-solid fa-filter"></i> ${on ? 'Show all' : 'Only these'}</button>${rows ? `<span class="dim nway-bnote">${Number(rows[0])} of ${Number(rows[1])} rows</span>` : ''}`;
+            return `<span data-trk-chip class="nway-trkwrap">${chip}${only}</span>`;
         }
 
         _trackLabel() {
@@ -814,7 +879,7 @@
             if (table && d && this.state.view !== 'strings') {
                 const cols = d.columns, groups = d.groups || {}, rows = d.items.filter(x => !x.header);
                 held = cols.map(() => false);
-                table.querySelectorAll('.nway-trk, .nway-tc').forEach(el => el.classList.remove('nway-trk', 'nway-tc'));
+                table.querySelectorAll('.nway-trk, .nway-tc, .nway-trkin').forEach(el => el.classList.remove('nway-trk', 'nway-tc', 'nway-trkin'));
                 if (t) {
                     table.querySelectorAll('td[data-fn-open]').forEach((td, i) => {
                         const row = rows[i];
@@ -824,6 +889,7 @@
                     });
                     table.querySelectorAll('tr.nway-grow').forEach(tr => {
                         const g = groups[tr.dataset.gtoggle];
+                        if (g && g.id !== undefined && (g.path || []).slice(0, -1).some(id => this._trackKey(id) === t)) tr.classList.add('nway-trkin');
                         if (!g || this._trackKey(g.id) !== t) return;
                         tr.classList.add('nway-trk');
                         [...(g.kind === 'lane' ? g.mask : g.union || '')].forEach((b, ci) => { if (b === '1') held[ci] = true; });
@@ -835,8 +901,10 @@
                     b.classList.toggle('on', !!t && (b.dataset.trk === t || (t.startsWith('fn:') && b.dataset.trk.startsWith('fn:') && !!tr && tr.classList.contains('nway-trk'))));
                 });
             }
+            const tracked = t && d && table ? d.items.filter(x => !x.header && this._trackRow(x)).length : 0, loaded = d ? d.items.filter(x => !x.header).length : 0;
+            if (table) table.classList.toggle('nway-only', !!t && this.state.track_only === '1' && !this.lean);
             const chip = this.el.querySelector('[data-trk-chip]');
-            if (chip) chip.outerHTML = this._trackChip(held ? held.filter(Boolean).length : undefined);
+            if (chip) chip.outerHTML = this._trackChip(held ? held.filter(Boolean).length : undefined, t && !t.startsWith('fn:') && loaded ? [tracked, loaded] : null);
         }
 
         // Every table param for the lineage page (track, column and order=lineage included: that page keeps
@@ -3489,9 +3557,10 @@
         }
 
         _onClick(e) {
-            const t = e.target.closest('[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-ff-clear],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear],[data-trk],[data-dnode]');
+            const t = e.target.closest('[data-trk-only],[data-role-toggle],[data-lens],[data-role-set],[data-role-pick],[data-nway-file],[data-set],[data-preset],[data-tab],[data-sort],[data-nav],[data-open-cluster],[data-focus-toggle],[data-clear],[data-fn-open],[data-gpeek],[data-gtoggle],[data-merge-diff],[data-gall],[data-gpick],[data-colx],[data-coldepth],[data-bandall],[data-stats-toggle],[data-inl],[data-ff-clear],[data-sqmode],[data-lane-graph],[data-open-shared],[data-lineage],[data-pick-by],[data-cmp-clear],[data-colpick],[data-colpick-clear],[data-more-toggle],[data-fam-clear],[data-str-q],[data-fn-q],[data-xp],[data-ftg],[data-fax],[data-fmore],[data-fgroup],[data-fswap],[data-flane],[data-greset],[data-ftdepth],[data-fclear],[data-trk],[data-dnode]');
             if (!t) return;
             // a lit crosshair (or the chip's x) stops tracking
+            if (t.dataset.trkOnly !== undefined) return this._trackOnly();
             if (t.dataset.trk !== undefined) return this._track(t.dataset.trk && !t.classList.contains('on') ? t.dataset.trk : '');
             if (t.dataset.dnode) return this._set({ column: this.state.column === t.dataset.dnode ? '' : t.dataset.dnode, offset: 0 });
             if (t.dataset.lens) {

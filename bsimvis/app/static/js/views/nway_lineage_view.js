@@ -66,7 +66,7 @@ window.NwayLineageView = {
         const modes = () => ['files', ...(childrenOk ? ['children'] : []), ...(twinsOk ? ['twins'] : [])];
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
-            for (const k of ['order', 'layout', 'lview', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph']) out.delete(k);
+            for (const k of ['order', 'layout', 'lview', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph']) out.delete(k);
             for (const k of ['q', 'scope', 'tab', 'group']) if (st[k]) out.set(k, st[k]); else out.delete(k);
             // match, columns and groups must be the table's: the server's own defaults differ (tab=core, no twin tree, no merge)
             for (const k of Object.keys(D)) if ((['k', 'mode', 'twin_depth', 'twin_link', 'child_presence', 'sort_dir'].includes(k) || k.startsWith('group_')) && !out.has(k) && D[k] !== undefined && D[k] !== '') out.set(k, String(D[k]));

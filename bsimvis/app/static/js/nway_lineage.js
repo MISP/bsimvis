@@ -1092,7 +1092,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             ev.innerHTML = NG.laneEv(g, st.S, false) + (g.kind === 'lane' ? NG.parentChip(g, groupMap(), st.S) : '');
             sts.innerHTML = gStats(g);
             const acts = el('div', { class: 'lin-acts' });
-            for (const [what, txt, icon, tip] of [['graph', 'Call graph', 'fa-diagram-project', "The N-way table with the call graph of this group's functions together"], ['table', 'Open in table', 'fa-table', 'The N-way table on the same lens, this group tracked']]) {
+            for (const [what, txt, icon, tip] of [['graph', 'Call graph', 'fa-diagram-project', "Opens the N-way table with this group's call graph, the group highlighted and scrolled into view, showing only its functions"], ['table', 'Open in table', 'fa-table', 'Opens the N-way table with this group highlighted, scrolled into view, showing only its functions']]) {
                 const b = el('button', { type: 'button', class: 'lin-btn', title: tip });
                 b.append(el('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${txt}`));
                 b.addEventListener('click', e => groupPivot(what, x, e));
@@ -1141,6 +1141,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const q = tableQs(location.search), lens = LENSES.find(l => l[0] === st.lens);
             if (lens) q.set('group', lens[2]);
             q.set('track', x.tk);
+            q.set('tfocus', '1');
             if (what === 'graph') q.set('lane_graph', x.tk);
             const url = `/diff/nway?${q}`;
             if (window.Nav) window.Nav.openPath(url, ev, { title: what === 'graph' ? 'Call graph' : 'N-way', type: 'bin_sim' });
@@ -1909,7 +1910,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle');
+        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

@@ -38,7 +38,7 @@ window.NwayGroups = (function () {
         && !!((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
     // One lane of the naming request; `nFiles` = real file count (a mask bit may be a column group).
     const payload = (g, nFiles, strings) => ({
-        id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0,
+        id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0, roles: g.roles || {},
         ...(strings ? { kind: 'string' } : g.kind === 'presence' || g.kind === 'delta' ? { kind: 'summary' } : {}),
     });
     const cache = new Map();

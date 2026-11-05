@@ -48,6 +48,7 @@ from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
 MODES = ("tag", "lane", "prefix", "role", "presence", "delta", "region")
 PREFIX_MIN = 2  # functions that must share a prefix before it makes a group
+LANE_BROAD_ROWS = 40  # lane size from which sampling spreads and a name with no shared prefix stays general
 LANE_MIN = 2  # units that must share a set of files before it makes a lane
 LANE_FIT = (
     0.9  # a unit with this share of a bundle's files, all inside it, joins the bundle
@@ -1285,7 +1286,15 @@ def _annotate(pairs, fmeta):
                 key=lambda x: x[:2],
                 reverse=True,
             )
-            g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
+            # a big lane reads its strongest row plus ones spread over the rest,
+            # so its largest functions do not name all of it
+            top = ranked[:LANE_FIDS]
+            if len(ranked) >= LANE_BROAD_ROWS:
+                rest = ranked[1:]
+                top = ranked[:1] + [
+                    rest[i * len(rest) // (LANE_FIDS - 1)] for i in range(LANE_FIDS - 1)
+                ]
+            g["fids"] = [f for _, _, r in top for f in _fids(r)[:1]]
             # the heaviest rows' functions, looked up for a similar-function name only
             heavy = sorted(rows[g["id"]], key=lambda r: -r["weight"])[:LANE_NAME_FIDS]
             g["name_fids"] = [f for r in heavy for f in _fids(r)[:1]]
@@ -1336,6 +1345,7 @@ def _lane_evidence(l):
     tags = [t for t in dict.fromkeys(map(finding, l["tags"])) if t]
     by_string = l.get("kind") == "string"
     strings, code = [], []
+    big = l["rows"] >= LANE_BROAD_ROWS and not l.get("hint")
     if by_string:
         strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
     libs, inner, callers, platform = Counter(), Counter(), Counter(), Counter()
@@ -1387,7 +1397,7 @@ def _lane_evidence(l):
             strings += own
             n_read += 1
             n_str += bool(own)
-            if len(code) < LANE_CODE_FNS:
+            if len(code) < LANE_CODE_FNS and not big:
                 # the signature and body, without declarations and decompiler noise
                 lines = [
                     x
@@ -1437,8 +1447,24 @@ def _lane_evidence(l):
             "general terms (for example 'core bot logic and libc', 'attack and "
             "scanner code'), not one of its capabilities."
         )
+    if not by_string and n_read and l["rows"] > 3 * n_read:
+        out.append(
+            f"The evidence below comes from only {n_read} of the {l['rows']} functions; "
+            "the others are not shown and may do other things."
+        )
+        if big:
+            # a big lane with no shared name prefix is rarely one topic: the largest
+            # functions (often libc formatting or parsing) would name all of it
+            out.append(
+                "This is a large mixed group: answer in general terms (for example "
+                "'mixed application and library code'), and name a specific topic "
+                "only if the sample clearly covers most of it."
+            )
     if platform:
         out.append("Platform: " + platform.most_common(1)[0][0])
+    if big and l.get("roles"):
+        r = sorted(l["roles"].items(), key=lambda x: -x[1])
+        out.append("Roles of all its functions: " + ", ".join(f"{k} {v}" for k, v in r))
     if sample and not by_string:
         # a few names over many functions describe those few, not the lane
         few = len(sample) < 10 and len(sample) * 4 < l["rows"]
@@ -1466,7 +1492,7 @@ def _lane_evidence(l):
         # under a fifth of the lane is not lane evidence (it stays a chip)
         if hit * 5 >= of:
             out.append(f"{head}: " + ", ".join(tags[:8]))
-    if strings:
+    if strings and not (big and n_str * 2 < n_read):
         # one function's strings can mislead about a whole lane
         head = (
             f"Strings (from {n_str} of {n_read} functions read)"
@@ -1537,7 +1563,11 @@ def lane_names(lanes):
             "fids": fids,
             "name_fids": name_fids,
             "tag_rows": tag_rows,
-            "v": 9,  # bump when the prompt changes, so cached names are redone
+            "roles": {
+                str(k)[:20]: int(v)
+                for k, v in list((l.get("roles") or {}).items())[:10]
+            },
+            "v": 10,  # bump when the prompt changes, so cached names are redone
         }
         if l.get("kind") in ("string", "summary"):
             item["kind"] = l["kind"]

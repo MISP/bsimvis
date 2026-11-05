@@ -177,6 +177,23 @@ window.NwayLineageView = {
         };
 
         let seq = 0, loadedQs = '';
+        // The Ring opens merged (twin) files of a cluster: the server opens the column groups listed in col_open, so send the ones
+        // already open (the group ids on the nodes' paths, as the table spells out its `*` wildcard) plus these, keep the answer's
+        // state in the URL and the panel (no navigation), and hand the doc back for the Ring to merge into what it shows.
+        const openNodes = async ids => {
+            const doc0 = this._inst.state.doc, open = new Set();
+            for (const n of doc0.nodes) for (const g of n.path || []) open.add(g.id);
+            for (const id of ids) open.add(id);
+            const colOpen = JSON.stringify([...open]);
+            const doc = await get({ col_open: colOpen });
+            doc.scope = st.scope;
+            const u = new URLSearchParams(window.location.search);
+            u.set('col_open', colOpen);
+            history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
+            if (this._panel) this._panel.state.col_open = colOpen;
+            loadedQs = apiQs().toString();
+            return doc;
+        };
         const load = async () => {
             const my = ++seq;
             loadedQs = apiQs().toString();
@@ -210,7 +227,7 @@ window.NwayLineageView = {
                     lens: lensOf(st.group),
                     track: st.track,
                     view: chartView(),
-                    ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0' },
+                    ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0', openNodes },
                     onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page

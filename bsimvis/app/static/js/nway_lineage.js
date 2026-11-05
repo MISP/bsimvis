@@ -1658,6 +1658,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     showTip, moveTip, hideTip, fmt, name: nameOf, nodeColor: i => nodeColor(st.doc, i),
                     tree: () => st.doc._colors || (st.doc._colors = window.NwayColors.tree(st.doc.nodes.map(n => ({ id: n.id, path: n.path })))),
                     hsl, hue: hueOf, grey: GREY, fit: () => fit(true),
+                    camera: { get: () => st.t, to: bb => zoomBox(bb), restore: t => s.transition().duration(450).call(zoom.transform, t) },
+                    openNodes: opts.ring && opts.ring.openNodes, merge: doc => api.setDoc(doc, st.lens, { keep: true }),
                 });
             }
             st.ring.show(true);
@@ -1732,8 +1734,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const dblClose = ev => { if (ev.key === 'Escape') closeDock(); };
         document.addEventListener('keydown', dblClose);
 
-        return {
-            setDoc(doc, lens) {
+        const api = {
+            // o.keep: a merge (the ring opened some merged files): the view, the pick and the physics stay
+            setDoc(doc, lens, o = {}) {
                 if (lens) st.lens = lens;
                 // same tree (a filter changed only rows.match): keep the collapsed nodes, the view and a node pick
                 const sig = d => `${d.nodes.map(n => n.id).join('|')}#${d.edges.map(e => `${e.parent}>${e.child}`).join('|')}`;
@@ -1742,9 +1745,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.bfCache.clear();
                 st.R = null;
                 st.C = new Map();
-                if (!same || !(st.sel && st.sel.node)) { st.sel = null; closeDock(); }
+                if (!o.keep && (!same || !(st.sel && st.sel.node))) { st.sel = null; closeDock(); }
                 st.names = new Map(doc.nodes.map(n => [n.id, n.file_name || n.id]));
-                if (!same) st.collapsed = autoCollapse(doc);
+                if (!same) st.collapsed = o.keep ? new Set([...st.collapsed].filter(id => st.names.has(id))) : autoCollapse(doc);
                 const { w, h } = size();
                 s.attr('width', w).attr('height', h);
                 if (doc.rows) askNames();
@@ -1792,6 +1795,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 container.replaceChildren();
             },
         };
+        return api;
     }
 
     // Pivots: file page, its functions, its similar functions, and the N-way table on this

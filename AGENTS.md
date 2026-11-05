@@ -206,6 +206,25 @@ starts open when the URL carries a non-default advanced key. Defaults: Arcs = gr
 Nested on, Module list off; a key equal to its default stays out of the URL
 (`rarc`, `rnest`, `rmin`, `rlist`, `rtier`, `rbundle`; a legacy `rfocus` is stripped too), and none of them reaches the table or API links.
 
+**Focus by click.** A click on a cluster circle's own body (not an arc, ribbon, lane, band, fan, file
+dot; a drag still drags) zooms the page's d3 camera to it and fades the other top-level clusters and
+the ribbons that do not touch it (`ring-dim`, opacity .15; hover and pin still light their chain
+at full strength). A breadcrumb (All > cluster > sub-cluster, `textContent`) shows the path; Esc,
+the All crumb or a click on empty canvas bring back the camera stored at the *first* focus. Deeper,
+in order: the focused cluster's files get labels even above `HIDE_FILES`; leaf circles above
+`LEAF_MAX` are added to `S.open`; merged (twin) files are opened by the server. The server opens a
+merged column when its id is in `col_open`; with an explicit list the open groups are exactly the
+`path` ids on the nodes, so the view (`openNodes` in `nway_lineage_view.js`) sends the union of those
+ids plus the merged node ids (a `*fit:N` wildcard would not, its budget is spent). The answer
+replaces each opened node by one node per member file, with `path` extended by the opened id; the
+other nodes keep their paths and relative order. The answer is merged with `setDoc(doc, lens,
+{ keep: true })`: same SVG root, camera, pin, `S.open`, breadcrumb and the physics state: `sim.pts` is
+keyed by cluster id and by node id (never by index), and `sim.homes` / `sim.fhomes` remember where
+every cluster and file was placed, so old things do not move and new files appear (fade-in) inside
+their new cluster. While it runs the focused circle pulses and the note says "opening N files...";
+a failure keeps the old doc and shows the error; a response for a cluster that is no longer focused is
+ignored; a double click is one request. The new `col_open` is written with `history.replaceState`.
+
 **Tier buckets** (More row, `rtier=hide`, default Show): in the Lanes lens the server's `tier` / `fold`
 groups that hold rows of their own (rows in no lane) are buckets (`b.bucket`): neutral grey (the one
 exception to the lens-colour rule), fainter and thinner than lanes, drawn behind them, labelled

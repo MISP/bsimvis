@@ -234,7 +234,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         for (let i = 0; i < 400 && (left = dr.sim.tick()) > RING.SETTLE; i++) RL.geometry(M, { sim: dr.sim, nested: true, open: new Set() });
         assert.ok(left <= RING.SETTLE, 'the motion settles');
         for (const k of A.kids) { const q = dr.sim.pts[`f:${k.id}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a sub-cluster keeps its offset'); }
-        for (const i of A.files) { const q = dr.sim.pts[`n:${i}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a file keeps its offset'); }
+        for (const i of A.files) { const q = dr.sim.pts[`n:${d.nodes[i].id}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a file keeps its offset'); }
         const after = RL.geometry(M, { sim: dr.sim, nested: true, open: new Set() });
         for (let u = 0; u < 3; u++) for (let v = u + 1; v < 3; v++) {
             const a = after.cen[u], b = after.cen[v];
@@ -460,6 +460,146 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             }
         }
 
+
+        // clicking a cluster body: camera, fade of the other clusters, breadcrumb, deeper (aggregates, merged files) without a rebuild of the view
+        {
+            class El {
+                constructor(tag) { this.tag = tag; this.attrs = {}; this.st = {}; this.style = { setProperty: (k, v) => (this.st[k] = v) }; this.children = []; this.dataset = {}; this.ls = {}; this.cls = new Set(); this.parent = null; this._t = '';
+                    this.classList = { add: c => this.cls.add(c), remove: c => this.cls.delete(c), contains: c => this.cls.has(c), toggle: (c, on) => (on ? this.cls.add(c) : this.cls.delete(c)) }; }
+                setAttribute(k, v) { this.attrs[k] = String(v); } removeAttribute(k) { delete this.attrs[k]; }
+                appendChild(c) { c.parent = this; this.children.push(c); return c; } append(...c) { c.forEach(x => this.appendChild(x)); }
+                replaceChildren(...c) { this.children = []; c.forEach(x => this.appendChild(x)); }
+                remove() { if (this.parent) this.parent.children = this.parent.children.filter(k => k !== this); }
+                addEventListener(t, f) { (this.ls[t] = this.ls[t] || []).push(f); } removeEventListener(t, f) { this.ls[t] = (this.ls[t] || []).filter(x => x !== f); }
+                set textContent(v) { this._t = String(v); this.children = []; } get textContent() { return this._t; }
+                set className(v) { this.cn = v; } get className() { return this.cn; }
+                set title(v) { this.attrs.title = v; } get title() { return this.attrs.title; }
+                closest() { return null; } contains() { return true; }
+            }
+            const docL = {};
+            global.document = { createElementNS: (n, t) => new El(t), createElement: t => new El(t), head: new El('head'), body: new El('body'), hidden: false, getElementById: () => null,
+                addEventListener: (t, f) => (docL[t] = f), removeEventListener() {} };
+            window.addEventListener = () => {}; window.removeEventListener = () => {}; global.cancelAnimationFrame = () => {};
+            // yara with merged files: the first files of every family are merged twin columns of two
+            const merged = { ...yara, nodes: yara.nodes.map((n, i) => ({ ...n, members: i % 5 === 0 ? [n.id, `${n.id}#b`] : [n.id] })) };
+            // the doc the server answers when node `id` is opened: it becomes two files under a new group `id`
+            const openDoc = (dd, ids) => {
+                const nodes = [], map = new Map();
+                dd.nodes.forEach((n, i) => {
+                    if (!ids.includes(n.id)) { map.set(i, [nodes.length]); nodes.push(n); return; }
+                    const a = { ...n, id: `${n.id}#1`, members: [n.members[0]], path: [...n.path, { id: n.id, label: 'opened' }] }, b = { ...n, id: `${n.id}#2`, members: [n.members[1]], path: a.path };
+                    map.set(i, [nodes.length, nodes.length + 1]); nodes.push(a, b);
+                });
+                const mask = dd.rows.mask.map(m => { let bits = BigInt('0x' + m), out = 0n; for (const [i, to] of map) if ((bits >> BigInt(i)) & 1n) for (const t of to) out |= 1n << BigInt(t); return out.toString(16); });
+                const rename = id => (ids.includes(id) ? `${id}#1` : id);
+                return { ...dd, nodes, root: rename(dd.root), edges: dd.edges.map(e => ({ ...e, parent: rename(e.parent), child: rename(e.child) })), rows: { ...dd.rows, mask } };
+            };
+            const mk = dd => { const b = build(dd, 'modules'); return { R: b.R, C: b.C }; };
+            let cur = { doc: merged, ...mk(merged) }, track = '', camCalls = [], restores = [], getCalls = 0, openCalls = [], resolvers = [], merges = 0;
+            const T0 = { k: 1, x: 0, y: 0, tag: 'before' };
+            const g0 = new El('g'), svg = new El('svg'), host = new El('div'), c1 = new El('span'), c2 = new El('div');
+            const ctx = { g: g0, svg, host, controls: c1, controls2: c2, opts: { nest: true, min: 0, arc: 'partner' }, getDoc: () => cur.doc, getR: () => cur.R, getCats: () => cur.C, lens: () => 'modules', getTrack: () => track, setTrack: t => (track = t), onOpt() {}, onFile() {},
+                showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(cur.doc.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {},
+                camera: { get: () => (getCalls++, T0), to: b => camCalls.push(b), restore: t => restores.push(t) },
+                openNodes: ids => new Promise((res, rej) => { openCalls.push(ids); resolvers.push({ res: () => res(openDoc(cur.doc, ids)), rej }); }),
+                merge: dd => { merges++; cur = { doc: dd, ...mk(dd) }; ring.draw(); } };
+            const ring = window.NwayRing.mount(ctx);
+            ring.draw();
+            const root = g0.children[0], S2 = ring.state;
+            const circle = id => root.children.find(n => n.tag === 'circle' && n.dataset.drag === `f:${id}`);
+            const famId = c => ring.frame().els.find(e => e.id.startsWith('c:') && e.cl && e.cl.famIdx === c && e.cl.level === 0).cl.id;
+            const dimmed = () => root.children.filter(n => n.cls.has('ring-dim')).length;
+            const crumbEl = () => host.children.find(n => n.className === 'ring-crumb');
+            const crumbText = () => crumbEl().children.map(k => k.textContent).join(' ');
+            // a drag is not a click
+            S2.sim.moved = true; circle(famId(1)).ls.click[0](); S2.sim.moved = false;
+            assert.strictEqual(S2.fc, null, 'a drag does not focus'); assert.strictEqual(camCalls.length, 0);
+            // a click on a ribbon, a ring arc, a lane, a file dot does not focus
+            for (const kind of ['o:', 's:', 'l:', 'n:']) { const k = ring.frame().els.findIndex(e => e.id.startsWith(kind)); if (k >= 0 && root.children[k].ls.click) root.children[k].ls.click[0](); }
+            track = '';
+            assert.strictEqual(S2.fc, null, 'ribbons, arcs, lanes and file dots do not focus');
+            // a click on the body of a family
+            const f1 = famId(1);
+            circle(f1).ls.click[0]();
+            assert.strictEqual(S2.fc.id, f1); assert.strictEqual(camCalls.length, 1, 'the camera goes to the cluster');
+            const box = camCalls[0], cen = ring.frame().nc[f1];
+            assert.ok(box[0] < cen[0] && cen[0] < box[2] && box[1] < cen[1] && cen[1] < box[3], 'the box contains the cluster');
+            assert.ok(dimmed() > 0 && !circle(f1).cls.has('ring-dim'), 'the others fade, the focused one does not');
+            for (const e of ring.frame().els) { const n = root.children.find((c, i) => ring.frame().els[i] === e); if (e.fams && e.fams.includes(1)) assert.ok(!n.cls.has('ring-dim'), 'ribbons leaving the focused cluster keep full strength'); if (e.fams && !e.fams.includes(1)) assert.ok(n.cls.has('ring-dim'), 'ribbons that do not touch it fade'); }
+            assert.strictEqual(crumbText(), 'All > F1', 'breadcrumb');
+            assert.strictEqual(getCalls, 1);
+            // focusing another cluster keeps the first stored camera
+            circle(famId(2)).ls.click[0]();
+            assert.strictEqual(getCalls, 1, 'the camera before the first focus is stored once'); assert.strictEqual(camCalls.length, 2);
+            // Esc and the All crumb restore it and clear the fade
+            docL.keydown({ key: 'Escape' });
+            assert.deepStrictEqual(restores, [T0], 'Esc restores the first camera'); assert.strictEqual(S2.fc, null); assert.strictEqual(dimmed(), 0, 'no fade left'); assert.strictEqual(crumbEl().style.display, 'none');
+            circle(famId(2)).ls.click[0]();
+            crumbEl().children[0].ls.click[0]();
+            assert.strictEqual(restores.length, 2, 'the All crumb restores too'); assert.strictEqual(S2.fc, null);
+            circle(famId(2)).ls.click[0]();
+            svg.ls.click[0]({ target: svg });
+            assert.strictEqual(S2.fc, null, 'a click on empty canvas leaves the focus');
+            // a leaf drawn as one aggregate opens on focus
+            RING.LEAF_MAX = 3;
+            ring.reset();
+            const big = famId(0);
+            assert.ok(!S2.open.has(big));
+            circle(big).ls.click[0]();
+            assert.ok(S2.open.size > 0, 'the aggregate leaves of the focused cluster are opened');
+            RING.LEAF_MAX = 60;
+            docL.keydown({ key: 'Escape' });
+            // merged files: the server is asked, the answer is merged without touching the view state
+            ring.reset(); S2.open.clear(); ring.draw();
+            const shotPts = () => JSON.parse(JSON.stringify(S2.sim.pts)), f0 = famId(0);
+            const rootBefore = g0.children[0], pinBefore = (track = 'lanes:x');
+            const nodesBefore = cur.doc.nodes.map(n => n.id);
+            const base = openCalls.length;
+            circle(f0).ls.click[0]();
+            const ids = merged.nodes.filter(n => n.members.length > 1 && n.path[0].id === merged.nodes[0].path[0].id).map(n => n.id);
+            assert.strictEqual(openCalls.length, base + 1, 'one request'); assert.deepStrictEqual(openCalls[base].slice().sort(), ids.slice().sort(), 'the merged files of the cluster are asked for');
+            circle(f0).ls.click[0]();
+            assert.strictEqual(openCalls.length, base + 1, 'a double click is one request');
+            assert.ok(/opening \d+ files/.test(host.children.find(n => n.className === 'ring-note').textContent), 'the note says what is opening'); assert.ok(circle(f0).cls.has('ring-pending'), 'the focused cluster shows the pending state');
+            const camN = camCalls.length, before = shotPts(), openSet = [...S2.open];
+            // the user moves a file while it is pending: that offset must survive the merge
+            S2.sim.pts[`n:${merged.nodes[1].id}`].dx = 17; S2.sim.pts[`n:${merged.nodes[1].id}`].dy = -9;
+            const moved = shotPts();
+            resolvers[base].res();
+            await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0));
+            assert.strictEqual(merges, 1); assert.notStrictEqual(cur.doc, merged); assert.ok(cur.doc.nodes.length > merged.nodes.length, 'more nodes after opening');
+            assert.strictEqual(g0.children[0], rootBefore, 'the same SVG root'); assert.strictEqual(track, pinBefore, 'the pin stays'); assert.strictEqual(camCalls.length, camN, 'the camera does not move on a merge'); assert.deepStrictEqual([...S2.open], openSet, 'S.open stays');
+            const after = shotPts();
+            for (const id of nodesBefore) if (!ids.includes(id)) assert.deepStrictEqual(after[`n:${id}`], moved[`n:${id}`], `the physics point of ${id} is untouched`);
+            for (const k of Object.keys(moved).filter(k => k.startsWith('f:'))) assert.deepStrictEqual(after[k], moved[k], `${k} is untouched`);
+            assert.ok(S2.fc && S2.fc.id === f0, 'the focus stays'); assert.ok(!circle(f0).cls.has('ring-pending'), 'no pending state left');
+            // the new files sit inside their new cluster, inside the family
+            const fr = ring.frame(), newIdx = cur.doc.nodes.map((n, i) => [n, i]).filter(([n]) => /#[12]$/.test(n.id)).map(([, i]) => i), famC = fr.nc[f0], famR = fr.els.find(e => e.id === `c:${f0}`).a.r;
+            for (const i of newIdx) assert.ok(Math.hypot(fr.pos[i][0] - famC[0], fr.pos[i][1] - famC[1]) <= Number(famR), 'a new file is inside its family');
+            assert.ok(root.children.some(n => n.cls.has('ring-new')), 'new elements fade in');
+            // a failed request keeps the old doc
+            const docNow = cur.doc;
+            ring.reset(); S2.open.clear(); ring.draw();
+            docL.keydown({ key: 'Escape' });
+            const f3 = famId(3), b3 = openCalls.length;
+            circle(f3).ls.click[0]();
+            if (openCalls.length === b3 + 1) {
+                resolvers[b3].rej(new Error('boom'));
+                await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0));
+                assert.strictEqual(cur.doc, docNow, 'a failure keeps the old doc'); assert.ok(/Could not open/.test(host.children.find(n => n.className === 'ring-note').textContent)); assert.ok(!S2.pend);
+            }
+            // a stale answer is ignored
+            const n0 = openCalls.length, m0 = merges;
+            docL.keydown({ key: 'Escape' });
+            circle(famId(1)).ls.click[0]();
+            if (openCalls.length > n0) { circle(famId(2)).ls.click[0](); resolvers[n0].res(); await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0)); assert.strictEqual(merges, m0, 'a stale response is ignored'); }
+            ring.destroy();
+            assert.ok(!host.children.some(n => n.className === 'ring-crumb'), 'the crumb is gone with the ring');
+            delete global.document; delete global.cancelAnimationFrame;
+            // the view: the request lists the groups already open plus the files to open, the URL is rewritten without navigation
+            const vs = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
+            assert.ok(/for \(const g of n\.path \|\| \[\]\) open\.add\(g\.id\)/.test(vs) && /get\(\{ col_open: colOpen \}\)/.test(vs) && /history\.replaceState\(history\.state, '', `\$\{window\.location\.pathname\}\?\$\{u\.toString\(\)\}`\)/.test(vs) && /u\.set\('col_open', colOpen\)/.test(vs), 'openNodes sends the open groups plus the ids and writes col_open into the URL');
+        }
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const off = build(dd, lens), total = off.R.n;

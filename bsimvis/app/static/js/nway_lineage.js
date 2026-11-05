@@ -46,7 +46,7 @@
     const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];
     // nway_region_service.SPECIAL
     const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
-    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5;
+    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5, ALL_ROWS = 200;
     const hueOf = i => window.NwayColors.hue(i);
     // --lin-hl is the table's top-level lightness: 52%, 44% on the light theme (.nway-sq.on)
     const hsl = (h, l = 52) => `hsl(${h} 62% calc(var(--lin-hl) + ${l - 52}%))`;
@@ -1109,6 +1109,24 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const fid = st.R.fid[r], sum = el('div', { class: 'lin-sum' }, st.sums.get(fid) || '');
                 card.append(rowEl(r), sum);
                 if (!st.sums.has(fid)) want.push([fid, sum]);
+            }
+            // every function of the group, collapsed: rendered on first open, 200 rows at a time, a click on a row tracks it
+            const every = C.members[x.i].filter(st.R.match).sort((a, b) => (st.R.weight[b] || 0) - (st.R.weight[a] || 0));
+            if (every.length) {
+                const det = el('details', { style: 'margin-top:8px' }), list = el('div'), box = el('div', { style: 'max-height:280px;overflow:auto' }), moreB = el('button', { type: 'button', class: 'lin-more' });
+                let shown = 0;
+                const fill = () => {
+                    const n = Math.min(ALL_ROWS, every.length - shown);
+                    for (const r of every.slice(shown, shown + n)) list.append(rowEl(r));
+                    shown += n;
+                    moreB.textContent = `Show more (${fmt(every.length - shown)} left)`;
+                    moreB.style.display = shown < every.length ? '' : 'none';
+                };
+                det.addEventListener('toggle', () => { if (det.open && !shown) fill(); });
+                moreB.addEventListener('click', fill);
+                box.append(list, moreB);
+                det.append(el('summary', { style: 'cursor:pointer' }, `All functions (${fmt(every.length)})`), box);
+                card.append(det);
             }
             if (want.length) {
                 fetch(`/api/bin_sim/nway/facets/summaries?fids=${encodeURIComponent(want.map(w => w[0]).join(','))}`).then(res => (res.ok ? res.json() : { summaries: {} })).then(d => {

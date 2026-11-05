@@ -116,6 +116,9 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.strictEqual(col('delta:span-1-2'), bornColor(1), 'span-A-B takes the colour of node A');
     assert.strictEqual(col('delta:kept'), 'var(--lin-grey-d)', 'no single origin: grey');
     assert.ok(/!\(st\.view === 'tree'/.test('') || !/st\.sel = \{ group: true \}/.test(src), 'the group card is not opened a second time in the drawer');
+    // the lane card lists every function of the group: collapsed, filled on the first open, 200 rows at a time, rows are the dock's rowEl, built with textContent only
+    assert.ok(/ALL_ROWS = 200/.test(src) && /`All functions \(\$\{fmt\(every\.length\)\}\)`/.test(src) && /det\.addEventListener\('toggle', \(\) => \{ if \(det\.open && !shown\) fill\(\); \}\)/.test(src) && /list\.append\(rowEl\(r\)\)/.test(src) && /Show more \(\$\{fmt\(every\.length - shown\)\} left\)/.test(src), 'All functions: collapsed, lazy, 200 at a time, rowEl rows');
+    assert.ok(!/every[^;]*innerHTML/.test(src.slice(src.indexOf('every function of the group'), src.indexOf('every function of the group') + 1500)), 'no innerHTML in the list');
 }
 
 // --- tracks view: a group born in two places, member ids ---------------------------

@@ -207,7 +207,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         // lanes: one feeding ribbon each, all lanes of a ring inside 85% of it
         const lanes = g.els.filter(e => e.id.startsWith('l:')), ups = g.els.filter(e => e.id.startsWith('u:'));
         assert.ok(lanes.length > 0);
-        for (const l of lanes) assert.strictEqual(ups.filter(u => u.sk === l.sk && u.lane === l.lane).length, 1, `lane ${l.id} has one feeding ribbon`);
+        for (const l of lanes) assert.strictEqual(ups.filter(u => u.sk === l.sk && u.lane === l.lane).length, l.own ? 0 : 1, `lane ${l.id} has one feeding ribbon (none when the module starts here)`);
         const perNode = new Map();
         for (const l of g.stats.lanes) perNode.set(l.node, (perNode.get(l.node) || 0) + l.w);
         for (const [n, w] of perNode) assert.ok(w <= RING.LANE_FIT * 2 * Math.PI + 1e-6, `lanes of ${n} fit`);
@@ -221,7 +221,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         assert.ok(inner.length > 0 && inner.every(e => { const c = M.byId.get(e.drag.slice(2)); return c && (!c.kids.length); }), 'ribbons to files start at a cluster without sub-clusters');
         // nesting off: ring straight to the files, no lanes
         const flat = draw(M, false).g;
-        assert.strictEqual(flat.els.filter(e => /^[lu]:/.test(e.id)).length, 0, 'no lanes without nesting');
+        assert.strictEqual(flat.els.filter(e => e.id.startsWith('u:')).length, 0, 'no bands without nesting');
+        assert.ok(flat.els.filter(e => e.id.startsWith('l:')).every(e => e.own), 'without nesting the only lanes are single-cluster modules on the circle itself');
         assert.ok(flat.els.filter(e => e.id.startsWith('i:')).every(e => e.drag.startsWith('f:/fam:') || e.drag.startsWith('f:/other')), 'fans start at the family circle');
         assert.ok(flat.els.filter(e => e.id.startsWith('c:')).length === 3, 'only the families are circles');
         // drag: sub-clusters and files keep their offsets to the family, families keep apart
@@ -286,8 +287,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         })();
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const b = build(dd, lens), gg = RL.geometry(b.M, { sim: RL.newSim(), nested: true, open: new Set() });
-            const segMods = new Set(b.M.plan.segs.flat().map(x => x.b.k)), cross = b.M.mods.filter(m => m.fam == null);
-            assert.strictEqual(segMods.size, b.M.mods.length, `${label}/${lens}: every module has a ring segment`);
+            const segMods = new Set([...b.M.plan.segs.flat(), ...b.M.plan.layers.flat()].map(x => x.b.k)), cross = b.M.mods.filter(m => m.fam == null);
+            assert.strictEqual(segMods.size, b.M.mods.length, `${label}/${lens}: every module is drawn, on the ring or as a lane inside its cluster`);
             if (label === 'real-shaped' && lens === 'modules') assert.ok(b.M.mods.length === 21 && cross.length >= 10 && b.M.roots.length === 6, `fixture shape: ${b.M.mods.length} modules, ${cross.length} cross, ${b.M.roots.length} families`);
             assert.ok(!b.M.plan.segs.flat().some(x => x.b.other), 'no merged other segment');
             const ribKs = new Set(gg.els.filter(e => e.id.startsWith('o:')).map(e => Number(e.id.split(':')[1])));
@@ -323,7 +324,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const segCount = new Map();
             for (const e of go.els) if (e.id.startsWith('s:')) { const [, c, k] = e.id.split(':'); segCount.set(`${c}|${k}`, (segCount.get(`${c}|${k}`) || 0) + 1); }
             assert.ok([...segCount.values()].every(n => n === 1), `${label}/${lens}: one ring segment per module per circle`);
-            for (const m of one.M.mods) for (const c of m.fams) assert.ok(segCount.has(`${c}|${m.k}`), 'every module keeps a segment on each circle it spans');
+            for (const m of one.M.mods.filter(x => x.fam == null)) for (const c of m.fams) assert.ok(segCount.has(`${c}|${m.k}`), 'every module keeps a segment on each circle it spans');
             assert.strictEqual(go.els.filter(e => e.id.startsWith('o:')).length, gp.els.filter(e => e.id.startsWith('o:')).length, 'the same ribbons as with one arc per partner');
             for (const r of go.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends in one-arc mode');
             for (const m of one.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(go.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'a ribbon per family pair');
@@ -333,6 +334,37 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const lk = new Map();
             for (const e of go.els) if (e.id.startsWith('l:')) lk.set(e.id, (lk.get(e.id) || 0) + 1);
             assert.ok([...lk.values()].every(n => n === 1), 'ids are unique');
+        }
+
+        // single-cluster modules live inside their cluster: no outer segment, a lane on the lowest cluster holding them all, a chain down to every holder
+        {
+            const one = { ...d, nodes: d.nodes.map(n => ({ ...n, path: [{ id: 'one', label: 'One' }] })) };
+            for (const [label, dd] of [['synthetic', d], ['real-shaped', yara], ['one cluster', one]]) for (const lens of ['modules', 'lanes']) for (const nested of [true, false]) {
+                const b = build(dd, lens), gg = RL.geometry(b.M, { sim: RL.newSim(), nested, open: new Set([...b.M.byId.keys()]) }), ids = new Set(gg.els.map(e => e.id));
+                const layers = b.M.mods.filter(m => m.fam != null), cross = b.M.mods.filter(m => m.fam == null);
+                for (const m of layers) {
+                    const tag = `${label}/${lens}/nested=${nested}: ${m.label}`, f = b.M.roots[m.fam], hold = new Set(m.mem);
+                    assert.ok(!gg.els.some(e => e.id.startsWith('s:') && e.m === m.k), `${tag} has no outer segment`);
+                    const lca = RL.lcaNode(f, hold, nested);
+                    assert.ok(ids.has(`l:${m.k}.:${lca.id}`), `${tag} has a lane on its lowest cluster`);
+                    assert.ok(!gg.els.some(e => e.id.startsWith(`u:${m.k}.:${lca.id}:`)), 'no band from the outer ring into its first lane');
+                    for (const i of m.mem) {
+                        // every level from the lowest cluster down to the leaf that holds the file has its lane
+                        let n = lca;
+                        for (;;) {
+                            assert.ok(ids.has(`l:${m.k}.:${n.id}`), `${tag}: lane on ${n.id}`);
+                            const k = nested ? n.kids.find(K => K.files.includes(i)) : null;
+                            if (!k) break;
+                            n = k;
+                        }
+                        assert.ok(gg.els.some(e => e.id.startsWith(`i:${m.k}.:`) && e.id.endsWith(`:${i}`)), `${tag}: a fan to file ${i}`);
+                    }
+                    for (const e of gg.els) if (e.m === m.k) assert.strictEqual(e.s.fill || e.s.stroke, m.cat.color, 'lens colour');
+                }
+                for (const m of cross) assert.ok(gg.els.some(e => e.id.startsWith('s:') && e.m === m.k) && gg.els.some(e => e.id.startsWith('o:') && e.m === m.k), `${label}/${lens}: cross module ${m.label} keeps its outer segment and ribbons`);
+                assert.deepStrictEqual(RL.badAttrs(gg.els), []);
+                for (const r of gg.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends');
+            }
         }
 
         // colours: every module and lane has exactly the colour the Tree gives its lens group, whatever the cluster
@@ -387,7 +419,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                 assert.ok(on.M.mods.every(m => m.size >= (pct / 100) * total), 'none under the gate is shown');
                 const gg = RL.geometry(on.M, { sim: RL.newSim(), nested: true, open: new Set() });
                 assert.ok(!on.M.plan.segs.flat().some(x => x.b.other), 'nothing is merged into other');
-                assert.strictEqual(new Set(on.M.plan.segs.flat().map(x => x.b.k)).size, on.M.mods.length, 'every module left has a ring segment');
+                assert.strictEqual(new Set([...on.M.plan.segs.flat(), ...on.M.plan.layers.flat()].map(x => x.b.k)).size, on.M.mods.length, 'every module left is drawn');
                 const ribKs = new Set(gg.els.filter(e => e.id.startsWith('o:')).map(e => Number(e.id.split(':')[1])));
                 for (const m of on.M.mods.filter(x => x.fam == null)) assert.ok(ribKs.has(m.k), 'every cross module left has its ribbons');
                 assert.deepStrictEqual(RL.badAttrs(gg.els), []);

@@ -31,6 +31,7 @@
         ARC_DEFAULT: 'partner', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
+        ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
@@ -235,7 +236,7 @@
     // 0 everything, 1 no parent-to-lane bands and file labels, 2 clusters, rings and family ribbons only
     function modeOf(nested) {
         const M = this, nCl = nested ? M.byId.size : M.roots.length;
-        const segs = sum(M.plan.segs, l => l.length), fans = sum(M.plan.segs, l => sum(l, x => x.hold.size)), pairs = M.plan.ribbons;
+        const all = [...M.plan.segs.flat(), ...M.plan.layers.flat()], segs = all.length, fans = sum(all, x => x.hold.size), pairs = M.plan.ribbons;
         const est = 2 * nCl + segs + pairs + M.N * 2 + (nested ? 4 * segs : 0) + fans;
         return { est, mode: est > RING.BUDGET[1] ? 2 : est > RING.BUDGET[0] ? 1 : 0 };
     }
@@ -274,11 +275,12 @@
         if (all.length > RING.RIBBON_SAFE) {
             all.slice().sort((a, b2) => b2[3] - a[3]).slice(RING.RIBBON_SAFE).forEach(([b, x, y]) => { skip.add(`${b.k}|${x}|${y}`); truncated++; });
         }
+        const layers = roots.map(() => []);
         const segs = roots.map((f, c) => {
             const l = [];
             for (const b of mods) {
                 if (!b.fams.includes(c)) continue;
-                if (b.fam != null) { l.push({ b, size: b.rowsIn[c], hold: new Set(b.mem.filter(i => M.famOf[i] === c)), key: '' }); continue; }
+                if (b.fam != null) { layers[c].push({ b, size: b.rowsIn[c], hold: new Set(b.mem.filter(i => M.famOf[i] === c)), key: '' }); continue; }
                 const ps = b.fams.filter(p => p !== c && !skip.has(`${b.k}|${Math.min(c, p)}|${Math.max(c, p)}`));
                 const arc = (run, key) => ({ b, slots: run.map(p => ({ p, size: b.pairRows(c, p) })), size: sum(run, p => b.pairRows(c, p)), hold: new Set(run.flatMap(p => [...(b.hold.get(`${c}|${p}`) || [])])), key, ...(run.length === 1 ? { partner: run[0] } : {}) });
                 if (!ps.length) continue;
@@ -303,19 +305,31 @@
             px = lo;
         });
         const floorHits = sum(segs, l => sum(l, s => (s.slots ? s.slots.filter(t => t.size * px < floor).length : s.size * px < floor ? 1 : 0)));
-        return { segs, px, floor, w: s => wOf(s, px, floor), gaps: gaps.map((g, c) => g / rg(roots[c]).ro), floorHits, ribbons: all.length - truncated, truncated };
+        return { segs, px, floor, w: s => wOf(s, px, floor), gaps: gaps.map((g, c) => g / rg(roots[c]).ro), floorHits, ribbons: all.length - truncated, truncated, layers };
+    }
+
+    // the lowest cluster node of family root f that contains all of the files (f itself when not nested)
+    function lcaNode(f, files, nested) {
+        let n = f;
+        while (nested) {
+            const k = n.kids.find(K => { const set = K._set || (K._set = new Set(K.files)); return [...files].every(i => set.has(i)); });
+            if (!k) break;
+            n = k;
+        }
+        return n;
     }
 
     // One px-per-function for every lane: RING.LANE_W, or less when the lanes of some cluster would not fit its ring.
     function lanePx(M) {
         let px = RING.LANE_W;
-        const kept = M.plan.segs.flat();
+        const cross = M.plan.segs.flat(), lay = M.plan.layers.flatMap((l, c) => l.map(x => ({ x, lca: lcaNode(M.roots[c], x.hold, true) })));
         for (const n of M.byId.values()) {
-            if (n.level < 1) continue;
-            const fed = kept.filter(x => n.files.some(i => x.hold.has(i)));
+            const set = new Set(n.files), has = x => [...x.hold].some(i => set.has(i));
+            const rp = n.r + (n.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF);
+            // the lanes of this ring: cross arcs coming down to it, and the single-cluster modules whose chain passes through it (root: only those starting there)
+            const fed = n.level === 0 ? lay.filter(o => o.lca === n).map(o => o.x) : [...cross.filter(has), ...lay.filter(o => has(o.x) && n.files.every(i => (o.lca._set || (o.lca._set = new Set(o.lca.files))).has(i))).map(o => o.x)];
             if (!fed.length) continue;
-            const rp = n.r + RING.LANE_OFF, tot = sum(fed, x => Math.max(x.size, 1));
-            px = Math.min(px, (RING.LANE_FIT * TAU * rp - fed.length * RING.LANE_GAP * rp) / tot);
+            px = Math.min(px, (RING.LANE_FIT * TAU * rp - fed.length * RING.LANE_GAP * rp) / sum(fed, x => Math.max(x.size, 1)));
         }
         return Math.max(px, 1e-4);
     }
@@ -599,9 +613,13 @@
         };
         // routing: family ring -> lane on each cluster level -> files; a cluster without sub-clusters fans straight to its files
         const holdersIn = (n, x) => n.files.filter(i => x.hold.has(i));
-        const routeNode = (X, feeds) => {
+        const kidsOf = X => (nested ? X.kids : []);
+        let FM = new Map();
+        const feedsOf = X => FM.get(X.id) || FM.set(X.id, []).get(X.id);
+        // the lane ring of a cluster: one lane per feed, then down to the lanes of the sub-clusters that hold it, or to the files
+        const laneRing = (X, feeds) => {
             if (!feeds.length) return;
-            const C = nc[X.id], rp = X.r + RING.LANE_OFF, ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx }));
+            const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx }));
             const fsc = Math.min(1, (RING.LANE_FIT * TAU * rp - ports.length * RING.LANE_GAP * rp) / sum(ports, p => p.wp));
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
@@ -612,34 +630,38 @@
                     if (gap < 0) { ports[k].c += gap / 2; ports[j].c -= gap / 2; }
                 }
             }
-            const kidFeeds = new Map(X.kids.map(K => [K, []]));
+            const kids = kidsOf(X);
             ports.forEach(p => {
-                const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2, P1 = ptAt(C, rp + 4, p.c), P0 = p.from;
-                const dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
-                const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
-                if (!light) add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: 1 }, m: b.k, drag: key(X), lane: X.id, sk, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
-                out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp });
-                if (X.kids.length) {
-                    const here = X.kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
-                    here.forEach((K, n) => { const sw = p.w / here.length; kidFeeds.get(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + (n + 0.5) * sw), slot: sw * (rp - 3.5), srcDrag: key(X), srcId: `${X.id}`, centre: C }); });
+                const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
+                if (!light && !p.noBand) {
+                    const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
+                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
+                    add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
+                }
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: 1 }, m: b.k, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
+                if (kids.length) {
+                    const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
+                    here.forEach((K, n) => { const sw = p.w / here.length; feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + (n + 0.5) * sw), slot: sw * (rp - 3.5), srcDrag: key(X), srcId: `${X.id}`, centre: C }); });
                 } else if (!agg(X)) inner(C, rp - 3.5, a0, a1, holdersIn(X, p.x), p.x, key(X), M.famFiles[X.famIdx]);
             });
-            X.kids.forEach(K => routeNode(K, kidFeeds.get(K)));
         };
+        const walk = X => { laneRing(X, feedsOf(X)); kidsOf(X).forEach(walk); };
         if (!lean) roots.forEach((f, c) => {
-            const { ri } = rg(f), hs = x => [...x.hold];
-            if (!nested || !f.kids.length) {
-                if (agg(f)) return;
-                segs[c].forEach(x => inner(cen[c], ri, x.a0, x.a1, hs(x), x, `f:${f.id}`, M.famFiles[c]));
-                return;
+            FM = new Map();
+            const { ri } = rg(f);
+            // single-cluster modules start at the lowest cluster that holds them all, with no band from the outer ring
+            for (const x of pl.layers[c]) {
+                const X = lcaNode(f, x.hold, nested), hs = [...x.hold];
+                feedsOf(X).push({ x, from: [sum(hs, i => pos[i][0]) / hs.length, sum(hs, i => pos[i][1]) / hs.length], slot: 0, srcDrag: key(X), srcId: X.id, centre: nc[X.id], noBand: true });
             }
-            const kidFeeds = new Map(f.kids.map(K => [K, []]));
-            segs[c].forEach(x => {
+            // cross-family arcs of the outer ring: straight to the files, or down through the sub-clusters
+            if (!nested || !f.kids.length) { if (!agg(f)) segs[c].forEach(x => inner(cen[c], ri, x.a0, x.a1, [...x.hold], x, `f:${f.id}`, M.famFiles[c])); }
+            else segs[c].forEach(x => {
                 const mA = (x.a0 + x.a1) / 2, here = f.kids.filter(K => holdersIn(K, x).length).sort((u, v) => norm(angTo(cen[c], nc[u.id]) - mA) - norm(angTo(cen[c], nc[v.id]) - mA));
-                here.forEach((K, n) => { const sw = (x.a1 - x.a0) / here.length; kidFeeds.get(K).push({ x, from: ptAt(cen[c], ri, x.a0 + (n + 0.5) * sw), slot: sw * ri, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c] }); });
+                here.forEach((K, n) => { const sw = (x.a1 - x.a0) / here.length; feedsOf(K).push({ x, from: ptAt(cen[c], ri, x.a0 + (n + 0.5) * sw), slot: sw * ri, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c] }); });
             });
-            f.kids.forEach(K => routeNode(K, kidFeeds.get(K)));
+            walk(f);
         });
 
         // files
@@ -751,6 +773,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             ctx.showTip(ev, b.label, b.color, [
                 pr ? ['Shared', `${ctx.fmt(pr.n)} functions shared between ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)} in the module)`] : ['Functions', ctx.fmt(b.size)],
                 ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
+                ...(b.fam != null ? [['Only in cluster', M.roots[b.fam].label]] : []),
                 ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
                 ['', 'A file holds a module when it has at least one of its functions.']]);
         };
@@ -972,5 +995,5 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
     }
 
-    window.NwayRing = { mount, RING, _layout: { RING, clusterTree, modulesOf, buildModel, plan, placeFamilies, geometry, newSim, badAttrs, rg, band } };
+    window.NwayRing = { mount, RING, _layout: { RING, lcaNode, clusterTree, modulesOf, buildModel, plan, placeFamilies, geometry, newSim, badAttrs, rg, band } };
 })();

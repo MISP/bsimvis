@@ -217,8 +217,17 @@ same string the Tree uses; grey stays grey where the lens says so), never tinted
 golden-angle hue only when the lens gives none. The cluster colour is only on the circle, its
 label and the file dots. No lane shading.
 
-**Nothing is dropped.** Every module keeps its ring segment, its parent -> lane -> file chain
-and one outer ribbon per family pair it spans. A segment thinner than the scale gives is
+**Where a module sits.** The outer family ring carries only cross-family modules (the ones with
+outer ribbons). A module held inside one cluster has no ring segment: its lane sits on the lowest
+cluster node that contains all its holders (the lane ring of a sub-cluster, or, when that is the
+family root or nesting is off, a lane ring just inside the circle's edge, `ROOT_LANE_OFF` -6),
+and its chain goes down only: lane -> lanes of the sub-clusters that hold it -> files, no band
+from the outer ring. Its width is its functions in the family times `lanePx`; the ring's
+px-per-function scale is computed from the cross-family arcs only. Its tooltip says "Only in
+cluster X".
+
+**Nothing is dropped.** Every module is drawn (cross-family: ring arc, lanes at each level, files;
+single-cluster: lanes inside) and every cross-family module has one outer ribbon per family pair it spans. A segment thinner than the scale gives is
 drawn `FLOOR` (2 px, less on a genuinely full ring); the px-per-function scale shrinks
 instead. Only `RIBBON_SAFE` (5000 ribbons) can omit ribbons, with a note in the canvas.
 Constants are all in `RING`: `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120 files),

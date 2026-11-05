@@ -2026,12 +2026,17 @@ def get_function_meta():
 
 
 def _lineage_nodes(doc):
-    """(node columns, rows with fid cells, pair edges) of a files / twins doc, else None."""
+    """(node columns, rows with fid cells, pair edges) of a files / twins / children doc, else None."""
     if doc["columns_mode"] == "files":
         return doc["columns"], doc["rows"], doc["edges"]
-    if doc["columns_mode"] == "twins":
+    if doc["columns_mode"] in ("twins", "children"):
         return nway_lineage_service.group_nodes(
-            doc["columns"], doc["file_columns"], doc["rows"], doc["edges"]
+            doc["columns"],
+            doc["file_columns"],
+            doc["rows"],
+            doc["edges"],
+            children=doc["columns_mode"] == "children",
+            min_edge=doc["min_edge"],
         )
     return None
 
@@ -2050,7 +2055,7 @@ def _node_of(cols, raw):
 
 
 def _lineage_order(doc, args):
-    """`order=lineage`: a copy of a files / twins doc, its columns in lineage DFS order.
+    """`order=lineage`: a copy of a files / twins / children doc, its columns in lineage DFS order.
 
     Same tree as /nway/lineage's default (`root` honoured); the copy carries
     `column_parents`. Other column modes come back unchanged.
@@ -2198,7 +2203,7 @@ def _lineage_groups(rows, doc, r, args):
 
 
 def get_nway_lineage():
-    """Lineage tree of the files (or twin columns) of a set (same params as `/nway`, plus `root`, `order`).
+    """Lineage tree of the files (or twin / cluster columns) of a set (same params as `/nway`, plus `root`, `order`).
 
     Read-only: it annotates the rows and pair edges `/nway` already computes.
     The tree is built from every row; `rows.match` marks the rows the /nway
@@ -2220,7 +2225,10 @@ def get_nway_lineage():
             doc["columns"] = [{**c, "functions": held[c["id"]]} for c in doc["columns"]]
     nodes = _lineage_nodes(doc)
     if nodes is None:
-        abort(400, "lineage needs file or twin columns: use columns=files or twins")
+        abort(
+            400,
+            "lineage needs file, twin or cluster columns: use columns=files, twins or children",
+        )
     cols, rows, edges = nodes
     fmeta = doc["fmeta"]
 

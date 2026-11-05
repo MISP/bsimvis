@@ -223,7 +223,11 @@ cluster node that contains all its holders (the lane ring of a sub-cluster, or, 
 family root or nesting is off, a lane ring just inside the circle's edge, `ROOT_LANE_OFF` -6),
 and its chain goes down only: lane -> lanes of the sub-clusters that hold it -> files, no band
 from the outer ring. Its width is its functions in the family times `lanePx`; the ring's
-px-per-function scale is computed from the cross-family arcs only. Its tooltip says "Only in
+px-per-function scale is computed from the cross-family arcs only, in the part of the ring not
+reserved for the outward side: `OUTWARD_KEEP` (0.4) of every ring, away from the other clusters, stays
+free of cross arcs so their ribbons do not wrap round the circle (0 gave 1051 crossings on yara lanes,
+0.4 gives 581). The arc order keeps the better of the by-direction order and the barycentre sweeps
+(by a crossing count), so sweeps never add crossings. Its tooltip says "Only in
 cluster X".
 
 **Nothing is dropped.** Every module is drawn (cross-family: ring arc, lanes at each level, files;

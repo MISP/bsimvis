@@ -407,6 +407,17 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             }
         }
 
+        // the outward side of every ring (away from the other clusters) stays free of cross-family arcs
+        for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) for (const mode of ['partner', 'group', 'one']) {
+            const b = build(dd, lens, { arc: mode }), sim = RL.newSim(), gg = RL.geometry(b.M, { sim, nested: true, open: new Set() });
+            const norm = a => ((a + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+            gg.segs.forEach((l, c) => l.filter(x => x.b.fam == null).forEach(x => {
+                // a ring so full that the floor width had to shrink may spill a little into the outward arc
+                const slack = b.M.plan.floor < RING.FLOOR ? 0.25 : 1e-6;
+                for (const a of [x.a0, x.a1]) assert.ok(Math.abs(norm(a - sim.dir[c])) >= RING.OUTWARD_KEEP * Math.PI - slack, `${label}/${lens}/${mode}: a cross arc on ring ${c} stays out of the outward arc`);
+            }));
+        }
+
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const off = build(dd, lens), total = off.R.n;

@@ -28,6 +28,7 @@
         SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, FLOOR: 2, SEG_STROKE: 12, // ring segments; no segment is ever dropped, the thinnest are drawn FLOOR px wide (1 when a ring is full)
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
+        OUTWARD_KEEP: 0.4, // share of a ring kept free on its outward side (away from the other clusters); cross-family arcs use the rest
         ARC_DEFAULT: 'partner', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
@@ -291,7 +292,7 @@
             l.sort((a, b2) => b2.size - a.size);
             return l;
         });
-        const avail = segs.map((l, c) => RING.FILL * TAU * rg(roots[c]).ro);
+        const avail = segs.map((l, c) => RING.FILL * (1 - RING.OUTWARD_KEEP) * TAU * rg(roots[c]).ro);
         // gap between segments: the usual one, less on a crowded ring
         const gaps = segs.map((l, c) => (l.length ? Math.min(RING.SEG_GAP * rg(roots[c]).ro, (0.2 * avail[c]) / l.length) : 0));
         let floor = RING.FLOOR;
@@ -503,7 +504,7 @@
             const hs = x => [...x.hold];
             const side = x => { const h = hs(x); if (!h.length) return 0; const vx = sum(h, i => Math.cos(angTo(cen[c], pos[i]))), vy = sum(h, i => Math.sin(angTo(cen[c], pos[i]))); return Math.hypot(vx, vy) / h.length < 0.25 ? 0 : norm(Math.atan2(vy, vx) - tos[c]); };
             const inner_ = segs[c].filter(x => x.b.fam != null).map(x => ({ x, s: side(x) })).sort((p, q) => p.s - q.s || q.x.size - p.x.size).map(q => q.x), cross = segs[c].filter(x => x.b.fam == null);
-            const span = sum(inner_, x => A(x)) + GAP * Math.max(0, inner_.length - 1);
+            const span = Math.max(sum(inner_, x => A(x)) + GAP * Math.max(0, inner_.length - 1), nF > 1 ? RING.OUTWARD_KEEP * TAU : 0);
             let a = tos[c] - span / 2;
             inner_.forEach(x => { x.a0 = a; x.a1 = a + A(x); a = x.a1 + GAP; });
             const hw = Math.PI - span / 2 - GAP, mid0 = tos[c] + Math.PI;
@@ -528,10 +529,39 @@
             cross.forEach(x => { x.a0 = r.mid0 + x.c - x.w / 2; x.a1 = r.mid0 + x.c + x.w / 2; });
         };
         placed.forEach(relax);
+        // a proxy for the crossings of the outer ribbons (their centre curves), to keep the better of the by-direction order and the sweeps
+        const at = new Map();
+        placed.forEach((r, c) => r.cross.forEach(x => x.slots.forEach(t => at.set(`${x.b.k}|${c}|${t.p}`, x))));
+        const crossCount = () => {
+            const curves = [];
+            placed.forEach((r, c) => r.cross.forEach(x => x.slots.forEach(t => {
+                if (c > t.p) return;
+                const y = at.get(`${x.b.k}|${t.p}|${c}`);
+                if (!y) return;
+                const ma = (x.a0 + x.a1) / 2, mb = (y.a0 + y.a1) / 2, p0 = ptAt(cen[c], rg(roots[c]).ro, ma), p1 = ptAt(cen[t.p], rg(roots[t.p]).ro, mb);
+                const h = Math.max(RING.ARM_MIN, (x.a1 - x.a0) * rg(roots[c]).ro * RING.ARM_W, Math.hypot(p0[0] - p1[0], p0[1] - p1[1]) * RING.ARM_D);
+                const c0 = [p0[0] + Math.cos(ma) * h, p0[1] + Math.sin(ma) * h], c1 = [p1[0] + Math.cos(mb) * h, p1[1] + Math.sin(mb) * h], pts = [];
+                for (let i = 0; i <= 8; i++) pts.push(bez(p0, c0, c1, p1, i / 8));
+                curves.push(pts);
+            })));
+            if (curves.length > 800) return 0;
+            const ccw = (a, b, c) => (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
+            let n = 0;
+            for (let i = 0; i < curves.length; i++) for (let j = i + 1; j < curves.length; j++) {
+                let hit = false;
+                for (let u = 0; u < 8 && !hit; u++) for (let v = 0; v < 8; v++) {
+                    const a = curves[i][u], b = curves[i][u + 1], c = curves[j][v], d = curves[j][v + 1];
+                    if (ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d)) { hit = true; break; }
+                }
+                if (hit) n++;
+            }
+            return n;
+        };
+        const snapshot = () => placed.map(r => ({ order: r.cross.slice(), cs: r.cross.map(x => x.c) }));
+        const restore = sn => placed.forEach((r, i) => { r.cross = sn[i].order; r.cross.forEach((x, k) => { x.c = sn[i].cs[k]; x.a0 = r.mid0 + x.c - x.w / 2; x.a1 = r.mid0 + x.c + x.w / 2; }); });
         // crossing-minimising order: an arc goes where the arcs it connects to lie, seen from its ring's centre (barycentre sweeps over all rings)
         if (RING.ORDER_SWEEPS > 0 && nF > 1) {
-            const at = new Map();
-            placed.forEach((r, c) => r.cross.forEach(x => x.slots.forEach(t => at.set(`${x.b.k}|${c}|${t.p}`, x))));
+            let best = { n: crossCount(), sn: snapshot() };
             for (let sweep = 0; sweep < RING.ORDER_SWEEPS; sweep++) {
                 let changed = false;
                 placed.forEach((r, c) => {
@@ -555,7 +585,10 @@
                     relax(r);
                 });
                 if (!changed) break;
+                const n = crossCount();
+                if (n < best.n) best = { n, sn: snapshot() };
             }
+            restore(best.sn);
         }
         placed.forEach((r, c) => (segs[c] = [...r.inner_, ...r.cross]));
         out.segs = segs;

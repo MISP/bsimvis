@@ -94,6 +94,30 @@ const filtered = trackInfo(some.L, some.R, trackRows(some.R, some.cats, 'fn:c:fu
 assert.strictEqual(filtered.holders, 0, 'a row the filters drop is not tracked');
 assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tracks fill bar)');
 
+// --- the Ring's Deltas lens: the server's delta lanes, coloured by their origin node; the trees keep the born-in cats ----
+{
+    const dd = doc([true, true, true, true, true, true]);
+    Object.assign(dd, {
+        group: 'delta,region',
+        groups: [
+            { id: 'delta:added-3', kind: 'delta', label: 'New in d.elf', path: ['delta:added-3'] },
+            { id: 'delta:span-1-2', kind: 'delta', label: 'b.elf to c.elf', path: ['delta:span-1-2'] },
+            { id: 'delta:kept', kind: 'delta', label: 'Kept', path: ['delta:kept'] },
+        ],
+    });
+    dd.rows.group = [2, 1, 1, 0, null, 0];
+    const b = build(dd);
+    const born = lensCats(dd, b.R, 'deltas'), srv = lensCats(dd, b.R, 'deltas', g => g.label, { server: true });
+    assert.ok(born.cats.every(c => !c.g) && born.cats.length === dd.nodes.length, 'the trees keep painting by the node a row is born in');
+    assert.deepStrictEqual(srv.groups.map(x => x.tk), ['delta:added-3', 'delta:span-1-2', 'delta:kept'], 'the Ring gets the server delta groups, track keys are their ids');
+    assert.deepStrictEqual(srv.cats.map(c => c.label).sort(), ['Kept', 'New in d.elf', 'Other functions', 'b.elf to c.elf'], 'readable labels (and the rows in no group)');
+    const col = id => srv.cats.find(c => c.g.id === id).color, bornColor = i => lensCats(dd, b.R, 'deltas').cats[i].color;
+    assert.strictEqual(col('delta:added-3'), bornColor(3), 'added-N takes the colour of node N');
+    assert.strictEqual(col('delta:span-1-2'), bornColor(1), 'span-A-B takes the colour of node A');
+    assert.strictEqual(col('delta:kept'), 'var(--lin-grey-d)', 'no single origin: grey');
+    assert.ok(/!\(st\.view === 'tree'/.test('') || !/st\.sel = \{ group: true \}/.test(src), 'the group card is not opened a second time in the drawer');
+}
+
 // --- tracks view: a group born in two places, member ids ---------------------------
 const twice = doc(null);
 for (const [k, v] of Object.entries({ fid: 'c:func:b:6', fids: ['c:func:b:6', 'c:func:c:6'], name: 'reused', mask: '6', role: 'logic', region: 1, library: false, weight: 10 })) twice.rows[k].push(v);

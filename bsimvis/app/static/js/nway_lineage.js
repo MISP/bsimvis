@@ -299,6 +299,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (g.kind === 'presence') return (BANDS.find(x => `presence:${x[0]}` === g.id) || [0, 0, GREY])[2];
             if (g.kind === 'region' && !g.label) return hsl(hueOf(hues++));
             if (g.kind === 'lane' && direct[i] && hues < LANE_MAX) return hsl(hueOf(hues++ * 3 + 1));
+            // a delta lane takes the colour of the file it starts in (the Tree's node colour); grey when it has no single origin
+            if (g.kind === 'delta') { const m = /^delta:(?:added|dropped|span)-(\d+)/.exec(g.id), ix = m ? Number(m[1]) : -1; return ix >= 0 && ix < doc.nodes.length ? nodeColor(doc, ix) : GREY; }
             return GREY;
         };
         const groups = G.map((g, i) => {
@@ -323,9 +325,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 
     // The groups of one lens: cats in display order, of(r) = the row's group key, raw(r) = the key `track` uses,
     // tk = the track value. The server's groups when the doc carries them for this lens (not Deltas).
-    function lensCats(doc, R, lens, label = g => g.label || g.id) {
+    // o.server: the Ring shows the server's delta lanes ("Added in X", "Only in X", ...); the trees keep painting by the node a row is born in
+    function lensCats(doc, R, lens, label = g => g.label || g.id, o = {}) {
         const L = LENSES.find(l => l[0] === lens);
-        if (lens !== 'deltas' && L && doc.groups && doc.group === L[2] && R.group) return serverCats(doc, R, lens, label);
+        if ((lens !== 'deltas' || o.server) && L && doc.groups && doc.group === L[2] && R.group) return serverCats(doc, R, lens, label);
         const cat = (key, label, color) => ({ key: String(key), tk: `${lens}:${key}`, label, color });
         const done = (cats, of, raw = of) => ({ lens, cats, of, raw });
         if (lens === 'core') return done(BANDS.map(([k, l, c]) => cat(k, l, c)), r => presenceBand(R.pop[r], R.N));
@@ -801,7 +804,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             else detail(drawer, pick, name, closeDock);
         };
         const lensOn = () => !!st.R && st.lens !== 'deltas' && LENSES.some(l => l[0] === st.lens);
-        const cats = lens => st.C.get(lens) || st.C.set(lens, lensCats(st.doc, st.R, lens, gText)).get(lens);
+        const cats = lens => { const ring = lens === 'deltas' && st.view === 'ring', k = ring ? 'deltas:ring' : lens; return st.C.get(k) || st.C.set(k, lensCats(st.doc, st.R, lens, gText, { server: ring })).get(k); };
         const NG = window.NwayGroups;
         // a server group as plain text: its label, the model's name, or what it is made of
         function gText(g) {
@@ -958,7 +961,6 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (opts.onTrack) opts.onTrack(t);
             applyTrack(true);
             // a group tracked here gets its card in the dock (the Tracks view shows it beside its list)
-            if (trackedGroup() && (st.view === 'tree' || st.view === 'ring') && !(st.sel && st.sel.node && drawer.classList.contains('open'))) { st.sel = { group: true }; openDrawer(st.sel); }
         }
         function trackLabel() {
             const t = st.track, i = t.indexOf(':'), kind = t.slice(0, i), key = t.slice(i + 1);
@@ -1795,6 +1797,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             setView(v) {
                 st.view = v;
                 if (!st.L) return;
+                // the Ring's Deltas cats are the server's lanes, the trees' are born-in cats: repaint on the way in and out
+                if (st.lens === 'deltas') { st.C = new Map(); rebuild(); }
                 applyTrack(false);
                 ringDraw();
                 fit(true);

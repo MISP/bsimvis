@@ -315,6 +315,66 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         assert.ok(!/HOLD_|holdSel|Holder threshold|CAP_CROSS|MIN_SEG_PX|OTHER_MAX|MAX_RIBBONS/.test(ringSrc), 'no holder control, no pruning constants');
         assert.ok(!/KEYS = \[[^\]]*rhold/.test(viewSrc) && !/rhold: /.test(viewSrc), 'rhold is not a page key');
         assert.ok(window.NwayRing.RING.BUDGET[0] >= 6000 && !('CAP' in window.NwayRing.RING));
+
+        // one arc per module (test option): exactly one ring segment per module on each circle, ribbons still equal at both ends and one per family pair
+        for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
+            const per = build(dd, lens), one = build(dd, lens, { oneArc: true });
+            const gp = RL.geometry(per.M, { sim: RL.newSim(), nested: true, open: new Set() }), go = RL.geometry(one.M, { sim: RL.newSim(), nested: true, open: new Set() });
+            const segCount = new Map();
+            for (const e of go.els) if (e.id.startsWith('s:')) { const [, c, k] = e.id.split(':'); segCount.set(`${c}|${k}`, (segCount.get(`${c}|${k}`) || 0) + 1); }
+            assert.ok([...segCount.values()].every(n => n === 1), `${label}/${lens}: one ring segment per module per circle`);
+            for (const m of one.M.mods) for (const c of m.fams) assert.ok(segCount.has(`${c}|${m.k}`), 'every module keeps a segment on each circle it spans');
+            assert.strictEqual(go.els.filter(e => e.id.startsWith('o:')).length, gp.els.filter(e => e.id.startsWith('o:')).length, 'the same ribbons as with one arc per partner');
+            for (const r of go.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends in one-arc mode');
+            for (const m of one.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(go.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'a ribbon per family pair');
+            assert.deepStrictEqual(RL.badAttrs(go.els), [], `${label}/${lens}: finite attributes in one-arc mode`);
+            assert.ok(go.els.filter(e => e.id.startsWith('s:')).length <= gp.els.filter(e => e.id.startsWith('s:')).length, 'never more segments than per-partner');
+            // one chain below the ring per module and cluster
+            const lk = new Map();
+            for (const e of go.els) if (e.id.startsWith('l:')) lk.set(e.id, (lk.get(e.id) || 0) + 1);
+            assert.ok([...lk.values()].every(n => n === 1), 'ids are unique');
+        }
+
+        // focus mode and the pin, on a stub DOM: a hover touches only the module's own elements
+        {
+            class El {
+                constructor(tag) { this.tag = tag; this.attrs = {}; this.st = {}; this.style = { setProperty: (k, v) => (this.st[k] = v) }; this.kids = []; this.dataset = {}; this.ls = {}; this.cls = new Set(); this.parent = null; this._t = '';
+                    this.classList = { add: c => this.cls.add(c), remove: c => this.cls.delete(c), contains: c => this.cls.has(c), toggle: (c, on) => (on ? this.cls.add(c) : this.cls.delete(c)) }; }
+                setAttribute(k, v) { this.attrs[k] = String(v); } removeAttribute(k) { delete this.attrs[k]; }
+                appendChild(c) { c.parent = this; this.kids.push(c); return c; } replaceChildren(...c) { this.kids = []; c.forEach(x => this.appendChild(x)); }
+                remove() { if (this.parent) this.parent.kids = this.parent.kids.filter(k => k !== this); }
+                addEventListener(t, f) { (this.ls[t] = this.ls[t] || []).push(f); } removeEventListener() {}
+                set textContent(v) { this._t = String(v); this.kids = []; } get textContent() { return this._t; }
+                closest() { return null; } contains() { return true; }
+            }
+            const docL = {};
+            global.document = { createElementNS: (n, t) => new El(t), createElement: t => new El(t), head: new El('head'), body: new El('body'), hidden: false, getElementById: () => null,
+                addEventListener: (t, f) => (docL[t] = f), removeEventListener() {} };
+            window.addEventListener = () => {}; window.removeEventListener = () => {}; global.cancelAnimationFrame = () => {};
+            const b = build(yara, 'modules');
+            let track = '', cardShown = [];
+            const g0 = new El('g'), controls = new El('span'), host = new El('div');
+            const ring = window.NwayRing.mount({ g: g0, svg: new El('svg'), host, controls, opts: { nest: true, focus: true }, getDoc: () => yara, getR: () => b.R, getCats: () => b.C, lens: () => 'modules', getTrack: () => track, setTrack: t => (track = t), onOpt() {}, onFile() {},
+                showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
+            ring.draw();
+            const root = g0.kids[0];
+            assert.ok(root.classList.contains('ring-focus'), 'focus mode puts one class on the root');
+            const rib = root.kids.find(n => n.dataset.m !== undefined && n.tag === 'path'), k = Number(rib.dataset.m);
+            const mine = root.kids.filter(n => n.dataset.m === String(k) || (n.dataset.h || '').split(' ').includes(String(k)));
+            rib.ls.mouseenter[0]({ clientX: 0, clientY: 0 });
+            assert.ok(root.classList.contains('hlm'), 'hover fades the rest through one root class');
+            assert.deepStrictEqual(root.kids.filter(n => n.cls.has('on')).length, mine.length, 'only the module chain and its holder files are lit');
+            const card = host.kids.find(n => n.cls && n.cls.has && n.className === 'ring-card');
+            assert.ok(card && card.style.display === '' && card.kids[0].textContent.length > 0, 'the card names the focused module');
+            rib.ls.mouseleave[0]();
+            assert.ok(!root.classList.contains('hlm') && root.kids.every(n => !n.cls.has('on')), 'leaving clears it');
+            rib.ls.click[0]();
+            assert.ok(track !== '', 'a click pins the module as the table track');
+            docL.keydown({ key: 'Escape' });
+            assert.strictEqual(track, '', 'Escape clears the pin');
+            ring.destroy();
+            delete global.document; delete global.cancelAnimationFrame;
+        }
     }
     console.log('nway lineage self-check OK');
 })().catch(e => { console.error(e); process.exit(1); });

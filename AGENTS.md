@@ -187,7 +187,16 @@ current lens's groups. **A file holds a module when it has at least one of its f
 (no threshold, no control). Counts come from one pass over `rows.mask` (never
 `rowModel.held`): per module `rowsIn[family]` and `pair[x|y]`, the rows held by a file of
 both families. A cross-family segment is sized by the rows shared with its partner, so both
-ends of a ribbon are equal; a single-family module by its rows in the family. URL key `rnest`.
+ends of a ribbon are equal; a single-family module by its rows in the family. URL keys
+`rnest`, `rfocus`, `rarc` (lineage-only, stripped from table and API links).
+
+**Focus** (toolbar toggle, `rfocus=1`): hovering or pinning a module lights only its chain
+(opacity .04 for the rest, still hit-testable) through one root class and the per-module
+element index; a corner card names it with its shared functions per family pair; Escape or
+a second click clears the pin. **One arc per module** (`rarc=one`, a test): one ring segment
+per module on each circle, sized by the sum of its pair rows; its ribbons leave it as
+consecutive slots ordered by partner angle, and the lane chain below starts at that one arc.
+Default stays one segment per partner family.
 
 **Nothing is dropped.** Every module keeps its ring segment, its parent -> lane -> file chain
 and one outer ribbon per family pair it spans. A segment thinner than the scale gives is

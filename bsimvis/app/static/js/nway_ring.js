@@ -220,7 +220,7 @@
             b.fam = b.fams.length === 1 ? b.fams[0] : null;
             b.color = b.fam != null ? roots[b.fam].famCol : b.grey ? neutral : cross++ < RING.CROSS_COLORS ? b.cat.color : hsl(Math.round((cross * 137.508 + 40) % 360), 52);
         });
-        const M = { doc, N, T, roots, modeOf, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
+        const M = { doc, N, T, roots, modeOf, oneArc: !!o.oneArc, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
         M.plan = plan(M);
         M.homes = placeFamilies(M);
         M.lanePx = lanePx(M);
@@ -243,6 +243,8 @@
     // one segment (size = its rows held in the family), a cross module one per partner family (size = the rows held by a file
     // of each of the two, so both ends of a ribbon are equal). A segment thinner than the scale gives is drawn FLOOR px wide
     // (less when a ring is genuinely full); the scale shrinks until every ring fits.
+    // pixel width of a segment: each of its slots (or the segment itself) at least `floor` wide
+    const wOf = (s, q, floor) => (s.slots ? sum(s.slots, t => Math.max(t.size * q, floor)) : Math.max(s.size * q, floor));
     function plan(M) {
         const { roots, mods } = M;
         const all = [];
@@ -258,7 +260,11 @@
             for (const b of mods) {
                 if (!b.fams.includes(c)) continue;
                 if (b.fam != null) { l.push({ b, size: b.rowsIn[c], hold: new Set(b.mem.filter(i => M.famOf[i] === c)) }); continue; }
-                for (const p of b.fams) if (p !== c && !skip.has(`${b.k}|${Math.min(c, p)}|${Math.max(c, p)}`)) l.push({ b, partner: p, size: b.pairRows(c, p), hold: b.hold.get(`${c}|${p}`) || new Set() });
+                const ps = b.fams.filter(p => p !== c && !skip.has(`${b.k}|${Math.min(c, p)}|${Math.max(c, p)}`));
+                if (M.oneArc) {
+                    // one arc per module: its slots, one per partner family, tile it
+                    if (ps.length) l.push({ b, slots: ps.map(p => ({ p, size: b.pairRows(c, p) })), size: sum(ps, p => b.pairRows(c, p)), hold: new Set(ps.flatMap(p => [...(b.hold.get(`${c}|${p}`) || [])])) });
+                } else for (const p of ps) l.push({ b, partner: p, slots: [{ p, size: b.pairRows(c, p) }], size: b.pairRows(c, p), hold: b.hold.get(`${c}|${p}`) || new Set() });
             }
             l.sort((a, b2) => b2.size - a.size);
             return l;
@@ -270,14 +276,14 @@
         segs.forEach((l, c) => { const room = avail[c] - gaps[c] * l.length; if (l.length * floor > room) floor = Math.min(floor, Math.max(0.2, (0.9 * room) / l.length)); });
         let px = RING.PX_MAX;
         segs.forEach((l, c) => {
-            const room = avail[c] - gaps[c] * l.length, used = q => sum(l, s => Math.max(s.size * q, floor));
+            const room = avail[c] - gaps[c] * l.length, used = q => sum(l, s => wOf(s, q, floor));
             if (used(px) <= room) return;
             let lo = 0, hi = px;
             for (let it = 0; it < 40; it++) { const mid = (lo + hi) / 2; if (used(mid) <= room) lo = mid; else hi = mid; }
             px = lo;
         });
-        const floorHits = sum(segs, l => l.filter(s => s.size * px < floor).length);
-        return { segs, px, floor, gaps: gaps.map((g, c) => g / rg(roots[c]).ro), floorHits, ribbons: all.length - truncated, truncated };
+        const floorHits = sum(segs, l => sum(l, s => (s.slots ? s.slots.filter(t => t.size * px < floor).length : s.size * px < floor ? 1 : 0)));
+        return { segs, px, floor, w: s => wOf(s, px, floor), gaps: gaps.map((g, c) => g / rg(roots[c]).ro), floorHits, ribbons: all.length - truncated, truncated };
     }
 
     // One px-per-function for every lane: RING.LANE_W, or less when the lanes of some cluster would not fit its ring.
@@ -448,19 +454,26 @@
             }
             sim.dir[c] = prev == null ? best : prev + Math.max(-0.35, Math.min(0.35, norm(best - prev)));
             tos[c] = sim.dir[c];
-            segs[c] = pl.segs[c].map(s => ({ ...s, want: s.partner == null ? 0 : norm(angTo(cen[c], cen[s.partner]) - (tos[c] + Math.PI)) }));
+            segs[c] = pl.segs[c].map(s => {
+                if (s.slots && s.partner == null) {
+                    // one arc: faces the circular mean of the directions to its partners
+                    const ds = s.slots.map(t => [angTo(cen[c], cen[t.p]), t.size + 1]), mean = Math.atan2(sum(ds, d => d[1] * Math.sin(d[0])), sum(ds, d => d[1] * Math.cos(d[0])));
+                    return { ...s, want: norm(mean - (tos[c] + Math.PI)) };
+                }
+                return { ...s, want: s.partner == null ? 0 : norm(angTo(cen[c], cen[s.partner]) - (tos[c] + Math.PI)) };
+            });
         });
         roots.forEach((f, c) => {
-            const { ro } = rg(f), GAP = pl.gaps[c], A = s => Math.max(s * px, pl.floor) / ro;
+            const { ro } = rg(f), GAP = pl.gaps[c], A = x => pl.w(x) / ro;
             const hs = x => [...x.hold];
             const side = x => { const h = hs(x); if (!h.length) return 0; const vx = sum(h, i => Math.cos(angTo(cen[c], pos[i]))), vy = sum(h, i => Math.sin(angTo(cen[c], pos[i]))); return Math.hypot(vx, vy) / h.length < 0.25 ? 0 : norm(Math.atan2(vy, vx) - tos[c]); };
             const inner_ = segs[c].filter(x => x.b.fam != null).map(x => ({ x, s: side(x) })).sort((p, q) => p.s - q.s || q.x.size - p.x.size).map(q => q.x), cross = segs[c].filter(x => x.b.fam == null);
-            const span = sum(inner_, x => A(x.size)) + GAP * Math.max(0, inner_.length - 1);
+            const span = sum(inner_, x => A(x)) + GAP * Math.max(0, inner_.length - 1);
             let a = tos[c] - span / 2;
-            inner_.forEach(x => { x.a0 = a; x.a1 = a + A(x.size); a = x.a1 + GAP; });
+            inner_.forEach(x => { x.a0 = a; x.a1 = a + A(x); a = x.a1 + GAP; });
             const hw = Math.PI - span / 2 - GAP, mid0 = tos[c] + Math.PI;
-            cross.forEach(x => { x.w = A(x.size); x.c = Math.max(-hw + x.w / 2, Math.min(hw - x.w / 2, x.want)); });
-            const flip = x => (c < x.partner ? 1 : -1) * x.b.k;
+            cross.forEach(x => { x.w = A(x); x.c = Math.max(-hw + x.w / 2, Math.min(hw - x.w / 2, x.want)); });
+            const flip = x => (c < (x.partner ?? 0) ? 1 : -1) * x.b.k;
             cross.sort((p, q) => p.c - q.c || flip(p) - flip(q));
             for (let it = 0; it < 80; it++) {
                 for (let k = 1; k < cross.length; k++) {
@@ -479,7 +492,17 @@
 
         // outer ribbons between families (fixed orientation, every slot faces its partner)
         const slots = {};
-        segs.forEach((l, c) => l.filter(x => x.b.fam == null).forEach(x => (slots[`${x.b.k}|${c}|${x.partner}`] = [x.a0, x.a1])));
+        segs.forEach((l, c) => l.filter(x => x.b.fam == null).forEach(x => {
+            if (x.partner != null) { slots[`${x.b.k}|${c}|${x.partner}`] = [x.a0, x.a1]; return; }
+            // one arc: consecutive slots, ordered by the angle of the partner
+            const ro = rg(roots[c]).ro, mid = (x.a0 + x.a1) / 2;
+            let a = x.a0;
+            for (const t of x.slots.slice().sort((u, v) => norm(angTo(cen[c], cen[u.p]) - mid) - norm(angTo(cen[c], cen[v.p]) - mid))) {
+                const w = Math.max(t.size * px, pl.floor) / ro;
+                slots[`${x.b.k}|${c}|${t.p}`] = [a, a + w];
+                a += w;
+            }
+        }));
         for (const b of mods) {
             if (b.fam != null) continue;
             for (let u = 0; u < b.fams.length; u++) for (let v = u + 1; v < b.fams.length; v++) {
@@ -498,7 +521,8 @@
                 // width of the body: the two long edges A (x1 to y0) and B (y1 to x0) at matching parameters
                 let minW = Infinity;
                 for (let t = 0; t <= 1.0001; t += 1 / 16) { const pa = bez(x1, c1, c2, ya, t), pb = bez(yb, c3, c4, x0, 1 - t); minW = Math.min(minW, Math.hypot(pa[0] - pb[0], pa[1] - pb[1])); }
-                out.stats.ribbons.push({ k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(yb[0] - ya[0], yb[1] - ya[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
+                const mxp = ptAt(cen[X], roX, mx), myp = ptAt(cen[Y], roY, my), ccl = [mxp, cb(mxp, mx), cb(myp, my), myp];
+                out.stats.ribbons.push({ cl: ccl, k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(yb[0] - ya[0], yb[1] - ya[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
                 add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5, 'stroke-width': 0.6 }, m: b.k, drag: hk, pair: { X, Y, n: b.pairRows(X, Y) } });
             }
         }
@@ -540,7 +564,7 @@
                 const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
                 if (!light) add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 const lane = (laneOf.get(`${b.fam}|${X.id}`) || 0);
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: b.fam != null ? RING.LANE_SHADE[lane % 3] : 1 }, m: b.k, drag: key(X), lane: X.id, sk, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined });
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: b.fam != null ? RING.LANE_SHADE[lane % 3] : 1 }, m: b.k, drag: key(X), lane: X.id, sk, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 if (b.fam != null) laneOf.set(`${b.fam}|${X.id}`, lane + 1);
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp });
                 if (X.kids.length) {
@@ -579,7 +603,7 @@
             let lane = 0;
             segs[c].forEach(x => {
                 const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), a0 = x.a0 + pd, a1 = x.a1 - pd, wide = (x.a1 - x.a0) * ro > RING.SEG_STROKE + 2;
-                add(`s:${c}:${x.b.k}:${x.partner ?? ''}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: x.b.fam != null ? RING.LANE_SHADE[lane++ % 3] : 1 }, m: x.b.k, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined });
+                add(`s:${c}:${x.b.k}:${x.partner ?? ''}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: x.b.fam != null ? RING.LANE_SHADE[lane++ % 3] : 1 }, m: x.b.k, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             add(`fl:${c}`, 'text', { x: f1(tx), y: f1(ty), 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600 }, { text: `${f.label}  ${f.files.length} files`, cls: 'ring-fam', drag: `f:${f.id}` });
@@ -601,6 +625,10 @@
 .ring-root .ring-sub{fill:var(--text,#f8f8f2);opacity:.7;paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;pointer-events:none}
 .ring-root .ring-fl{fill:#fff;paint-order:stroke;stroke:rgba(0,0,0,.4);stroke-width:2px;pointer-events:none}
 .ring-root .ring-fam{fill:var(--text,#f8f8f2);paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;cursor:grab}
+.ring-root.ring-focus.hlm [data-m]:not(.on),.ring-root.ring-focus.hlm [data-h]:not(.on){opacity:.04!important}
+.ring-root.ring-focus.hlm [data-m].on{opacity:1!important}
+.ring-card{position:absolute;right:12px;top:48px;max-width:300px;padding:6px 10px;border:1px solid var(--lin-line);border-radius:8px;background:var(--lin-card);font-size:12px;pointer-events:none;z-index:2}
+.ring-card b{display:block;margin-bottom:3px}
 .ring-root [data-drag]{cursor:grab}
 .ring-root [data-m]{cursor:pointer}
 .ring-note{position:absolute;left:12px;bottom:12px;max-width:70%;padding:4px 10px;border:1px solid var(--lin-line);border-radius:8px;background:var(--lin-card);font-size:12px;opacity:.95;pointer-events:none}
@@ -618,7 +646,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
      * ctx: { g (svg group inside the zoomed world), svg (the svg element), host (the canvas div, for the note),
      *   getDoc(), getR(), getCats() -> lensCats or null, getTrack(), setTrack(tk), onFile(nodeId),
      *   showTip(ev, title, colour, rows), moveTip(ev), hideTip(), fmt, name(id), nodeColor(i), tree(), hsl(h, l), hue(i),
-     *   grey, controls (element for the buttons), opts: { nest }, onOpt({nest}), fit() }
+     *   grey, controls (element for the buttons), opts: { nest, focus, arc: 'one' | '' }, onOpt({nest, focus, arc}), fit() }
      */
     function mount(ctx) {
         ensureCss();
@@ -629,32 +657,40 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set() };
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ctx.opts.arc === 'one' ? 'one' : '' };
+        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
         // ---- controls
-        const nestBtn = document.createElement('button'), resetBtn = document.createElement('button');
-        nestBtn.type = resetBtn.type = 'button';
-        nestBtn.className = resetBtn.className = 'lin-btn';
+        const nestBtn = document.createElement('button'), resetBtn = document.createElement('button'), focusBtn = document.createElement('button'), arcBtn = document.createElement('button');
+        nestBtn.type = resetBtn.type = focusBtn.type = arcBtn.type = 'button';
+        nestBtn.className = resetBtn.className = focusBtn.className = arcBtn.className = 'lin-btn';
+        focusBtn.textContent = 'Focus';
+        focusBtn.title = 'Hover or pin a module to see only its chain';
+        arcBtn.textContent = 'One arc per module';
+        arcBtn.title = 'Test: one ring segment per module on each circle, its ribbons to the partners leave it side by side';
         nestBtn.textContent = 'Nested clusters';
         nestBtn.title = 'Show the sub-clusters of each family as circles inside it, with lanes on each level';
         resetBtn.textContent = 'Reset layout';
         resetBtn.title = 'Put every circle and ribbon back where it was computed';
-        const sync = () => nestBtn.setAttribute('aria-pressed', String(S.nested));
-        nestBtn.addEventListener('click', () => { S.nested = !S.nested; sync(); ctx.onOpt({ nest: S.nested }); S.sim.reset(); full(); ctx.fit(); });
+        const sync = () => { nestBtn.setAttribute('aria-pressed', String(S.nested)); focusBtn.setAttribute('aria-pressed', String(S.focus)); arcBtn.setAttribute('aria-pressed', String(S.arc === 'one')); root.classList.toggle('ring-focus', S.focus); };
+        nestBtn.addEventListener('click', () => { S.nested = !S.nested; sync(); ctx.onOpt(opt()); S.sim.reset(); full(); ctx.fit(); });
+        focusBtn.addEventListener('click', () => { S.focus = !S.focus; sync(); ctx.onOpt(opt()); card(); });
+        arcBtn.addEventListener('click', () => { S.arc = S.arc === 'one' ? '' : 'one'; sync(); ctx.onOpt(opt()); M = null; S.sim.reset(); full(); ctx.fit(); });
         resetBtn.addEventListener('click', () => { S.sim.reset(); S.open.clear(); full(); ctx.fit(); });
         sync();
-        ctx.controls.replaceChildren(nestBtn, resetBtn);
+        ctx.controls.replaceChildren(nestBtn, focusBtn, arcBtn, resetBtn);
 
         // ---- tooltips
-        const modTip = (ev, b, pr) => {
+        const modTip = (ev, b, pr, prs) => {
             if (!b) return;
             const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
             const lab = c => M.roots[c].label;
             ctx.showTip(ev, b.label, b.color, [
                 pr ? ['Shared', `${ctx.fmt(pr.n)} functions shared between ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)} in the module)`] : ['Functions', ctx.fmt(b.size)],
+                ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
                 ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
                 ['', 'A file holds a module when it has at least one of its functions.']]);
         };
@@ -664,13 +700,32 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
 
         // ---- hover / pin: a module's chain lights, the rest fades. The lists are made once per layout, so a hover touches only its own elements.
+        const cardEl = document.createElement('div');
+        cardEl.className = 'ring-card';
+        cardEl.style.display = 'none';
+        ctx.host.appendChild(cardEl);
+        // focus mode: the focused module's name and its shared functions per family pair
+        const card = k => {
+            const b = k == null || !S.focus ? null : mods.find(x => x.k === k);
+            if (!b) { cardEl.style.display = 'none'; return; }
+            const t = document.createElement('b');
+            t.textContent = b.label;
+            const lines = b.fam != null ? [`${ctx.fmt(b.rowsIn[b.fam])} functions in ${M.roots[b.fam].label}`] : b.fams.flatMap((x, u) => b.fams.slice(u + 1).map(y => `${ctx.fmt(b.pairRows(x, y))} shared between ${M.roots[x].label} and ${M.roots[y].label}`));
+            cardEl.replaceChildren(t, ...lines.slice(0, 12).map(l => { const d = document.createElement('div'); d.textContent = l; return d; }));
+            if (lines.length > 12) { const d = document.createElement('div'); d.textContent = `+${lines.length - 12} more pairs`; cardEl.appendChild(d); }
+            const m = document.createElement('div');
+            m.textContent = `${ctx.fmt(b.size)} functions in the module`;
+            cardEl.appendChild(m);
+            cardEl.style.display = '';
+        };
         const act = k => {
+            card(k);
             root.classList.add('hlm');
             const b = mods.find(x => x.k === k);
             root.style.setProperty('--hc', b ? b.color : 'var(--accent)');
             for (const n of [...(byMod.get(k) || []), ...(holdEls.get(k) || [])]) { n.classList.add('on'); lit.push(n); }
         };
-        const clear = () => { root.classList.remove('hlm'); for (const n of lit) n.classList.remove('on'); lit = []; };
+        const clear = () => { card(null); root.classList.remove('hlm'); for (const n of lit) n.classList.remove('on'); lit = []; };
         const pinned = () => { const t = ctx.getTrack(); const b = t && mods.find(x => x.tk === t); return b ? b.k : null; };
         const rest = () => { clear(); const p = pinned(); if (p != null) act(p); };
         const index = () => {
@@ -688,7 +743,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.m !== undefined) {
                 node.dataset.m = String(e.m);
                 node.style.cursor = 'pointer';
-                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair); });
+                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
                 node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
@@ -760,10 +815,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!doc) { M = null; return; }
             let h = 0;
             if (R) for (let r = 0; r < R.n; r++) h = (h * 31 + (R.match(r) ? 1 : 0)) | 0;
-            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
+            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
-            M = buildModel(doc, R, C, { hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
+            M = buildModel(doc, R, C, { oneArc: S.arc === 'one', hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
         }
 
@@ -819,6 +874,9 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX)) return;
             raf = requestAnimationFrame(step);
         }
+        // Escape clears the pin
+        const onKey = ev => { if (ev.key === 'Escape' && pinned() != null) ctx.setTrack(''); };
+        document.addEventListener('keydown', onKey);
         const onVis = () => { if (!document.hidden && S.sim.drag) run(); };
         ctx.svg.addEventListener('pointerdown', down);
         window.addEventListener('pointermove', move);
@@ -842,6 +900,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 window.removeEventListener('pointermove', move);
                 window.removeEventListener('pointerup', up);
                 document.removeEventListener('visibilitychange', onVis);
+                document.removeEventListener('keydown', onKey);
+                cardEl.remove();
                 document.body.classList.remove('ring-dragging');
                 ctx.controls.replaceChildren();
                 root.remove(); note.remove();

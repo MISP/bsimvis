@@ -4,7 +4,7 @@
  * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
- * ring {nest, focus, arc, min, list, tier, bundle}, onRing(state)), onNode(node) (true when it took the click: no dock),
+ * ring {nest, arc, min, list, tier, bundle}, onRing(state)), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no

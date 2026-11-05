@@ -188,7 +188,7 @@ current lens's groups. **A file holds a module when it has at least one of its f
 `rowModel.held`): per module `rowsIn[family]` and `pair[x|y]`, the rows held by a file of
 both families. A cross-family segment is sized by the rows shared with its partner, so both
 ends of a ribbon are equal; a single-family module by its rows in the family. URL keys
-`rnest`, `rfocus`, `rarc`, `rmin` (lineage-only, stripped from table and API links).
+`rnest`, `rarc`, `rmin` (lineage-only, stripped from table and API links, as is a legacy `rfocus`).
 
 **Min size gate** (toolbar select, `rmin` in percent, default 0.5, 0 = off): the one deliberate
 exception to "nothing is dropped". A module (lane) whose own rows in the lens group, before
@@ -198,21 +198,18 @@ left out of everything (segments, ribbons, lanes, fans, colours) and never merge
 means the same everywhere. The canvas note and the select's title always say how many modules
 are hidden and how many are shown. Scale and floor widths are computed after the gate.
 
-**Focus** (toolbar toggle, `rfocus=1`): hovering or pinning a module lights only its chain
-(opacity .04 for the rest, still hit-testable) through one root class and the per-module
-element index; a corner card names it with its shared functions per family pair; Escape or
-a second click clears the pin. **Toolbar.** The Ring controls use the lineage page's own switches: `.lin-seg` groups of buttons with
-`aria-pressed` (on/off switches are two buttons, Off / On), never selects. Visible: Focus, Min size
+**Toolbar.** The Ring controls use the lineage page's own switches: `.lin-seg` groups of buttons with
+`aria-pressed` (on/off switches are two buttons, Off / On), never selects. Visible: Min size
 (Off, 0.25 ... 5%), Reset layout and a "More" `.lin-btn` (`aria-expanded`). Behind "More" (a row that
 wraps below): Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list (the lens chip legend, hidden by default). More
 starts open when the URL carries a non-default advanced key. Defaults: Arcs = grouped, Min size 0.5%,
-Focus off, Nested on, Module list off; a key equal to its default stays out of the URL
-(`rarc`, `rnest`, `rfocus`, `rmin`, `rlist`, `rtier`, `rbundle`), and none of them reaches the table or API links.
+Nested on, Module list off; a key equal to its default stays out of the URL
+(`rarc`, `rnest`, `rmin`, `rlist`, `rtier`, `rbundle`; a legacy `rfocus` is stripped too), and none of them reaches the table or API links.
 
 **Tier buckets** (More row, `rtier=hide`, default Show): in the Lanes lens the server's `tier` / `fold`
 groups that hold rows of their own (rows in no lane) are buckets (`b.bucket`): neutral grey (the one
 exception to the lens-colour rule), fainter and thinner than lanes, drawn behind them, labelled
-"<Tier>: rows in no lane" / "slim lanes folded". They take part in hover, pin and Focus. Hide removes
+"<Tier>: rows in no lane" / "slim lanes folded". They take part in hover and pin. Hide removes
 them like the Min size gate (never merged into "other") and the canvas note counts them. The switch is
 disabled on lenses without tier groups.
 

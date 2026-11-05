@@ -34,9 +34,9 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'region,role', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', rnest: '1', rfocus: '', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '' };
-        // rnest, rfocus, rarc: the Ring view's nested clusters, focus mode and one-arc test (lineage-only keys, like lview)
-        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'];
+        const D = { q: '', scope: 'code', tab: 'all', group: 'region,role', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '' };
+        // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview)
+        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'];
         const q = new URLSearchParams(window.location.search);
         // `order` is the table's column order and passes through; an old link's order=tree|chain|star is the layout
         const legacy = ['tree', 'chain', 'star'].includes(q.get('order')) ? q.get('order') : '';
@@ -95,7 +95,7 @@ window.NwayLineageView = {
             if (u.get('order') !== 'lineage') u.delete('order');
             if (st.root) u.set('root', st.root); else u.delete('root');
             for (const k of KEYS) if (st[k] !== String(D[k] ?? '')) u.set(k, st[k]); else u.delete(k);
-            u.delete('rhold');
+            u.delete('rhold'); u.delete('rfocus');
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
         };
 
@@ -138,7 +138,7 @@ window.NwayLineageView = {
         // columns it auto-opened); a filter or column change refetches the tree
         const fromTable = () => {
             const p = this._panel, s = p.state, u = p._lineageQs(), cur = new URLSearchParams(window.location.search);
-            for (const k of ['layout', 'lview', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
+            for (const k of ['layout', 'lview', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
             for (const k of ['q', 'scope', 'tab', 'group', 'columns', 'track']) st[k] = String(s[k] ?? D[k] ?? '');
             st.column = s.column || '';
@@ -153,7 +153,7 @@ window.NwayLineageView = {
             const u = new URLSearchParams(window.location.search), source = {}, state = {};
             for (const k of ['md5s', 'batch_uuid', 'collection', 'pool', 'cluster_uuid', 'axis']) if (u.get(k)) source[k] = u.get(k);
             for (const k of Object.keys(window.NwayPanel.DEFAULTS)) if (u.has(k)) state[k] = u.get(k);
-            for (const k of KEYS) if (u.has(k) && !['lview', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'].includes(k)) state[k] = u.get(k);
+            for (const k of KEYS) if (u.has(k) && !['lview', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'].includes(k)) state[k] = u.get(k);
             this._panel = new window.NwayPanel(panelHost, {
                 source, state,
                 lean: true,
@@ -210,8 +210,8 @@ window.NwayLineageView = {
                     lens: lensOf(st.group),
                     track: st.track,
                     view: chartView(),
-                    ring: { nest: st.rnest !== '0', focus: st.rfocus === '1', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0' },
-                    onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rfocus = o.focus ? '1' : ''; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; writeUrl(); },
+                    ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0' },
+                    onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page
                     onGroup: (what, tk) => {

@@ -801,10 +801,6 @@
 .ring-root .ring-sub{fill:var(--text,#f8f8f2);opacity:.7;paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;pointer-events:none}
 .ring-root .ring-fl{fill:#fff;paint-order:stroke;stroke:rgba(0,0,0,.4);stroke-width:2px;pointer-events:none}
 .ring-root .ring-fam{fill:var(--text,#f8f8f2);paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;cursor:grab}
-.ring-root.ring-focus.hlm [data-m]:not(.on),.ring-root.ring-focus.hlm [data-h]:not(.on){opacity:.04!important}
-.ring-root.ring-focus.hlm [data-m].on{opacity:1!important}
-.ring-card{position:absolute;right:12px;top:48px;max-width:300px;padding:6px 10px;border:1px solid var(--lin-line);border-radius:8px;background:var(--lin-card);font-size:12px;pointer-events:none;z-index:2}
-.ring-card b{display:block;margin-bottom:3px}
 .ring-root [data-drag]{cursor:grab}
 .ring-root [data-m]{cursor:pointer}
 .ring-note{position:absolute;left:12px;bottom:12px;max-width:70%;padding:4px 10px;border:1px solid var(--lin-line);border-radius:8px;background:var(--lin-card);font-size:12px;opacity:.95;pointer-events:none}
@@ -823,7 +819,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
      *   getDoc(), getR(), getCats() -> lensCats or null, getTrack(), setTrack(tk), onFile(nodeId),
      *   showTip(ev, title, colour, rows), moveTip(ev), hideTip(), fmt, name(id), nodeColor(i), tree(), hsl(h, l), hue(i),
      *   grey, controls (the always-visible controls), controls2 (the row behind "More"),
-     *   opts: { nest, focus, arc: 'partner' | 'group' | 'one', min (percent), list }, onOpt({nest, focus, arc, min, list}), fit() }
+     *   opts: { nest, arc: 'partner' | 'group' | 'one', min (percent), list }, onOpt({nest, arc, min, list}), fit() }
      */
     function mount(ctx) {
         ensureCss();
@@ -834,8 +830,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
-        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
+        const opt = () => ({ nest: S.nested, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
@@ -866,8 +862,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
         const segs = [], paintSegs = () => segs.forEach(f => f());
         const onOff = (label, tip, get, set) => seg(label, tip, [[false, 'Off'], [true, 'On']], get, set);
-        const applyOpt = rebuild => { ctx.onOpt(opt()); root.classList.toggle('ring-focus', S.focus); if (rebuild) { M = null; S.sim.reset(); full(); ctx.fit(); } };
-        const focusSeg = onOff('Focus', 'Hover or pin a module to see only its chain', () => S.focus, v => { S.focus = v; applyOpt(false); card(); });
+        const applyOpt = rebuild => { ctx.onOpt(opt()); if (rebuild) { M = null; S.sim.reset(); full(); ctx.fit(); } };
         const minSeg = seg('Min size', 'Hide modules and lanes with fewer functions than this share of all functions in the set.', RING.MIN_OPTS.map(v => [v, v ? `${v}%` : 'Off']), () => S.min, v => { S.min = v; applyOpt(true); });
         if (!RING.MIN_OPTS.includes(S.min)) S.min = RING.MIN_PCT;
         const resetBtn = document.createElement('button');
@@ -891,10 +886,9 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list || S.tier === 'hide' || S.bundle !== RING.BUNDLE_DEFAULT;
         const syncMore = () => { moreBtn.setAttribute('aria-expanded', String(more)); chev.className = `fa-solid fa-chevron-${more ? 'up' : 'down'}`; ctx.controls2.style.display = more ? 'flex' : 'none'; };
         moreBtn.addEventListener('click', () => { more = !more; syncMore(); });
-        ctx.controls.replaceChildren(focusSeg, minSeg, resetBtn, moreBtn);
+        ctx.controls.replaceChildren(minSeg, resetBtn, moreBtn);
         ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
         ctx.controls2.setAttribute('style', `display:${more ? 'flex' : 'none'};flex:0 0 100%;flex-wrap:wrap;gap:8px 10px;align-items:center`);
-        root.classList.toggle('ring-focus', S.focus);
         syncMore();
 
         // ---- tooltips
@@ -916,32 +910,13 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
 
         // ---- hover / pin: a module's chain lights, the rest fades. The lists are made once per layout, so a hover touches only its own elements.
-        const cardEl = document.createElement('div');
-        cardEl.className = 'ring-card';
-        cardEl.style.display = 'none';
-        ctx.host.appendChild(cardEl);
-        // focus mode: the focused module's name and its shared functions per family pair
-        const card = k => {
-            const b = k == null || !S.focus ? null : mods.find(x => x.k === k);
-            if (!b) { cardEl.style.display = 'none'; return; }
-            const t = document.createElement('b');
-            t.textContent = b.label;
-            const lines = b.fam != null ? [`${ctx.fmt(b.rowsIn[b.fam])} functions in ${M.roots[b.fam].label}`] : b.fams.flatMap((x, u) => b.fams.slice(u + 1).map(y => `${ctx.fmt(b.pairRows(x, y))} shared between ${M.roots[x].label} and ${M.roots[y].label}`));
-            cardEl.replaceChildren(t, ...lines.slice(0, 12).map(l => { const d = document.createElement('div'); d.textContent = l; return d; }));
-            if (lines.length > 12) { const d = document.createElement('div'); d.textContent = `+${lines.length - 12} more pairs`; cardEl.appendChild(d); }
-            const m = document.createElement('div');
-            m.textContent = `${ctx.fmt(b.size)} functions in the module`;
-            cardEl.appendChild(m);
-            cardEl.style.display = '';
-        };
         const act = k => {
-            card(k);
             root.classList.add('hlm');
             const b = mods.find(x => x.k === k);
             root.style.setProperty('--hc', b ? b.color : 'var(--accent)');
             for (const n of [...(byMod.get(k) || []), ...(holdEls.get(k) || [])]) { n.classList.add('on'); lit.push(n); }
         };
-        const clear = () => { card(null); root.classList.remove('hlm'); for (const n of lit) n.classList.remove('on'); lit = []; };
+        const clear = () => { root.classList.remove('hlm'); for (const n of lit) n.classList.remove('on'); lit = []; };
         const pinned = () => { const t = ctx.getTrack(); const b = t && mods.find(x => x.tk === t); return b ? b.k : null; };
         const rest = () => { clear(); const p = pinned(); if (p != null) act(p); };
         const index = () => {
@@ -1123,7 +1098,6 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 window.removeEventListener('pointerup', up);
                 document.removeEventListener('visibilitychange', onVis);
                 document.removeEventListener('keydown', onKey);
-                cardEl.remove();
                 document.body.classList.remove('ring-dragging');
                 ctx.controls.replaceChildren();
                 ctx.controls2.replaceChildren();

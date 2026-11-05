@@ -65,7 +65,7 @@ window.NwayLineageView = {
             const res = await fetch(`/api/bin_sim/nway/lineage?${apiQs(extra).toString()}`, { signal: AbortSignal.timeout(180000) });
             const doc = await res.json();
             // a server without Same code lineage answers 400 "needs file columns": fall back to files
-            if (res.status === 400 && cols() === 'twins' && /columns/.test(doc.message || doc.error || '')) { twinsOk = false; renderBar(null); return get(extra); }
+            if (res.status === 400 && cols() === 'twins' && /columns/.test(doc.message || doc.error || '')) { twinsOk = false; if (this._panel) { this._panel.fileModes = ['files']; this._panel.render(); } return get(extra); }
             if (!res.ok) throw new Error(doc.message || doc.error || `HTTP ${res.status}`);
             return doc;
         };
@@ -83,14 +83,10 @@ window.NwayLineageView = {
             layoutSel.append(o);
         }
         const rootSel = mk('select', { 'aria-label': 'Lineage root file' });
-        const back = mk('a', { class: 'lin-btn', title: 'Back to the N-way diff table, with the same filters, lens and track' }, '← N-way table');
-        back.style.textDecoration = 'none';
         const backHref = () => {
             const bq = NL.tableQs(window.location.search);
             return window.NwayPanel ? window.NwayPanel.backUrl(bq) : `/diff/nway?${bq.toString()}`;
         };
-        back.href = backHref();
-        back.addEventListener('click', e => { if (window.Nav) window.Nav.openPath(back.getAttribute('href'), e); });
 
         const writeUrl = () => {
             const u = new URLSearchParams(window.location.search);
@@ -99,7 +95,6 @@ window.NwayLineageView = {
             if (st.root) u.set('root', st.root); else u.delete('root');
             for (const k of KEYS) if (st[k] !== String(D[k] ?? '')) u.set(k, st[k]); else u.delete(k);
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
-            back.href = backHref();
         };
 
         // ---- Tree | Tracks | Split ----
@@ -112,79 +107,20 @@ window.NwayLineageView = {
             return { v, b };
         });
 
-        // ---- the table's filter row: search, code axis, row tabs with counts, merge files, lens tabs ----
-        const bar = mk('div', { class: 'lin-vars lin-tb lin-filters' });
-        const sbox = mk('div', { class: 'search-input-wrapper nway-search' });
-        const search = mk('input', { type: 'text', placeholder: 'Search functions', 'aria-label': 'Search functions' });
-        search.value = st.q;
-        sbox.append(mk('i', { class: 'fa-solid fa-magnifying-glass' }), search);
-        const seg = (label, opts, key) => {
-            const g = mk('div', { class: 'lin-seg', role: 'group', 'aria-label': label });
-            const btns = opts.map(([v, t, icon]) => {
-                const b = mk('button', { type: 'button' });
-                if (icon) b.append(mk('i', { class: `fa-solid ${icon}`, style: 'margin-right:4px' }));
-                b.append(document.createTextNode(t));
-                const n = mk('span', { class: 'lin-n' });
-                b.append(n);
-                b.addEventListener('click', () => { if (st[key] === v) return; st[key] = v; writeUrl(); renderBar(null); load(); });
-                g.append(b);
-                return { v, b, n };
-            });
-            return { g, btns };
-        };
-        const scope = seg('Code axis', [['code', 'Code', 'fa-code'], ['library', 'Library', 'fa-cubes'], ['all', 'All', 'fa-layer-group']], 'scope');
-        const tabs = seg('Functions', [['all', 'All'], ['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']], 'tab');
-        const merge = mk('select', { 'aria-label': 'Merge files' });
-        for (const [v, t] of [['files', 'None'], ['twins', 'Same code']]) merge.append(mk('option', { value: v }, t));
-        merge.addEventListener('change', () => { st.columns = merge.value; st.root = ''; writeUrl(); load(); });
-        const lenses = mk('div', { class: 'bsim-tabbar nway-lenses', role: 'tablist', 'aria-label': 'Lens' });
+        // ---- the table's own controls (NwayPanel, lean): search, filters, code axis, tabs, merge files, lenses.
+        // The panel owns the filter state; the chart sits in its stage slot, under the controls. ----
         const status = mk('span', { class: 'lin-dim' });
-        bar.append(sbox, mk('span', { class: 'lin-dim' }, 'Show'), scope.g, tabs.g, mk('span', { class: 'lin-dim' }, 'Merge files'), merge, lenses, status);
-        search.addEventListener('input', () => {
-            clearTimeout(this._typing);
-            this._typing = setTimeout(() => { st.q = search.value.trim(); writeUrl(); load(); }, 350);
-        });
-        let lastDoc = null;
-        const renderBar = doc => {
-            if (doc) lastDoc = doc;
-            const c = (lastDoc && lastDoc.counts) || null;
-            for (const x of scope.btns) x.b.setAttribute('aria-pressed', String(st.scope === x.v));
-            for (const x of tabs.btns) {
-                x.b.setAttribute('aria-pressed', String(st.tab === x.v));
-                const n = c && c[x.v] ? (st.scope === 'library' ? c[x.v].library : st.scope === 'all' ? c[x.v].code + c[x.v].library : c[x.v].code) : null;
-                x.n.textContent = n == null ? '' : Number(n).toLocaleString();
-            }
-            // the table's search (split) shows up here, but never under the user's typing
-            if (document.activeElement !== search) search.value = st.q;
-            merge.value = cols();
-            merge.options[1].disabled = !twinsOk;
-            merge.options[1].title = twinsOk ? '' : 'This server builds lineage over files only';
-            // without the row list only Deltas (the lineage's own colouring) is offered
-            const rich = !!(lastDoc && lastDoc.rows);
-            const cur = rich ? lensOf(st.group) : 'deltas';
-            lenses.replaceChildren();
-            for (const [k, label, group, icon] of NL.LENSES) {
-                if (!rich && k !== 'deltas') continue;
-                const b = mk('button', { type: 'button', role: 'tab', class: `bsim-tab${k === cur ? ' active' : ''}`, 'aria-selected': String(k === cur) });
-                b.append(mk('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${label}`));
-                // a lens is the table's groups for its preset: refetched, the tree stays
-                b.addEventListener('click', () => { st.group = group; writeUrl(); renderBar(null); load(); });
-                lenses.append(b);
-            }
-        };
-        renderBar(null);
-
         host.replaceChildren();
+        const panelHost = mk('div', { class: 'nway-view nway-fill' });
+        panelHost.style.cssText = 'flex:1;min-height:0;padding:0 12px';
         const wrap = mk('div');
         wrap.style.cssText = 'flex:1;min-height:0;width:100%;position:relative;display:flex;flex-direction:column;overflow:hidden';
         const chart = mk('div');
-        // split: the real N-way table under the tree (nway-view / nway-fill: the table page's own layout rules)
-        const table = mk('div', { class: 'nway-view nway-fill' });
-        table.style.cssText = 'flex:1;min-height:0;padding:6px 12px;border-top:1px solid var(--border)';
+        chart.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0';
         const msg = mk('div', {}, 'Loading lineage...');
         msg.style.cssText = 'padding:20px;color:var(--dim)';
-        host.append(bar, wrap);
-        wrap.append(chart, table);
+        host.append(panelHost);
+        wrap.append(chart);
         chart.append(msg);
 
         const setTrack = t => {
@@ -193,7 +129,9 @@ window.NwayLineageView = {
             if (this._inst) this._inst.setTrack(t);
             if (this._panel) this._panel.setTrack(t);
         };
-        // split: the table's state is the page's (URL), read the way its Lineage tab hands it over (with the
+        const split = () => st.lview === 'split';
+        let started = false;
+        // the panel's state is the page's (URL), read the way its Lineage tab hands it over (with the
         // columns it auto-opened); a filter or column change refetches the tree
         const fromTable = () => {
             const p = this._panel, s = p.state, u = p._lineageQs(), cur = new URLSearchParams(window.location.search);
@@ -201,38 +139,38 @@ window.NwayLineageView = {
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
             for (const k of ['q', 'scope', 'tab', 'group', 'columns', 'track']) st[k] = String(s[k] ?? D[k] ?? '');
             st.column = s.column || '';
-            back.href = backHref();
-            renderBar(null);
+            if (!started) return;
             const stale = apiQs().toString() !== loadedQs;
-            if (this._inst) { if (!stale) this._inst.setLens(lensOf(st.group)); this._inst.setTrack(st.track); this._inst.select(st.column); }
+            if (this._inst) { if (!stale) this._inst.setLens(lensOf(st.group)); this._inst.setTrack(st.track); this._inst.select(split() ? st.column : null); }
             if (stale) load();
         };
-        const mountTable = () => {
+        let ready;
+        const stageReady = new Promise(r => { ready = r; });
+        const mountPanel = () => {
             const u = new URLSearchParams(window.location.search), source = {}, state = {};
             for (const k of ['md5s', 'batch_uuid', 'collection', 'pool', 'cluster_uuid', 'axis']) if (u.get(k)) source[k] = u.get(k);
             for (const k of Object.keys(window.NwayPanel.DEFAULTS)) if (u.has(k)) state[k] = u.get(k);
-            const inner = mk('div');
-            inner.style.cssText = 'flex:1;min-height:0;display:flex;flex-direction:column';
-            table.replaceChildren(inner);
-            this._panel = new window.NwayPanel(inner, {
+            for (const k of KEYS) if (u.has(k) && k !== 'lview') state[k] = u.get(k);
+            this._panel = new window.NwayPanel(panelHost, {
                 source, state,
+                lean: true,
+                noTable: !split(),
+                fileModes: ['files', 'twins'],
+                backHref,
+                // the chart is re-parented into the slot after every render of the controls
+                onStage: slot => { (slot || panelHost).append(wrap); ready(); },
                 onState: fromTable,
                 onData: fromTable,
-                onTrack: t => setTrack(t),
+                onTrack: t => { if (t !== st.track) setTrack(t); },
                 onRowHover: row => { if (this._inst) this._inst.hover(row); },
             });
             this._panel.load();
         };
         const applyView = () => {
             for (const x of viewBtns) x.b.setAttribute('aria-pressed', String(st.lview === x.v));
-            const split = st.lview === 'split' && !!window.NwayPanel;
-            // the table brings its own filter row
-            bar.style.display = split ? 'none' : '';
-            chart.style.cssText = `display:flex;flex-direction:column;${split ? 'flex:none;height:42%;min-height:360px' : 'flex:1;min-height:0'}`;
-            table.style.display = split ? '' : 'none';
-            if (split && !this._panel) mountTable();
-            if (!split && this._panel) { this._panel.destroy(); this._panel = null; table.replaceChildren(); }
-            if (this._inst) { this._inst.setView(st.lview === 'tracks' ? 'tracks' : 'tree'); this._inst.select(split ? st.column : null); }
+            wrap.classList.toggle('lin-split', split());
+            if (this._panel) this._panel.setTable(split());
+            if (this._inst) { this._inst.setView(st.lview === 'tracks' ? 'tracks' : 'tree'); this._inst.select(split() ? st.column : null); }
         };
 
         let seq = 0, loadedQs = '';
@@ -247,7 +185,7 @@ window.NwayLineageView = {
                 if (tok !== this._tok || my !== seq) return;
                 status.textContent = '';
                 if (this._inst) { this._inst.destroy(); this._inst = null; }
-                chart.replaceChildren(back, views);
+                chart.replaceChildren(views);
                 const m = mk('div', {}, `${err.message || err}${cols() === 'twins' ? ' (Same code merged the files: try Merge files: None.)' : ''}`);
                 m.style.cssText = 'padding:20px;color:#f92672';
                 chart.append(m);
@@ -261,11 +199,10 @@ window.NwayLineageView = {
                 o.selected = n.id === st.root;
                 rootSel.append(o);
             }
-            renderBar(doc);
             if (!this._inst) {
                 chart.replaceChildren();
                 this._inst = NL.mount(chart, {
-                    toolbar: [back, views, layoutSel, rootSel],
+                    toolbar: [views, layoutSel, rootSel, status],
                     fetchFile: id => get({ file: id }),
                     lens: lensOf(st.group),
                     track: st.track,
@@ -273,7 +210,7 @@ window.NwayLineageView = {
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page
                     onGroup: (what, tk) => {
-                        const p = this._panel;
+                        const p = split() ? this._panel : null;
                         if (!p) return false;
                         if (what === 'graph') p.laneGraph(tk);
                         else setTrack(tk);
@@ -282,7 +219,7 @@ window.NwayLineageView = {
                     onTrack: t => { st.track = t; writeUrl(); if (this._panel) this._panel.setTrack(t); },
                     // split: a node is the table's column filter (a second click clears it), not the dock
                     onNode: n => {
-                        if (!this._panel) return false;
+                        if (!split()) return false;
                         this._panel._set({ column: st.column === n.id ? '' : n.id, offset: 0 });
                         return true;
                     },
@@ -291,11 +228,14 @@ window.NwayLineageView = {
             for (const w of doc.warnings || []) console.warn('lineage:', w);
             doc.scope = st.scope;
             this._inst.setDoc(doc, lensOf(st.group));
-            if (this._panel) this._inst.select(st.column);
+            if (split()) this._inst.select(st.column);
         };
         layoutSel.addEventListener('change', () => { st.layout = layoutSel.value; writeUrl(); load(); });
         rootSel.addEventListener('change', () => { st.root = rootSel.value; writeUrl(); load(); });
+        mountPanel();
         applyView();
+        await stageReady;
+        started = true;
         await load();
     },
 };

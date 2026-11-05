@@ -127,6 +127,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-code{max-height:55vh;overflow:auto;margin-top:6px}
 .lin-root button:focus-visible,.lin-root select:focus-visible,.lin-root input:focus-visible{outline:2px solid var(--accent,#66d9ef);outline-offset:2px}
 .lin-tb{flex:none}
+.lin-zoom{position:absolute;right:12px;top:10px;z-index:3;background:var(--lin-card)}
+.lin-root>.lin-tb{padding:4px 0}
+.nway-lean{flex:1;min-height:0;display:flex;flex-direction:column}
+.nway-stage{flex:1;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--border)}
+.nway-lean.has-table .nway-stage{flex:none;height:42%;min-height:360px}
 .lin-body{flex:1;min-height:0;display:flex}
 .lin-body>.lin-canvas{min-width:0}
 .lin-glist{flex:none;width:300px;max-width:45%;overflow:auto;border-right:1px solid var(--lin-line);padding:6px 8px;background:var(--lin-card)}
@@ -720,8 +725,16 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         zbtn('Fit', 'Fit the whole chart', () => fit(true));
         zbtn('100%', 'Actual size', () => s.transition().duration(250).call(zoom.scaleTo, 1));
         zbtn('Selection', 'Zoom to the selected or last hovered file, edge or reuse arc', () => zoomToSel());
-        tb.append(search, hits, btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
-            btn('Expand all', 'Show every file', () => { st.collapsed = new Set(); rebuild(); }), reuseBtn, zgrp);
+        // chart-only tools: one popover (as the table's Filter), zoom floating over the canvas
+        const chartPop = el('details', { class: 'nway-pop' }), chartBody = el('div', { class: 'nway-match-body' });
+        const chartSum = el('summary', { class: 'nway-chip', title: 'Collapse or expand the tree, show the reuse layer' });
+        chartSum.append(el('i', { class: 'fa-solid fa-diagram-project' }), document.createTextNode(' Chart'));
+        chartBody.append(btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
+            btn('Expand all', 'Show every file', () => { st.collapsed = new Set(); rebuild(); }), reuseBtn);
+        chartPop.append(chartSum, chartBody);
+        zgrp.classList.add('lin-zoom');
+        canvas.append(zgrp);
+        tb.append(search, hits, chartPop);
         const trackBox = el('span', { style: 'display:contents' }), legendBox = el('span', { style: 'display:contents' });
         tb.append(trackBox, legendBox);
         const deepAll = () => {
@@ -978,19 +991,23 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
         // true when it picked the biggest group itself (that setTrack already redrew everything)
         function groupList() {
-            side.hidden = st.view !== 'tracks';
+            const tracks = st.view === 'tracks';
+            // the left pane lists the groups in every view; tree view just does not pick one for you
+            side.hidden = !tracks && !st.R;
             side.replaceChildren();
             if (side.hidden) return false;
             if (!st.R) { side.append(el('div', { class: 'lin-dim' }, 'This server sends no row list: groups need it.')); return false; }
             const list = groupRows();
-            if (!st.track && list.length) { setTrack(list.filter(x => x.leaf).sort((a, b) => b.rows.length - a.rows.length)[0].tk); return true; }
-            const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Group view' });
-            for (const [v, t] of [[false, 'One group'], [true, 'Small multiples']]) {
-                const b = el('button', { type: 'button', 'aria-pressed': String(st.multi === v) }, t);
-                b.addEventListener('click', () => { st.multi = v; groupList(); multiples(); });
-                seg.append(b);
+            if (tracks && !st.track && list.length) { setTrack(list.filter(x => x.leaf).sort((a, b) => b.rows.length - a.rows.length)[0].tk); return true; }
+            if (tracks) {
+                const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Group view' });
+                for (const [v, t] of [[false, 'One group'], [true, 'Small multiples']]) {
+                    const b = el('button', { type: 'button', 'aria-pressed': String(st.multi === v) }, t);
+                    b.addEventListener('click', () => { st.multi = v; groupList(); multiples(); });
+                    seg.append(b);
+                }
+                side.append(seg);
             }
-            side.append(seg);
             const tg = trackedGroup();
             if (tg) side.append(groupCard(tg.x, tg.C));
             for (const { c, rows, tk } of list) {

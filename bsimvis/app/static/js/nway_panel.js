@@ -155,6 +155,13 @@
             this.onSlot = opts.onSlot || null;
             this.onTrack = opts.onTrack || null;
             this.onRowHover = opts.onRowHover || null;
+            // The lineage page's shared controls: no lineage link, order, rows toggle or stats; `noTable` skips the
+            // table (one-row fetch); `onStage(el)` gets the slot between the controls and the table to park the chart in.
+            this.lean = !!opts.lean;
+            this.noTable = !!opts.noTable;
+            this.onStage = opts.onStage || null;
+            this.backHref = opts.backHref || null;
+            this.fileModes = opts.fileModes || null;
             this.data = null;
             this.error = null;
             this._gen = 0;
@@ -293,6 +300,13 @@
             }
         }
 
+        // The lineage page: show or hide the table under the stage.
+        setTable(on) {
+            if (this.noTable === !on) return;
+            this.noTable = !on;
+            this.load();
+        }
+
         // Light another tracked item; no reload, the track is not an API param.
         setTrack(track) {
             this.state.track = track || '';
@@ -349,7 +363,7 @@
             if (!append) this._openQ = qs.get('col_open');
             if (this.state.view === 'strings') ['group', 'group_merge', 'group_open', 'group_flip'].forEach(k => qs.delete(k));
             // After opening or closing a group, reload as many rows as were on screen.
-            qs.set('limit', this.cgInit || this.state.view === 'strings' ? 1 : (this._keep || PAGE));
+            qs.set('limit', this.cgInit || this.noTable || this.state.view === 'strings' ? 1 : (this._keep || PAGE));
             this._keep = 0;
             if (scroll) qs.set('offset', append ? this.data.items.length : 0);
             if (!this.data) this.el.innerHTML = '<div class="nway-state"></div>';
@@ -657,11 +671,11 @@
             const sec = (title, body) => `<div class="nway-more-sec"><span class="nway-sech">${title}</span><div class="nway-more-row">${body}</div></div>`;
             const moreBtn = `<button type="button" class="nway-chip${this._moreOpen ? ' on' : ''}" data-more-toggle title="Matching, row groups, focus, stats and the file set"><i class="fa-solid fa-sliders"></i> More options <span class="dim">${escapeHtml(moreSum)}</span> <i class="fa-solid fa-chevron-${this._moreOpen ? 'up' : 'down'}"></i></button>`;
             const more = !this._moreOpen ? '' : `<div class="nway-more-body">
-                ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${stats}${inl}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
+                ${this._famOn() ? sec('Family filters', this._slider('Cover at least', 'cover_min', Number(s.cover_min) || 0, 0, 1, 0.05, 'Keep rows held by at least this share of the family files.') + this._slider('Leak at most', 'leak_max', s.leak_max === '' ? 1 : Number(s.leak_max), 0, 1, 0.05, 'Keep rows held by at most this share of the contrast files.')) : ''}${sec('Matching', match)}${sec('Row groups', parts.rows)}${sec('View', `${this._focusBox()}${shared}${this.lean ? '' : stats + inl}`)}${this.onSlot ? sec('File set', '<div data-more-slot></div>') : ''}</div>`;
             // Compare and Family are rarely used: both live in the ... menu, lit while either is on.
             const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}${this.data && this.data.large ? '<div><button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>' : ''}</div></details>`;
             return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._trackChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
-                <div class="nway-bar">${axisDd}${this._viewDd()}${s.view === 'strings' ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
+                <div class="nway-bar">${axisDd}${this.lean ? '' : this._viewDd()}${s.view === 'strings' && !this.lean ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
         }
 
         // Small function filter: feature and support bounds the server already applies (feat_min / feat_max / support_min).
@@ -704,7 +718,7 @@
             // Merge files by: None = one column per file, Cluster = child clusters (a cluster node only), Same code = twins.
             const fileOpts = [['files', 'None', 'One column per file.'], ...(this.source.cluster_uuid || d.shared_cluster ? [['children', 'Cluster', 'One column per child cluster; open a column to show its own children, down to files.']] : []), ['twins', 'Same code', "Files that hold a function in exactly the same shared rows become one column. Click a column's count to show its files; a function only some of them hold shows as a partly filled square."], ['by', 'Metadata', 'One column per value of a file field or tag namespace (collection, batch, architecture, a tag family...). Click a column to show its files.']];
             const fileColors = { files: 'var(--dim, #888)', children: 'var(--info, #3b82f6)', twins: 'var(--success)', by: 'var(--warning, #d97706)' };
-            const fileDd = this._dd('Merge files', fileOpts.map(([v, text, tip]) => [v, text, FILE_ICONS[v], fileColors[v], undefined, tip]), fileMode, 'How files share a column.', v => (v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`));
+            const fileDd = this._dd('Merge files', fileOpts.filter(o => !this.fileModes || this.fileModes.includes(o[0])).map(([v, text, tip]) => [v, text, FILE_ICONS[v], fileColors[v], undefined, tip]), fileMode, 'How files share a column.', v => (v === 'by' ? 'data-pick-by' : `data-set="columns:${v}"`));
             const axisOpts = (this._axes || []).map(a => [a.key, a.values ? `${a.key} (${a.values})` : a.key]);
             if (s.col_by && !axisOpts.some(([k]) => k === s.col_by)) axisOpts.push([s.col_by, s.col_by]);
             const entry = (this._axes || []).find(a => a.key === s.col_by), picked = this._pickList();
@@ -713,7 +727,7 @@
             const abCtl = by && !s.col_set && this._ab() && s.tab === 'unique' ? this._seg('Unique to', 'side', [['', 'Both'], ['a', d.columns[0].label], ['b', d.columns[1].label]], 'Unique tab only: functions in one column and not the other.') : '';
             const byCtl = !by ? '' : s.col_set ? `<span class="dim nway-bnote">compared queries</span><button class="nway-blink" data-cmp-clear>clear</button><a class="nway-blink" title="Write a YARA rule: group A must match, the others must not" href="/yara?${new URLSearchParams({ collection: (this._cmp.scope().collection || ''), cmp: this.state.cmp }).toString()}" onclick="Nav.openPath(this.href, event)">Write YARA</a>` : `${sel('col_by', s.col_by, axisOpts)}${s.col_by.startsWith('tag:') ? sel('col_by_multi', s.col_by_multi || 'first', [['first', 'Most shared tag'], ['all', 'Every tag']]) : ''}${this._seg('Holds when', 'col_presence', [['', 'Half'], ['any', 'Any'], ['all', 'All']], 'A column holds a function when this share of its files do: any one, half (default) or all.')}${pickCtl}${abCtl}`;
             // Column order: the usual one, or the lineage tree's (files and twins only).
-            const orderDd = fileMode === 'files' || fileMode === 'twins' ? this._dd('Order', [['', 'Default', 'fa-solid fa-arrow-down-1-9', 'var(--dim, #888)', undefined, 'The usual column order.'], ['lineage', 'Lineage', 'fa-solid fa-sitemap', 'var(--info, #3b82f6)', undefined, 'Columns in lineage-tree order, each parent before its children, with the tree drawn over the column heads. The Deltas lens then groups rows by the column they were born in.']], s.order || '', 'How the file columns are ordered.', v => `data-set="order:${v}"`) : '';
+            const orderDd = !this.lean && (fileMode === 'files' || fileMode === 'twins') ? this._dd('Order', [['', 'Default', 'fa-solid fa-arrow-down-1-9', 'var(--dim, #888)', undefined, 'The usual column order.'], ['lineage', 'Lineage', 'fa-solid fa-sitemap', 'var(--info, #3b82f6)', undefined, 'Columns in lineage-tree order, each parent before its children, with the tree drawn over the column heads. The Deltas lens then groups rows by the column they were born in.']], s.order || '', 'How the file columns are ordered.', v => `data-set="order:${v}"`) : '';
             return {
                 files: `${fileDd}${twinNote ? `<span class="dim nway-bnote">${twinNote}</span>` : ''}${orderDd}`,
                 byRow: by || this._byErr ? `<div class="nway-byrow">${byCtl}${valueChips}${this._byErr ? `<span class="dim nway-bnote">${escapeHtml(this._byErr)}</span>` : ''}</div>` : '',
@@ -751,7 +765,7 @@
         _columnChip() {
             const id = this.state.column, file = id && this._files().find(f => f.id === id), col = file || (id && this.data.columns.find(c => c.id === id));
             if (!col) return '';
-            const show = '<button type="button" class="nway-chip" data-lineage title="Open the lineage page on this column, with the same filters"><i class="fa-solid fa-sitemap"></i> Show in lineage</button>';
+            const show = this.lean ? '' : '<button type="button" class="nway-chip" data-lineage title="Open the lineage page on this column, with the same filters"><i class="fa-solid fa-sitemap"></i> Show in lineage</button>';
             return `<button class="nway-chip on" data-clear="column" title="drop the file filter">Only ${file ? this._fileNameLink(file) : escapeHtml(this._colLabel(col))} &times;</button>${show}`;
         }
 
@@ -2850,7 +2864,8 @@
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
-            const lineage = `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
+            const back = this.backHref ? `<a class="bsim-tab nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
+            const lineage = this.lean ? back : `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             if (this.state.view === 'strings') return `<div class="bsim-tabbar nway-lenses" role="tablist">${lineage}</div>`;
             const cur = this.state.group || '';
             const icons = { modules: 'fa-diagram-project', core: 'fa-bullseye', deltas: 'fa-code-compare', lanes: 'fa-layer-group', triage: 'fa-list-ol' };
@@ -3264,6 +3279,7 @@
             this._renderPanel();
             this._paintTrack();
             this._nameLanes();
+            if (this.onStage) this.onStage(this.el.querySelector('[data-stage]'));
             if (this.onSlot) {
                 const actions = this.el.querySelector('[data-actions]');
                 this.onSlot(this.el.querySelector('[data-more-slot]'), actions);
@@ -3283,12 +3299,17 @@
                 this._mountGate();
                 return;
             }
-            if (this.state.view === 'strings') return this._renderStrings();
+            if (this.state.view === 'strings' && !this.lean) return this._renderStrings();
             const d = this.data;
+            const stage = this.onStage ? '<div class="nway-stage" data-stage></div>' : '';
+            if (this.noTable) {
+                this.el.innerHTML = `<div class="nway-panel nway-lean">${this._controls()}${this._notes()}${stage}</div>`;
+                return;
+            }
             const rows = this._rows(d.items, 0);
             const off = Number(d.offset), total = Number(d.total);
             const scroll = window.Paging.mode() === 'scroll';
-            this.el.innerHTML = `<div class="nway-panel">${this._controls()}${this._notes()}${d.group_note ? `<div class="nway-note warn">${escapeHtml(d.group_note)}</div>` : ''}
+            this.el.innerHTML = `<div class="nway-panel${this.lean ? ' nway-lean has-table' : ''}">${this._controls()}${this._notes()}${d.group_note ? `<div class="nway-note warn">${escapeHtml(d.group_note)}</div>` : ''}${stage}
                 <div class="nway-card table-scope">
                     <div class="nway-body">${this._legend()}
                     <div class="nway-scroll">

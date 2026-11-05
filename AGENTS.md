@@ -184,6 +184,13 @@ answers 400 for children (old server, no shared cluster). Opening a cluster node
 Node check: `node scripts/test_nway_lineage.js`; the service self-check: `uv run python -I
 bsimvis/app/services/nway_lineage_service.py`.
 
+**Default view.** With no `lview` in the URL and no remembered pick (`localStorage` `nway.lview`; the Ring's
+settings are `nway.ring`; a URL param always wins) the page chooses once its doc is here, before the first
+draw: `NwayRing.autoView(doc)` = Ring with at least `RING.AUTO.FAMILIES` (3) families, or `FILES` (30)
+files in at least `FILES_FAMILIES` (2) families (the "Other files" family never counts), else Tree. The
+automatic choice is not written to the URL or remembered. The table's Lineage button (among its controls) opens
+the page in the remembered view; the page's back link always goes to the N-way table (`NwayPanel.tableUrl`).
+
 ### Ring view (`lview=ring`)
 
 `static/js/nway_ring.js` (`window.NwayRing`) draws clusters of files as circles, the modules

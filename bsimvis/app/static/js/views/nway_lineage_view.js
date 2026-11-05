@@ -47,6 +47,8 @@ window.NwayLineageView = {
             get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
             set: (k, v2) => { try { localStorage.setItem(k, v2); } catch (e) { /* ignore */ } },
         };
+        // no lview in the URL and no remembered pick: the page chooses once the doc is here (Ring.autoView), and never stores it
+        st.auto = !q.has('lview') && !store.get('nway.lview');
         let mem = {};
         try { mem = JSON.parse(store.get('nway.ring') || '{}') || {}; } catch (e) { mem = {}; }
         for (const k of KEYS) st[k] = q.has(k) ? q.get(k) : RING_KEYS.includes(k) && typeof mem[k] === 'string' ? mem[k] : k === 'lview' && store.get('nway.lview') ? store.get('nway.lview') : String(D[k] ?? '');
@@ -108,7 +110,7 @@ window.NwayLineageView = {
             if (st.layout !== 'tree') u.set('layout', st.layout); else u.delete('layout');
             if (u.get('order') !== 'lineage') u.delete('order');
             if (st.root) u.set('root', st.root); else u.delete('root');
-            for (const k of KEYS) if (st[k] !== String(D[k] ?? '')) u.set(k, st[k]); else u.delete(k);
+            for (const k of KEYS) if (st[k] !== String(D[k] ?? '') && !(k === 'lview' && st.auto)) u.set(k, st[k]); else u.delete(k);
             u.delete('rhold'); u.delete('rfocus');
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
         };
@@ -118,7 +120,7 @@ window.NwayLineageView = {
         const viewBtns = [['tree', 'Tree', 'fa-sitemap', 'The lineage tree'], ['tracks', 'Tracks', 'fa-route', 'Follow one group of the lens through the tree, or six at once'], ['split', 'Split', 'fa-table-columns', 'A compact tree over the N-way table, linked both ways'], ['ring', 'Ring', 'fa-circle-nodes', 'Clusters of files as circles, the modules they hold as rings, shared modules as ribbons']].map(([v, t, icon, title]) => {
             const b = mk('button', { type: 'button', title });
             b.append(mk('i', { class: `fa-solid ${icon}`, style: 'margin-right:4px' }), document.createTextNode(t));
-            b.addEventListener('click', () => { if (st.lview === v) return; st.lview = v; store.set('nway.lview', v); writeUrl(); applyView(); });
+            b.addEventListener('click', () => { if (st.lview === v && !st.auto) return; st.auto = false; st.lview = v; store.set('nway.lview', v); writeUrl(); applyView(); });
             views.append(b);
             return { v, b };
         });
@@ -233,6 +235,7 @@ window.NwayLineageView = {
                 o.selected = n.id === st.root;
                 rootSel.append(o);
             }
+            if (!this._inst && st.auto && window.NwayRing) { st.lview = window.NwayRing.chooseView('', '', doc).view; applyView(); }
             if (!this._inst) {
                 chart.replaceChildren();
                 this._inst = NL.mount(chart, {

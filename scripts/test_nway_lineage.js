@@ -618,6 +618,29 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const vs = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
             assert.ok(/for \(const g of n\.path \|\| \[\]\) open\.add\(g\.id\)/.test(vs) && /get\(\{ col_open: colOpen \}\)/.test(vs) && /history\.replaceState\(history\.state, '', `\$\{window\.location\.pathname\}\?\$\{u\.toString\(\)\}`\)/.test(vs) && /u\.set\('col_open', colOpen\)/.test(vs), 'openNodes sends the open groups plus the ids and writes col_open into the URL');
         }
+        // the default view: Ring for many builds in several clusters, Tree for one family or a few builds; URL and remembered picks win
+        {
+            const NR = window.NwayRing, mkDoc = sizes => ({ nodes: sizes.flatMap((n, f) => Array.from({ length: n }, (_, i) => ({ id: `a:file:${f}_${i}`, file_name: `f${f}_${i}`, functions: 10, path: f < 0 ? [] : [{ id: `g${f}`, label: `G${f}` }] }))), edges: [] });
+            const noPath = { nodes: Array.from({ length: 5 }, (_, i) => ({ id: `a:file:o${i}`, file_name: `o${i}`, functions: 10, path: [] })), edges: [] };
+            assert.strictEqual(NR.autoView(mkDoc([12])), 'tree', 'one family: tree');
+            assert.strictEqual(NR.autoView(mkDoc([4, 3, 2])), 'ring', 'three families: ring');
+            assert.strictEqual(NR.autoView(d), 'ring', 'the synthetic fixture has three families');
+            assert.strictEqual(NR.autoView(yara), 'ring', 'six families: ring');
+            assert.strictEqual(NR.autoView(mkDoc([15, 15])), 'ring', 'thirty files in two families: ring');
+            assert.strictEqual(NR.autoView(mkDoc([10, 10])), 'tree', 'two small families: tree');
+            assert.strictEqual(NR.autoView({ nodes: [...mkDoc([10, 10]).nodes, ...noPath.nodes], edges: [] }), 'tree', 'the Other files family does not count');
+            const R = NR.RING.AUTO;
+            assert.deepStrictEqual([R.FAMILIES, R.FILES, R.FILES_FAMILIES], [3, 30, 2], 'the constants live in RING.AUTO');
+            assert.deepStrictEqual(NR.chooseView('', '', yara), { view: 'ring', auto: true });
+            assert.deepStrictEqual(NR.chooseView('', '', mkDoc([5])), { view: 'tree', auto: true });
+            assert.deepStrictEqual(NR.chooseView('tracks', 'ring', yara), { view: 'tracks', auto: false }, 'an explicit URL view wins');
+            assert.deepStrictEqual(NR.chooseView('', 'tree', yara), { view: 'tree', auto: false }, 'a remembered pick wins over auto');
+            assert.deepStrictEqual(NR.chooseView('bogus', 'nope', mkDoc([12])), { view: 'tree', auto: true }, 'unknown values are ignored');
+            const vs2 = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
+            assert.ok(/st\.auto = !q\.has\('lview'\) && !store\.get\('nway\.lview'\)/.test(vs2) && /chooseView\('', '', doc\)\.view; applyView\(\); \}\n\s+if \(!this\._inst\) \{/.test(vs2), 'the choice is made after the fetch and before the first draw');
+            assert.ok(/!\(k === 'lview' && st\.auto\)/.test(vs2), 'an automatic choice is not written to the URL');
+        }
+
         // navigation: the lineage page goes back to the N-way TABLE (a cluster_uuid stays a plain param); the table's Lineage button remembers the view
         {
             const panelSrc = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_panel.js', 'utf8'), viewS = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');

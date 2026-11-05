@@ -30,6 +30,7 @@
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
         OUTWARD_KEEP: 0.4, // share of a ring kept free on its outward side (away from the other clusters); cross-family arcs use the rest
         BUNDLE_DEFAULT: true, // ribbons between two clusters drawn as one bundle of stripes
+        AUTO: { FAMILIES: 3, FILES: 30, FILES_FAMILIES: 2 }, // the page opens in the Ring with at least FAMILIES families, or FILES files in at least FILES_FAMILIES families (the "Other files" family does not count)
         BUCKET_FADE: 0.45, // opacity of the tier buckets next to real lanes
         ARC_DEFAULT: 'group', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
@@ -812,6 +813,19 @@
         return bad;
     }
 
+    // The view the page opens in when nobody picked one: Ring for many builds in several clusters, else Tree.
+    function autoView(doc) {
+        const fams = clusterTree(doc).roots.filter(f => !f.other), files = sum(fams, f => f.files.length), A = RING.AUTO;
+        return fams.length >= A.FAMILIES || (fams.length >= A.FILES_FAMILIES && files >= A.FILES) ? 'ring' : 'tree';
+    }
+    // URL lview wins, then the remembered pick, then the rule above (auto: true, never stored)
+    function chooseView(urlView, remembered, doc) {
+        const ok = v => ['tree', 'tracks', 'split', 'ring'].includes(v);
+        if (ok(urlView)) return { view: urlView, auto: false };
+        if (ok(remembered)) return { view: remembered, auto: false };
+        return { view: autoView(doc), auto: true };
+    }
+
     // ---------------------------------------------------------------- mount
     const CSS = `
 .ring-root.hlm [data-m]:not(.on),.ring-root.hlm [data-h]:not(.on){opacity:.1!important}
@@ -1236,5 +1250,5 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
     }
 
-    window.NwayRing = { mount, RING, _layout: { RING, lcaNode, clusterTree, modulesOf, buildModel, plan, placeFamilies, geometry, newSim, badAttrs, rg, band } };
+    window.NwayRing = { mount, autoView, chooseView, RING, _layout: { RING, lcaNode, clusterTree, modulesOf, buildModel, plan, placeFamilies, geometry, newSim, badAttrs, rg, band } };
 })();

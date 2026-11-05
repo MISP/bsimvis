@@ -13,6 +13,7 @@ const window = {};
 new Function('window', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_colors.js', 'utf8'))(window);
 new Function('window', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_groups.js', 'utf8'))(window);
 new Function('window', src)(window);
+new Function('window', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_ring.js', 'utf8'))(window);
 const { buildModel, layout, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } = window.NwayLineage._layout;
 
 // A (root) > B > D, A > C. Rows: r0 everywhere, r1 A+B, r2 B+D, r3 C, r4 A+C, r5 D.
@@ -165,5 +166,108 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
     // the lineage page asks for the same lane under another id: answered from the cache
     assert.strictEqual(await NG.nameLanes([{ ...lane, id: 'tier:core/lane:1100' }], () => true, n => got.push(n['tier:core/lane:1100'])), 'ready');
     assert.deepStrictEqual([posts, got], [1, ['udp flood', 'udp flood']], 'a lane named once is not asked again');
+    // --- Ring view (nway_ring.js): pure layout ------------------------------------------------------
+    {
+        const RL = window.NwayRing._layout, RING = window.NwayRing.RING;
+        // 12 files in three families (A: two sub-clusters of 3, B: 4 files, C: 2 files); lanes are the modules
+        const fam = ['A', 'A', 'A', 'A', 'A', 'A', 'B', 'B', 'B', 'B', 'C', 'C'], sub = ['a1', 'a1', 'a1', 'a2', 'a2', 'a2', '', '', '', '', '', ''];
+        const rdoc = withPath => {
+            const nodes = fam.map((f, i) => ({ id: `s:file:${i}`, file_name: `f${i}`, functions: 40, members: [`s:file:${i}`],
+                path: withPath ? [{ id: `fam:${f}`, label: `Family ${f}` }, ...(sub[i] ? [{ id: `sub:${sub[i]}`, label: sub[i] }] : [])] : [] }));
+            const edges = nodes.slice(1).map((n, i) => ({ parent: nodes[i].id, child: n.id, similarity: fam[i] === fam[i + 1] ? 0.9 : 0.1, gained: 1, lost: 1, shared: 5, recall_suspect: 0 }));
+            const masks = [];
+            const add = (idx, n) => { let m = 0n; for (const i of idx) m |= 1n << BigInt(i); for (let k = 0; k < n; k++) masks.push(m.toString(16)); };
+            add([0, 1, 2, 3, 4, 5], 12); add([0, 1, 2], 8); add([3, 4, 5], 7); add([6, 7, 8, 9], 9); add([10, 11], 6);
+            add([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 14); add([3, 4, 5, 10, 11], 10); add([6, 7, 8, 9, 10, 11], 5); add([0], 3);
+            return { root: nodes[0].id, nodes, edges, partitions: [], reuse: [], rows: { n: masks.length, mask: masks, fid: masks.map((_, r) => `f${r}`), name: masks.map((_, r) => `fn${r}`), role: masks.map(() => 'logic'), region: masks.map(() => null), library: masks.map(() => false), weight: masks.map(() => 1), match: null }, regions: {} };
+        };
+        const build = (d, lens, o = {}) => {
+            const LM = buildModel(d, new Set()), R = rowModel(d, LM), C = lensCats(d, R, lens);
+            return { R, C, M: RL.buildModel(d, R, C, { hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, tree: window.NwayColors.tree(d.nodes.map(n => ({ id: n.id, path: n.path }))), nodeColor: () => '#888', ...o }) };
+        };
+        const draw = (M, nested = true, sim = RL.newSim(), mode) => ({ sim, g: RL.geometry(M, { sim, nested, open: new Set() }, mode == null ? {} : { mode }) });
+        const d = rdoc(true);
+        // clusters from node.path: three families, A nested in two sub-clusters
+        const { M } = build(d, 'lanes');
+        assert.deepStrictEqual(M.roots.map(f => [f.label, f.files.length, f.kids.length]), [['Family A', 6, 2], ['Family B', 4, 0], ['Family C', 2, 0]]);
+        // every view and lens: no NaN / undefined / Infinity in any attribute
+        for (const lens of ['modules', 'core', 'lanes', 'triage', 'deltas']) for (const nested of [true, false]) {
+            const b = build(d, lens), g = draw(b.M, nested).g;
+            assert.deepStrictEqual(RL.badAttrs(g.els), [], `${lens} nested=${nested}: finite attributes`);
+            assert.ok(g.els.every(e => e.id), 'every element has an id');
+        }
+        const g = draw(M).g, nodeOf = id => M.byId.get(id) || [...M.byId.values()].find(c => c.id === id);
+        // outer ribbons: equal width at both ends, no pinch at the default layout
+        assert.ok(g.stats.ribbons.length > 0, 'the cross-family lanes make ribbons');
+        for (const r of g.stats.ribbons) {
+            assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'both ends have the same arc width');
+            assert.ok(Math.abs(r.wX - r.wY) < 0.05 * Math.max(r.wX, r.wY, 1), 'and the same chord');
+            assert.ok(r.minW >= 0.75 * Math.max(r.wX, r.wY), `narrowest point ${r.minW.toFixed(1)} of ${r.wX.toFixed(1)}`);
+        }
+        // lanes: one feeding ribbon each, all lanes of a ring inside 85% of it
+        const lanes = g.els.filter(e => e.id.startsWith('l:')), ups = g.els.filter(e => e.id.startsWith('u:'));
+        assert.ok(lanes.length > 0);
+        for (const l of lanes) assert.strictEqual(ups.filter(u => u.m === l.m && u.lane === l.lane).length, 1, `lane ${l.id} has one feeding ribbon`);
+        const perNode = new Map();
+        for (const l of g.stats.lanes) perNode.set(l.node, (perNode.get(l.node) || 0) + l.w);
+        for (const [n, w] of perNode) assert.ok(w <= RING.LANE_FIT * 2 * Math.PI + 1e-6, `lanes of ${n} fit`);
+        assert.ok(g.stats.laneFit >= 0.99, 'one lane scale fits every ring without a squeeze');
+        // no ribbon skips a level: a lane on a sub-cluster is fed from its parent (a family ring segment, or the parent's lane)
+        for (const u of ups) {
+            const c = M.byId.get(u.lane), src = u.src;
+            assert.ok(c && c.parent && c.parent.id === src, `${u.id} comes from the parent level`);
+        }
+        const inner = g.els.filter(e => e.id.startsWith('i:'));
+        assert.ok(inner.length > 0 && inner.every(e => { const c = M.byId.get(e.drag.slice(2)); return c && (!c.kids.length); }), 'ribbons to files start at a cluster without sub-clusters');
+        // nesting off: ring straight to the files, no lanes
+        const flat = draw(M, false).g;
+        assert.strictEqual(flat.els.filter(e => /^[lu]:/.test(e.id)).length, 0, 'no lanes without nesting');
+        assert.ok(flat.els.filter(e => e.id.startsWith('i:')).every(e => e.drag.startsWith('f:/fam:') || e.drag.startsWith('f:/other')), 'fans start at the family circle');
+        assert.ok(flat.els.filter(e => e.id.startsWith('c:')).length === 3, 'only the families are circles');
+        // drag: sub-clusters and files keep their offsets to the family, families keep apart
+        const dr = draw(M), A = M.roots[0], key = `f:${A.id}`, p = dr.sim.pts[key];
+        dr.sim.drag = { key, px: p.hx + 220, py: p.hy - 90, gx: 0, gy: 0 };
+        for (let i = 0; i < 40; i++) { dr.sim.tick(); RL.geometry(M, { sim: dr.sim, nested: true, open: new Set() }); }
+        dr.sim.drag = null;
+        let left = 0;
+        for (let i = 0; i < 400 && (left = dr.sim.tick()) > RING.SETTLE; i++) RL.geometry(M, { sim: dr.sim, nested: true, open: new Set() });
+        assert.ok(left <= RING.SETTLE, 'the motion settles');
+        for (const k of A.kids) { const q = dr.sim.pts[`f:${k.id}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a sub-cluster keeps its offset'); }
+        for (const i of A.files) { const q = dr.sim.pts[`n:${i}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a file keeps its offset'); }
+        const after = RL.geometry(M, { sim: dr.sim, nested: true, open: new Set() });
+        for (let u = 0; u < 3; u++) for (let v = u + 1; v < 3; v++) {
+            const a = after.cen[u], b = after.cen[v];
+            assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) >= RL.rg(M.roots[u]).ro + RL.rg(M.roots[v]).ro + RING.FAM_GAP - 1, 'families keep their spacing');
+        }
+        // pushing family A onto B moves B away
+        const d2 = draw(M), pa = d2.sim.pts[key], b0 = M.homes[1];
+        d2.sim.drag = { key, px: b0[0], py: b0[1], gx: 0, gy: 0 };
+        for (let i = 0; i < 30; i++) { d2.sim.tick(); RL.geometry(M, { sim: d2.sim, nested: true, open: new Set() }); }
+        const f2 = RL.geometry(M, { sim: d2.sim, nested: true, open: new Set() });
+        assert.ok(Math.hypot(f2.cen[0][0] - f2.cen[1][0], f2.cen[0][1] - f2.cen[1][1]) >= RL.rg(M.roots[0]).ro + RL.rg(M.roots[1]).ro + RING.FAM_GAP - 1, 'a dragged family does not sit on another');
+        void pa;
+        // no node.path: the lineage edges are cut at weak similarity (A, B, C stay apart; singletons join Other files)
+        const np = build(rdoc(false), 'lanes').M;
+        assert.ok(!np.T.hasPath && np.roots.length >= 2, 'clusters without node.path');
+        assert.deepStrictEqual(np.roots.map(f => f.files.length).slice(0, 2), [6, 4]);
+        // the holder rule: one pass over the masks; a file holds a module when it has HOLD_MIN of the best holder's rows
+        const mc = build(d, 'lanes');
+        const mods = RL.modulesOf(mc.R, mc.C, d.nodes.length, { hold: 0.5 });
+        assert.strictEqual(mods.reduce((a, m) => a + m.size, 0), d.rows.n, 'every row is in one module');
+        assert.deepStrictEqual(mods.find(m => m.size === 12).mem, [0, 1, 2, 3, 4, 5], 'a lane is held by exactly its files');
+        // degrade ladder: above the budget, no ribbons to single files; above the second one, clusters and family ribbons only
+        const rows = g.els.length, inner0 = inner.length;
+        const light = draw(M, true, RL.newSim(), 1).g, lean = draw(M, true, RL.newSim(), 2).g;
+        assert.ok(light.els.length < rows && light.els.every(e => !e.id.startsWith('i:')) && light.els.some(e => e.id.startsWith('l:')), 'mode 1: lanes stay, fans to files go');
+        assert.ok(lean.els.every(e => !/^[iunl]:/.test(e.id)) && lean.els.some(e => e.id.startsWith('o:')), 'mode 2: clusters, rings and family ribbons');
+        assert.strictEqual(M.modeOf(true).mode, 0, 'a small set draws everything');
+        const saved = RING.BUDGET.slice();
+        RING.BUDGET[0] = 10; RING.BUDGET[1] = 100000;
+        assert.strictEqual(M.modeOf(true).mode, 1); RING.BUDGET[1] = 20;
+        assert.strictEqual(M.modeOf(true).mode, 2);
+        RING.BUDGET[0] = saved[0]; RING.BUDGET[1] = saved[1];
+        void inner0;
+        void nodeOf;
+    }
     console.log('nway lineage self-check OK');
 })().catch(e => { console.error(e); process.exit(1); });

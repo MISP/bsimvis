@@ -19,12 +19,12 @@
     const TAU = 2 * Math.PI;
     // every tuned number of the view
     const RING = {
-        HOLD_MIN: 0.5, // a file holds a module when it has this share of the module's functions
+        HOLD_MIN: 0.5, // a file holds a module when it has this share of what the best holder has
         HOLD_OPTS: [0.25, 0.5, 0.75, 1],
         DEPTH: 3, DEPTH_BIG: 2, BIG_FILES: 120, // cluster levels drawn; fewer above BIG_FILES files
         LEAF_MAX: 24, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 12, // families beyond this many merge into "Other files"
-        CUT: [0.5, 0.75, 0.9], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
+        CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
         R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, // circle radius a + b*sqrt(files)
         RI: 6, RM: 14, RO: 22, // ring radii beyond the circle: inner, centre, outer
         SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, CAP: 14, MIN_SEG_PX: 14, SEG_STROKE: 12, // ring segments
@@ -35,7 +35,8 @@
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
-        LIGHT: 1500, // elements above which a drag draws clusters and ribbons only
+        BUDGET: [1200, 2500], // estimated elements above which the drawing gets lighter: no per-file fans; clusters and family ribbons only
+        FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 33, // a redraw loop stops after this many frames or ms; at most 30 frames a second
         MIN_FILL: [0.09, 0.12, 0.16],
     };
 
@@ -162,19 +163,27 @@
     // module when at least `hold` of the module's matching rows are in it.
     function modulesOf(R, C, N, o = {}) {
         const hold = o.hold ?? RING.HOLD_MIN, K = C.cats.length, at = new Map(C.cats.map((c, i) => [c.key, i]));
-        const size = new Uint32Array(K), cnt = new Uint32Array(K * N), gOf = new Int32Array(R.n).fill(-1);
+        const size = new Uint32Array(K), cnt = new Uint32Array(K * N);
+        // one pass over the row masks: rows of each group, and how many of them each file holds
         for (let r = 0; r < R.n; r++) {
             if (!R.match(r)) continue;
             const g = at.get(C.of(r));
             if (g == null) continue;
-            gOf[r] = g;
             size[g]++;
+            const h = R.mask[r] || '', base = g * N;
+            for (let j = h.length - 1, i0 = 0; j >= 0; j--, i0 += 4) {
+                const v = parseInt(h[j], 16) || 0;
+                if (!v) continue;
+                for (let b = 0; b < 4; b++) if ((v >> b) & 1 && i0 + b < N) cnt[base + i0 + b]++;
+            }
         }
-        for (let i = 0; i < N; i++) for (const r of R.held[i]) if (gOf[r] >= 0) cnt[gOf[r] * N + i]++;
         const mods = [];
         C.cats.forEach((c, g) => {
             if (!size[g]) return;
-            const need = Math.max(1, Math.ceil(hold * size[g] - 1e-9)), mem = [];
+            // relative to the best holder, so a group spread over many files (a role, a band) still has holders
+            let top = 0;
+            for (let i = 0; i < N; i++) top = Math.max(top, cnt[g * N + i]);
+            const need = Math.max(1, Math.ceil(hold * top - 1e-9)), mem = [];
             for (let i = 0; i < N; i++) if (cnt[g * N + i] >= need) mem.push(i);
             if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, grey: !!o.grey && c.color === o.grey, get label() { return this.cat.label; } });
         });
@@ -203,10 +212,26 @@
             b.fam = b.fams.length === 1 ? b.fams[0] : null;
             b.color = b.fam != null ? roots[b.fam].famCol : !b.grey && cross++ < RING.CROSS_COLORS ? b.cat.color : neutral;
         });
-        const M = { doc, N, T, roots, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), hold: o.hold ?? RING.HOLD_MIN, nodeColor: o.nodeColor || (() => '#888') };
+        const M = { doc, N, T, roots, modeOf, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), hold: o.hold ?? RING.HOLD_MIN, nodeColor: o.nodeColor || (() => '#888') };
         M.plan = plan(M);
         M.homes = placeFamilies(M);
+        M.lanePx = lanePx(M);
         return M;
+    }
+
+    // estimated elements of a full drawing, and the lighter mode that keeps it under RING.BUDGET:
+    // 0 everything, 1 no per-file ribbons, 2 clusters, rings and family ribbons only
+    function modeOf(nested) {
+        const M = this, nCl = nested ? M.byId.size : M.roots.length;
+        let pairs = 0, fans = 0, lanes = 0;
+        for (const b of M.mods) {
+            if (b.fam == null) pairs += (b.fams.length * (b.fams.length - 1)) / 2;
+            fans += b.mem.length;
+            lanes += nested ? 2 * Math.min(b.mem.length, nCl) : 0;
+        }
+        const segs = sum(M.plan.segs, l => l.length), base = 2 * nCl + segs + pairs + M.N * 2;
+        const est = base + lanes + fans;
+        return { est, mode: est > RING.BUDGET[1] ? 2 : est > RING.BUDGET[0] ? 1 : 0 };
     }
 
     // the radii of a family's rings
@@ -258,6 +283,20 @@
         return { segs, px };
     }
 
+    // One px-per-function for every lane: RING.LANE_W, or less when the lanes of some cluster would not fit its ring.
+    function lanePx(M) {
+        let px = RING.LANE_W;
+        const kept = M.plan.segs.flat().filter(x => !x.b.other);
+        for (const n of M.byId.values()) {
+            if (n.level < 1) continue;
+            const here = new Set(n.files), fed = kept.filter(x => x.b.mem.some(i => here.has(i)));
+            if (!fed.length) continue;
+            const rp = n.r + RING.LANE_OFF, tot = sum(fed, x => x.size);
+            px = Math.min(px, (RING.LANE_FIT * TAU * rp - fed.length * RING.LANE_GAP * rp) / tot);
+        }
+        return Math.max(px, 1e-4);
+    }
+
     // Home of each family: a short stress relaxation, pairs that share more sit closer.
     function placeFamilies(M) {
         const { roots, mods } = M, n = roots.length, ro = roots.map(f => rg(f).ro);
@@ -292,7 +331,7 @@
     // keeps what was moved. geometry() registers the points of each frame (d), who follows whom, and the constraint.
     function newSim() {
         const sim = {
-            pts: {}, dir: {}, links: [], cons: null, drag: null, moved: false,
+            pts: {}, dir: {}, orient: {}, links: [], cons: null, drag: null, moved: false,
             begin() { this.links = []; this.cons = null; },
             d(key, hx, hy) { const p = this.pts[key] || (this.pts[key] = { dx: 0, dy: 0, vx: 0, vy: 0, ldx: 0, ldy: 0, qx: 0, qy: 0 }); p.hx = hx; p.hy = hy; return [p.dx, p.dy]; },
             follow(child, parent, rate) { this.links.push([child, parent, rate]); },
@@ -324,7 +363,7 @@
                 for (const k of ks) { const p = this.pts[k]; p.ldx = p.dx; p.ldy = p.dy; }
                 return e;
             },
-            reset() { this.pts = {}; this.dir = {}; },
+            reset() { this.pts = {}; this.dir = {}; this.orient = {}; },
         };
         return sim;
     }
@@ -333,7 +372,8 @@
     // One frame as a flat element list [{id, tag, a (attributes), s (style), m (module k), h (modules a file holds), drag, ...}]
     // in drawing order. S: { sim, nested, open: Set of leaf cluster ids drawn open, pin (module k) }, o: { light }.
     function geometry(M, S, o = {}) {
-        const { roots, mods } = M, sim = S.sim, nested = S.nested !== false, light = !!o.light, open = S.open || new Set();
+        const { roots, mods } = M, sim = S.sim, nested = S.nested !== false, open = S.open || new Set();
+        const mode = o.mode ?? M.modeOf(nested).mode, light = mode >= 1, lean = mode >= 2;
         const nF = roots.length, pl = M.plan, px = pl.px;
         const els = [];
         sim.begin();
@@ -381,7 +421,7 @@
                 for (let u = 0; u < nF; u++) for (let v = u + 1; v < nF; v++) {
                     const A = k[u], B = k[v], dx = B.hx + B.dx - A.hx - A.dx, dy = B.hy + B.dy - A.hy - A.dy, dist = Math.hypot(dx, dy) || 1, min = rg(roots[u]).ro + rg(roots[v]).ro + RING.FAM_GAP;
                     if (dist >= min) continue;
-                    const push = min - dist, ux = dx / dist, uy = dy / dist, aFix = dragged === `f:${roots[u].id}`, bFix = dragged === `f:${roots[v].id}`, sa = bFix ? 0.85 : aFix ? 0.15 : 0.5, sb = 1 - sa;
+                    const push = min - dist, ux = dist === 1 && !dx && !dy ? 1 : dx / dist, uy = dist === 1 && !dx && !dy ? 0 : dy / dist, aFix = dragged === `f:${roots[u].id}`, bFix = dragged === `f:${roots[v].id}`, sa = bFix ? 0.85 : aFix ? 0.15 : 0.5, sb = 1 - sa;
                     A.dx -= ux * push * sa; A.dy -= uy * push * sa; B.dx += ux * push * sb; B.dy += uy * push * sb;
                 }
                 k.forEach((p, n) => { const m = rg(roots[n]).ro + RING.MARGIN; p.dx = Math.min(bounds.x1 - m - p.hx, Math.max(bounds.x0 + m - p.hx, p.dx)); p.dy = Math.min(bounds.y1 - m - p.hy, Math.max(bounds.y0 + m - p.hy, p.dy)); });
@@ -450,12 +490,16 @@
                 const x0 = ptAt(cen[X], roX, sx[0]), x1 = ptAt(cen[X], roX, sx[1]), y0 = ptAt(cen[Y], roY, sy[0]), y1 = ptAt(cen[Y], roY, sy[1]), mx = (sx[0] + sx[1]) / 2, my = (sy[0] + sy[1]) / 2, wpx = (sx[1] - sx[0]) * roX;
                 const hk = `r:${b.k}:${X}:${Y}`, hm = sim.d(hk, (x0[0] + y0[0]) / 2, (x0[1] + y0[1]) / 2);
                 const h = Math.max(RING.ARM_MIN, wpx * RING.ARM_W, Math.hypot(x0[0] - y0[0], x0[1] - y0[1]) * RING.ARM_D), cb = (p, an) => [p[0] + Math.cos(an) * h + hm[0], p[1] + Math.sin(an) * h + hm[1]];
-                const c1 = cb(x1, mx), c2 = cb(y0, my), c3 = cb(y1, my), c4 = cb(x0, mx);
-                const d = `M${P(x0)} A${f1(roX)},${f1(roX)} 0 0 1 ${P(x1)} C${P(c1)} ${P(c2)} ${P(y0)} A${f1(roY)},${f1(roY)} 0 0 1 ${P(y1)} C${P(c3)} ${P(c4)} ${P(x0)}Z`;
+                // which end of the partner slot x1 joins: the pairing that does not twist the body, kept until the layout is reset
+                const dst = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1]);
+                if (sim.orient[hk] === undefined) sim.orient[hk] = dst(x1, y1) + dst(y0, x0) < dst(x1, y0) + dst(y1, x0);
+                const flipO = sim.orient[hk], ya = flipO ? y1 : y0, yb = flipO ? y0 : y1;
+                const c1 = cb(x1, mx), c2 = cb(ya, my), c3 = cb(yb, my), c4 = cb(x0, mx);
+                const d = `M${P(x0)} A${f1(roX)},${f1(roX)} 0 0 1 ${P(x1)} C${P(c1)} ${P(c2)} ${P(ya)} A${f1(roY)},${f1(roY)} 0 0 ${flipO ? 0 : 1} ${P(yb)} C${P(c3)} ${P(c4)} ${P(x0)}Z`;
                 // width of the body: the two long edges A (x1 to y0) and B (y1 to x0) at matching parameters
                 let minW = Infinity;
-                for (let t = 0; t <= 1.0001; t += 1 / 16) { const pa = bez(x1, c1, c2, y0, t), pb = bez(y1, c3, c4, x0, 1 - t); minW = Math.min(minW, Math.hypot(pa[0] - pb[0], pa[1] - pb[1])); }
-                out.stats.ribbons.push({ k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(y1[0] - y0[0], y1[1] - y0[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
+                for (let t = 0; t <= 1.0001; t += 1 / 16) { const pa = bez(x1, c1, c2, ya, t), pb = bez(yb, c3, c4, x0, 1 - t); minW = Math.min(minW, Math.hypot(pa[0] - pb[0], pa[1] - pb[1])); }
+                out.stats.ribbons.push({ k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(yb[0] - ya[0], yb[1] - ya[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
                 add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5, 'stroke-width': 0.6 }, m: b.k, drag: hk });
             }
         }
@@ -478,7 +522,7 @@
         const laneOf = new Map();
         const routeNode = (X, feeds) => {
             if (!feeds.length) return;
-            const C = nc[X.id], rp = X.r + RING.LANE_OFF, ports = feeds.map(fd => ({ ...fd, wp: fd.x.size * RING.LANE_W }));
+            const C = nc[X.id], rp = X.r + RING.LANE_OFF, ports = feeds.map(fd => ({ ...fd, wp: fd.x.size * M.lanePx }));
             const fsc = Math.min(1, (RING.LANE_FIT * TAU * rp - ports.length * RING.LANE_GAP * rp) / sum(ports, p => p.wp));
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
@@ -494,7 +538,7 @@
                 const b = p.x.b, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2, P1 = ptAt(C, rp + 4, p.c), P0 = p.from;
                 const dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                 const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
-                add(`u:${b.k}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id });
+                add(`u:${b.k}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId });
                 const lane = (laneOf.get(`${b.fam}|${X.id}`) || 0);
                 add(`l:${b.k}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: b.fam != null ? RING.LANE_SHADE[lane % 3] : 1 }, m: b.k, drag: key(X), lane: X.id });
                 if (b.fam != null) laneOf.set(`${b.fam}|${X.id}`, lane + 1);
@@ -506,7 +550,7 @@
             });
             X.kids.forEach(K => routeNode(K, kidFeeds.get(K)));
         };
-        roots.forEach((f, c) => {
+        if (!lean) roots.forEach((f, c) => {
             const { ri } = rg(f), hs = x => x.b.mem.filter(i => M.famOf[i] === c);
             if (!nested || !f.kids.length) {
                 if (agg(f)) return;
@@ -523,7 +567,7 @@
         });
 
         // files
-        if (!light) for (let i = 0; i < M.N; i++) {
+        if (!lean) for (let i = 0; i < M.N; i++) {
             if (aggOf[i]) continue;
             const rr = RING.FILE_R[0] + Math.sqrt(M.doc.nodes[i].functions || 0) * RING.FILE_R[1] * (nested ? 1 : 1.4);
             add(`n:${i}`, 'circle', { cx: f1(pos[i][0]), cy: f1(pos[i][1]), r: f1(rr) }, { s: { fill: M.nodeColor(i), stroke: 'var(--lin-card)' }, sa: { 'stroke-width': 1.5 }, cls: 'hold', h: (holdsOf.get(i) || []).join(' '), drag: `n:${i}`, file: i });
@@ -587,8 +631,9 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.style.display = 'none';
         ctx.host.appendChild(note);
         const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), hold: ctx.opts.hold ?? RING.HOLD_MIN };
-        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null;
-        const mkEl = (tag, attrs, text) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); if (text != null) e.textContent = text; return e; };
+        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
+        let byMod = new Map(), holdEls = new Map(), lit = [];
+        const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
         // ---- controls
         const nestBtn = document.createElement('button'), resetBtn = document.createElement('button'), holdSel = document.createElement('select');
@@ -612,6 +657,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
 
         // ---- tooltips
         const modTip = (ev, b) => {
+            if (!b) return;
             if (b.other) { ctx.showTip(ev, b.label, b.color, [['Functions', ctx.fmt(Math.round(b.size))]]); return; }
             const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
             ctx.showTip(ev, b.label, b.color, [['Functions', ctx.fmt(b.size)], ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names]]);
@@ -620,19 +666,26 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const n = M.doc.nodes[i], held = mods.filter(b => b.mem.includes(i)).sort((a, b) => b.size - a.size);
             ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, ctx.fmt(b.size)]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
         };
-        let mods = [];
 
-        // ---- hover / pin: a module's chain lights, the rest fades
+        // ---- hover / pin: a module's chain lights, the rest fades. The lists are made once per layout, so a hover touches only its own elements.
         const act = k => {
             root.classList.add('hlm');
             const b = mods.find(x => x.k === k);
             root.style.setProperty('--hc', b ? b.color : 'var(--accent)');
-            for (const x of root.querySelectorAll(`[data-m="${k}"]`)) x.classList.add('on');
-            for (const x of root.querySelectorAll('[data-h]')) if (x.dataset.h.split(' ').includes(String(k))) x.classList.add('on');
+            for (const n of [...(byMod.get(k) || []), ...(holdEls.get(k) || [])]) { n.classList.add('on'); lit.push(n); }
         };
-        const clear = () => { root.classList.remove('hlm'); for (const x of root.querySelectorAll('.on')) x.classList.remove('on'); };
+        const clear = () => { root.classList.remove('hlm'); for (const n of lit) n.classList.remove('on'); lit = []; };
         const pinned = () => { const t = ctx.getTrack(); const b = t && mods.find(x => x.tk === t); return b ? b.k : null; };
         const rest = () => { clear(); const p = pinned(); if (p != null) act(p); };
+        const index = () => {
+            byMod = new Map(); holdEls = new Map();
+            for (const e of frame.els) {
+                const n = nodes.get(e.id);
+                if (e.m !== undefined) (byMod.get(e.m) || byMod.set(e.m, []).get(e.m)).push(n);
+                if (e.h) for (const k of e.h.split(' ')) { const kk = Number(k); (holdEls.get(kk) || holdEls.set(kk, []).get(kk)).push(n); }
+            }
+            lit = [];
+        };
 
         // ---- elements
         function listen(node, e) {
@@ -642,7 +695,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m)); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
-                node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
+                node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
             } else if (e.other) {
                 node.addEventListener('mouseenter', ev => modTip(ev, e.other));
                 node.addEventListener('mousemove', ctx.moveTip);
@@ -664,7 +717,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             }
         }
         function draw1(e) {
-            const node = mkEl(e.tag, {}, e.text);
+            const node = mkEl(e.tag, e.text);
             if (e.cls) node.setAttribute('class', e.cls);
             if (e.pe) node.style.pointerEvents = 'none';
             if (e.h !== undefined) node.dataset.h = e.h;
@@ -680,9 +733,9 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.text !== undefined && node.textContent !== e.text) node.textContent = e.text;
             for (const [k, v] of Object.entries(e.s || {})) { if (prev[`$${k}`] !== v) { prev[`$${k}`] = v; node.style.setProperty(k, v); } }
         }
-        let frame = null;
-        function paint(light) {
-            frame = geometry(M, S, { light });
+        // the DOM is rebuilt only when the element list changes (a new layout, mode or opened circle); a physics frame updates attributes
+        function paint() {
+            frame = geometry(M, S, { mode: cur.mode });
             const els = frame.els;
             const same = els.length === ids.length && els.every((e, i) => e.id === ids[i]);
             if (!same) {
@@ -690,9 +743,12 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 nodes = new Map();
                 ids = els.map(e => e.id);
                 for (const e of els) { const n = draw1(e); nodes.set(e.id, n); root.appendChild(n); }
+                for (const e of els) apply(nodes.get(e.id), e);
+                index();
+                rest();
+                return frame;
             }
             for (const e of els) apply(nodes.get(e.id), e);
-            rest();
             return frame;
         }
         function full() {
@@ -700,13 +756,19 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             build();
             note.style.display = 'none';
             if (!M) return;
-            paint(false);
-            if (!mods.length) { note.style.display = ''; note.textContent = ctx.getR() ? 'No module holds enough of its functions in one file: try a lower threshold.' : 'This server sends no row list: modules need it, only the clusters are shown.'; }
+            cur = M.modeOf(S.nested);
+            paint();
+            const msg = !mods.length ? (ctx.getR() ? 'No module holds enough of its functions in one file: try a lower threshold.' : 'This server sends no row list: modules need it, only the clusters are shown.')
+                : cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no ribbons to single files.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '';
+            note.textContent = msg;
+            note.style.display = msg ? '' : 'none';
         }
         function build() {
             const doc = ctx.getDoc(), R = ctx.getR(), C = R ? ctx.getCats() : null;
             if (!doc) { M = null; return; }
-            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.hold, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', R && R.match ? Array.from({ length: R.n }, (_, r) => (R.match(r) ? 1 : 0)).join('') : ''].join('#');
+            let h = 0;
+            if (R) for (let r = 0; r < R.n; r++) h = (h * 31 + (R.match(r) ? 1 : 0)) | 0;
+            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.hold, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
             M = buildModel(doc, R, C, { hold: S.hold, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
@@ -723,40 +785,53 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const q = svgPoint(ev);
             press = { key: k, sx: ev.clientX, sy: ev.clientY, gx: q[0] - (p.hx + p.dx), gy: q[1] - (p.hy + p.dy), px: q[0], py: q[1], active: false };
         };
+        let pointerMoved = false;
         const move = ev => {
             if (!press) return;
             if (!press.active) {
                 if (Math.hypot(ev.clientX - press.sx, ev.clientY - press.sy) < RING.DRAG_PX) return;
                 press.active = true; S.sim.drag = press; S.sim.moved = true; document.body.classList.add('ring-dragging');
                 ctx.hideTip();
-                light = (frame ? frame.els.length : 0) > RING.LIGHT;
             }
             const q = svgPoint(ev);
             press.px = q[0]; press.py = q[1];
+            pointerMoved = true;
             run();
         };
-        let light = false;
         const up = () => {
             if (!press) return;
             const was = press.active;
             press = null; S.sim.drag = null; document.body.classList.remove('ring-dragging');
             if (was) { setTimeout(() => (S.sim.moved = false), 0); run(); }
         };
+        // The loop always ends: it stops once the motion settles, after RING.FRAMES_MAX frames or RING.MS_MAX ms of settling,
+        // runs at most 30 frames a second, and pauses while the page is hidden.
+        let frames = 0, t0 = 0, lastT = 0;
         function run() {
-            if (raf || dead) return;
-            const step = () => {
-                raf = 0;
-                if (dead) return;
-                const e = S.sim.tick();
-                paint(light && !!S.sim.drag);
-                if (e > RING.SETTLE || S.sim.drag) raf = requestAnimationFrame(step);
-                else if (light) { light = false; paint(false); }
-            };
+            if (raf || dead || document.hidden) return;
+            frames = 0; t0 = performance.now();
             raf = requestAnimationFrame(step);
         }
+        function step() {
+            raf = 0;
+            if (dead || document.hidden) return;
+            const now = performance.now();
+            if (now - lastT < RING.FRAME_MS) { raf = requestAnimationFrame(step); return; }
+            lastT = now;
+            const e = S.sim.tick();
+            paint();
+            frames++;
+            const drag = !!S.sim.drag, active = e > RING.SETTLE || (drag && pointerMoved);
+            pointerMoved = false;
+            if (!active) return;
+            if (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX)) return;
+            raf = requestAnimationFrame(step);
+        }
+        const onVis = () => { if (!document.hidden && S.sim.drag) run(); };
         ctx.svg.addEventListener('pointerdown', down);
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
+        document.addEventListener('visibilitychange', onVis);
 
         return {
             draw: full,
@@ -765,7 +840,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             reset() { S.sim.reset(); full(); },
             // bounding box of everything drawn, for Fit
             box() { return frame ? frame.fit : null; },
-            show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; if (on) ctx.controls.style.display = ''; else ctx.controls.style.display = 'none'; },
+            show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; ctx.controls.style.display = on ? '' : 'none'; },
             state: S,
             frame: () => frame,
             destroy() {
@@ -774,7 +849,11 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 ctx.svg.removeEventListener('pointerdown', down);
                 window.removeEventListener('pointermove', move);
                 window.removeEventListener('pointerup', up);
+                document.removeEventListener('visibilitychange', onVis);
+                document.body.classList.remove('ring-dragging');
+                ctx.controls.replaceChildren();
                 root.remove(); note.remove();
+                nodes = new Map(); byMod = new Map(); holdEls = new Map(); lit = []; frame = null; M = null;
             },
         };
     }

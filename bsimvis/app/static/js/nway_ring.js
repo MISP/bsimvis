@@ -28,6 +28,7 @@
         SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, FLOOR: 2, SEG_STROKE: 12, // ring segments; no segment is ever dropped, the thinnest are drawn FLOOR px wide (1 when a ring is full)
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
+        MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         CROSS_COLORS: 12, RIBBON_SAFE: 5000, // cross modules in the lens colour (then golden-angle hues); safety limit of outer ribbons, with a note when it triggers
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7, LANE_SHADE: [1, 0.7, 0.45],
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
@@ -187,18 +188,22 @@
                 for (const i of inRow) if (famOf[i] === x) set.add(i);
             }
         }
-        const mods = [];
+        const mods = [], gate = ((o.minPct || 0) / 100) * R.n;
+        let hidden = 0;
         C.cats.forEach((c, g) => {
             if (!size[g]) return;
             const mem = [];
             for (let i = 0; i < N; i++) if (has[g * N + i]) mem.push(i);
+            // the gate: a module's own rows against all functions of the set, before any split between families
+            if (mem.length && size[g] < gate) { hidden++; return; }
             if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, get label() { return this.cat.label; } });
         });
+        mods.hidden = hidden;
         return mods;
     }
 
     // ---------------------------------------------------------------- the model
-    // o: { hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey, neutral }
+    // o: { minPct (gate, percent of all functions), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey, neutral }
     function buildModel(doc, R, C, o = {}) {
         const N = doc.nodes.length, T = clusterTree(doc), roots = T.roots, hsl = o.hsl || ((h, l) => `hsl(${h},62%,${l}%)`);
         roots.forEach(sizeNode);
@@ -220,7 +225,7 @@
             b.fam = b.fams.length === 1 ? b.fams[0] : null;
             b.color = b.fam != null ? roots[b.fam].famCol : b.grey ? neutral : cross++ < RING.CROSS_COLORS ? b.cat.color : hsl(Math.round((cross * 137.508 + 40) % 360), 52);
         });
-        const M = { doc, N, T, roots, modeOf, oneArc: !!o.oneArc, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
+        const M = { doc, N, T, roots, modeOf, oneArc: !!o.oneArc, hidden: mods.hidden || 0, nFuncs: R ? R.n : 0, minPct: o.minPct || 0, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
         M.plan = plan(M);
         M.homes = placeFamilies(M);
         M.lanePx = lanePx(M);
@@ -646,7 +651,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
      * ctx: { g (svg group inside the zoomed world), svg (the svg element), host (the canvas div, for the note),
      *   getDoc(), getR(), getCats() -> lensCats or null, getTrack(), setTrack(tk), onFile(nodeId),
      *   showTip(ev, title, colour, rows), moveTip(ev), hideTip(), fmt, name(id), nodeColor(i), tree(), hsl(h, l), hue(i),
-     *   grey, controls (element for the buttons), opts: { nest, focus, arc: 'one' | '' }, onOpt({nest, focus, arc}), fit() }
+     *   grey, controls (element for the buttons), opts: { nest, focus, arc: 'one' | '', min (percent) }, onOpt({nest, focus, arc, min}), fit() }
      */
     function mount(ctx) {
         ensureCss();
@@ -657,8 +662,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ctx.opts.arc === 'one' ? 'one' : '' };
-        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc });
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ctx.opts.arc === 'one' ? 'one' : '', min: ctx.opts.min ?? RING.MIN_PCT };
+        const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
@@ -673,6 +678,13 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         arcBtn.title = 'Test: one ring segment per module on each circle, its ribbons to the partners leave it side by side';
         nestBtn.textContent = 'Nested clusters';
         nestBtn.title = 'Show the sub-clusters of each family as circles inside it, with lanes on each level';
+        const minSel = document.createElement('select');
+        minSel.setAttribute('aria-label', 'Minimum size');
+        for (const v of RING.MIN_OPTS) { const op = document.createElement('option'); op.value = String(v); op.textContent = v ? `Min size ${v}%` : 'Min size: off'; minSel.appendChild(op); }
+        if (!RING.MIN_OPTS.includes(S.min)) S.min = RING.MIN_PCT;
+        minSel.value = String(S.min);
+        minSel.title = 'Hide modules and lanes with fewer functions than this share of all functions in the set.';
+        minSel.addEventListener('change', () => { S.min = Number(minSel.value); ctx.onOpt(opt()); M = null; S.sim.reset(); full(); ctx.fit(); });
         resetBtn.textContent = 'Reset layout';
         resetBtn.title = 'Put every circle and ribbon back where it was computed';
         const sync = () => { nestBtn.setAttribute('aria-pressed', String(S.nested)); focusBtn.setAttribute('aria-pressed', String(S.focus)); arcBtn.setAttribute('aria-pressed', String(S.arc === 'one')); root.classList.toggle('ring-focus', S.focus); };
@@ -681,7 +693,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         arcBtn.addEventListener('click', () => { S.arc = S.arc === 'one' ? '' : 'one'; sync(); ctx.onOpt(opt()); M = null; S.sim.reset(); full(); ctx.fit(); });
         resetBtn.addEventListener('click', () => { S.sim.reset(); S.open.clear(); full(); ctx.fit(); });
         sync();
-        ctx.controls.replaceChildren(nestBtn, focusBtn, arcBtn, resetBtn);
+        ctx.controls.replaceChildren(minSel, nestBtn, focusBtn, arcBtn, resetBtn);
 
         // ---- tooltips
         const modTip = (ev, b, pr, prs) => {
@@ -805,8 +817,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!M) return;
             cur = M.modeOf(S.nested);
             paint();
+            const gateMsg = M.hidden ? `${M.hidden} module${M.hidden === 1 ? '' : 's'} hidden under ${S.min}% of functions (${ctx.fmt(M.nFuncs)} functions in total); ${mods.length} shown.` : '';
+            minSel.title = `Hide modules and lanes with fewer functions than this share of all functions in the set.${gateMsg ? ` ${gateMsg}` : ` ${mods.length} shown.`}`;
             const msg = !mods.length ? (ctx.getR() ? 'No group of this lens has functions in the files.' : 'This server sends no row list: modules need it, only the clusters are shown.')
-                : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : ''].filter(Boolean).join(' ');
+                : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : '', gateMsg].filter(Boolean).join(' ');
             note.textContent = msg;
             note.style.display = msg ? '' : 'none';
         }
@@ -815,10 +829,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!doc) { M = null; return; }
             let h = 0;
             if (R) for (let r = 0; r < R.n; r++) h = (h * 31 + (R.match(r) ? 1 : 0)) | 0;
-            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
+            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, S.min, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
-            M = buildModel(doc, R, C, { oneArc: S.arc === 'one', hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
+            M = buildModel(doc, R, C, { minPct: S.min, oneArc: S.arc === 'one', hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
         }
 

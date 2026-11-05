@@ -335,6 +335,28 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok([...lk.values()].every(n => n === 1), 'ids are unique');
         }
 
+        // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
+        for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
+            const off = build(dd, lens), total = off.R.n;
+            assert.strictEqual(off.M.hidden, 0, 'gate off hides nothing');
+            assert.strictEqual(off.M.nFuncs, total, 'the denominator is all functions of the set');
+            for (const pct of [2, 5, 20]) {
+                const on = build(dd, lens, { minPct: pct }), want = off.M.mods.filter(m => m.size >= (pct / 100) * total).map(m => m.cat.key).sort();
+                assert.deepStrictEqual(on.M.mods.map(m => m.cat.key).sort(), want, `${label}/${lens}/${pct}%: the modules left are those at or over the gate`);
+                assert.strictEqual(on.M.hidden, off.M.mods.length - on.M.mods.length, 'hidden = total - shown');
+                assert.ok(on.M.mods.every(m => m.size >= (pct / 100) * total), 'none under the gate is shown');
+                const gg = RL.geometry(on.M, { sim: RL.newSim(), nested: true, open: new Set() });
+                assert.ok(!on.M.plan.segs.flat().some(x => x.b.other), 'nothing is merged into other');
+                assert.strictEqual(new Set(on.M.plan.segs.flat().map(x => x.b.k)).size, on.M.mods.length, 'every module left has a ring segment');
+                const ribKs = new Set(gg.els.filter(e => e.id.startsWith('o:')).map(e => Number(e.id.split(':')[1])));
+                for (const m of on.M.mods.filter(x => x.fam == null)) assert.ok(ribKs.has(m.k), 'every cross module left has its ribbons');
+                assert.deepStrictEqual(RL.badAttrs(gg.els), []);
+            }
+        }
+        assert.ok(build(yara, 'modules', { minPct: 5 }).M.hidden > 0 && build(yara, 'modules').M.hidden === 0, 'the fixture has modules under 5%');
+        assert.strictEqual(window.NwayLineage.tableQs('md5s=a&rmin=1&rfocus=1&rarc=one').toString().includes('rmin'), false, 'rmin is not forwarded to the table');
+        assert.ok(/'rarc', 'rmin', 'root', 'file'/.test(viewSrc), 'rmin is stripped from the API query too');
+
         // focus mode and the pin, on a stub DOM: a hover touches only the module's own elements
         {
             class El {

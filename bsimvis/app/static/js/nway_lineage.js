@@ -1519,14 +1519,19 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             dimRibs(d => d.edge === l.edge);
             showTip(ev, `${name(l.edge.parent)} → ${name(l.edge.child)}`, V.shared, [...edgeRows(l.edge), ...partRows(l.part)]);
         }
+        // one card for a lane/module, on a node row or a link: the group's name, then what is local to
+        // the spot hovered, then the group's own numbers (functions, files, span, features, role mix)
+        function lensTip(ev, cat, local) {
+            focusHover(cat.tk);
+            const g = cat.g, nm = g && NG.shownName(st.S.names[g.id]);
+            showTip(ev, nm || cat.label, cat.color, [...local, ...(g ? gTip(g) : [])]);
+        }
         function hoverLens(ev, l) {
             st.last = { edge: l.edge };
-            focusHover(l.cat.tk);
-            showTip(ev, `${name(l.source.id)} \u2192 ${name(l.target.id)}`, l.cat.color, [[l.cat.label, `${fmt(l.value)} fn kept`], ...(l.edge ? [['Similarity', l.edge.similarity]] : []), ...(l.cat.g ? gTip(l.cat.g) : [])]);
+            lensTip(ev, l.cat, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ...(l.edge ? [['Similarity', l.edge.similarity]] : [])]);
         }
         function hoverLensSeg(ev, n, sg) {
-            focusHover(sg.cat.tk);
-            showTip(ev, `${name(n.id)}: ${sg.cat.label}`, sg.cat.color, [['Functions', fmt(sg.cnt)], ...(sg.cat.g ? gTip(sg.cat.g) : []), ['', 'click a legend chip to track the group']]);
+            lensTip(ev, sg.cat, [['In', name(n.id)], ['Here', `${fmt(sg.cnt)} fn`]]);
         }
         function hoverSeg(ev, sg) {
             const n = sg.n;

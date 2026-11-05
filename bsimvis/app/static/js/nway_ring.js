@@ -27,7 +27,7 @@
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
         R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, // circle radius a + b*sqrt(files)
         RI: 6, RM: 14, RO: 22, // ring radii beyond the circle: inner, centre, outer
-        SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, CAP: 14, MIN_SEG_PX: 14, SEG_STROKE: 12, // ring segments
+        SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, CAP: 14, CAP_CROSS: 30, MIN_SEG_PX: 14, MIN_CROSS_PX: 6, OTHER_MAX: 0.25, SEG_STROKE: 12, // ring segments
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
         CROSS_COLORS: 12, MAX_RIBBONS: 160, // coloured cross modules; outer ribbons drawn
@@ -267,19 +267,23 @@
             return { keep, lost, nLost };
         });
         const dropSeg = (c, s) => drop.add(s.partner == null ? `L|${s.b.k}` : pk(s.b, c, s.partner));
-        const fit = (r, f) => { const { ro } = rg(f), tot = sum(r.keep, s => s.size) + r.lost; return tot ? (RING.FILL * TAU * ro - RING.SEG_GAP * ro * (r.keep.length + (r.lost ? 1 : 0) + 1)) / tot : Infinity; };
+        const fit = (r, f) => { const { ro } = rg(f), kept = sum(r.keep, s => s.size), tot = kept + Math.min(r.lost, RING.OTHER_MAX * kept); return tot ? (RING.FILL * TAU * ro - RING.SEG_GAP * ro * (r.keep.length + (r.lost ? 1 : 0) + 1)) / tot : Infinity; };
         let R, px = 1;
         for (let pass = 0; pass < 12; pass++) {
             R = rings();
             let changed = false;
-            R.forEach((r, c) => { for (const s of r.keep.slice(RING.CAP)) { dropSeg(c, s); changed = true; } });
+            R.forEach((r, c) => {
+                // layers and cross-family segments are capped apart, so the many small cross segments are not crowded out by big layers
+                for (const s of r.keep.filter(x => x.b.fam != null).slice(RING.CAP)) { dropSeg(c, s); changed = true; }
+                for (const s of r.keep.filter(x => x.b.fam == null).slice(RING.CAP_CROSS)) { dropSeg(c, s); changed = true; }
+            });
             if (changed) continue;
             const sc = R.map((r, c) => fit(r, roots[c])).filter(Number.isFinite);
             px = sc.length ? Math.min(RING.PX_MAX, Math.max(1e-6, Math.min(...sc))) : 1;
-            R.forEach((r, c) => { for (const s of r.keep) if (s.size * px < RING.MIN_SEG_PX) { dropSeg(c, s); changed = true; } });
+            R.forEach((r, c) => { for (const s of r.keep) if (s.size * px < (s.b.fam == null ? RING.MIN_CROSS_PX : RING.MIN_SEG_PX)) { dropSeg(c, s); changed = true; } });
             if (!changed) break;
         }
-        const segs = R.map((r, c) => [...r.keep, ...(r.lost ? [{ b: { k: `o${c}`, other: true, fam: c, size: r.lost, mem: [], fams: [c], label: `${r.nLost} smaller module${r.nLost === 1 ? '' : 's'}`, color: roots[c].famCol }, size: r.lost }] : [])]);
+        const segs = R.map((r, c) => [...r.keep, ...(r.lost ? [{ b: { k: `o${c}`, other: true, fam: c, size: r.lost, mem: [], fams: [c], label: `${r.nLost} smaller module${r.nLost === 1 ? '' : 's'}`, color: roots[c].famCol }, size: Math.min(r.lost, RING.OTHER_MAX * sum(r.keep, s => s.size)) }] : [])]);
         return { segs, px };
     }
 

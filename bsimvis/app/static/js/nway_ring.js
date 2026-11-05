@@ -29,6 +29,7 @@
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
         OUTWARD_KEEP: 0.4, // share of a ring kept free on its outward side (away from the other clusters); cross-family arcs use the rest
+        BUNDLE_DEFAULT: true, // ribbons between two clusters drawn as one bundle of stripes
         BUCKET_FADE: 0.45, // opacity of the tier buckets next to real lanes
         ARC_DEFAULT: 'group', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
@@ -687,7 +688,7 @@
         };
         const byPair = new Map();
         for (const e of entries) (byPair.get(`${e.X}|${e.Y}`) || byPair.set(`${e.X}|${e.Y}`, []).get(`${e.X}|${e.Y}`)).push(e);
-        for (const list of byPair.values()) if (!(S.bundle !== false && bundle(list))) list.forEach(plainRibbon);
+        for (const list of byPair.values()) if (!((S.bundle ?? RING.BUNDLE_DEFAULT) && bundle(list))) list.forEach(plainRibbon);
 
         // ribbons inside clusters: a segment fans to the files of a leaf cluster, sized by slot, tapering to the file
         const inner = (center, rr, a0, a1, files, x, dragKey, famN) => {
@@ -833,7 +834,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         note.className = 'ring-note';
         note.style.display = 'none';
         ctx.host.appendChild(note);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle !== false };
+        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), focus: !!ctx.opts.focus, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
         const opt = () => ({ nest: S.nested, focus: S.focus, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
@@ -887,7 +888,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         const tierSeg = seg('Tier buckets', 'The Core / Common / Rare remainders of the Lanes lens (rows that are in no lane): shown in grey behind the lanes, or hidden', [['show', 'Show'], ['hide', 'Hide']], () => S.tier, v => { S.tier = v; applyOpt(true); });
         const bundleSeg = seg('Bundle ribbons', 'Draw the ribbons between two clusters as one bundle of parallel stripes, one per module', [[true, 'On'], [false, 'Off']], () => S.bundle, v => { S.bundle = v; applyOpt(false); paint(); });
         // advanced settings that differ from their defaults start open, so the state is visible
-        let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list || S.tier === 'hide' || !S.bundle;
+        let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list || S.tier === 'hide' || S.bundle !== RING.BUNDLE_DEFAULT;
         const syncMore = () => { moreBtn.setAttribute('aria-expanded', String(more)); chev.className = `fa-solid fa-chevron-${more ? 'up' : 'down'}`; ctx.controls2.style.display = more ? 'flex' : 'none'; };
         moreBtn.addEventListener('click', () => { more = !more; syncMore(); });
         ctx.controls.replaceChildren(focusSeg, minSeg, resetBtn, moreBtn);

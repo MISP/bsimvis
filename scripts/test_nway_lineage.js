@@ -556,6 +556,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                 assert.strictEqual(o.c1.children[3].attrs['aria-expanded'], 'true', `${why} opens More`);
                 o.r.destroy();
             }
+            { const o = mountBar({ bundle: true }); assert.strictEqual(o.c1.children[3].attrs['aria-expanded'], 'false', 'bundles on is the default and does not open More'); o.r.destroy(); }
             const lst = segs.find(e => e.attrs['aria-label'] === 'Module list');
             lst.children[1].ls.click[0]();
             assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');

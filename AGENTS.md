@@ -216,7 +216,7 @@ exception to the lens-colour rule), fainter and thinner than lanes, drawn behind
 them like the Min size gate (never merged into "other") and the canvas note counts them. The switch is
 disabled on lenses without tier groups.
 
-**Bundle ribbons** (More row, `rbundle=0`, default On): the outer ribbons of one cluster pair are drawn
+**Bundle ribbons** (More row, `rbundle=0` for Off, default On, `RING.BUNDLE_DEFAULT`): the outer ribbons of one cluster pair are drawn
 as one bundle: each module's stripe leaves its slot, joins a straight parallel run on the axis between
 the two centres (`min(0.25 * distance, 80)` px beyond each ring), and diverges to its slot on the other
 ring; ends are arc-exact and equal; stripe order is by lateral slot position. A stripe is still the

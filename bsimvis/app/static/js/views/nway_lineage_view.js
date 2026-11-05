@@ -41,7 +41,15 @@ window.NwayLineageView = {
         // `order` is the table's column order and passes through; an old link's order=tree|chain|star is the layout
         const legacy = ['tree', 'chain', 'star'].includes(q.get('order')) ? q.get('order') : '';
         const st = { layout: q.get('layout') || legacy || 'tree', root: q.get('root') || '', column: q.get('column') || '' };
-        for (const k of KEYS) st[k] = q.has(k) ? q.get(k) : String(D[k] ?? '');
+        // the view picked last and the Ring's settings are remembered (a URL param always wins); storage may be unavailable
+        const RING_KEYS = ['rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'];
+        const store = {
+            get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+            set: (k, v2) => { try { localStorage.setItem(k, v2); } catch (e) { /* ignore */ } },
+        };
+        let mem = {};
+        try { mem = JSON.parse(store.get('nway.ring') || '{}') || {}; } catch (e) { mem = {}; }
+        for (const k of KEYS) st[k] = q.has(k) ? q.get(k) : RING_KEYS.includes(k) && typeof mem[k] === 'string' ? mem[k] : k === 'lview' && store.get('nway.lview') ? store.get('nway.lview') : String(D[k] ?? '');
         // the lens a group string stands for: its preset, else the lens of its first level
         const lensOf = g => {
             const first = (g || '').split(',')[0];
@@ -92,7 +100,7 @@ window.NwayLineageView = {
         const rootSel = mk('select', { 'aria-label': 'Lineage root file' });
         const backHref = () => {
             const bq = NL.tableQs(window.location.search);
-            return window.NwayPanel ? window.NwayPanel.backUrl(bq) : `/diff/nway?${bq.toString()}`;
+            return window.NwayPanel ? window.NwayPanel.tableUrl(bq) : `/diff/nway?${bq.toString()}`;
         };
 
         const writeUrl = () => {
@@ -110,7 +118,7 @@ window.NwayLineageView = {
         const viewBtns = [['tree', 'Tree', 'fa-sitemap', 'The lineage tree'], ['tracks', 'Tracks', 'fa-route', 'Follow one group of the lens through the tree, or six at once'], ['split', 'Split', 'fa-table-columns', 'A compact tree over the N-way table, linked both ways'], ['ring', 'Ring', 'fa-circle-nodes', 'Clusters of files as circles, the modules they hold as rings, shared modules as ribbons']].map(([v, t, icon, title]) => {
             const b = mk('button', { type: 'button', title });
             b.append(mk('i', { class: `fa-solid ${icon}`, style: 'margin-right:4px' }), document.createTextNode(t));
-            b.addEventListener('click', () => { if (st.lview === v) return; st.lview = v; writeUrl(); applyView(); });
+            b.addEventListener('click', () => { if (st.lview === v) return; st.lview = v; store.set('nway.lview', v); writeUrl(); applyView(); });
             views.append(b);
             return { v, b };
         });
@@ -234,7 +242,7 @@ window.NwayLineageView = {
                     track: st.track,
                     view: chartView(),
                     ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0', openNodes },
-                    onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; writeUrl(); },
+                    onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; store.set('nway.ring', JSON.stringify(Object.fromEntries(RING_KEYS.map(k => [k, st[k]])))); writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page
                     onGroup: (what, tk) => {

@@ -675,7 +675,7 @@
             // Compare and Family are rarely used: both live in the ... menu, lit while either is on.
             const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}${this.data && this.data.large ? '<div><button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>' : ''}</div></details>`;
             return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._trackChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
-                <div class="nway-bar">${axisDd}${this.lean ? '' : this._viewDd()}${s.view === 'strings' && !this.lean ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
+                <div class="nway-bar">${axisDd}${this.lean ? '' : this._viewDd()}${s.view === 'strings' && !this.lean ? '' : tabDd}${presetDd}${parts.files}${this.lean ? '' : `<button type="button" class="nway-chip" data-lineage title="The lineage of these files on its own page, in the view you used last (tree, tracks, split or ring), with the same filters"><i class="fa-solid fa-sitemap"></i> Lineage</button>`}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
         }
 
         // Small function filter: feature and support bounds the server already applies (feat_min / feat_max / support_min).
@@ -3529,7 +3529,15 @@
             if (t.dataset.famClear !== undefined) return this._set({ family: '', ignore: '', cover_min: '', leak_max: '', offset: 0, sort_col: '' });
             if (t.dataset.lineage !== undefined) {
                 this._scrollSave();
-                return window.Nav.openPath(`/diff/nway/lineage?${this._lineageQs().toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
+                // the view picked last on the lineage page (and the Ring's settings) go with it; a param already in the URL wins there
+                const qs = this._lineageQs();
+                try {
+                    const v = localStorage.getItem('nway.lview');
+                    if (v && !qs.has('lview')) qs.set('lview', v);
+                    const ring = JSON.parse(localStorage.getItem('nway.ring') || '{}');
+                    for (const [k, val] of Object.entries(ring)) if (!qs.has(k) && typeof val === 'string' && val !== '') qs.set(k, val);
+                } catch (err) { /* storage unavailable: the page opens in its default view */ }
+                return window.Nav.openPath(`/diff/nway/lineage?${qs.toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
             }
             if (t.dataset.mergeDiff) {
                 const group = this.data.groups[t.dataset.mergeDiff];
@@ -3731,6 +3739,13 @@
         const out = new URLSearchParams({ tab: 'functions' });
         for (const k of ['axis', 'scope', 'min_edge', 'mode', 'columns', 'child_presence', 'twin_depth', 'twin_link']) if (q.has(k)) out.set(k, q.get(k));
         return `${base}?${out.toString()}`;
+    };
+
+    // The N-way TABLE a lineage URL came from: /diff/nway with every filter; a cluster_uuid stays a plain param.
+    NwayPanel.tableUrl = function (q) {
+        const keep = new URLSearchParams();
+        for (const [k, v] of q) if (!k.startsWith('cg_') && !k.startsWith('fx_')) keep.set(k, v);
+        return `/diff/nway?${keep.toString()}`;
     };
 
     // Selected file ids are `{coll}:file:{md5}`; the page's pool (if any) rides along.

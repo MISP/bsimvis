@@ -618,6 +618,19 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const vs = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
             assert.ok(/for \(const g of n\.path \|\| \[\]\) open\.add\(g\.id\)/.test(vs) && /get\(\{ col_open: colOpen \}\)/.test(vs) && /history\.replaceState\(history\.state, '', `\$\{window\.location\.pathname\}\?\$\{u\.toString\(\)\}`\)/.test(vs) && /u\.set\('col_open', colOpen\)/.test(vs), 'openNodes sends the open groups plus the ids and writes col_open into the URL');
         }
+        // navigation: the lineage page goes back to the N-way TABLE (a cluster_uuid stays a plain param); the table's Lineage button remembers the view
+        {
+            const panelSrc = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_panel.js', 'utf8'), viewS = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
+            const body = /NwayPanel\.tableUrl = (function \(q\) \{[\s\S]*?\n    \});/.exec(panelSrc)[1];
+            const tableUrl = new Function(`return ${body}`)();
+            const href = tableUrl(new URLSearchParams('collection=more_mirai_yara&cluster_uuid=bc27&group=lane,region&track=lanes:3&cg_x=1&columns=twins'));
+            assert.ok(href.startsWith('/diff/nway?') && /cluster_uuid=bc27/.test(href) && /track=lanes%3A3/.test(href) && !/cg_x/.test(href) && !/\/files\/clusters\//.test(href), `back goes to the table: ${href}`);
+            assert.ok(/NwayPanel\.tableUrl\(bq\)/.test(viewS), 'the lineage page uses it for its back link');
+            assert.ok(/class="nway-chip" data-lineage[^>]*><i class="fa-solid fa-sitemap"><\/i> Lineage<\/button>/.test(panelSrc), 'a visible Lineage button among the table controls');
+            assert.ok(/localStorage\.getItem\('nway\.lview'\)[\s\S]{0,200}qs\.set\('lview', v\)/.test(panelSrc) && /localStorage\.getItem\('nway\.ring'\)/.test(panelSrc), 'the table opens the lineage page in the remembered view');
+            assert.ok(/store\.set\('nway\.lview', v\)/.test(viewS) && /store\.set\('nway\.ring'/.test(viewS) && /get: k => \{ try \{ return localStorage\.getItem\(k\)/.test(viewS), 'a pick is remembered, storage wrapped in try/catch');
+        }
+
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
         for (const [label, dd] of [['synthetic', d], ['real-shaped', yara]]) for (const lens of ['modules', 'lanes']) {
             const off = build(dd, lens), total = off.R.n;

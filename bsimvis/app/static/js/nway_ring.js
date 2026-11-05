@@ -19,8 +19,8 @@
     const TAU = 2 * Math.PI;
     // every tuned number of the view
     const RING = {
-        HOLD_MIN: 0.5, // a file holds a module when it has this share of what the best holder has
-        HOLD_OPTS: [0.25, 0.5, 0.75, 1],
+        HOLD_MIN: 0.05, // a file holds a module when it has this share of what the best holder has; real sets share little across families, so low
+        HOLD_OPTS: [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1],
         DEPTH: 3, DEPTH_BIG: 2, BIG_FILES: 120, // cluster levels drawn; fewer above BIG_FILES files
         LEAF_MAX: 24, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 12, // families beyond this many merge into "Other files"

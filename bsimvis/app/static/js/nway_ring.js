@@ -524,7 +524,9 @@
                 cross.forEach(x => (x.c = Math.max(-hw + x.w / 2, Math.min(hw - x.w / 2, x.c))));
             }
             // a last sweep each way guarantees no overlap when the segments fit the ring
+            if (cross.length) cross[0].c = Math.max(cross[0].c, -hw + cross[0].w / 2);
             for (let k = 1; k < cross.length; k++) cross[k].c = Math.max(cross[k].c, cross[k - 1].c + cross[k - 1].w / 2 + GAP + cross[k].w / 2);
+            if (cross.length) cross[cross.length - 1].c = Math.min(cross[cross.length - 1].c, hw - cross[cross.length - 1].w / 2);
             for (let k = cross.length - 2; k >= 0; k--) cross[k].c = Math.min(cross[k].c, cross[k + 1].c - cross[k + 1].w / 2 - GAP - cross[k].w / 2);
             cross.forEach(x => { x.a0 = r.mid0 + x.c - x.w / 2; x.a1 = r.mid0 + x.c + x.w / 2; });
         };

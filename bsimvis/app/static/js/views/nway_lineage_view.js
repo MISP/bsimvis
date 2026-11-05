@@ -48,8 +48,12 @@ window.NwayLineageView = {
             const l = NL.LENSES.find(x => x[2] === g) || NL.LENSES.find(x => x[2].split(',')[0] === first);
             return l ? l[0] : 'modules';
         };
-        let twinsOk = true;
-        const cols = () => (st.columns === 'twins' && twinsOk ? 'twins' : 'files');
+        let twinsOk = true, childrenOk = true;
+        // Merge files: Cluster needs a cluster to open (the table's rule: the page's cluster_uuid or the shared cluster the panel found)
+        const hasCluster = () => !!new URLSearchParams(window.location.search).get('cluster_uuid') || !!(this._panel && this._panel.data && this._panel.data.shared_cluster);
+        const cols = () => (st.columns === 'children' && childrenOk && hasCluster() ? 'children' : st.columns === 'twins' && twinsOk ? 'twins' : 'files');
+        // what the panel's Merge files menu may offer: only what the server answered for
+        const modes = () => ['files', ...(childrenOk ? ['children'] : []), ...(twinsOk ? ['twins'] : [])];
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
             for (const k of ['order', 'layout', 'lview', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph']) out.delete(k);
@@ -66,7 +70,9 @@ window.NwayLineageView = {
             const res = await fetch(`/api/bin_sim/nway/lineage?${apiQs(extra).toString()}`, { signal: AbortSignal.timeout(180000) });
             const doc = await res.json();
             // a server without Same code lineage answers 400 "needs file columns": fall back to files
-            if (res.status === 400 && cols() === 'twins' && /columns/.test(doc.message || doc.error || '')) { twinsOk = false; if (this._panel) { this._panel.fileModes = ['files']; this._panel.render(); } return get(extra); }
+            if (res.status === 400 && cols() === 'twins' && /columns/.test(doc.message || doc.error || '')) { twinsOk = false; if (this._panel) { this._panel.fileModes = modes(); this._panel.render(); } return get(extra); }
+            // the same for Cluster: an old server, or files that share no stored cluster
+            if (res.status === 400 && cols() === 'children') { childrenOk = false; if (this._panel) { this._panel.fileModes = modes(); this._panel.render(); } return get(extra); }
             if (!res.ok) throw new Error(doc.message || doc.error || `HTTP ${res.status}`);
             return doc;
         };
@@ -158,7 +164,7 @@ window.NwayLineageView = {
                 source, state,
                 lean: true,
                 noTable: !split(),
-                fileModes: ['files', 'twins'],
+                fileModes: ['files', 'children', 'twins'],
                 backHref,
                 // the chart is re-parented into the slot after every render of the controls
                 onStage: slot => { (slot || panelHost).append(wrap); ready(); },

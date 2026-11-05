@@ -1284,7 +1284,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             h.append(sw, document.createTextNode(name(n.id)));
             if (tw) h.append(el('span', { style: 'color:var(--success);margin-left:6px' }, `×${tw.length}`));
             box.append(x, h);
-            if (tw) box.append(el('div', { class: 'lin-dim', style: 'word-break:break-all;margin-bottom:6px' }, `Same code: ${tw.map(md5Of).join(', ')}`));
+            if (tw) box.append(el('div', { class: 'lin-dim', style: 'word-break:break-all;margin-bottom:6px' }, `${st.doc.columns_mode === 'children' ? 'Cluster files' : 'Same code'}: ${tw.map(md5Of).join(', ')}`));
             const p = st.L.fileOf.get(st.L.parentOf.get(n.id));
             const shown = n.rows.filter(R.match);
             const born = p ? shown.filter(r => !p.has(r)) : [], lost = p ? p.rows.filter(r => R.match(r) && !n.has(r)) : [];

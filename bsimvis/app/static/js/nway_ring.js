@@ -938,7 +938,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
         const fileTip = (ev, i) => {
             const n = M.doc.nodes[i], held = mods.filter(b => b.mem.includes(i)).sort((a, b) => b.size - a.size);
-            ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, ctx.fmt(b.size)]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
+            ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, ctx.fmt(b.size)]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
         };
 
         // ---- hover / pin: a module's chain lights, the rest fades. The lists are made once per layout, so a hover touches only its own elements.

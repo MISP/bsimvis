@@ -172,7 +172,17 @@ also sends the first-level `groups` that `/nway` builds over the same filtered r
 `group_rows` call, so same ids, meta and LLM names) and `rows.group` (each matching row's
 deepest one); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
 keys, and one lane-name cache keyed by content, so a lane is never named twice).
-Node check: `node scripts/test_nway_lineage.js`.
+**Merge files** on the lineage page: `columns=files`, `twins` (Same code) or `children` (Cluster, needs
+a `cluster_uuid` or a shared cluster; the same availability rule as the table's menu). `children` and
+`twins` docs both go through `nway_lineage_service.group_nodes` (a node holds a row when any member file
+does, `members` / `path` come from the group). Twins keep the first member's pair edges (they share
+their rows); child clusters differ, so the edge between two nodes is the strongest one over all their
+member pairs (most matched functions at `min_edge`), the same `PairEdges` value, and a node is named by
+its cluster. `columns=by` is refused (400). The view (`cols()`) falls back to files when the server
+answers 400 for children (old server, no shared cluster). Opening a cluster node uses the same
+`col_open` rule as twins: the `path` group ids on the nodes plus the node to open.
+Node check: `node scripts/test_nway_lineage.js`; the service self-check: `uv run python -I
+bsimvis/app/services/nway_lineage_service.py`.
 
 ### Ring view (`lview=ring`)
 

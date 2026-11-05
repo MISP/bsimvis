@@ -595,6 +595,24 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             if (openCalls.length > n0) { circle(famId(2)).ls.click[0](); resolvers[n0].res(); await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0)); assert.strictEqual(merges, m0, 'a stale response is ignored'); }
             ring.destroy();
             assert.ok(!host.children.some(n => n.className === 'ring-crumb'), 'the crumb is gone with the ring');
+            // Merge files: Cluster. The view's cols() mapping, and the node tooltip of a cluster
+            const vs0 = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');
+            const colsSrc = /const cols = \(\) => (\([^;]*\));/.exec(vs0)[1];
+            const colsOf = (columns, childrenOk, twinsOk, hasCluster) => new Function('st', 'childrenOk', 'twinsOk', 'hasCluster', `return ${colsSrc}`)({ columns }, childrenOk, twinsOk, () => hasCluster);
+            assert.deepStrictEqual([['children', true, true, true], ['children', true, true, false], ['children', false, true, true], ['twins', true, true, true], ['twins', true, false, true], ['files', true, true, true]].map(a2 => colsOf(...a2)), ['children', 'files', 'files', 'twins', 'files', 'files'], 'cols(): children only with a cluster and a server that answers; twins and files as before');
+            assert.ok(/fileModes: \['files', 'children', 'twins'\]/.test(vs0) && /res\.status === 400 && cols\(\) === 'children'\) \{ childrenOk = false;/.test(vs0) && /out\.set\('columns', cols\(\)\)/.test(vs0), 'the panel offers Cluster, a failing children request falls back, the API gets columns=cols()');
+            {
+                const cd = { ...merged, columns_mode: 'children' }, cb = build(cd, 'modules'), g5 = new El('g'), tips = [];
+                const r5 = window.NwayRing.mount({ g: g5, svg: new El('svg'), host: new El('div'), controls: new El('span'), controls2: new El('div'), opts: {}, getDoc: () => cd, getR: () => cb.R, getCats: () => cb.C, lens: () => 'modules', getTrack: () => '', setTrack() {}, onOpt() {}, onFile() {},
+                    showTip: (ev, title, col, rows) => tips.push(rows), moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(cd.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
+                r5.draw();
+                const els5 = r5.frame().els, merged0 = els5.findIndex(e => e.file === 0), plain = els5.findIndex(e => e.file === 1);
+                g5.children[0].children[merged0].ls.mouseenter[0]({});
+                g5.children[0].children[plain].ls.mouseenter[0]({});
+                assert.ok(tips[0].some(r2 => r2[0] === 'Files' && r2[1] === '2 files (cluster)'), 'a cluster node says how many files it holds');
+                assert.ok(!tips[1].some(r2 => r2[0] === 'Files'), 'a single file does not');
+                r5.destroy();
+            }
             delete global.document; delete global.cancelAnimationFrame;
             // the view: the request lists the groups already open plus the files to open, the URL is rewritten without navigation
             const vs = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8');

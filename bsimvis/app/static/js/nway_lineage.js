@@ -4,7 +4,7 @@
  * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
- * ring {nest, arc, min, list, tier, bundle}, onRing(state)), onNode(node) (true when it took the click: no dock),
+ * ring {nest, arc, min, list, tier, bundle}, onRing(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -170,6 +170,29 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
         if (text !== undefined) e.textContent = text;
         return e;
+    }
+
+    // "More": one .lin-btn (aria-expanded, chevron) and the row that wraps below the toolbar; the same for every view
+    function moreToggle(open) {
+        const btn = el('button', { type: 'button', class: 'lin-btn', title: 'More settings of this view' }), chev = el('i', {}), row = el('div', {});
+        btn.append(chev, el('span', {}, ' More'));
+        const sync = () => {
+            btn.setAttribute('aria-expanded', String(open));
+            chev.setAttribute('class', `fa-solid fa-chevron-${open ? 'up' : 'down'}`);
+            row.setAttribute('style', `display:${open ? 'flex' : 'none'};flex:0 0 100%;flex-wrap:wrap;gap:8px 10px;align-items:center`);
+        };
+        btn.addEventListener('click', () => { open = !open; sync(); });
+        sync();
+        return { btn, row, set: v => { open = !!v; sync(); } };
+    }
+    // a labelled .lin-seg of buttons with aria-pressed (an on/off switch is two buttons)
+    function segSwitch(label, tip, options, get, set) {
+        const wrap = el('span', { style: 'display:inline-flex;align-items:center;gap:6px' }), box = el('div', { class: 'lin-seg', role: 'group', 'aria-label': label, title: tip });
+        const paint = () => { for (const [v, b] of btns) b.setAttribute('aria-pressed', String(String(get()) === String(v))); };
+        const btns = options.map(([v, text]) => { const b = el('button', { type: 'button' }, text); b.addEventListener('click', () => { set(v); paint(); }); box.append(b); return [v, b]; });
+        wrap.append(el('span', { class: 'lin-dim' }, label), box);
+        paint();
+        return { el: wrap, paint };
     }
 
     // ---------------------------------------------------------------- model
@@ -719,29 +742,31 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const search = el('input', { type: 'search', placeholder: 'Find file or md5', 'aria-label': 'Find a file' });
         const hits = el('span', { class: 'lin-dim' });
         const btn = (txt, title, f, cls = 'lin-btn') => { const b = el('button', { type: 'button', class: cls, title }, txt); b.addEventListener('click', f); return b; };
-        const reuseBtn = btn('Reuse layer', 'Show or hide the reuse arcs', () => { st.reuseOn = !st.reuseOn; reuseBtn.setAttribute('aria-pressed', String(st.reuseOn)); applyReuse(); });
-        reuseBtn.setAttribute('aria-pressed', 'true');
         const zgrp = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Zoom' });
         const zbtn = (txt, title, f) => { const b = el('button', { type: 'button', title, 'aria-label': title }, txt); b.addEventListener('click', f); zgrp.append(b); };
         zbtn('−', 'Zoom out', () => s.transition().duration(200).call(zoom.scaleBy, 1 / 1.5));
         zbtn('+', 'Zoom in', () => s.transition().duration(200).call(zoom.scaleBy, 1.5));
         zbtn('Fit', 'Fit the whole chart', () => fit(true));
-        zbtn('100%', 'Actual size', () => s.transition().duration(250).call(zoom.scaleTo, 1));
-        zbtn('Selection', 'Zoom to the selected or last hovered file, edge or reuse arc', () => zoomToSel());
-        // chart-only tools: one popover (as the table's Filter), zoom floating over the canvas
-        const chartPop = el('details', { class: 'nway-pop' }), chartBody = el('div', { class: 'nway-match-body' });
-        const chartSum = el('summary', { class: 'nway-chip', title: 'Collapse or expand the tree, show the reuse layer' });
-        chartSum.append(el('i', { class: 'fa-solid fa-diagram-project' }), document.createTextNode(' Chart'));
-        chartBody.append(btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
-            btn('Expand all', 'Show every file', () => { st.collapsed = new Set(); rebuild(); }), reuseBtn);
-        chartPop.append(chartSum, chartBody);
+        // visible: the view picker (the page's), search, zoom (floating) and what the view needs most; the rest is behind "More"
+        const reuse = segSwitch('Reuse layer', 'Show or hide the reuse arcs', [[false, 'Off'], [true, 'On']], () => st.reuseOn, v => { st.reuseOn = v; applyReuse(); });
+        const more = moreToggle(!!opts.moreOpen);
+        more.row.append(...(opts.more || []),
+            btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
+            btn('Expand all', 'Show every file', () => { st.collapsed = new Set(); rebuild(); }),
+            btn('100%', 'Actual size', () => s.transition().duration(250).call(zoom.scaleTo, 1)),
+            btn('Selection', 'Zoom to the selected or last hovered file, edge or reuse arc', () => zoomToSel()));
         zgrp.classList.add('lin-zoom');
         canvas.append(zgrp);
-        tb.append(search, hits, chartPop);
+        const reuseSlot = el('span', { style: 'display:contents' });
+        tb.append(search, hits, reuseSlot);
         const trackBox = el('span', { style: 'display:contents' }), legendBox = el('span', { style: 'display:contents' });
         // the Ring's controls sit in the same flex row as the others; its "More" row wraps below
         const ringBox = el('span', { style: 'display:none' }), ringBox2 = el('div', { style: 'display:none' });
-        tb.append(trackBox, legendBox, ringBox, ringBox2);
+        more.row.append(ringBox2);
+        tb.append(trackBox, legendBox, ringBox, more.btn, more.row);
+        // Tree keeps Reuse layer in view; Tracks and Split have it behind More; the Ring has no reuse arcs
+        const placeBar = () => { (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' ? 'none' : ''; };
+        placeBar();
         const deepAll = () => {
             const out = new Set();
             for (const n of st.M.vis) if (!n.agg && n.d >= 2 && (st.M.kids.get(n.id) || []).length && !out.has(st.M.rep.get(n.id))) out.add(n.id);
@@ -1641,6 +1666,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             gRingG.style('display', on ? null : 'none');
             mini.style.display = on ? 'none' : '';
             ringBox.style.display = on ? 'contents' : 'none';
+            ringBox2.style.display = on ? 'contents' : 'none';
+            placeBar();
             // the chip legend is the Ring's optional "Module list"
             legendBox.style.display = on && !(opts.ring && st.ringList) ? 'none' : 'contents';
             if (!on) { if (st.ring) st.ring.show(false); return; }
@@ -1866,5 +1893,5 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         return q;
     }
 
-    window.NwayLineage = { mount, ensureCss, LENSES, tableQs, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
+    window.NwayLineage = { mount, ensureCss, LENSES, tableQs, _bar: { moreToggle, segSwitch }, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
 })();

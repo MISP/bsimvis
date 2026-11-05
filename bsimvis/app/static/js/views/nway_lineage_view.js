@@ -115,14 +115,40 @@ window.NwayLineageView = {
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
         };
 
-        // ---- Tree | Tracks | Split ----
-        const views = mk('div', { class: 'lin-seg', role: 'group', 'aria-label': 'View' });
-        const viewBtns = [['tree', 'Tree', 'fa-sitemap', 'The lineage tree'], ['tracks', 'Tracks', 'fa-route', 'Follow one group of the lens through the tree, or six at once'], ['split', 'Split', 'fa-table-columns', 'A compact tree over the N-way table, linked both ways'], ['ring', 'Ring', 'fa-circle-nodes', 'Clusters of files as circles, the modules they hold as rings, shared modules as ribbons']].map(([v, t, icon, title]) => {
-            const b = mk('button', { type: 'button', title });
-            b.append(mk('i', { class: `fa-solid ${icon}`, style: 'margin-right:4px' }), document.createTextNode(t));
-            b.addEventListener('click', () => { if (st.lview === v && !st.auto) return; st.auto = false; st.lview = v; store.set('nway.lview', v); writeUrl(); applyView(); });
-            views.append(b);
-            return { v, b };
+        // ---- the view picker: the pill dropdown of the table's pickers (NwayPanel._dd), no look of its own ----
+        const VIEWS = [
+            ['tree', 'Tree', 'fa-solid fa-sitemap', 'A few similar builds of one family'],
+            ['tracks', 'Tracks', 'fa-solid fa-route', 'Follow one lens group through the tree'],
+            ['split', 'Split', 'fa-solid fa-table-columns', 'A compact tree over the N-way table'],
+            ['ring', 'Ring', 'fa-solid fa-circle-nodes', 'Many builds and clusters: shared code between them'],
+        ];
+        const viewPick = mk('span');
+        let recommended = '';
+        const renderPicker = () => {
+            const NP = window.NwayPanel;
+            if (!NP) return;
+            const tip = st.auto ? 'Chosen for you: Tree for a few similar builds, Ring for many builds and clusters. Pick one to keep it.' : 'How the lineage is drawn: as a tree, group by group, beside the table, or as clusters.';
+            viewPick.innerHTML = NP.prototype._dd.call({ _tip: NP.prototype._tip }, 'View', VIEWS.map(([k, t, icon, why]) => [k, t, icon, 'var(--info, #3b82f6)', st.auto && k === recommended ? 'auto' : undefined, why]), st.lview, tip, k => `data-view="${k}" role="menuitemradio" tabindex="0"`);
+        };
+        const pickView = k => {
+            const det = viewPick.querySelector('details');
+            if (det) det.removeAttribute('open');
+            if (st.lview === k && !st.auto) return;
+            st.auto = false;
+            st.lview = k;
+            store.set('nway.lview', k);
+            writeUrl();
+            applyView();
+        };
+        viewPick.addEventListener('click', ev => { const t = ev.target.closest && ev.target.closest('[data-view]'); if (t) pickView(t.dataset.view); });
+        viewPick.addEventListener('keydown', ev => {
+            const items = [...viewPick.querySelectorAll('[data-view]')], det = viewPick.querySelector('details'), at = items.indexOf(ev.target);
+            if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+                ev.preventDefault();
+                if (det && !det.open) det.open = true;
+                items[at < 0 ? 0 : (at + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+            } else if ((ev.key === 'Enter' || ev.key === ' ') && at >= 0) { ev.preventDefault(); pickView(items[at].dataset.view); }
+            else if (ev.key === 'Escape' && det && det.open) { ev.stopPropagation(); det.open = false; const sm = det.querySelector('summary'); if (sm) sm.focus(); }
         });
 
         // ---- the table's own controls (NwayPanel, lean): search, filters, code axis, tabs, merge files, lenses.
@@ -186,12 +212,13 @@ window.NwayLineageView = {
             this._panel.load();
         };
         const applyView = () => {
-            for (const x of viewBtns) x.b.setAttribute('aria-pressed', String(st.lview === x.v));
+            renderPicker();
             wrap.classList.toggle('lin-split', split());
             if (this._panel) this._panel.setTable(split());
             if (this._inst) { this._inst.setView(chartView()); this._inst.select(split() ? st.column : null); }
         };
 
+        const advanced = () => { const R = window.NwayRing ? window.NwayRing.RING : { ARC_DEFAULT: 'group' }; return st.layout !== 'tree' || !!st.root || st.rnest === '0' || st.rarc !== R.ARC_DEFAULT || st.rlist === '1' || st.rtier === 'hide' || st.rbundle === '0'; };
         let seq = 0, loadedQs = '';
         // The Ring opens merged (twin) files of a cluster: the server opens the column groups listed in col_open, so send the ones
         // already open (the group ids on the nodes' paths, as the table spells out its `*` wildcard) plus these, keep the answer's
@@ -221,7 +248,7 @@ window.NwayLineageView = {
                 if (tok !== this._tok || my !== seq) return;
                 status.textContent = '';
                 if (this._inst) { this._inst.destroy(); this._inst = null; }
-                chart.replaceChildren(views);
+                chart.replaceChildren(viewPick);
                 const m = mk('div', {}, `${err.message || err}${cols() === 'twins' ? ' (Same code merged the files: try Merge files: None.)' : ''}`);
                 m.style.cssText = 'padding:20px;color:#f92672';
                 chart.append(m);
@@ -235,11 +262,15 @@ window.NwayLineageView = {
                 o.selected = n.id === st.root;
                 rootSel.append(o);
             }
+            if (window.NwayRing) recommended = window.NwayRing.autoView(doc);
             if (!this._inst && st.auto && window.NwayRing) { st.lview = window.NwayRing.chooseView('', '', doc).view; applyView(); }
             if (!this._inst) {
                 chart.replaceChildren();
                 this._inst = NL.mount(chart, {
-                    toolbar: [views, layoutSel, rootSel, status],
+                    toolbar: [viewPick, status],
+                    // the tree's layout and root, and every other control of the view, sit behind "More"; it starts open when the URL carries a non-default one
+                    more: [layoutSel, rootSel],
+                    moreOpen: advanced(),
                     fetchFile: id => get({ file: id }),
                     lens: lensOf(st.group),
                     track: st.track,

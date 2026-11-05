@@ -858,7 +858,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
      * ctx: { g (svg group inside the zoomed world), svg (the svg element), host (the canvas div, for the note),
      *   getDoc(), getR(), getCats() -> lensCats or null, getTrack(), setTrack(tk), onFile(nodeId),
      *   showTip(ev, title, colour, rows), moveTip(ev), hideTip(), fmt, name(id), nodeColor(i), tree(), hsl(h, l), hue(i),
-     *   grey, controls (the always-visible controls), controls2 (the row behind "More"),
+     *   grey, controls (the always-visible controls), controls2 (the controls the page puts behind its "More"),
      *   camera { get() -> the current zoom transform, to(box [x0, y0, x1, y1]) animates to it, restore(transform) },
  *   openNodes(ids) -> Promise of a lineage doc with those merged nodes opened, merge(doc) puts it in (the view state stays),
  *   opts: { nest, arc: 'partner' | 'group' | 'one', min (percent), list }, onOpt({nest, arc, min, list}), fit() }
@@ -917,26 +917,14 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         resetBtn.textContent = 'Reset layout';
         resetBtn.title = 'Put every circle and ribbon back where it was computed';
         resetBtn.addEventListener('click', () => { S.sim.reset(); S.open.clear(); full(); ctx.fit(); });
-        const moreBtn = document.createElement('button'), chev = document.createElement('i'), moreTxt = document.createElement('span');
-        moreBtn.setAttribute('type', 'button');
-        moreBtn.className = 'lin-btn';
-        moreBtn.title = 'More Ring settings: arcs, nested clusters, module list';
-        moreTxt.textContent = ' More';
-        moreBtn.append(chev, moreTxt);
         const arcSeg = seg('Arcs', 'How many ring segments a module gets on a circle: one per partner family, one per group of nearby partners, or one for all of them', [['partner', 'Per partner'], ['group', 'Grouped'], ['one', 'One per module']], () => S.arc, v => { S.arc = v; applyOpt(true); });
         const nestSeg = onOff('Nested clusters', 'Show the sub-clusters of each family as circles inside it, with lanes on each level', () => S.nested, v => { S.nested = v; S.sim.reset(); applyOpt(false); full(); ctx.fit(); });
         const listSeg = onOff('Module list', 'Show the chips of the lens groups above the chart', () => S.list, v => { S.list = v; applyOpt(false); });
         const tierSeg = seg('Tier buckets', 'The Core / Common / Rare remainders of the Lanes lens (rows that are in no lane): shown in grey behind the lanes, or hidden', [['show', 'Show'], ['hide', 'Hide']], () => S.tier, v => { S.tier = v; applyOpt(true); });
         const bundleSeg = seg('Bundle ribbons', 'Draw the ribbons between two clusters as one bundle of parallel stripes, one per module', [[true, 'On'], [false, 'Off']], () => S.bundle, v => { S.bundle = v; applyOpt(false); paint(); });
-        // advanced settings that differ from their defaults start open, so the state is visible
-        let more = S.arc !== RING.ARC_DEFAULT || !S.nested || S.list || S.tier === 'hide' || S.bundle !== RING.BUNDLE_DEFAULT;
-        const syncMore = () => { moreBtn.setAttribute('aria-expanded', String(more)); chev.className = `fa-solid fa-chevron-${more ? 'up' : 'down'}`; ctx.controls2.style.display = more ? 'flex' : 'none'; };
-        moreBtn.addEventListener('click', () => { more = !more; syncMore(); });
-        ctx.controls.replaceChildren(minSeg, resetBtn, moreBtn);
+        ctx.controls.replaceChildren(minSeg, resetBtn);
         ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
-        ctx.controls2.setAttribute('style', `display:${more ? 'flex' : 'none'};flex:0 0 100%;flex-wrap:wrap;gap:8px 10px;align-items:center`);
-        syncMore();
-
+        
         // ---- tooltips
         const modTip = (ev, b, pr, prs, bu) => {
             if (!b) return;
@@ -1228,7 +1216,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             reset() { S.sim.reset(); full(); },
             // bounding box of everything drawn, for Fit
             box() { return frame ? frame.fit : null; },
-            show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; ctx.controls2.style.display = on && more ? 'flex' : 'none'; },
+            show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; },
             state: S,
             frame: () => frame,
             destroy() {

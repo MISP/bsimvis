@@ -215,48 +215,17 @@ left out of everything (segments, ribbons, lanes, fans, colours) and never merge
 means the same everywhere. The canvas note and the select's title always say how many modules
 are hidden and how many are shown. Scale and floor widths are computed after the gate.
 
-**Toolbar.** The Ring controls use the lineage page's own switches: `.lin-seg` groups of buttons with
-`aria-pressed` (on/off switches are two buttons, Off / On), never selects. Visible: Min size
-(Off, 0.25 ... 5%), Reset layout and a "More" `.lin-btn` (`aria-expanded`). Behind "More" (a row that
-wraps below): Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list (the lens chip legend, hidden by default). More
-starts open when the URL carries a non-default advanced key. Defaults: Arcs = grouped, Min size 0.5%,
-Nested on, Module list off; a key equal to its default stays out of the URL
-(`rarc`, `rnest`, `rmin`, `rlist`, `rtier`, `rbundle`; a legacy `rfocus` is stripped too), and none of them reaches the table or API links.
-
-**Focus by click.** A click on a cluster circle's own body (not an arc, ribbon, lane, band, fan, file
-dot; a drag still drags) zooms the page's d3 camera to it and fades the other top-level clusters and
-the ribbons that do not touch it (`ring-dim`, opacity .15; hover and pin still light their chain
-at full strength). A breadcrumb (All > cluster > sub-cluster, `textContent`) shows the path; Esc,
-the All crumb or a click on empty canvas bring back the camera stored at the *first* focus. Deeper,
-in order: the focused cluster's files get labels even above `HIDE_FILES`; leaf circles above
-`LEAF_MAX` are added to `S.open`; merged (twin) files are opened by the server. The server opens a
-merged column when its id is in `col_open`; with an explicit list the open groups are exactly the
-`path` ids on the nodes, so the view (`openNodes` in `nway_lineage_view.js`) sends the union of those
-ids plus the merged node ids (a `*fit:N` wildcard would not, its budget is spent). The answer
-replaces each opened node by one node per member file, with `path` extended by the opened id; the
-other nodes keep their paths and relative order. The answer is merged with `setDoc(doc, lens,
-{ keep: true })`: same SVG root, camera, pin, `S.open`, breadcrumb and the physics state: `sim.pts` is
-keyed by cluster id and by node id (never by index), and `sim.homes` / `sim.fhomes` remember where
-every cluster and file was placed, so old things do not move and new files appear (fade-in) inside
-their new cluster. While it runs the focused circle pulses and the note says "opening N files...";
-a failure keeps the old doc and shows the error; a response for a cluster that is no longer focused is
-ignored; a double click is one request. The new `col_open` is written with `history.replaceState`.
-
-**Tier buckets** (More row, `rtier=hide`, default Show): in the Lanes lens the server's `tier` / `fold`
-groups that hold rows of their own (rows in no lane) are buckets (`b.bucket`): neutral grey (the one
-exception to the lens-colour rule), fainter and thinner than lanes, drawn behind them, labelled
-"<Tier>: rows in no lane" / "slim lanes folded". They take part in hover and pin. Hide removes
-them like the Min size gate (never merged into "other") and the canvas note counts them. The switch is
-disabled on lenses without tier groups.
-
-**Bundle ribbons** (More row, `rbundle=0` for Off, default On, `RING.BUNDLE_DEFAULT`): the outer ribbons of one cluster pair are drawn
-as one bundle: each module's stripe leaves its slot, joins a straight parallel run on the axis between
-the two centres (`min(0.25 * distance, 80)` px beyond each ring), and diverges to its slot on the other
-ring; ends are arc-exact and equal; stripe order is by lateral slot position. A stripe is still the
-module's `o:` element (same id and `data-m`); one drag handle per pair (`rb:X:Y`); the tooltip adds
-"X + Y: N modules, M shared functions". Pairs too close for a bundle fall back to plain ribbons.
-Stripes of a pair can still cross where the two rings order their slots differently (see the numbers
-in the commit message).
+**Toolbar (all four views).** One pattern: the View picker (the table's pill dropdown, `NwayPanel._dd`: Tree,
+Tracks, Split, Ring, an "auto" badge while the page chose for you; arrows / Enter / Esc), the file search, zoom
+(floating: - + Fit) and at most two view essentials, then one "More" `.lin-btn` (`aria-expanded`, chevron) that
+opens a second row. Visible per view: Tree = Reuse layer; Tracks, Split = nothing extra; Ring = Min size and
+Reset layout. Behind More (every view): the tree's Layout and Root, Collapse deep, Expand all, 100%, Selection,
+Reuse layer (Tracks, Split), and for the Ring Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list
+(the lens chip legend, hidden by default). More starts open when the URL carries a non-default advanced key
+(`layout`, `root`, `rarc`, `rnest=0`, `rlist`, `rtier=hide`, `rbundle=0`). The on/off switches are `.lin-seg`
+groups of buttons with `aria-pressed`, never selects. Defaults: Arcs = grouped, Min size 0.5%, Nested on,
+Module list off; a key equal to its default stays out of the URL (`rarc`, `rnest`, `rmin`, `rlist`, `rtier`,
+`rbundle`; a legacy `rfocus` is stripped too), and none of them reaches the table or API links.
 
 **Arcs** (`rarc=partner|group|one`, default `RING.ARC_DEFAULT` = group): how many ring
 segments a cross-family module gets on a circle. `partner`: one per partner family. `group`: partners

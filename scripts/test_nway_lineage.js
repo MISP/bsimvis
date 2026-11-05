@@ -651,7 +651,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(/NwayPanel\.tableUrl\(bq\)/.test(viewS), 'the lineage page uses it for its back link');
             assert.ok(/class="nway-chip" data-lineage[^>]*><i class="fa-solid fa-sitemap"><\/i> Lineage<\/button>/.test(panelSrc), 'a visible Lineage button among the table controls');
             assert.ok(/localStorage\.getItem\('nway\.lview'\)[\s\S]{0,200}qs\.set\('lview', v\)/.test(panelSrc) && /localStorage\.getItem\('nway\.ring'\)/.test(panelSrc), 'the table opens the lineage page in the remembered view');
-            assert.ok(/store\.set\('nway\.lview', v\)/.test(viewS) && /store\.set\('nway\.ring'/.test(viewS) && /get: k => \{ try \{ return localStorage\.getItem\(k\)/.test(viewS), 'a pick is remembered, storage wrapped in try/catch');
+            assert.ok(/store\.set\('nway\.lview', k\)/.test(viewS) && /store\.set\('nway\.ring'/.test(viewS) && /get: k => \{ try \{ return localStorage\.getItem\(k\)/.test(viewS), 'a pick is remembered, storage wrapped in try/catch');
         }
 
         // the min-size gate: off keeps every module; a gate drops exactly the modules under the share of all functions, merges nothing
@@ -737,19 +737,26 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const pressed = label => segs.find(e => e.attrs['aria-label'] === label).children.find(k => k.attrs['aria-pressed'] === 'true').textContent;
             assert.deepStrictEqual(['Min size', 'Arcs', 'Nested clusters', 'Bundle ribbons', 'Tier buckets', 'Module list'].map(pressed), ['0.5%', 'Grouped', 'On', 'On', 'Show', 'Off'], 'defaults: min size 0.5%, grouped arcs, nested on, bundles on, tier buckets shown, no module list');
             assert.ok(bar.c2.children.length === 5 && !bar.c1.children.some(k => k.tag === 'span' && /Bundle|Tier/.test(k.children[0].textContent)), 'Bundle ribbons and Tier buckets live in the More row');
-            assert.deepStrictEqual(bar.c1.children.map(k => (k.tag === 'span' ? k.children[0].textContent : k.textContent || k.children[1].textContent)), ['Min size', 'Reset layout', ' More'], 'visible: Min size, Reset layout, More');
-            assert.strictEqual(bar.c2.style.display, 'none', 'the advanced row is hidden by default');
-            const more = bar.c1.children[2];
-            assert.strictEqual(more.attrs['aria-expanded'], 'false');
-            more.ls.click[0]();
-            assert.strictEqual(more.attrs['aria-expanded'], 'true');
-            assert.strictEqual(bar.c2.style.display, 'flex', 'More opens the row');
-            for (const [opts, why] of [[{ arc: 'one' }, 'rarc=one'], [{ nest: false }, 'rnest=0'], [{ list: true }, 'rlist=1'], [{ tier: 'hide' }, 'rtier=hide'], [{ bundle: false }, 'rbundle=0']]) {
-                const o = mountBar(opts);
-                assert.strictEqual(o.c1.children[2].attrs['aria-expanded'], 'true', `${why} opens More`);
-                o.r.destroy();
-            }
-            { const o = mountBar({ bundle: true }); assert.strictEqual(o.c1.children[2].attrs['aria-expanded'], 'false', 'bundles on is the default and does not open More'); o.r.destroy(); }
+            assert.deepStrictEqual(bar.c1.children.map(k => (k.tag === 'span' ? k.children[0].textContent : k.textContent)), ['Min size', 'Reset layout'], 'the Ring keeps Min size and Reset layout in view; the page adds View, search, zoom and More');
+            // the page's "More" (the same for every view): closed by default, opens by click or for a non-default key
+            const NB = window.NwayLineage._bar, m0 = NB.moreToggle(false), m1 = NB.moreToggle(true);
+            assert.deepStrictEqual([m0.btn.attrs['aria-expanded'], m0.btn.className === undefined ? m0.btn.attrs.class : m0.btn.className, m0.row.attrs.style.includes('display:none')], ['false', 'lin-btn', true], 'More starts closed, a .lin-btn');
+            assert.strictEqual(m1.btn.attrs['aria-expanded'], 'true'); assert.ok(m1.row.attrs.style.includes('display:flex'), 'starts open when asked to');
+            assert.ok(/fa-chevron-down/.test(m0.btn.children[0].attrs.class) && /fa-chevron-up/.test(m1.btn.children[0].attrs.class), 'a chevron');
+            m0.btn.ls.click[0]();
+            assert.strictEqual(m0.btn.attrs['aria-expanded'], 'true'); assert.ok(m0.row.attrs.style.includes('display:flex'), 'a click opens the row'); assert.ok(/chevron-up/.test(m0.btn.children[0].attrs.class));
+            const sw = NB.segSwitch('Reuse layer', 'tip', [[false, 'Off'], [true, 'On']], () => true, () => {});
+            assert.deepStrictEqual([sw.el.children[1].attrs.class, sw.el.children[1].attrs.role, sw.el.children[1].attrs['aria-label'], sw.el.children[1].children.map(b2 => [b2.tag, b2.attrs.type, b2.attrs['aria-pressed']])], ['lin-seg', 'group', 'Reuse layer', [['button', 'button', 'false'], ['button', 'button', 'true']]], 'the on/off switch is the lineage .lin-seg markup');
+            // the same controls in every view, the picker in the table pickers' markup, the advanced keys that open More
+            const ps = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_panel.js', 'utf8'), vv = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/views/nway_lineage_view.js', 'utf8'), lin = fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_lineage.js', 'utf8');
+            assert.ok(/NP\.prototype\._dd\.call\(\{ _tip: NP\.prototype\._tip \}, 'View'/.test(vv) && !/'aria-label': 'View'/.test(vv), 'the view picker is NwayPanel._dd, not a button group');
+            assert.ok(/<span class="nway-ctlwrap"><span class="nway-lbl">[^`]*<details class="nway-ddl"><summary>[^`]*<div class="nway-ddl-menu">/.test(ps), 'the markup _dd produces: .nway-ctlwrap > details.nway-ddl > .nway-ddl-menu');
+            assert.ok(/\['tree', 'Tree', 'fa-solid fa-sitemap'[^\]]*\],\s*\['tracks', 'Tracks', 'fa-solid fa-route'[^\]]*\],\s*\['split', 'Split', 'fa-solid fa-table-columns'[^\]]*\],\s*\['ring', 'Ring', 'fa-solid fa-circle-nodes'/.test(vv), 'four views with icons and tips');
+            assert.ok(/toolbar: \[viewPick, status\]/.test(vv) && /more: \[layoutSel, rootSel\]/.test(vv) && /moreOpen: advanced\(\)/.test(vv), 'picker + status in view, layout and root behind More');
+            assert.ok(/st\.layout !== 'tree' \|\| !!st\.root \|\| st\.rnest === '0' \|\| st\.rarc !== R\.ARC_DEFAULT \|\| st\.rlist === '1' \|\| st\.rtier === 'hide' \|\| st\.rbundle === '0'/.test(vv), 'a non-default advanced key opens More');
+            assert.ok(/tb\.append\(trackBox, legendBox, ringBox, more\.btn, more\.row\)/.test(lin) && /more\.row\.append\(\.\.\.\(opts\.more \|\| \[\]\),[\s\S]*'Collapse deep'[\s\S]*'Expand all'[\s\S]*'100%'[\s\S]*'Selection'/.test(lin), 'Collapse deep, Expand all, 100% and Selection stay reachable behind More');
+            assert.ok(/zbtn\('−'/.test(lin) && /zbtn\('\+'/.test(lin) && /zbtn\('Fit'/.test(lin) && !/zbtn\('100%'/.test(lin), 'zoom in view: − + Fit');
+            assert.ok(/\(st\.view === 'tree' \? reuseSlot : more\.row\)\.append\(reuse\.el\)/.test(lin), 'Reuse layer: in view for Tree, behind More for Tracks and Split');
             const lst = segs.find(e => e.attrs['aria-label'] === 'Module list');
             lst.children[1].ls.click[0]();
             assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');

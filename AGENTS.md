@@ -212,14 +212,18 @@ by the barycentre of the arcs they connect to on the other rings. Measured on th
 and 4100 one-arc), grouped cuts the segments about 40-50% for about 50% more crossings, the sweeps help
 grouped and one-arc by 5-35% and are neutral for per partner, which is why it stays the default.
 
+**Colours:** a module or lane is painted exactly with its lens group's colour (`cat.color`, the
+same string the Tree uses; grey stays grey where the lens says so), never tinted by cluster; a
+golden-angle hue only when the lens gives none. The cluster colour is only on the circle, its
+label and the file dots. No lane shading.
+
 **Nothing is dropped.** Every module keeps its ring segment, its parent -> lane -> file chain
 and one outer ribbon per family pair it spans. A segment thinner than the scale gives is
 drawn `FLOOR` (2 px, less on a genuinely full ring); the px-per-function scale shrinks
 instead. Only `RIBBON_SAFE` (5000 ribbons) can omit ribbons, with a note in the canvas.
 Constants are all in `RING`: `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120 files),
 `LEAF_MAX` 60 (larger leaves are one circle until clicked), `FAM_MAX` 24, `PX_MAX` 2.5,
-`LANE_W` 0.12 (shrunk by `lanePx` to fit), `LANE_FIT` 0.85, `CROSS_COLORS` 12 (more
-cross modules get golden-angle hues; grey only for groups grey on purpose), `BUDGET`
+`LANE_W` 0.12 (shrunk by `lanePx` to fit), `LANE_FIT` 0.85, `BUDGET`
 [6000, 12000] estimated elements (above: no parent-to-lane bands; above the second:
 clusters and family ribbons only; the mode is shown in the canvas note). The redraw loop
 stops after 240 frames or 4 s.

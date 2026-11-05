@@ -30,8 +30,8 @@
         PX_MAX: 2.5, // ceiling of the px-per-function scale, so a small set does not get ring-wide ribbons
         ARC_DEFAULT: 'partner', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
-        CROSS_COLORS: 12, RIBBON_SAFE: 5000, // cross modules in the lens colour (then golden-angle hues); safety limit of outer ribbons, with a note when it triggers
-        LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7, LANE_SHADE: [1, 0.7, 0.45],
+        RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
+        LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
@@ -204,7 +204,7 @@
     }
 
     // ---------------------------------------------------------------- the model
-    // o: { minPct (gate, percent of all functions), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey, neutral }
+    // o: { minPct (gate, percent of all functions), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey }
     function buildModel(doc, R, C, o = {}) {
         const N = doc.nodes.length, T = clusterTree(doc), roots = T.roots, hsl = o.hsl || ((h, l) => `hsl(${h},62%,${l}%)`);
         roots.forEach(sizeNode);
@@ -215,16 +215,14 @@
         };
         roots.forEach((f, fi) => { const walk = c => { c.col = colour(c, fi); c.kids.forEach(walk); }; walk(f); f.famCol = f.other ? 'var(--lin-grey)' : f.col; });
         const mods = R && C ? modulesOf(R, C, N, T.famOf, roots.length, o) : [];
-        // cross modules in size order get the lens colour; past RING.CROSS_COLORS they get golden-angle hues of their own; grey stays for groups that are grey on purpose
-        const neutral = o.neutral || 'var(--lin-grey)';
         mods.sort((a, b) => b.size - a.size);
-        let cross = 0;
         mods.forEach((b, k) => {
             b.k = k;
             b.fams = [...new Set(b.mem.map(i => T.famOf[i]))].sort((x, y) => x - y);
             b.pairRows = (x, y) => b.pair.get(`${Math.min(x, y)}|${Math.max(x, y)}`) || 0;
             b.fam = b.fams.length === 1 ? b.fams[0] : null;
-            b.color = b.fam != null ? roots[b.fam].famCol : b.grey ? neutral : cross++ < RING.CROSS_COLORS ? b.cat.color : hsl(Math.round((cross * 137.508 + 40) % 360), 52);
+            // exactly the colour the Tree gives the group (grey stays grey where the lens says so); a golden-angle hue only when the lens gives none
+            b.color = b.cat.color || hsl(Math.round((k * 137.508 + 40) % 360), 52);
         });
         const M = { doc, N, T, roots, modeOf, arcMode: o.arc || (o.oneArc ? 'one' : RING.ARC_DEFAULT), hidden: mods.hidden || 0, nFuncs: R ? R.n : 0, minPct: o.minPct || 0, byId: T.byId, famOf: T.famOf, mods, famFiles: roots.map(f => f.files.length), nodeColor: o.nodeColor || (() => '#888') };
         M.homes = placeFamilies(M);
@@ -601,7 +599,6 @@
         };
         // routing: family ring -> lane on each cluster level -> files; a cluster without sub-clusters fans straight to its files
         const holdersIn = (n, x) => n.files.filter(i => x.hold.has(i));
-        const laneOf = new Map();
         const routeNode = (X, feeds) => {
             if (!feeds.length) return;
             const C = nc[X.id], rp = X.r + RING.LANE_OFF, ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx }));
@@ -621,9 +618,7 @@
                 const dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                 const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
                 if (!light) add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 }, m: b.k, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
-                const lane = (laneOf.get(`${b.fam}|${X.id}`) || 0);
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: b.fam != null ? RING.LANE_SHADE[lane % 3] : 1 }, m: b.k, drag: key(X), lane: X.id, sk, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
-                if (b.fam != null) laneOf.set(`${b.fam}|${X.id}`, lane + 1);
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: 1 }, m: b.k, drag: key(X), lane: X.id, sk, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp });
                 if (X.kids.length) {
                     const here = X.kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
@@ -658,10 +653,9 @@
         // family rings (rounded arcs) and labels
         roots.forEach((f, c) => {
             const { rm, ro } = rg(f);
-            let lane = 0;
             segs[c].forEach(x => {
                 const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), a0 = x.a0 + pd, a1 = x.a1 - pd, wide = (x.a1 - x.a0) * ro > RING.SEG_STROKE + 2;
-                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: x.b.fam != null ? RING.LANE_SHADE[lane++ % 3] : 1 }, m: x.b.k, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
+                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: 1 }, m: x.b.k, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             add(`fl:${c}`, 'text', { x: f1(tx), y: f1(ty), 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600 }, { text: `${f.label}  ${f.files.length} files`, cls: 'ring-fam', drag: `f:${f.id}` });

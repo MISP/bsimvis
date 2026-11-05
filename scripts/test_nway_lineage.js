@@ -335,6 +335,18 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok([...lk.values()].every(n => n === 1), 'ids are unique');
         }
 
+        // colours: every module and lane has exactly the colour the Tree gives its lens group, whatever the cluster
+        {
+            const one = { ...d, nodes: d.nodes.map(n => ({ ...n, path: [{ id: 'one', label: 'One' }] })) };
+            for (const [label, dd] of [['synthetic', d], ['real-shaped', yara], ['one cluster', one]]) for (const lens of ['modules', 'lanes']) {
+                const b = build(dd, lens), gg = RL.geometry(b.M, { sim: RL.newSim(), nested: true, open: new Set() });
+                for (const m of b.M.mods) assert.strictEqual(m.color, m.cat.color, `${label}/${lens}: ${m.label} keeps the lens colour`);
+                const byK = new Map(b.M.mods.map(m => [m.k, m]));
+                for (const e of gg.els) if (e.m !== undefined) assert.strictEqual(e.s.fill || e.s.stroke, byK.get(e.m).cat.color, `${label}/${lens}: ${e.id} is painted in the lens colour`);
+                assert.ok(!('CROSS_COLORS' in RING) && !('LANE_SHADE' in RING), 'no colour cap and no lane shading');
+            }
+        }
+
         // grouped arcs and the crossing-minimising order, on every arc mode
         {
             const crossings = gg => {

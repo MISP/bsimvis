@@ -850,7 +850,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             chip(V.shared, 'shared'); chip(V.fork, 'kept by several children');
             chip(V.born, `born ${fmt(born)} fn`); chip(V.born, 'hatched: likely matcher miss', 'hatch');
             chip(V.died, `died ${fmt(died)} fn (kept by no child)`);
-            if (st.R && st.R.library.some(Boolean)) chip(V.shared, 'library code (bottom of a file)', doc.scope === 'code' ? 'dash' : 'hatch');
+            if (st.R && doc.scope !== 'code' && st.R.library.some(Boolean)) chip(V.shared, 'library code (bottom of a file)', 'hatch');
             if (doc.reuse_skipped) { chip(V.reuse, 'reuse off: too many files'); return; }
             chip(V.reuse, `reused outside the tree path ${fmt(doc.reuse_total || 0)} fn`);
             chip(V.reuse, 'same level'); chip(V.reuse, 'across depth', 'dash');
@@ -1418,10 +1418,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             }
             hits.textContent = hits._m ? hits._m : '';
         }
-        // Library share of each file: zebra stripes on the bottom band, a dashed ghost box on the Code axis
+        // Library share of each file: zebra stripes on the bottom band; nothing on the Code axis
         function drawLib() {
-            const R = st.R, ghost = st.doc.scope === 'code';
-            if (!R || !R.library.length) return;
+            const R = st.R;
+            if (!R || !R.library.length || st.doc.scope === 'code') return;
             const z = defs.append('pattern').attr('id', `lib-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
             z.append('rect').attr('width', 3).attr('height', 6).attr('fill', '#fff').attr('fill-opacity', 0.38);
             for (const n of st.L.vis) {
@@ -1429,9 +1429,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const held = R.held[n.idx], lib = held.reduce((a, r) => a + (R.library[r] ? 1 : 0), 0);
                 const h = held.length ? Math.min(n.h, n.h * lib / held.length) : 0;
                 if (h < 1) continue;
-                const r = gLib.append('rect').attr('x', n.x0).attr('y', n.y1 - h).attr('width', NODE_W).attr('height', h);
-                if (ghost) r.attr('fill', 'none').style('stroke', V.shared).attr('stroke-dasharray', '4 3').attr('vector-effect', 'non-scaling-stroke').attr('stroke-opacity', 0.9);
-                else r.attr('fill', `url(#lib-${id})`);
+                gLib.append('rect').attr('x', n.x0).attr('y', n.y1 - h).attr('width', NODE_W).attr('height', h).attr('fill', `url(#lib-${id})`);
                 gLib.append('title').text(`${fmt(lib)} library functions`);
             }
         }

@@ -485,16 +485,16 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         // focus mode and the pin, on a stub DOM: a hover touches only the module's own elements
         {
             class El {
-                constructor(tag) { this.tag = tag; this.attrs = {}; this.st = {}; this.style = { setProperty: (k, v) => (this.st[k] = v) }; this.kids = []; this.dataset = {}; this.ls = {}; this.cls = new Set(); this.parent = null; this._t = '';
+                constructor(tag) { this.tag = tag; this.attrs = {}; this.st = {}; this.style = { setProperty: (k, v) => (this.st[k] = v) }; this.children = []; this.dataset = {}; this.ls = {}; this.cls = new Set(); this.parent = null; this._t = '';
                     this.classList = { add: c => this.cls.add(c), remove: c => this.cls.delete(c), contains: c => this.cls.has(c), toggle: (c, on) => (on ? this.cls.add(c) : this.cls.delete(c)) }; }
                 setAttribute(k, v) { this.attrs[k] = String(v); } removeAttribute(k) { delete this.attrs[k]; }
                 append(...c) { c.forEach(x => this.appendChild(x)); }
                 set className(v) { this.cn = v; } get className() { return this.cn; }
                 set title(v) { this.attrs.title = v; } get title() { return this.attrs.title; }
-                appendChild(c) { c.parent = this; this.kids.push(c); return c; } replaceChildren(...c) { this.kids = []; c.forEach(x => this.appendChild(x)); }
-                remove() { if (this.parent) this.parent.kids = this.parent.kids.filter(k => k !== this); }
+                appendChild(c) { c.parent = this; this.children.push(c); return c; } replaceChildren(...c) { this.children = []; c.forEach(x => this.appendChild(x)); }
+                remove() { if (this.parent) this.parent.children = this.parent.children.filter(k => k !== this); }
                 addEventListener(t, f) { (this.ls[t] = this.ls[t] || []).push(f); } removeEventListener() {}
-                set textContent(v) { this._t = String(v); this.kids = []; } get textContent() { return this._t; }
+                set textContent(v) { this._t = String(v); this.children = []; } get textContent() { return this._t; }
                 closest() { return null; } contains() { return true; }
             }
             const docL = {};
@@ -507,17 +507,17 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const ring = window.NwayRing.mount({ g: g0, svg: new El('svg'), host, controls, controls2, opts: { nest: true, focus: true }, getDoc: () => yara, getR: () => b.R, getCats: () => b.C, lens: () => 'modules', getTrack: () => track, setTrack: t => (track = t), onOpt() {}, onFile() {},
                 showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
             ring.draw();
-            const root = g0.kids[0];
+            const root = g0.children[0];
             assert.ok(root.classList.contains('ring-focus'), 'focus mode puts one class on the root');
-            const rib = root.kids.find(n => n.dataset.m !== undefined && n.tag === 'path'), k = Number(rib.dataset.m);
-            const mine = root.kids.filter(n => n.dataset.m === String(k) || (n.dataset.h || '').split(' ').includes(String(k)));
+            const rib = root.children.find(n => n.dataset.m !== undefined && n.tag === 'path'), k = Number(rib.dataset.m);
+            const mine = root.children.filter(n => n.dataset.m === String(k) || (n.dataset.h || '').split(' ').includes(String(k)));
             rib.ls.mouseenter[0]({ clientX: 0, clientY: 0 });
             assert.ok(root.classList.contains('hlm'), 'hover fades the rest through one root class');
-            assert.deepStrictEqual(root.kids.filter(n => n.cls.has('on')).length, mine.length, 'only the module chain and its holder files are lit');
-            const card = host.kids.find(n => n.cls && n.cls.has && n.className === 'ring-card');
-            assert.ok(card && card.style.display === '' && card.kids[0].textContent.length > 0, 'the card names the focused module');
+            assert.deepStrictEqual(root.children.filter(n => n.cls.has('on')).length, mine.length, 'only the module chain and its holder files are lit');
+            const card = host.children.find(n => n.cls && n.cls.has && n.className === 'ring-card');
+            assert.ok(card && card.style.display === '' && card.children[0].textContent.length > 0, 'the card names the focused module');
             rib.ls.mouseleave[0]();
-            assert.ok(!root.classList.contains('hlm') && root.kids.every(n => !n.cls.has('on')), 'leaving clears it');
+            assert.ok(!root.classList.contains('hlm') && root.children.every(n => !n.cls.has('on')), 'leaving clears it');
             rib.ls.click[0]();
             assert.ok(track !== '', 'a click pins the module as the table track');
             docL.keydown({ key: 'Escape' });
@@ -529,7 +529,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                 const c1 = new El('span'), c2 = new El('div'), g1 = new El('g');
                 const r = window.NwayRing.mount({ g: g1, svg: new El('svg'), host: new El('div'), controls: c1, controls2: c2, opts, getDoc: () => yara, getR: () => b.R, getCats: () => b.C, lens: () => 'modules', getTrack: () => '', setTrack() {}, onOpt: o => sink.push(o), onFile() {},
                     showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
-                const all = n => [n, ...n.kids.flatMap(all)];
+                const all = n => [n, ...n.children.flatMap(all)];
                 return { r, c1, c2, els: [...all(c1), ...all(c2)], sink };
             };
             const bar = mountBar({});
@@ -538,28 +538,28 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.deepStrictEqual(segs.map(e => e.attrs['aria-label']), ['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Bundle ribbons', 'Tier buckets', 'Module list'], 'the controls, in order');
             for (const sg of segs) {   // the markup of the lineage page's own seg (view buttons, Group view): div.lin-seg[role=group][aria-label] > button[type=button][aria-pressed]
                 assert.strictEqual(sg.tag, 'div'); assert.strictEqual(sg.attrs.role, 'group'); assert.ok(sg.attrs.title, 'a tooltip');
-                assert.ok(sg.kids.length >= 2 && sg.kids.every(k => k.tag === 'button' && k.attrs.type === 'button' && /^(true|false)$/.test(k.attrs['aria-pressed'])), 'buttons carry aria-pressed');
-                assert.strictEqual(sg.kids.filter(k => k.attrs['aria-pressed'] === 'true').length, 1, 'exactly one pressed');
+                assert.ok(sg.children.length >= 2 && sg.children.every(k => k.tag === 'button' && k.attrs.type === 'button' && /^(true|false)$/.test(k.attrs['aria-pressed'])), 'buttons carry aria-pressed');
+                assert.strictEqual(sg.children.filter(k => k.attrs['aria-pressed'] === 'true').length, 1, 'exactly one pressed');
             }
-            const pressed = label => segs.find(e => e.attrs['aria-label'] === label).kids.find(k => k.attrs['aria-pressed'] === 'true').textContent;
+            const pressed = label => segs.find(e => e.attrs['aria-label'] === label).children.find(k => k.attrs['aria-pressed'] === 'true').textContent;
             assert.deepStrictEqual(['Focus', 'Min size', 'Arcs', 'Nested clusters', 'Bundle ribbons', 'Tier buckets', 'Module list'].map(pressed), ['Off', '0.5%', 'Grouped', 'On', 'On', 'Show', 'Off'], 'defaults: focus off, min size 0.5%, grouped arcs, nested on, bundles on, tier buckets shown, no module list');
-            assert.ok(bar.c2.kids.length === 5 && !bar.c1.kids.some(k => k.tag === 'span' && /Bundle|Tier/.test(k.kids[0].textContent)), 'Bundle ribbons and Tier buckets live in the More row');
-            assert.deepStrictEqual(bar.c1.kids.map(k => (k.tag === 'span' ? k.kids[0].textContent : k.textContent || k.kids[1].textContent)), ['Focus', 'Min size', 'Reset layout', ' More'], 'visible: Focus, Min size, Reset layout, More');
+            assert.ok(bar.c2.children.length === 5 && !bar.c1.children.some(k => k.tag === 'span' && /Bundle|Tier/.test(k.children[0].textContent)), 'Bundle ribbons and Tier buckets live in the More row');
+            assert.deepStrictEqual(bar.c1.children.map(k => (k.tag === 'span' ? k.children[0].textContent : k.textContent || k.children[1].textContent)), ['Focus', 'Min size', 'Reset layout', ' More'], 'visible: Focus, Min size, Reset layout, More');
             assert.strictEqual(bar.c2.style.display, 'none', 'the advanced row is hidden by default');
-            const more = bar.c1.kids[3];
+            const more = bar.c1.children[3];
             assert.strictEqual(more.attrs['aria-expanded'], 'false');
             more.ls.click[0]();
             assert.strictEqual(more.attrs['aria-expanded'], 'true');
             assert.strictEqual(bar.c2.style.display, 'flex', 'More opens the row');
             for (const [opts, why] of [[{ arc: 'one' }, 'rarc=one'], [{ nest: false }, 'rnest=0'], [{ list: true }, 'rlist=1'], [{ tier: 'hide' }, 'rtier=hide'], [{ bundle: false }, 'rbundle=0']]) {
                 const o = mountBar(opts);
-                assert.strictEqual(o.c1.kids[3].attrs['aria-expanded'], 'true', `${why} opens More`);
+                assert.strictEqual(o.c1.children[3].attrs['aria-expanded'], 'true', `${why} opens More`);
                 o.r.destroy();
             }
             const lst = segs.find(e => e.attrs['aria-label'] === 'Module list');
-            lst.kids[1].ls.click[0]();
+            lst.children[1].ls.click[0]();
             assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');
-            assert.strictEqual(lst.kids[1].attrs['aria-pressed'], 'true');
+            assert.strictEqual(lst.children[1].attrs['aria-pressed'], 'true');
             bar.r.destroy();
             // the canvas note counts the hidden tier buckets; the Tier buckets switch is only enabled when the lens has them
             {
@@ -567,16 +567,16 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                 const r2 = window.NwayRing.mount({ g: new El('g'), svg: new El('svg'), host: host2, controls: c1, controls2: c2, opts: { tier: 'hide', min: 0 }, getDoc: () => grouped, getR: () => gb2.R, getCats: () => gb2.C, lens: () => 'lanes', getTrack: () => '', setTrack() {}, onOpt() {}, onFile() {},
                     showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(grouped.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
                 r2.draw();
-                const note = host2.kids.find(n => n.className === 'ring-note');
+                const note = host2.children.find(n => n.className === 'ring-note');
                 assert.ok(/2 tier buckets hidden \(\d+ functions\)/.test(note.textContent), `the note counts them: ${note.textContent}`);
-                const tierBtns = c2.kids.find(k => k.kids[0].textContent === 'Tier buckets').kids[1].kids;
+                const tierBtns = c2.children.find(k => k.children[0].textContent === 'Tier buckets').children[1].children;
                 assert.ok(tierBtns.every(b => b.attrs.disabled === undefined), 'enabled on the Lanes lens');
                 r2.destroy();
                 const m3 = new El('div'), c3 = new El('span'), c4 = new El('div'), g3 = build(yara, 'modules');
                 const r3 = window.NwayRing.mount({ g: new El('g'), svg: new El('svg'), host: m3, controls: c3, controls2: c4, opts: {}, getDoc: () => yara, getR: () => g3.R, getCats: () => g3.C, lens: () => 'modules', getTrack: () => '', setTrack() {}, onOpt() {}, onFile() {},
                     showTip() {}, moveTip() {}, hideTip() {}, fmt: String, name: String, nodeColor: () => '#888', tree: () => window.NwayColors.tree(yara.nodes.map(n => ({ id: n.id, path: n.path }))), hsl: (h, l) => `hsl(${h},60%,${l}%)`, hue: window.NwayColors.hue, grey: 'x', fit() {} });
                 r3.draw();
-                assert.ok(c4.kids.find(k => k.kids[0].textContent === 'Tier buckets').kids[1].kids.every(b => b.attrs.disabled !== undefined), 'disabled, with a reason, on the Modules lens');
+                assert.ok(c4.children.find(k => k.children[0].textContent === 'Tier buckets').children[1].children.every(b => b.attrs.disabled !== undefined), 'disabled, with a reason, on the Modules lens');
                 r3.destroy();
             }
             // URL keys: omitted at their defaults, stripped from table links

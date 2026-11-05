@@ -1021,11 +1021,11 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             cur = M.modeOf(S.nested);
             paint();
             const gateMsg = M.hidden ? `${M.hidden} module${M.hidden === 1 ? '' : 's'} hidden under ${S.min}% of functions (${ctx.fmt(M.nFuncs)} functions in total); ${mods.length} shown.` : '';
-            minSeg.kids[1].setAttribute("title", `Hide modules and lanes with fewer functions than this share of all functions in the set.${gateMsg ? ` ${gateMsg}` : ` ${mods.length} shown.`}`);
+            minSeg.children[1].setAttribute("title", `Hide modules and lanes with fewer functions than this share of all functions in the set.${gateMsg ? ` ${gateMsg}` : ` ${mods.length} shown.`}`);
             const tierMsg = M.bucketsHidden ? `${M.bucketsHidden} tier bucket${M.bucketsHidden === 1 ? '' : 's'} hidden (${ctx.fmt(M.bucketFuncs)} functions).` : '';
             // the Tier buckets switch only means something when the lens has such groups
-            for (const b of tierSeg.kids[1].kids) { if (M.buckets || M.bucketsHidden) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); }
-            tierSeg.kids[1].setAttribute('title', M.buckets || M.bucketsHidden ? 'The Core / Common / Rare remainders of the Lanes lens (rows that are in no lane): shown in grey behind the lanes, or hidden' : 'This lens has no tier groups: only the Lanes lens does');
+            for (const b of tierSeg.children[1].children) { if (M.buckets || M.bucketsHidden) b.removeAttribute('disabled'); else b.setAttribute('disabled', ''); }
+            tierSeg.children[1].setAttribute('title', M.buckets || M.bucketsHidden ? 'The Core / Common / Rare remainders of the Lanes lens (rows that are in no lane): shown in grey behind the lanes, or hidden' : 'This lens has no tier groups: only the Lanes lens does');
             const msg = !mods.length ? (ctx.getR() ? 'No group of this lens has functions in the files.' : 'This server sends no row list: modules need it, only the clusters are shown.')
                 : [cur.mode === 1 ? `Lighter drawing (about ${cur.est} elements): no bands from a ring to its lanes, no file labels.` : cur.mode === 2 ? `Light drawing (about ${cur.est} elements): clusters, rings and family ribbons only.` : '', M.plan.truncated ? `${M.plan.truncated} of the smallest outer ribbons are not drawn (safety limit ${RING.RIBBON_SAFE}).` : '', gateMsg, tierMsg].filter(Boolean).join(' ');
             note.textContent = msg;

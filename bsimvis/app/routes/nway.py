@@ -2211,6 +2211,13 @@ def get_nway_lineage():
         doc, r, pool_id = _load_doc()
     except _Reply as e:
         return e.args[0]
+    all_rows = doc["rows"]
+    if request.args.get("scope", "code") == "code":
+        # the Code axis sizes every node by its code functions only (the doc is cached: copy)
+        doc = {**doc, "rows": [x for x in all_rows if not x["library"]]}
+        if doc["columns_mode"] == "files":
+            held = Counter(c for x in doc["rows"] for c in x["cells"])
+            doc["columns"] = [{**c, "functions": held[c["id"]]} for c in doc["columns"]]
     nodes = _lineage_nodes(doc)
     if nodes is None:
         abort(400, "lineage needs file or twin columns: use columns=files or twins")
@@ -2235,6 +2242,8 @@ def get_nway_lineage():
     except nway_lineage_service.BadParams as e:
         abort(400, str(e))
     out.update(_lineage_rows(doc, request.args, r, pool_id))
+    # the toolbar counts stay those of the whole set
+    out["counts"] = _tab_counts(all_rows, _tab_args(doc, request.args))
     out["columns_mode"] = doc["columns_mode"]
     out["min_edge"] = doc["min_edge"]
     out["warnings"] = doc["warnings"]

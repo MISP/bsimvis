@@ -823,7 +823,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function focusHover(tk) {
             st.hoverTk = tk; syncFocus();
             ribs.style('opacity', ribOp); nodeBase.style('opacity', nodeOp);
-            strSel.style('opacity', d => { const c = reuseCat(d.c.r); return !tk || (c && c.tk === tk) ? 1 : 0.4; });
+            const lit = r => { const c = reuseCat(r); return !tk || (c && c.tk === tk); };
+            strSel.style('opacity', d => (lit(d.c.r) ? 1 : 0.3));
+            arcSel.style('opacity', A => (lit(A.r) ? 1 : 0.15));
             applySel();
         }
 
@@ -1174,9 +1176,23 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 : gRib.selectAll('path').data(L.links).join('path').attr('d', l => l.d).style('fill', l => l.fill).style('opacity', ribOp).style('cursor', 'pointer')
                     .on('mouseenter', (ev, l) => hoverRib(ev, l)).on('mousemove', moveTip).on('mouseleave', leave)
                     .on('click', (ev, l) => pick({ edge: l.edge, part: l.part }));
+            // in a lens a reuse stripe, and the arc joining stripes, take their group's colour and sit at that group's row in the node
+            const sdata = [...L.stripes.values()].flat(), used = new Map(), at = new Map();
+            for (const d of sdata) {
+                d.cat = reuseCat(d.c.r);
+                const sg = d.cat && st.P.segs.get(d.n.id).m.get(d.cat.key), k = d.n.id + '|' + (sg ? d.cat.key : '');
+                const o = used.get(k) || 0;
+                used.set(k, o + d.c.th);
+                d.ys = sg ? sg.y0 + Math.min(o, Math.max(0, sg.h - d.c.th)) : d.y0;
+                at.set(d.c.r, (at.get(d.c.r) || new Map()).set(d.n.id, d));
+            }
+            for (const A of L.arcs) {
+                const a = at.get(A.r).get(A.a.id), b = at.get(A.r).get(A.b.id);
+                A.cat = a.cat; A.ya = a.ys + A.c.th / 2; A.yb = b.ys + A.c.th / 2; A.d = arcPath(A);
+            }
             arcSel = gArc.selectAll('g').data(L.arcs).join('g').style('cursor', 'pointer');
             arcSel.append('path').attr('d', A => A.d).attr('fill', 'none').attr('stroke', 'transparent').attr('stroke-width', A => Math.max(12, A.c.th));
-            arcSel.append('path').attr('class', 'vis').attr('d', A => A.d).attr('fill', 'none').attr('stroke', V.reuse).attr('stroke-opacity', 0.8)
+            arcSel.append('path').attr('class', 'vis').attr('d', A => A.d).attr('fill', 'none').style('stroke', A => (A.cat ? A.cat.color : V.reuse)).attr('stroke-opacity', 0.8)
                 .attr('stroke-width', A => A.c.th).attr('stroke-dasharray', A => A.r.same_level ? null : '9 5');
             arcSel.on('mouseenter', (ev, A) => hoverReuse(ev, A.r)).on('mousemove', moveTip).on('mouseleave', leave).on('click', (ev, A) => pick({ reuse: A.r }));
 
@@ -1202,10 +1218,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 .on('click', (ev, n) => { if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pickNode(n); })
                 .on('keydown', (ev, n) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); if (n.agg) { st.collapsed.delete(n.top); rebuild(); } else pickNode(n); } });
             nodeBase.append('title').text(n => n.agg ? `${n.file_name}: ${fmt(n.functions)} functions in all` : `${name(n.id)} (${fmt(n.functions)} functions)${twinsOf(n) ? `, same code in ${twinsOf(n).length} files` : ''}`);
-            // reuse stripes
-            const sdata = [...L.stripes.values()].flat();
-            // in a lens the stripe takes its group's colour and sits at that group's row in the node
-            for (const d of sdata) { d.cat = reuseCat(d.c.r); const sg = d.cat && st.P.segs.get(d.n.id).m.get(d.cat.key); d.ys = sg ? sg.y0 : d.y0; }
+            // reuse stripes (sdata is built above, with the arcs)
             strSel = gStr.selectAll('rect').data(sdata).join('rect').attr('x', d => d.n.x1 - REUSE_W).attr('y', d => d.ys).attr('width', REUSE_W).attr('height', d => d.c.th)
                 .style('fill', d => (d.cat ? d.cat.color : V.reuse)).attr('clip-path', d => `url(#clip-${id}-${d.n.idx}-${d.n.agg ? 'a' : 'f'})`).style('cursor', 'pointer')
                 .on('mouseenter', (ev, d) => hoverReuse(ev, d.c.r)).on('mousemove', moveTip).on('mouseleave', leave).on('click', (ev, d) => pick({ reuse: d.c.r }));
@@ -1223,7 +1236,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const on = n => sel && ((sel.node && sel.node.id === n.id) || (sel.parent && sel.parent === n.id) || (sel.reuse && sel.reuse.files.includes(n.id)) || (st.hl === n.id));
             if (!rim) return;
             rim.style('stroke', n => on(n) ? 'var(--accent,#66d9ef)' : 'var(--lin-edge)').attr('stroke-width', n => on(n) ? 3 : 1);
-            if (ribs) ribs.style('stroke', l => (sel && sel.edge && l.edge === sel.edge) || (st.fk && l.cat && l.cat.tk === st.fk) ? 'var(--accent,#66d9ef)' : 'none').attr('stroke-width', l => (st.fk && l.cat && l.cat.tk === st.fk ? 3 : 1.5)).attr('vector-effect', 'non-scaling-stroke');
+            if (ribs) {
+                ribs.style('stroke', l => (sel && sel.edge && l.edge === sel.edge ? 'var(--accent,#66d9ef)' : 'none')).attr('stroke-width', 1.5).attr('vector-effect', 'non-scaling-stroke');
+                // the lit lineage keeps its own colour, fuller; the rest dims through ribOp
+                if (st.P) ribs.attr('fill-opacity', l => (st.fk && l.cat.tk === st.fk ? 0.95 : 0.55));
+            }
         }
         function pick(p) { st.sel = p; st.last = p; applySel(); openDrawer(p); }
         // a node click opens the dock, or goes to opts.onNode (the split page sets the table's column)
@@ -1504,7 +1521,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
         function hoverLens(ev, l) {
             st.last = { edge: l.edge };
-            dimRibs(d => d.cat === l.cat);
+            focusHover(l.cat.tk);
             showTip(ev, `${name(l.source.id)} \u2192 ${name(l.target.id)}`, l.cat.color, [[l.cat.label, `${fmt(l.value)} fn kept`], ...(l.edge ? [['Similarity', l.edge.similarity]] : []), ...(l.cat.g ? gTip(l.cat.g) : [])]);
         }
         function hoverLensSeg(ev, n, sg) {

@@ -1064,7 +1064,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.host.appendChild(crumb);
         const S = { shut: new Set(), sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), fc: null, fcTok: 0, focusSet: null, pend: null, err: '', noteBase: '', fadeNew: false, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
         const opt = () => ({ nest: S.nested, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
-        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
+        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 }, liveMode = null;
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
@@ -1215,7 +1215,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         }
         // the DOM is rebuilt only when the element list changes (a new layout, mode or opened circle); a physics frame updates attributes
         function paint() {
-            frame = geometry(M, S, { mode: cur.mode });
+            frame = geometry(M, S, { mode: liveMode ?? cur.mode });
             const els = frame.els;
             const same = els.length === ids.length && els.every((e, i) => e.id === ids[i]);
             if (!same) {
@@ -1237,6 +1237,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         }
         function full() {
             if (dead) return;
+            liveMode = null;
             build();
             note.style.display = 'none';
             if (!M) return;
@@ -1438,7 +1439,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
         // The loop always ends: it stops once the motion settles, after RING.FRAMES_MAX frames or RING.MS_MAX ms of settling,
         // runs at most 30 frames a second, and pauses while the page is hidden.
-        let frames = 0, t0 = 0, lastT = 0;
+        let frames = 0, t0 = 0, lastT = 0, cost = 0;
         function run() {
             if (raf || dead || document.hidden) return;
             frames = 0; t0 = performance.now();
@@ -1448,15 +1449,17 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             raf = 0;
             if (dead || document.hidden) return;
             const now = performance.now();
-            if (now - lastT < RING.FRAME_MS) { raf = requestAnimationFrame(step); return; }
+            if (now - lastT < Math.max(RING.FRAME_MS, 1.5 * cost)) { raf = requestAnimationFrame(step); return; }
             lastT = now;
             const e = S.sim.tick();
+            // while things move, big drawings use the next lighter mode; the full drawing comes back once the motion stops
+            liveMode = cur.est > RING.BUDGET[1] * 0.5 ? Math.max(cur.mode, 2) : cur.est > RING.BUDGET[0] * 0.35 ? Math.max(cur.mode, 1) : null;
             paint();
+            cost = performance.now() - now;
             frames++;
             const drag = !!S.sim.drag, active = e > RING.SETTLE || (drag && pointerMoved);
             pointerMoved = false;
-            if (!active) return;
-            if (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX)) return;
+            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { if (liveMode !== null) { liveMode = null; paint(); } return; }
             raf = requestAnimationFrame(step);
         }
         // Escape clears the pin

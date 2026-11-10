@@ -739,15 +739,7 @@
             const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx * (fd.cov ?? 1) }));
             const fsc = Math.min(1, (RING.LANE_FIT * TAU * rp - ports.length * RING.LANE_GAP * rp) / sum(ports, p => p.wp));
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
-            // a lane with sub-clusters sits on the side of its children (their centres weighted by the rows they hold), so its stems run inward to them
-            const kidAim = p => {
-                if (p.noBand) return p.from;
-                const hk = kidsOf(X).filter(K => holdersIn(K, p.x).length);
-                if (!hk.length) return p.from;
-                const wk = hk.map(K => kidShare(K, p.x).wt), tw = sum(wk, v => v), t = [sum(hk, K => nc[K.id][0] * wk[hk.indexOf(K)]) / tw, sum(hk, K => nc[K.id][1] * wk[hk.indexOf(K)]) / tw];
-                return Math.hypot(t[0] - C[0], t[1] - C[1]) < 1 ? p.from : t;
-            };
-            ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, kidAim(p)) % TAU) + TAU) % TAU; });
+            ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
             ports.sort((p, q) => p.c - q.c);
             for (let it = 0; it < 80 && ports.length > 1; it++) {
                 for (let k = 0; k < ports.length; k++) {
@@ -759,7 +751,7 @@
             ports.forEach(p => {
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
                 if (!light && !p.noBand) {
-                    const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, h = Math.min(Math.max(20, dist * 0.4), dist * 0.45, cl), u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
+                    const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                     const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }

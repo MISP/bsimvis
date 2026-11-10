@@ -506,7 +506,12 @@
             add(`c:${n.id}`, 'circle', { cx: f1(C[0]), cy: f1(C[1]), r: f1(n.r) }, { s: { fill: n.col, stroke: n.col }, sa: { opacity: RING.MIN_FILL[lvl], 'stroke-width': n.level ? 1 : 1.2, 'stroke-dasharray': n.level ? '3 3' : null }, drag: key(n), cl: n });
             const label = n.loose ? '' : n.label;
             if (n.level && label) add(`cl:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] - n.r + 13), 'text-anchor': 'middle', 'font-size': n.level === 1 ? 11 : 9 }, { text: label, cls: 'ring-sub', s: { fill: n.col }, lab: { id: n.id, r: n.r, lvl: n.level } });
-            if (agg(n)) add(`ca:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] + 4), 'text-anchor': 'middle', 'font-size': 12 }, { text: `${n.files.length}`, cls: 'ring-sub', cl: n, drag: key(n) });
+            if (agg(n)) {
+                const br = Math.min(13, n.r * 0.4);
+                add(`cb:${n.id}`, 'circle', { cx: f1(C[0]), cy: f1(C[1] - 5), r: f1(br) }, { cls: 'ring-plus', s: { fill: n.col }, cl: n, drag: key(n) });
+                add(`cp:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] - 5 + br * 0.42), 'text-anchor': 'middle', 'font-size': f1(br * 1.4) }, { text: '+', cls: 'ring-fl', pe: true });
+                add(`ca:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] + br + 10), 'text-anchor': 'middle', 'font-size': 12 }, { text: `${n.files.length}`, cls: 'ring-sub', cl: n, drag: key(n) });
+            }
             n.kids.forEach(drawNode);
         };
         roots.forEach(drawNode);
@@ -983,8 +988,13 @@
 .ring-root .ring-hide{display:none}
 .ring-root .ring-dim{opacity:.15!important}
 .ring-root .on.ring-dim{opacity:1!important}
-.ring-root circle.ring-pending{stroke-dasharray:6 4;stroke-width:2.5;animation:ring-pulse 1s ease-in-out infinite}
-@keyframes ring-pulse{50%{stroke-opacity:.2}}
+.ring-root circle.ring-plus{stroke:#fff;stroke-width:1.5;cursor:pointer}
+.ring-root circle.ring-plus:hover{stroke-width:3}
+.ring-root circle.ring-pending{stroke-dasharray:10 6;stroke-width:5;fill-opacity:.35;animation:ring-march .6s linear infinite,ring-pulse 1s ease-in-out infinite}
+@keyframes ring-march{to{stroke-dashoffset:-16}}
+@keyframes ring-pulse{50%{stroke-opacity:.35;fill-opacity:.1}}
+.ring-note.busy::before{content:"";display:inline-block;width:11px;height:11px;margin-right:7px;vertical-align:-1px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:ring-spin .7s linear infinite}
+@keyframes ring-spin{to{transform:rotate(360deg)}}
 .ring-root .ring-new{animation:ring-fade .6s ease-out}
 @keyframes ring-fade{from{opacity:0}}
 .ring-crumb{position:absolute;left:12px;top:10px;z-index:3;display:flex;align-items:center;gap:4px;flex-wrap:wrap;max-width:60%}
@@ -1217,6 +1227,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const t = [S.noteBase, S.pend ? `opening ${S.pend.count} files\u2026` : '', S.err].filter(Boolean).join(' ');
             note.textContent = t;
             note.style.display = t ? '' : 'none';
+            note.classList.toggle('busy', !!S.pend);
         }
         // ---- focus: a click on a cluster body zooms the camera to it, fades the other clusters, opens what it holds
         const clusterBox = n => { const c = frame.nc[n.id], R = n.r + (n.level === 0 ? RING.RO + 40 : 24); return [c[0] - R, c[1] - R, c[0] + R, c[1] + R]; };

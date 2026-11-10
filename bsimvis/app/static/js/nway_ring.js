@@ -23,7 +23,8 @@
         LEAF_MAX: 60, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 24, // families beyond this many merge into "Other files"
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
-        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, // bands bend around unrelated circles: clearance, and the most a control point moves (share of the band length)
+        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, // OWN_MARGIN: radians kept free between the lanes of shared modules and those held inside one cluster
+         // bands bend around unrelated circles: clearance, and the most a control point moves (share of the band length)
          // circle radius a + b*sqrt(files)
         RI: 6, RM: 14, RO: 22, // ring radii beyond the circle: inner, centre, outer
         SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, FLOOR: 2, SEG_STROKE: 12, // ring segments; no segment is ever dropped, the thinnest are drawn FLOOR px wide (1 when a ring is full)
@@ -793,14 +794,28 @@
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
             ports.sort((p, q) => p.c - q.c);
-            // free room on the ring is shared out: lanes are pushed apart by half of it, so links of different modules do not pile up in one direction
-            const spread = ports.length > 1 ? 0.5 * Math.max(0, (TAU - sum(ports, p => p.w) - ports.length * RING.LANE_GAP) / ports.length) : 0;
-            for (let it = 0; it < 80 && ports.length > 1; it++) {
-                for (let k = 0; k < ports.length; k++) {
-                    const j = (k + 1) % ports.length, dj = ports[j].c - ports[k].c + (j === 0 ? TAU : 0), gap = dj - (ports[k].w + ports[j].w) / 2 - RING.LANE_GAP - spread;
-                    if (gap < 0) { ports[k].c += gap / 2; ports[j].c -= gap / 2; }
+            // lanes of shared modules (fed from a ring above) stay together on the side facing their source; lanes of modules held inside this cluster only
+            // (noBand) are moved out of that sector, so the two kinds of link do not run in the same direction
+            const relax = (list, fixed) => {
+                for (let it = 0; it < 80 && list.length > 1; it++) {
+                    for (let k = 0; k < list.length; k++) {
+                        const j = (k + 1) % list.length, A = list[k], B = list[j], dj = B.c - A.c + (j === 0 ? TAU : 0), gap = dj - (A.w + B.w) / 2 - RING.LANE_GAP;
+                        if (gap >= 0) continue;
+                        const fa = fixed && fixed(A), fb = fixed && fixed(B);
+                        if (fa && fb) continue;
+                        if (fa) B.c -= gap; else if (fb) A.c += gap; else { A.c += gap / 2; B.c -= gap / 2; }
+                    }
                 }
-            }
+            };
+            const shared = ports.filter(q => !q.noBand), own = ports.filter(q => q.noBand);
+            if (shared.length && own.length) {
+                relax(shared);
+                const ts = Math.atan2(sum(shared, q => q.w * Math.sin(q.c)), sum(shared, q => q.w * Math.cos(q.c))), half = Math.max(...shared.map(q => Math.abs(norm(q.c - ts)) + q.w / 2)) + RING.OWN_MARGIN;
+                for (const q of own) { const d = norm(q.c - ts), lim = half + q.w / 2; if (Math.abs(d) < lim) q.c = ts + (d >= 0 ? 1 : -1) * lim; }
+                ports.forEach(q => { q.c = ((q.c % TAU) + TAU) % TAU; });
+                ports.sort((p, q) => p.c - q.c);
+                relax(ports, q => !q.noBand);
+            } else relax(ports);
             const kids = kidsOf(X);
             ports.forEach(p => {
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;

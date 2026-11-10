@@ -140,7 +140,7 @@ def load_display_tree(r, collection, algo, cache=None, **opts):
                 "n": int(m.get("member_count") or size[c]),
                 "coh": float(m.get("cohesion_score") or 0),
             }
-    out = {c: {**v, **nodes[c]} for c, v in prune(nodes, **o).items()}
+    out = {c: {**nodes[c], **v} for c, v in prune(nodes, **o).items()}
     if cache is not None:
         cache.setex(ck, 3600, json.dumps(out))
     return out

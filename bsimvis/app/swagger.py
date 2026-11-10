@@ -929,6 +929,34 @@ class FileSearch(Resource):
         return search_files()
 
 
+@ns_file.route("/search/by_cluster")
+class FileSearchByCluster(Resource):
+    @ns_file.doc(
+        description="File search paged by cluster: ranked root clusters with their nested "
+        "clusters and first files. Takes every /file/search filter; a filter keeps the "
+        "cluster and drops only the files that do not match.",
+        params={
+            "collection": "Collection name (required)",
+            "axis": "Similarity axis: overall, code, library, content",
+            "limit": "Root clusters per page (default 20)",
+            "offset": "Root clusters to skip",
+            "per_cluster": "Files returned per cluster (default 12)",
+            "cluster_sort": "relevance (default), size or cohesion",
+            "cluster": "Cluster id: page through its own files (offset/limit count files)",
+            "unclustered": "1: page through the matching files that are in no shown cluster",
+            "cluster_min_members": "Smallest cluster shown (default 3)",
+            "cluster_min_cohesion": "Lowest cohesion shown (default 0.1)",
+            "cluster_jump": "A nested cluster must be this much tighter than its parent (default 0.1)",
+            "cluster_depth": "Nesting levels shown (default 3)",
+        },
+    )
+    def get(self):
+        """Search for files, grouped by cluster."""
+        from bsimvis.app.routes.search_file_clusters import search_files_by_cluster
+
+        return search_files_by_cluster()
+
+
 @ns_file.route("/details/<string:file_md5>")
 class FileDetails(Resource):
     @ns_file.doc(description="Get full metadata for a file including its clusters")

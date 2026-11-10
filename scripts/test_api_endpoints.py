@@ -2041,6 +2041,43 @@ def test_lineage():
         str(roots)[:250],
     )
 
+    # Cluster-grouped search: no clusters are built here, so every matching
+    # file is unclustered and the same filters give the same total.
+    flat = test_endpoint(
+        "GET",
+        "/api/file/search",
+        params={"collection": coll, "limit": 1},
+        label="GET /api/file/search (total for the by_cluster check)",
+    )
+    grouped = test_endpoint(
+        "GET",
+        "/api/file/search/by_cluster",
+        params={"collection": coll},
+        label="GET /api/file/search/by_cluster (no clusters built)",
+    )
+    check(
+        "by_cluster with no clusters: nothing grouped, every file unclustered",
+        bool(grouped)
+        and grouped.get("has_clusters") is False
+        and grouped.get("clusters") == []
+        and grouped.get("unclustered_total")
+        == grouped.get("total")
+        == (flat or {}).get("total"),
+        str(grouped)[:250],
+    )
+    rest = test_endpoint(
+        "GET",
+        "/api/file/search/by_cluster",
+        params={"collection": coll, "unclustered": 1, "limit": 5},
+        label="GET /api/file/search/by_cluster?unclustered=1",
+    )
+    check(
+        "by_cluster unclustered=1 pages the files outside any cluster",
+        bool(rest)
+        and len(rest.get("files") or []) == min(5, rest.get("files_total", 0)) > 0,
+        str(rest)[:250],
+    )
+
     requests.post(
         f"{BASE_URL}/api/collection/delete", json={"collection": coll}, timeout=60
     )

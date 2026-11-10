@@ -292,28 +292,35 @@ def _list_bin_clusters_slice(collection, algo, r):
     }
 
 
+def bin_cluster_algo(collection, requested=None, axis="overall", node_type="file"):
+    """The key namespace a collection's binary clusters live under.
+
+    Containers and files cluster in two separate graphs (a container holds no
+    code of its own, so it can never share a similarity edge with a file) and
+    persist under two namespaces -- see
+    BinClusterService._persist_hierarchical_binary_clusters. A pool's
+    namespace carries neither the engine nor the node-type suffix.
+    """
+    algo = resolve_collection_algo(collection, requested)
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    if collection.startswith("global:pool:"):
+        return algo
+    if (
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
+        == "hierarchical_snn"
+    ):
+        algo = f"{algo}:snn"
+    return f"{algo}:container" if node_type == "container" else algo
+
+
 def list_bin_clusters():
     """Lists discovered binary clusters with metadata, filtering, and sorting."""
     t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
-    algo = resolve_collection_algo(collection, request.args.get("algo"))
     axis = request.args.get("axis", "overall").strip().lower()
-
-    # Containers and files cluster in two separate graphs (a container holds
-    # no code of its own, so it can never share a similarity edge with a
-    # file) and persist under two separate key namespaces -- see
-    # BinClusterService._persist_hierarchical_binary_clusters. node_type
-    # picks which one this listing reads.
     node_type = request.args.get("node_type", "file").strip().lower()
-    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    algo = bin_cluster_algo(collection, request.args.get("algo"), axis, node_type)
     is_pool = collection.startswith("global:pool:")
-    if not is_pool:
-        if (
-            config_service.get("clustering.bin_engine", "hierarchical_snn")
-            == "hierarchical_snn"
-        ):
-            algo = f"{algo}:snn"
-        algo = f"{algo}:container" if node_type == "container" else algo
 
     # Filtering
     format_arg = request.args.get("format")

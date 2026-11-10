@@ -23,7 +23,8 @@
         LEAF_MAX: 60, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 24, // families beyond this many merge into "Other files"
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
-        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, // circle radius a + b*sqrt(files)
+        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, // bands bend around unrelated circles: clearance, and the most a control point moves (share of the band length)
+         // circle radius a + b*sqrt(files)
         RI: 6, RM: 14, RO: 22, // ring radii beyond the circle: inner, centre, outer
         SEG_GAP: 0.03, FILL: 0.9, SEG_PAD: 0.012, FLOOR: 2, SEG_STROKE: 12, // ring segments; no segment is ever dropped, the thinnest are drawn FLOOR px wide (1 when a ring is full)
         ARM_MIN: 40, ARM_W: 0.9, ARM_D: 0.36, // outer ribbon arm length: at least this, this share of its width, this share of the distance
@@ -740,15 +741,16 @@
         // a band bends away from the circles of the clusters it is not related to (siblings of its target and of the target's ancestors)
         const avoid = (X, P0, c0, c1, P1) => {
             const obs = [];
-            for (let A = X; A.parent; A = A.parent) for (const K of A.parent.kids) if (K !== A && nc[K.id]) obs.push({ c: nc[K.id], r: K.r + RING.LANE_OFF + RING.LANE_STROKE });
+            for (let A = X; A.parent; A = A.parent) for (const K of A.parent.kids) if (K !== A && nc[K.id]) obs.push({ c: nc[K.id], r: K.r + RING.AVOID_MARGIN });
             if (!obs.length) return [c0, c1];
+            const o0 = c0, o1 = c1, cap = RING.AVOID_BEND * Math.hypot(P1[0] - P0[0], P1[1] - P0[1]);
             c0 = c0.slice(); c1 = c1.slice();
-            for (let it = 0; it < 8; it++) {
+            for (let it = 0; it < 4; it++) {
                 let moved = false;
-                for (let k = 1; k < 12; k++) {
+                for (let k = 3; k <= 9; k++) {
                     const t = k / 12, pt = bez(P0, c0, c1, P1, t), b0 = 3 * t * (1 - t) * (1 - t), b1 = 3 * t * t * (1 - t), nn = b0 * b0 + b1 * b1;
                     for (const o of obs) {
-                        const dx = pt[0] - o.c[0], dy = pt[1] - o.c[1], d = Math.hypot(dx, dy) || 1, pen = (o.r - d) * 1.1;
+                        const dx = pt[0] - o.c[0], dy = pt[1] - o.c[1], d = Math.hypot(dx, dy) || 1, pen = o.r - d;
                         if (pen <= 0) continue;
                         c0[0] += ((dx / d) * pen * b0) / nn; c0[1] += ((dy / d) * pen * b0) / nn; c1[0] += ((dx / d) * pen * b1) / nn; c1[1] += ((dy / d) * pen * b1) / nn;
                         moved = true;
@@ -756,7 +758,9 @@
                 }
                 if (!moved) break;
             }
-            return [c0, c1];
+            // a gentle bend only: never move a control point further than AVOID_BEND of the band's length
+            const lim = (c, o) => { const dx = c[0] - o[0], dy = c[1] - o[1], m = Math.hypot(dx, dy); return m > cap ? [o[0] + (dx * cap) / m, o[1] + (dy * cap) / m] : c; };
+            return [lim(c0, o0), lim(c1, o1)];
         };
         const laneRing = (X, feeds) => {
             if (!feeds.length) return;
@@ -776,7 +780,7 @@
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
-                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
+                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, [P0[0] + (P1[0] - P0[0]) / 3, P0[1] + (P1[1] - P0[1]) / 3], [P0[0] + ((P1[0] - P0[0]) * 2) / 3, P0[1] + ((P1[1] - P0[1]) * 2) / 3], P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });

@@ -2932,7 +2932,7 @@
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
-            const back = this.backHref ? `<a class="btn-action nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
+            const back = this.backHref ? `<a class="bsim-tab nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
             const lineage = this.lean ? back : `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             if (this.state.view === 'strings') return `<div class="bsim-tabbar nway-lenses" role="tablist">${lineage}</div>`;
             const cur = this.state.group || '';

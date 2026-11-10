@@ -736,7 +736,7 @@
             // Compare and Family are rarely used: both live in the ... menu, lit while either is on.
             const kebab = `<details class="nway-pop nway-kebab"${this._kebabOpen ? ' open' : ''}><summary class="nway-chip${this._famOn() || s.col_set ? ' on' : ''}" title="Compare and Family" aria-label="More actions"><i class="fa-solid fa-ellipsis"></i></summary><div class="nway-match-body nway-kebab-body">${this._famChip()}${this._compareBox()}${this.data && this.data.large ? '<div><button type="button" class="btn-action" data-nway-rebuild title="Queue a build at another depth (Fast, Balanced, Deep)"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>' : ''}</div></details>`;
             return `<div class="nway-tabrow">${search}${this._fnFilter()}${this._columnChip()}${this._trackChip()}${this._tagChip()}${moreBtn}</div>${this._lensBar()}
-                <div class="nway-bar">${axisDd}${this.lean ? '' : this._viewDd()}${s.view === 'strings' && !this.lean ? '' : tabDd}${presetDd}${parts.files}${this.lean ? '' : `<button type="button" class="nway-chip" data-lineage title="The lineage of these files on its own page, in the view you used last (tree, tracks, split or ring), with the same filters"><i class="fa-solid fa-sitemap"></i> Lineage</button>`}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
+                <div class="nway-bar">${axisDd}${this.lean ? '' : this._viewDd()}${s.view === 'strings' && !this.lean ? '' : tabDd}${presetDd}${parts.files}<span class="nway-pops" data-actions>${kebab}</span></div>${parts.byRow}${more}`;
         }
 
         // Small function filter: feature and support bounds the server already applies (feat_min / feat_max / support_min).
@@ -2932,7 +2932,7 @@
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
-            const back = this.backHref ? `<a class="bsim-tab nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
+            const back = this.backHref ? `<a class="btn-action nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
             const lineage = this.lean ? back : `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             if (this.state.view === 'strings') return `<div class="bsim-tabbar nway-lenses" role="tablist">${lineage}</div>`;
             const cur = this.state.group || '';

@@ -286,7 +286,13 @@ elif command -v uv > /dev/null; then
 fi
 
 # Start App
-start_tmux "app" "${PYTHON_CMD} app.py"
+# app.py grows with the in-process caches; cap it in its own scope so a runaway app is OOM-killed instead of freezing the host. Empty = no cap.
+APP_MEMORY_MAX=${APP_MEMORY_MAX:-}
+APP_CMD="${PYTHON_CMD} app.py"
+if [ -n "$APP_MEMORY_MAX" ] && command -v systemd-run >/dev/null 2>&1; then
+    APP_CMD="systemd-run --user --scope -q -p MemoryMax=${APP_MEMORY_MAX} -p MemorySwapMax=0 ${PYTHON_CMD} app.py"
+fi
+start_tmux "app" "${APP_CMD}"
 
 # Start Workers
 # Each window runs the supervisor, not the worker: the supervisor owns the

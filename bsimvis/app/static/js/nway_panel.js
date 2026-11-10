@@ -2932,7 +2932,7 @@
 
         // The lens tabs: each sets the group levels; any other nesting shows as custom.
         _lensBar() {
-            const back = this.backHref ? `<a class="bsim-tab nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
+            const back = this.backHref ? `<a class="bsim-tab nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="try{sessionStorage.setItem('nway.heroAnim','1')}catch(err){}Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
             const lineage = this.lean ? back : `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             if (this.state.view === 'strings') return `<div class="bsim-tabbar nway-lenses" role="tablist">${lineage}</div>`;
             const cur = this.state.group || '';
@@ -3606,7 +3606,13 @@
                     const ring = JSON.parse(localStorage.getItem('nway.ring') || '{}');
                     for (const [k, val] of Object.entries(ring)) if (!qs.has(k) && typeof val === 'string' && val !== '') qs.set(k, val);
                 } catch (err) { /* storage unavailable: the page opens in its default view */ }
-                return window.Nav.openPath(`/diff/nway/lineage?${qs.toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
+                const go = () => window.Nav.openPath(`/diff/nway/lineage?${qs.toString()}`, e, { title: 'Lineage', type: 'bin_sim' });
+                // fold the set header away first (the same transition as scrolling), then open the page
+                const view = this.el.closest('.nway-view');
+                if (!view || e.ctrlKey || e.metaKey || e.shiftKey || e.button || view.classList.contains('nway-compact') || !view.querySelector(':scope > .nway-hero:not([hidden])')) return go();
+                e.preventDefault();
+                view.classList.add('nway-compact');
+                return setTimeout(go, 300);
             }
             if (t.dataset.mergeDiff) {
                 const group = this.data.groups[t.dataset.mergeDiff];

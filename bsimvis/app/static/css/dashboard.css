@@ -3810,6 +3810,9 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-panel .bsim-tabbar.nway-lenses { margin: 8px 0 10px; align-items: center; flex-wrap: wrap; }
 .nway-lenses .bsim-tab .fa-solid { margin-right: 4px; opacity: 0.8; }
 .nway-lens-lineage { margin-left: auto; }
+.nway-linback { padding: 8px 12px 0; flex-shrink: 0; animation: nway-linback-in 0.3s ease; }
+.nway-linback a { text-decoration: none; }
+@keyframes nway-linback-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 a.nway-lens-lineage, a.nway-lens-lineage:hover { text-decoration: none; }
 /* The ... menu: Family and Compare, the compare form opening inline in it. */
 .nway-kebab-body { min-width: 240px; }

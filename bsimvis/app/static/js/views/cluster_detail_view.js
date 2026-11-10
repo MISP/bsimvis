@@ -357,6 +357,7 @@ window.ClusterDetailView = {
                         <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-lineage" onclick="ClusterDetailView.openLineage(event)" title="Who inherited what from whom: the lineage of this cluster's files, on its own page"><i class="fa-solid fa-sitemap"></i> Lineage</button>` : ''}
                     </div>
 
                     <div id="cluster-tab-members" style="display:none; flex-direction:column; flex:1; min-height:0;">
@@ -1000,6 +1001,14 @@ window.ClusterDetailView = {
             if (v != null && String(v) !== String(def[k] ?? '')) qs.set(k, v);
         });
         Nav.openPath(`/diff/nway?${qs}`, event);
+    },
+
+    /** The lineage page of the selected cluster's files (no panel here: it opens on its own page). */
+    openLineage(event) {
+        const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, axis: this.axis });
+        if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+        else qs.set('collection', this.collection || '');
+        Nav.openPath(`/diff/nway/lineage?${qs}`, event);
     },
 
     /** N-way diff of a function cluster's members (family view): the server resolves the members from the cluster. */

@@ -164,6 +164,14 @@ window.NwayLineageView = {
         chart.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0';
         const msg = mk('div', {}, 'Loading lineage...');
         msg.style.cssText = 'padding:20px;color:var(--dim)';
+        // back to the cluster or batch the set came from (the table's header back button)
+        if (q.get('cluster_uuid') || q.get('batch_uuid')) {
+            const cl = !!q.get('cluster_uuid');
+            const href = cl ? window.NwayPanel.backUrl(q) : `${window.Nav.buildUIUrl(q.get('collection') || (q.get('md5s') || '').split(',')[0].split(':')[0], ['files'])}?batch_uuid=${encodeURIComponent(q.get('batch_uuid'))}`;
+            const bar = mk('div', { class: 'nway-linback' });
+            bar.innerHTML = `<a class="btn-code-action" href="${escapeAttr(href)}" onclick="Nav.openPath(this.href, event)" title="Back to the ${cl ? 'cluster' : 'batch'}"><i class="fa-solid fa-arrow-left"></i> ${cl ? 'Binary cluster' : 'Batch'}</a>`;
+            host.append(bar);
+        }
         host.append(panelHost);
         wrap.append(chart);
         chart.append(msg);

@@ -502,10 +502,16 @@ window.NwayView = {
         if (st && st.median < 0.4) warns.push('weak: files may be unrelated');
         if (st && st.scored < st.total) warns.push(`${st.total - st.scored} pairs unscored`);
         const parts = [plural(files.length, 'file'), `${funcs.toLocaleString()} functions`, plural(colls.length, 'collection'), archs.join(' · ')].filter(Boolean);
+        // coming back from the lineage page: start folded, then unfold
+        let unfold = false;
+        try { unfold = sessionStorage.getItem('nway.heroAnim') === '1'; sessionStorage.removeItem('nway.heroAnim'); } catch (e) { /* storage unavailable */ }
+        const view = el.parentElement;
+        if (unfold) view.classList.add('nway-compact');
         el.hidden = false;
         el.innerHTML = `<div class="nway-hero-top">${backBtn}<span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
             <div class="nway-hero-meta dim">${comp}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
+        if (unfold) requestAnimationFrame(() => requestAnimationFrame(() => view.classList.remove('nway-compact')));
         el.onclick = e => {
             if (!e.target.closest('[data-nway-back]')) return;
             if (back) return window.Nav.openPath(back, e);

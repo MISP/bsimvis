@@ -263,7 +263,7 @@ window.UI = {
                         <a href="${buildNavUrl('pools')}" id="nav-pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> Pools</a>
                         <hr>
                         <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> Scan</a>
-                        <a href="/yara" id="nav-yara" title="Write and test YARA rules against file sets" class="${isActive('yara')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-shield-halved"></i> YARA</a>
+                        <a href="/yara" id="nav-yara" title="Write and test YARA rules against file sets (experimental)" class="${isActive('yara')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-shield-halved"></i> YARA</a>
                         <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> Jobs</a>
                         <hr>

@@ -179,7 +179,7 @@ window.YaraView = {
         return `
         <div class="yw">
             <div class="yw-bar">
-                <h2 class="yw-title"><i class="fa-solid fa-shield-halved"></i> YARA workbench</h2>
+                <h2 class="yw-title"><i class="fa-solid fa-shield-halved"></i> YARA workbench <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
                 <select id="yara-rules" aria-label="Saved rules" onchange="YaraView.openRule(this.value)" style="max-width:220px;"><option value="">Saved rules...</option></select>
                 <span class="yw-status" id="yara-status"></span>
                 <span class="yw-sp"></span>

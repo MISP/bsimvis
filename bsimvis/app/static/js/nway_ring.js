@@ -39,7 +39,7 @@
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
-        CORE_MIN: 0.9, GHOST: 0.28, TINY: 14, TINY_FADE: 0.4, // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane with a solid part along it, as long as the coverage; a lane shorter than TINY px is one dot, dimmer when less is covered (from TINY_FADE)
+        CORE_MIN: 0.9, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], TINY: 14, TINY_FADE: 0.4, // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY); a lane shorter than TINY px is one dot, dimmer when less is covered (from TINY_FADE)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
@@ -866,9 +866,9 @@
                     const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = !b.bucket && cv.t && cov < RING.CORE_MIN, tiny = part && (a1 - a0) * rp < RING.TINY, ae = part && !tiny ? a0 + (a1 - a0) * cov : a1;
+                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = !b.bucket && cv.t && cov < RING.CORE_MIN, tiny = part && (a1 - a0) * rp < RING.TINY, hatch = part && !tiny ? { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) * 100)}`, col: b.color, duty: Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) } : null;
                 if (part && !tiny) add(`lg:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(b) }, m: b.k, pe: true });
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, ae))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) * (tiny ? RING.TINY_FADE + (1 - RING.TINY_FADE) * cov : 1) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) * (tiny ? RING.TINY_FADE + (1 - RING.TINY_FADE) * cov : 1) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
@@ -908,8 +908,8 @@
         roots.forEach((f, c) => {
             const { rm, ro } = rg(f);
             segs[c].forEach(x => {
-                const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), a0 = x.a0 + pd, a1 = x.a1 - pd, wide = (x.a1 - x.a0) * ro > RING.SEG_STROKE + 2;
-                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
+                const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), sw = x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, cap = sw / 2 / rm, mdl = (x.a0 + x.a1) / 2, a0 = Math.min(x.a0 + pd + cap, mdl - 0.002), a1 = Math.max(x.a1 - pd - cap, mdl + 0.002);
+                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             const fname = f.label.length > 24 ? `${f.label.slice(0, 23)}\u2026` : f.label;
@@ -1126,10 +1126,22 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 if (e.tag === 'circle') node.addEventListener('click', () => { if (!S.sim.moved) focusCluster((M && M.byId.get(e.cl.id)) || e.cl); });
             }
         }
+        // 45 degree hatch fills for partial lanes, one pattern per colour and share, kept beside the drawing so a redraw does not drop them
+        const defs = document.createElementNS(NS, 'defs'), hatches = new Set();
+        ctx.g.appendChild(defs);
+        function hatchDef(h) {
+            if (hatches.has(h.id)) return;
+            hatches.add(h.id);
+            const pat = mkEl('pattern'), rect = mkEl('rect');
+            for (const [k, v] of Object.entries({ id: h.id, width: RING.HATCH, height: RING.HATCH, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' })) pat.setAttribute(k, v);
+            rect.setAttribute('width', String(RING.HATCH * h.duty)); rect.setAttribute('height', String(RING.HATCH)); rect.style.fill = h.col;
+            pat.appendChild(rect); defs.appendChild(pat);
+        }
         function draw1(e) {
             const node = mkEl(e.tag, e.text);
             if (e.cls) node.setAttribute('class', e.cls);
             if (e.pe) node.style.pointerEvents = 'none';
+            if (e.hatch) hatchDef(e.hatch);
             if (e.h !== undefined) node.dataset.h = e.h;
             if (e.f !== undefined) node.dataset.f = String(e.f);
             if (e.drag) node.dataset.drag = e.drag;
@@ -1143,6 +1155,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             for (const [k, v] of Object.entries(e.sa || {})) { const s = v == null ? '' : String(v); if (prev[`@${k}`] !== s) { prev[`@${k}`] = s; if (v == null) node.removeAttribute(k); else node.setAttribute(k, s); } }
             if (e.text !== undefined && node.textContent !== e.text) node.textContent = e.text;
             for (const [k, v] of Object.entries(e.s || {})) { if (prev[`$${k}`] !== v) { prev[`$${k}`] = v; node.style.setProperty(k, v); } }
+            // a hatched lane paints with its pattern; when it stops being hatched the plain colour comes back
+            if (e.hatch) { if (prev.hatch !== e.hatch.id) { prev.hatch = e.hatch.id; node.style.setProperty('stroke', `url(#${e.hatch.id})`); } } else if (prev.hatch) { prev.hatch = null; node.style.setProperty('stroke', e.s.stroke); }
         }
         // the DOM is rebuilt only when the element list changes (a new layout, mode or opened circle); a physics frame updates attributes
         function paint() {
@@ -1404,7 +1418,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 document.body.classList.remove('ring-dragging');
                 ctx.controls.replaceChildren();
                 ctx.controls2.replaceChildren();
-                root.remove(); note.remove();
+                root.remove(); defs.remove(); note.remove();
                 nodes = new Map(); byMod = new Map(); holdEls = new Map(); lit = []; frame = null; M = null;
             },
         };

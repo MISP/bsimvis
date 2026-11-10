@@ -439,9 +439,8 @@
         const medoid = c.medoid || '';
         el.querySelector('#cov-fn-total').innerHTML = `${num(m.counts.core + m.counts.partial + m.counts.unique)}<small>code fn</small>`;
         el.querySelector('#cov-fn-body').innerHTML = fnCardBody(m);
-        el.querySelector('#cov-lanes').innerHTML = m.lanes.length
-            ? matrix(m, medoid) + codeMap(m, medoid)
-            : `<div class="cov-panel dim">These files share no lane of functions.</div>`;
+        el.querySelector('#cov-lanes').innerHTML = m.lanes.length ? matrix(m, medoid) : `<div class="cov-panel dim">These files share no lane of functions.</div>`;
+        el.querySelector('#cov-map').innerHTML = m.lanes.length ? codeMap(m, medoid) : '';
         nameLanes(el, m, stale);
     }
 
@@ -482,7 +481,8 @@
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
                 <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
-                ${fn ? `<div class="cov-duo">${lineageCard()}<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px; min-width:0;"></div></div>` : ''}
+                ${fn ? `<div class="cov-duo">${lineageCard()}<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px; min-width:0;"></div></div>
+                <div id="cov-map" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
             if (linInst) { linInst.destroy(); linInst = null; }
             if (fn) loadLanes(el, v, c).then(() => loadLineage(el, v, c)); // after lanes: same /nway build, so it hits the cache instead of racing it

@@ -356,7 +356,7 @@ window.ClusterDetailView = {
                         ${this.isBinary ? `<button class="bsim-tab active" id="cluster-tab-btn-overview" onclick="ClusterDetailView.switchTab('overview')" title="What is behind each tab">Overview</button>` : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
                         <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
-                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-lineage" onclick="ClusterDetailView.openLineage(event)" title="Who inherited what from whom: the lineage of this cluster's files, on its own page"><i class="fa-solid fa-sitemap"></i> Lineage</button>` : ''}
                     </div>
 
@@ -1025,7 +1025,7 @@ window.ClusterDetailView = {
             className: 'btn-code-action',
             icon: 'fa-solid fa-shield-halved',
             label: 'YARA',
-            tooltip: 'Write a YARA rule for the files of this cluster',
+            tooltip: 'Write a YARA rule for the files of this cluster (experimental)',
             onClick: `Nav.openPath(${jsString(window.yaraUrl(this.collection, [`cluster_uuid=${self.cluster_uuid}&axis=${this.axis || 'overall'}`]))}, event)`,
         });
     },

@@ -550,7 +550,7 @@
                 actionsSubmenuHtml += `
                 <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(yUrl))}, event, { title: 'YARA workbench' })">
                     <i class="fa-solid fa-shield-halved" style="width: 16px; text-align: center; opacity: 0.8;"></i>
-                    <span>YARA rule for ${yFiles.length > 1 ? yFiles.length + ' files' : 'this file'}</span>
+                    <span>YARA rule for ${yFiles.length > 1 ? yFiles.length + ' files' : 'this file'} <i class="fa-solid fa-flask" style="color:var(--warning,#d97706);margin-left:4px" title="Experimental"></i></span>
                 </div>`;
             }
             if (window.NwayBasket) {

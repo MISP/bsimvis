@@ -200,7 +200,7 @@
             const tab = (k, label, why) => `<button class="bsim-tab${s.tab === k ? ' active' : ''}" role="tab" data-xtab="${k}"${why ? ` title="${escapeAttr(why)}"` : ''}>${label}</button>`;
             const nf = d.functions.length;
             this.el.innerHTML = `
-                ${this.embedded ? '' : `<div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')} <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></h2>
+                ${this.embedded ? '' : `<div class="nway-head"><h2><i class="fa-solid fa-table-columns"></i> ${escapeHtml(this.name || 'Function family')}</h2>
                     <p>${nf} functions, one per file. Strings, calls, constants and code compared across them.</p></div>`}
                 ${this._head()}
                 ${this.embedded ? '' : `<div class="xp-bar"><div class="bsim-tabbar" role="tablist" style="margin:0">

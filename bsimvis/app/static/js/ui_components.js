@@ -264,7 +264,7 @@ window.UI = {
                         <hr>
                         <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> Scan</a>
                         <a href="/yara" id="nav-yara" title="Write and test YARA rules against file sets (experimental)" class="${isActive('yara')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-shield-halved"></i> YARA</a>
-                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> Jobs</a>
                         <hr>
                         <a href="#" id="nav-search" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> Search <kbd>Ctrl+K</kbd></a>

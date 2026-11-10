@@ -169,7 +169,7 @@
     // (rows held by a file of x and a file of y) and the files of x holding such a row (hold[x|y]).
     function modulesOf(R, C, N, famOf, F, o = {}) {
         const K = C.cats.length, at = new Map(C.cats.map((c, i) => [c.key, i]));
-        const size = new Uint32Array(K), has = new Uint8Array(K * N), rowsIn = new Uint32Array(K * F), pair = C.cats.map(() => new Map()), hold = C.cats.map(() => new Map());
+        const size = new Uint32Array(K), has = new Uint8Array(K * N), cnt = new Uint32Array(K * N), rowsIn = new Uint32Array(K * F), pair = C.cats.map(() => new Map()), hold = C.cats.map(() => new Map());
         const inRow = [], fams = [];
         for (let r = 0; r < R.n; r++) {
             if (!R.match(r)) continue;
@@ -181,7 +181,7 @@
             for (let j = h.length - 1, i0 = 0; j >= 0; j--, i0 += 4) {
                 const v = parseInt(h[j], 16) || 0;
                 if (!v) continue;
-                for (let b = 0; b < 4; b++) if ((v >> b) & 1 && i0 + b < N) { inRow.push(i0 + b); has[g * N + i0 + b] = 1; }
+                for (let b = 0; b < 4; b++) if ((v >> b) & 1 && i0 + b < N) { inRow.push(i0 + b); has[g * N + i0 + b] = 1; cnt[g * N + i0 + b]++; }
             }
             fams.length = 0;
             for (const i of inRow) if (!fams.includes(famOf[i])) fams.push(famOf[i]);
@@ -206,7 +206,7 @@
             const bucket = !!(c.g && (c.g.kind === 'tier' || c.g.kind === 'fold'));
             if (mem.length && bucket) buckets++;
             if (mem.length && bucket && o.tier === 'hide') { bucketsHidden++; bucketFuncs += size[g]; return; }
-            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
+            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
         });
         mods.hidden = hidden; mods.buckets = buckets; mods.bucketsHidden = bucketsHidden; mods.bucketFuncs = bucketFuncs;
         return mods;
@@ -701,14 +701,18 @@
         const inner = (center, rr, a0, a1, files, x, dragKey, famN) => {
             const b = x.b, sk = `${b.k}.${x.key}`;
             if (!files.length) return;
-            const mA = (a0 + a1) / 2, fs = files.slice().sort((p, q) => norm(angTo(center, pos[p]) - mA) - norm(angTo(center, pos[q]) - mA)), w = (a1 - a0) / fs.length;
+            const mA = (a0 + a1) / 2, fs = files.slice().sort((p, q) => norm(angTo(center, pos[p]) - mA) - norm(angTo(center, pos[q]) - mA));
+            // slot of each file on the arc is proportional to the module rows it holds (floored so a thin fan stays visible)
+            const cn = i => (b.cnt ? b.cnt[i] : 0) || 1, tot = sum(fs, cn), wt = fs.map(i => Math.max(cn(i), tot * 0.03)), wsum = sum(wt, v => v);
+            let acc = a0;
             fs.forEach((i, n) => {
-                const s0 = a0 + n * w, s1 = s0 + w, p0 = ptAt(center, rr, s0), p1 = ptAt(center, rr, s1), t = pos[i], sm = ptAt(center, rr, (s0 + s1) / 2);
-                const chord = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]), we = Math.min(10, Math.max(3, chord * 0.4));
+                const cov = Math.min(1, cn(i) / Math.max(1, b.size)), s0 = acc, s1 = acc + ((a1 - a0) * wt[n]) / wsum, p0 = ptAt(center, rr, s0), p1 = ptAt(center, rr, s1), t = pos[i], sm = ptAt(center, rr, (s0 + s1) / 2);
+                acc = s1;
+                const we = 2 + 12 * cov;
                 const dxt = t[0] - sm[0], dyt = t[1] - sm[1], dl = Math.hypot(dxt, dyt) || 1, ud = [dxt / dl, dyt / dl], nr = [-ud[1], ud[0]], uin = [(center[0] - sm[0]) / rr, (center[1] - sm[1]) / rr], hh = Math.max(14, dl * 0.4);
                 const sd = (p0[0] - sm[0]) * nr[0] + (p0[1] - sm[1]) * nr[1] > 0 ? 1 : -1, fa = [t[0] + nr[0] * we / 2 * sd, t[1] + nr[1] * we / 2 * sd], fb = [t[0] - nr[0] * we / 2 * sd, t[1] - nr[1] * we / 2 * sd];
                 const ar = (p, u) => [p[0] + u[0] * hh, p[1] + u[1] * hh], br = f => [f[0] - ud[0] * hh, f[1] - ud[1] * hh];
-                add(`i:${sk}:${dragKey}:${i}`, 'path', { d: `M${P(p0)} A${f1(rr)},${f1(rr)} 0 0 1 ${P(p1)} C${P(ar(p1, uin))} ${P(br(fb))} ${P(fb)} L${P(fa)} C${P(br(fa))} ${P(ar(p0, uin))} ${P(p0)}Z` }, { s: { fill: b.color }, sa: { opacity: ((0.16 + 0.26 * (1 - fs.length / Math.max(1, famN))) * fade(b)).toFixed(3) }, m: b.k, bucket: b.bucket, drag: dragKey, f: i });
+                add(`i:${sk}:${dragKey}:${i}`, 'path', { d: `M${P(p0)} A${f1(rr)},${f1(rr)} 0 0 1 ${P(p1)} C${P(ar(p1, uin))} ${P(br(fb))} ${P(fb)} L${P(fa)} C${P(br(fa))} ${P(ar(p0, uin))} ${P(p0)}Z` }, { s: { fill: b.color }, sa: { opacity: ((0.15 + 0.5 * cov) * fade(b)).toFixed(3) }, m: b.k, bucket: b.bucket, drag: dragKey, f: i, fcov: { i, n: cn(i) } });
             });
         };
         // routing: family ring -> lane on each cluster level -> files; a cluster without sub-clusters fans straight to its files
@@ -926,7 +930,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
         
         // ---- tooltips
-        const modTip = (ev, b, pr, prs, bu) => {
+        const modTip = (ev, b, pr, prs, bu, fc) => {
             if (!b) return;
             const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
             const lab = c => M.roots[c].label;
@@ -934,6 +938,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 pr ? ['Shared', `${ctx.fmt(pr.n)} functions shared between ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)} in the module)`] : ['Functions', ctx.fmt(b.size)],
                 ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
                 ...(bu ? [['Bundle', `${M.roots[bu.X].label} + ${M.roots[bu.Y].label}: ${bu.n} modules, ${ctx.fmt(bu.m)} shared functions`]] : []),
+                ...(fc ? [['This file', `${ctx.name(M.doc.nodes[fc.i].id)} holds ${ctx.fmt(fc.n)} of ${ctx.fmt(b.size)} (${Math.round((100 * fc.n) / Math.max(1, b.size))}%)`]] : []),
                 ...(b.fam != null ? [['Only in cluster', M.roots[b.fam].label]] : []),
                 ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
                 ['', 'A file holds a module when it has at least one of its functions.']]);
@@ -968,7 +973,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.m !== undefined) {
                 node.dataset.m = String(e.m);
                 node.style.cursor = 'pointer';
-                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs, e.bundle); });
+                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs, e.bundle, e.fcov); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
                 node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });

@@ -329,7 +329,8 @@
 
     // One px-per-function for every lane: RING.LANE_W, or less when the lanes of some cluster would not fit its ring.
     function lanePx(M) {
-        let px = RING.LANE_W;
+        // start from the outer ribbons' px-per-function, so a lane is as thick as the ribbon it continues; the fit below only shrinks it
+        let px = Math.max(RING.LANE_W, M.plan.px);
         const cross = M.plan.segs.flat(), lay = M.plan.layers.flatMap((l, c) => l.map(x => ({ x, lca: lcaNode(M.roots[c], x.hold, true) })));
         for (const n of M.byId.values()) {
             const set = new Set(n.files), has = x => [...x.hold].some(i => set.has(i));
@@ -708,7 +709,8 @@
             fs.forEach((i, n) => {
                 const cov = Math.min(1, cn(i) / Math.max(1, b.size)), s0 = acc, s1 = acc + ((a1 - a0) * wt[n]) / wsum, p0 = ptAt(center, rr, s0), p1 = ptAt(center, rr, s1), t = pos[i], sm = ptAt(center, rr, (s0 + s1) / 2);
                 acc = s1;
-                const we = 2 + 12 * cov;
+                // the fan keeps the width of its slot on the lane (no fixed landing width), so thickness follows the file's rows
+                const we = Math.max(1.2, Math.hypot(p1[0] - p0[0], p1[1] - p0[1]));
                 const dxt = t[0] - sm[0], dyt = t[1] - sm[1], dl = Math.hypot(dxt, dyt) || 1, ud = [dxt / dl, dyt / dl], nr = [-ud[1], ud[0]], uin = [(center[0] - sm[0]) / rr, (center[1] - sm[1]) / rr], hh = Math.max(14, dl * 0.4);
                 const sd = (p0[0] - sm[0]) * nr[0] + (p0[1] - sm[1]) * nr[1] > 0 ? 1 : -1, fa = [t[0] + nr[0] * we / 2 * sd, t[1] + nr[1] * we / 2 * sd], fb = [t[0] - nr[0] * we / 2 * sd, t[1] - nr[1] * we / 2 * sd];
                 const ar = (p, u) => [p[0] + u[0] * hh, p[1] + u[1] * hh], br = f => [f[0] - ud[0] * hh, f[1] - ud[1] * hh];

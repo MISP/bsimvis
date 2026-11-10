@@ -350,7 +350,10 @@
             // the lanes of this ring: cross arcs coming down to it, and the single-cluster modules whose chain passes through it (root: only those starting there)
             const fed = n.level === 0 ? lay.filter(o => o.lca === n).map(o => o.x) : [...cross.filter(has), ...lay.filter(o => has(o.x) && n.files.every(i => (o.lca._set || (o.lca._set = new Set(o.lca.files))).has(i))).map(o => o.x)];
             if (!fed.length) continue;
-            px = Math.min(px, (RING.LANE_FIT * TAU * rp - fed.length * RING.LANE_GAP * rp) / sum(fed, x => Math.max(x.size, 1)));
+            // a family's own ring holds only the modules of that cluster; the shared arcs of its outer ring already use part of the one turn, so these lanes get the rest
+            const pl = M.plan, sh = n.level === 0 ? sum(pl.segs[n.famIdx], s => pl.w(s)) / rg(n).ro + (pl.gaps[n.famIdx] || 0) * pl.segs[n.famIdx].length : 0;
+            const turn = Math.max(0.15 * TAU, RING.LANE_FIT * TAU - sh);
+            px = Math.min(px, (turn * rp - fed.length * RING.LANE_GAP * rp) / sum(fed, x => Math.max(x.size, 1)));
         }
         return Math.max(px, 1e-4);
     }

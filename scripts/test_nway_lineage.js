@@ -241,6 +241,11 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         for (const l of g.stats.lanes) perNode.set(l.node, (perNode.get(l.node) || 0) + l.w);
         for (const [n, w] of perNode) assert.ok(w <= RING.LANE_FIT * 2 * Math.PI + 1e-6, `lanes of ${n} fit`);
         assert.ok(g.stats.laneFit >= 0.99, 'one lane scale fits every ring without a squeeze');
+        // a family's shared arcs (outer ring) and its own lanes (inner ring) share one turn
+        M.roots.forEach((f, c) => {
+            const pl = M.plan, sh = pl.segs[c].reduce((s, x) => s + pl.w(x), 0) / RL.rg(f).ro + pl.gaps[c] * pl.segs[c].length;
+            assert.ok(sh + (perNode.get(f.id) || 0) <= RING.LANE_FIT * 2 * Math.PI + 1e-6, `shared arcs and own lanes of ${f.id} fit one turn`);
+        });
         // no ribbon skips a level: a lane on a sub-cluster is fed from its parent (a family ring segment, or the parent's lane)
         for (const u of ups) {
             const c = M.byId.get(u.lane), src = u.src;

@@ -443,6 +443,9 @@
         const mode = o.mode ?? M.modeOf(nested).mode, light = mode >= 1, lean = mode >= 2;
         const nF = roots.length, pl = M.plan, px = pl.px;
         const els = [];
+        // a cluster is drawn at its packed size r0, or larger when its parts were dragged out of it (set below once positions are known)
+        const eachN = (n, f) => { f(n); n.kids.forEach(k => eachN(k, f)); };
+        roots.forEach(f => eachN(f, n => { if (n.r0 === undefined) n.r0 = n.r; n.r = n.r0; }));
         sim.begin();
         const add = (id, tag, a, extra = {}) => { els.push({ id, tag, a, ...extra }); return els[els.length - 1]; };
         const key = n => `f:${n.id}`;
@@ -488,6 +491,19 @@
             const d = sim.d(nk(i), hpos[i][0], hpos[i][1]);
             pos[i] = [hpos[i][0] + d[0], hpos[i][1] + d[1]];
             sim.follow(nk(i), owner[i] || key(roots[M.famOf[i]]), RING.FOLLOW);
+        }
+        // a parent grows to hold the children or files that were dragged out of it, and shrinks back when they return
+        if (nested) {
+            const grow = n => {
+                n.kids.forEach(grow);
+                if (agg(n)) return;
+                const c = nc[n.id];
+                let r = n.r0;
+                if (n.kids.length) for (const k of n.kids) r = Math.max(r, Math.hypot(nc[k.id][0] - c[0], nc[k.id][1] - c[1]) + k.r + 6);
+                else for (const i of n.files) r = Math.max(r, Math.hypot(pos[i][0] - c[0], pos[i][1] - c[1]) + 8);
+                n.r = r;
+            };
+            roots.forEach(grow);
         }
         for (const id of Object.keys(NH)) sim.homes[id] = NH[id];
         // families keep apart and inside the canvas

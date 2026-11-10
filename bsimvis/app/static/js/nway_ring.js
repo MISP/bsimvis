@@ -53,6 +53,8 @@
     // how widely a module is held inside a cluster: Core (CORE_MIN or more of its files), Common (COMMON_MIN or more), Rare. The glyph is
     // as solid as the lane: filled, half, empty.
     const TIER = { core: ['●', 'Core'], common: ['◐', 'Common'], rare: ['○', 'Rare'] };
+    // the 45 degree hatch of a partly held module: one pattern per colour and coverage
+    const hatchOf = (b, cov) => { const duty = Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)); return { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(duty * 100)}`, col: b.color, duty }; };
     const covTier = (n, t) => { const c = t ? n / t : 1; return c >= RING.CORE_MIN ? 'core' : c >= RING.COMMON_MIN ? 'common' : 'rare'; };
     const tierText = (n, t) => { const k = covTier(n, t); return `${TIER[k][0]} ${TIER[k][1]}`; };
     const norm = a => ((a + 3 * Math.PI) % TAU) - Math.PI;
@@ -881,7 +883,7 @@
                     const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = cv.t && cov < RING.CORE_MIN, hatch = part ? { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) * 100)}`, col: b.color, duty: Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) } : null;
+                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = cv.t && cov < RING.CORE_MIN, hatch = part ? hatchOf(b, cov) : null;
                 if (part) add(`lg:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rl, a0))} A${f1(rl)},${f1(rl)} 0 0 1 ${P(ptAt(C, rl, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(b) }, m: b.k, pe: true });
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rl, a0))} A${f1(rl)},${f1(rl)} 0 0 1 ${P(ptAt(C, rl, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: b.bucket ? undefined : cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp: rl, own: p.noBand });
@@ -924,7 +926,9 @@
             const { rm, ro } = rg(f);
             segs[c].forEach(x => {
                 const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), sw = x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, cap = sw / 2 / rm, mdl = (x.a0 + x.a1) / 2, a0 = Math.min(x.a0 + pd + cap, mdl - 0.002), a1 = Math.max(x.a1 - pd - cap, mdl + 0.002);
-                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, lc: x.b.bucket ? undefined : lcov(x.b, f), pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
+                const cv = lcov(x.b, f), cov = cv.t ? cv.n / cv.t : 1, part = cv.t && cov < RING.CORE_MIN;
+                if (part) add(`sg:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(x.b) }, m: x.b.k, pe: true });
+                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, hatch: part ? hatchOf(x.b, cov) : null, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, lc: x.b.bucket ? undefined : cv, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             const fname = f.label.length > 24 ? `${f.label.slice(0, 23)}\u2026` : f.label;

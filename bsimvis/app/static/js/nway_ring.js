@@ -47,7 +47,7 @@
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
         BUDGET: [6000, 12000], // estimated elements above which the drawing gets lighter: no parent-to-lane bands, then clusters, rings and family ribbons only
-        SLOW_MS: 30, HEAVY: 2100, HEAVY_FRAME_MS: 50, // estimated elements, or a full frame slower than SLOW_MS (the arc search grows with the ribbons, not the elements), above which a moving drawing is lightened, reuses its arc order and rounds to whole pixels, at most 20 frames a second
+        GROW_MAX: 1.5, SLOW_MS: 30, HEAVY: 2100, HEAVY_FRAME_MS: 50, // estimated elements, or a full frame slower than SLOW_MS (the arc search grows with the ribbons, not the elements), above which a moving drawing is lightened, reuses its arc order and rounds to whole pixels, at most 20 frames a second
         FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 12, // a redraw loop stops after this many frames or ms; every animation frame (at most about 80 a second)
         MIN_FILL: [0.09, 0.12, 0.16],
     };
@@ -475,11 +475,12 @@
         roots.forEach((f, c) => { place(f); cen[c] = nc[f.id]; });
         const agg = n => (!nested || !n.kids.length) && (n.shut || (n.files.length > RING.LEAF_MAX && !open.has(n.id)));
         // files sit on the inner ring of their leaf cluster; the files of a collapsed circle sit at its centre
-        const pos = out.pos, hpos = {}, owner = {}, aggOf = {};
+        const pos = out.pos, hpos = {}, owner = {}, ownerR = {}, aggOf = {};
         const leafPlace = n => {
             if (!nested || !n.kids.length) {
                 if (agg(n)) n.files.forEach(i => { hpos[i] = NH[n.id]; aggOf[i] = n; }); else placeFiles(n.files, NH[n.id], n.r, hpos);
                 n.files.forEach(i => (owner[i] = key(n)));
+                ownerR[key(n)] = n.r0;
             } else n.kids.forEach(leafPlace);
         };
         roots.forEach(leafPlace);
@@ -504,13 +505,24 @@
                 let r = n.r0;
                 if (n.kids.length) for (const k of n.kids) r = Math.max(r, Math.hypot(nc[k.id][0] - c[0], nc[k.id][1] - c[1]) + k.r + 6);
                 else for (const i of n.files) r = Math.max(r, Math.hypot(pos[i][0] - c[0], pos[i][1] - c[1]) + 8);
-                n.r = r;
+                n.r = Math.min(r, n.r0 * RING.GROW_MAX);
             };
             roots.forEach(grow);
         }
         for (const id of Object.keys(NH)) sim.homes[id] = NH[id];
         // families keep apart and inside the canvas
+        // a child cannot be thrown further than its parent may grow: it is held on a tether, so one wild drag cannot blow the parent (and the layout) up
+        const teth = [];
+        if (nested) roots.forEach(f => eachN(f, n => { if (n.parent) teth.push([key(n), key(n.parent), Math.max(10, n.parent.r0 * RING.GROW_MAX - n.r0 - 6)]); }));
+        for (let i = 0; i < M.N; i++) if (!aggOf[i] && ownerR[owner[i]]) teth.push([nk(i), owner[i], Math.max(10, ownerR[owner[i]] * RING.GROW_MAX - 8)]);
         sim.cons = (Pt, dragged) => {
+            for (const [c, par, R] of teth) {
+                const a = Pt[c], b = Pt[par];
+                if (!a || !b) continue;
+                // a child's lag behind its parent (q, and the parent's move not yet passed on) is not a stretch: measure where it will end up
+                const dx = a.hx + a.dx + a.qx - b.hx - b.ldx, dy = a.hy + a.dy + a.qy - b.hy - b.ldy, d = Math.hypot(dx, dy);
+                if (d > R) { const k = 1 - R / d; a.dx -= dx * k; a.dy -= dy * k; }
+            }
             const k = roots.map(f => Pt[`f:${f.id}`]);
             for (let it = 0; it < 10; it++) {
                 for (let u = 0; u < nF; u++) for (let v = u + 1; v < nF; v++) {

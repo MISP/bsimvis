@@ -23,7 +23,8 @@
         LEAF_MAX: 60, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 24, // families beyond this many merge into "Other files"
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
-        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, // OWN_MARGIN: radians kept free between the lanes of shared modules and those held inside one cluster
+        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, OWN_RAMP: 0.12, LANE_EASE: 0.35, // LANE_EASE: share of the remaining angle a lane covers per frame
+         // OWN_MARGIN: radians kept free between the lanes of shared modules and those held inside one cluster
          // bands bend around unrelated circles: clearance, and the most a control point moves (share of the band length)
          // circle radius a + b*sqrt(files)
         RI: 6, RM: 14, RO: 22, // ring radii beyond the circle: inner, centre, outer
@@ -382,14 +383,14 @@
     // keeps what was moved. geometry() registers the points of each frame (d), who follows whom, and the constraint.
     function newSim() {
         const sim = {
-            pts: {}, dir: {}, orient: {}, homes: {}, fhomes: {}, links: [], cons: null, drag: null, moved: false,
-            begin() { this.links = []; this.cons = null; },
+            pts: {}, dir: {}, orient: {}, lane: {}, laneRes: 0, homes: {}, fhomes: {}, links: [], cons: null, drag: null, moved: false,
+            begin() { this.links = []; this.cons = null; this.laneRes = 0; },
             d(key, hx, hy) { const p = this.pts[key] || (this.pts[key] = { dx: 0, dy: 0, vx: 0, vy: 0, ldx: 0, ldy: 0, qx: 0, qy: 0 }); p.hx = hx; p.hy = hy; return [p.dx, p.dy]; },
             follow(child, parent, rate) { this.links.push([child, parent, rate]); },
             // one step; returns the remaining motion
             tick() {
                 const ks = Object.keys(this.pts), dr = this.drag;
-                let e = 0;
+                let e = this.laneRes || 0;
                 for (const k of ks) {
                     const p = this.pts[k];
                     if (dr && dr.key === k) { p.dx = dr.px - p.hx - dr.gx; p.dy = dr.py - p.hy - dr.gy; p.vx = p.vy = 0; continue; }
@@ -793,7 +794,7 @@
             const fsc = Math.min(1, (RING.LANE_FIT * TAU * rp - ports.length * RING.LANE_GAP * rp) / sum(ports, p => p.wp));
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
-            ports.sort((p, q) => p.c - q.c);
+            const lk = q => `${q.x.b.k}.${q.x.key}:${X.id}`, arrange = list => list.sort((a, b) => a.c - b.c);
             // lanes of shared modules (fed from a ring above) stay together on the side facing their source; lanes of modules held inside this cluster only
             // (noBand) are moved out of that sector, so the two kinds of link do not run in the same direction
             const relax = (list, fixed) => {
@@ -809,13 +810,33 @@
             };
             const shared = ports.filter(q => !q.noBand), own = ports.filter(q => q.noBand);
             if (shared.length && own.length) {
+                arrange(shared);
                 relax(shared);
                 const ts = Math.atan2(sum(shared, q => q.w * Math.sin(q.c)), sum(shared, q => q.w * Math.cos(q.c))), half = Math.max(...shared.map(q => Math.abs(norm(q.c - ts)) + q.w / 2)) + RING.OWN_MARGIN;
-                for (const q of own) { const d = norm(q.c - ts), lim = half + q.w / 2; if (Math.abs(d) < lim) q.c = ts + (d >= 0 ? 1 : -1) * lim; }
+                // a lane inside the sector is pushed to its nearest edge through a short smooth ramp (OWN_RAMP) instead of a hard snap, so a drag moves it
+                // continuously: at the sector centre it would sit on the shared lanes, but only for a narrow window of angles
+                for (const q of own) {
+                    const d = norm(q.c - ts), lim = half + q.w / 2;
+                    if (Math.abs(d) >= lim) continue;
+                    const u = Math.min(1, Math.abs(d) / RING.OWN_RAMP);
+                    q.c = ts + (d >= 0 ? 1 : -1) * lim * u * u * (3 - 2 * u);
+                }
                 ports.forEach(q => { q.c = ((q.c % TAU) + TAU) % TAU; });
-                ports.sort((p, q) => p.c - q.c);
+                arrange(ports);
                 relax(ports, q => !q.noBand);
-            } else relax(ports);
+            } else { arrange(ports); relax(ports); }
+            ports.forEach(q => { q.c = ((q.c % TAU) + TAU) % TAU; });
+            // a lane eases to its angle over a few frames (sim.lane), so a swap of neighbours or a change of side while dragging glides instead of jumping;
+            // the remaining distance is reported to the redraw loop (sim.laneRes) so it keeps running until the lanes arrive
+            for (const q of ports) {
+                const k = lk(q), prev = sim.lane[k];
+                if (prev != null) {
+                    const diff = norm(q.c - prev), mv = Math.abs(diff) < 0.004 ? diff : diff * RING.LANE_EASE;
+                    q.c = prev + mv;
+                    sim.laneRes += Math.abs(diff - mv) * rp;
+                }
+                sim.lane[k] = q.c;
+            }
             const kids = kidsOf(X);
             ports.forEach(p => {
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;

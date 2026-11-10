@@ -47,7 +47,7 @@
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
         BUDGET: [6000, 12000], // estimated elements above which the drawing gets lighter: no parent-to-lane bands, then clusters, rings and family ribbons only
-        HEAVY: 2100, HEAVY_FRAME_MS: 50, // estimated elements above which a moving drawing is lightened, reuses its arc order and rounds to whole pixels, at most 20 frames a second
+        SLOW_MS: 30, HEAVY: 2100, HEAVY_FRAME_MS: 50, // estimated elements, or a full frame slower than SLOW_MS (the arc search grows with the ribbons, not the elements), above which a moving drawing is lightened, reuses its arc order and rounds to whole pixels, at most 20 frames a second
         FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 12, // a redraw loop stops after this many frames or ms; every animation frame (at most about 80 a second)
         MIN_FILL: [0.09, 0.12, 0.16],
     };
@@ -1080,7 +1080,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.host.appendChild(crumb);
         const S = { shut: new Set(), sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), fc: null, fcTok: 0, focusSet: null, pend: null, err: '', noteBase: '', fadeNew: false, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
         const opt = () => ({ nest: S.nested, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
-        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 }, liveMode = null, live = false;
+        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 }, liveMode = null, live = false, slow = false;
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
@@ -1231,7 +1231,9 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         }
         // the DOM is rebuilt only when the element list changes (a new layout, mode or opened circle); a physics frame updates attributes
         function paint() {
+            const tg = performance.now();
             frame = geometry(M, S, { mode: liveMode ?? cur.mode, reuse: live });
+            if (!live && performance.now() - tg > RING.SLOW_MS) slow = true;
             const els = frame.els;
             // the element list changes while things move (ribbons swap places, a mode lightens the drawing): add and remove only the elements that
             // changed and re-order the rest, so the surviving nodes (and their hidden labels) are never rebuilt
@@ -1244,7 +1246,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 for (const e of els) if (!nodes.has(e.id)) { const n = draw1(e); if (e.lab) n.classList.add('ring-hide'); nodes.set(e.id, n); }
                 ids = [];
             }
-            if (!sameSet || els.some((e, i) => e.id !== ids[i])) {
+            // the draw order is only rebuilt when elements came or went: ribbons swapping places while dragging would re-append every node each frame
+            if (!sameSet) {
                 ids = els.map(e => e.id);
                 for (const e of els) root.appendChild(nodes.get(e.id));
             }
@@ -1415,6 +1418,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, S.min, S.tier, [...S.shut].sort().join(','), R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
+            slow = false;
             M = buildModel(doc, R, C, { shut: S.shut, minPct: S.min, tier: S.tier, arc: S.arc, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
             // a cluster that grew or shrank (opened, collapsed, merged files opened) repacks its family: forget that family's frozen homes so its parts
@@ -1477,7 +1481,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             lastT = now;
             const e = S.sim.tick();
             // while things move, big drawings use the next lighter mode; the full drawing comes back once the motion stops
-            heavy = cur.est > RING.HEAVY;
+            heavy = cur.est > RING.HEAVY || slow;
             liveMode = cur.est > RING.BUDGET[1] * 0.5 ? Math.max(cur.mode, 2) : heavy ? Math.max(cur.mode, 1) : null;
             live = heavy;
             root.classList.toggle('ring-moving', heavy);

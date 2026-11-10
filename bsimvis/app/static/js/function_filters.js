@@ -155,6 +155,6 @@ window.enhanceFilterClears = function (root = document) {
 document.addEventListener('DOMContentLoaded', () => {
     window.enhanceFilterClears();
     new MutationObserver(records => records.forEach(record => record.addedNodes.forEach(node => {
-        if (node.nodeType === Node.ELEMENT_NODE) window.enhanceFilterClears(node.parentElement || document);
+        if (node.nodeType === Node.ELEMENT_NODE && !(node instanceof SVGElement)) window.enhanceFilterClears(node.parentElement || document);
     }))).observe(document.body, { childList: true, subtree: true });
 });

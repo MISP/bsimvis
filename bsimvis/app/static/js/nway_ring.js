@@ -41,7 +41,7 @@
         OWN_OFF: 10, // below a family's own ring, lanes of modules held in one cluster only sit this far inside the shared lanes
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
         COV_NUDGE: 0.3, // radians: in the crossing sweeps a partly held module's sort key is pushed back by up to this much, so solid arcs gather on one side (0 = off)
-        CORE_MIN: 0.9, ROW_CORE: 0.8, COMMON_MIN: 0.5, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY)
+        CORE_MIN: 0.9, COMMON_MIN: 0.5, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
@@ -58,8 +58,6 @@
     // the 45 degree hatch of a partly held module: one pattern per colour and coverage
     const hatchOf = (b, cov) => { const duty = Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)); return { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(duty * 100)}`, col: b.color, duty }; };
     const covTier = (n, t) => { const c = t ? n / t : 1; return c >= RING.CORE_MIN ? 'core' : c >= RING.COMMON_MIN ? 'common' : 'rare'; };
-    // the table's function tabs (nway.py _in_tab): Core at ROW_CORE of the files, Common from half of that, Rare below
-    const rowTier = (span, n) => { const core = Math.max(2, Math.ceil(RING.ROW_CORE * n)); return span >= core ? 'core' : span >= Math.max(2, Math.ceil(core / 2)) ? 'common' : 'rare'; };
     const tierText = (n, t) => { const k = covTier(n, t); return `${TIER[k][0]} ${TIER[k][1]}`; };
     const norm = a => ((a + 3 * Math.PI) % TAU) - Math.PI;
     const angTo = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]);
@@ -187,7 +185,7 @@
     // (rows held by a file of x and a file of y) and the files of x holding such a row (hold[x|y]).
     function modulesOf(R, C, N, famOf, F, o = {}) {
         const K = C.cats.length, at = new Map(C.cats.map((c, i) => [c.key, i]));
-        const size = new Uint32Array(K), has = new Uint8Array(K * N), cnt = new Uint32Array(K * N), rowsIn = new Uint32Array(K * F), pair = C.cats.map(() => new Map()), hold = C.cats.map(() => new Map()), spans = C.cats.map(() => []);
+        const size = new Uint32Array(K), has = new Uint8Array(K * N), cnt = new Uint32Array(K * N), rowsIn = new Uint32Array(K * F), pair = C.cats.map(() => new Map()), hold = C.cats.map(() => new Map()), tiers = C.cats.map(() => ({ core: 0, common: 0, rare: 0 }));
         const inRow = [], fams = [];
         for (let r = 0; r < R.n; r++) {
             if (!R.match(r)) continue;
@@ -201,7 +199,7 @@
                 if (!v) continue;
                 for (let b = 0; b < 4; b++) if ((v >> b) & 1 && i0 + b < N) { inRow.push(i0 + b); has[g * N + i0 + b] = 1; cnt[g * N + i0 + b]++; }
             }
-            spans[g].push(inRow.length);
+            tiers[g][R.tier ? R.tier[r] || 'rare' : 'rare']++;
             fams.length = 0;
             for (const i of inRow) if (!fams.includes(famOf[i])) fams.push(famOf[i]);
             for (const f of fams) rowsIn[g * F + f]++;
@@ -225,7 +223,7 @@
             const bucket = !!(c.g && (c.g.kind === 'tier' || c.g.kind === 'fold'));
             if (mem.length && bucket) buckets++;
             if (mem.length && bucket && o.tier === 'hide') { bucketsHidden++; bucketFuncs += size[g]; return; }
-            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), spread: spans[g].sort((a, b) => a - b)[spans[g].length >> 1], pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
+            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), rowTier: ['core', 'common', 'rare'].reduce((a, t) => (tiers[g][t] > tiers[g][a] ? t : a), 'rare'), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
         });
         mods.hidden = hidden; mods.buckets = buckets; mods.bucketsHidden = bucketsHidden; mods.bucketFuncs = bucketFuncs;
         return mods;
@@ -1166,7 +1164,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
         // a module's place in the clusters: Core / Common / Rare of a cluster, or unique to it
         // the badge: Core / Common / Rare in the hovered cluster (or in the whole set), Unique when no file outside it holds the module
-        const badgeOf = (b, lc) => { const u = ['\u25c6', 'Unique']; if (ctx.rowTier && ctx.rowTier()) return TIER[rowTier(b.spread, M.N)]; if (lc && lc.t > 1) return lc.n === b.mem.length ? u : TIER[covTier(lc.n, lc.t)]; return b.fam != null ? u : TIER[covTier(b.mem.length, M.N)]; };
+        const badgeOf = (b, lc) => { const u = ['\u25c6', 'Unique']; if (ctx.rowTier && ctx.rowTier()) return TIER[b.rowTier]; if (lc && lc.t > 1) return lc.n === b.mem.length ? u : TIER[covTier(lc.n, lc.t)]; return b.fam != null ? u : TIER[covTier(b.mem.length, M.N)]; };
         // a cluster is named by its biggest file, often a hash: say how big it is instead
         const cname = (s, n) => (s && !/[0-9a-f]{24,}/i.test(s) ? s : `cluster of ${n}`);
         const classRows = (b, lc) => {
@@ -1198,7 +1196,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             // the glyph of each module is its tier inside the file's own (deepest) cluster
             let leaf = M.roots[M.famOf[i]];
             for (let k = leaf.kids.find(x => x.files.includes(i)); k; k = leaf.kids.find(x => x.files.includes(i))) leaf = k;
-            const lset = new Set(leaf.files), glyph = b => (leaf.files.length > 1 ? `${tierText(b.mem.filter(j => lset.has(j)).length, leaf.files.length)}  ` : '');
+            const lset = new Set(leaf.files), glyph = b => (ctx.rowTier && ctx.rowTier() ? `${TIER[b.rowTier].join(' ')}  ` : leaf.files.length > 1 ? `${tierText(b.mem.filter(j => lset.has(j)).length, leaf.files.length)}  ` : '');
             ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, `${glyph(b)}${ctx.fmt(b.size)}`]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
         };
 

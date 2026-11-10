@@ -2147,6 +2147,20 @@ def _lineage_rows(doc, args, r, pool_id):
         "library": [bool(x["library"]) for x in rows],
         "weight": [x["weight"] for x in rows],
         "match": [id(x) in kept for x in rows],
+        # the table's function tab of each row, so a graph names a module's tier the way the tabs do
+        "tier": [
+            next(
+                (
+                    t
+                    for t in ("core", "common")
+                    if _in_tab(
+                        x, t, ta["k"], ta["n"], ta["focus"], ta["twin"], ta["core_min"]
+                    )
+                ),
+                "rare",
+            )
+            for x in rows
+        ],
     }
     if sum(map(len, fids)) > LINEAGE_FIDS_MAX:
         del out["fids"]

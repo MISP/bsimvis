@@ -281,7 +281,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // a member file id -> its node id: a deltas key or a hovered table row may name files, not nodes
         const nodeOf = new Map();
         for (const x of doc.nodes) for (const m of [x.id, ...(x.members || [])]) nodeOf.set(m, x.id);
-        return { n, N, pop, nodeOf, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), weight: col('weight'), group: R.group || null, match: r => !R.match || !!R.match[r] };
+        return { n, N, pop, nodeOf, held, has, bornIn, fid: col('fid'), fids: R.fids || null, name: col('name'), mask, role: col('role'), region: col('region'), library: col('library'), weight: col('weight'), group: R.group || null, tier: R.tier || null, match: r => !R.match || !!R.match[r] };
     }
 
     const presenceBand = (c, N) => (c >= N ? 'every' : c >= 0.75 * N ? 'most' : c > 2 ? 'some' : 'few');

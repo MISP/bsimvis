@@ -39,7 +39,7 @@
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
-        CORE_MIN: 0.9, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], TINY: 14, TINY_FADE: 0.4, // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY); a lane shorter than TINY px is one dot, dimmer when less is covered (from TINY_FADE)
+        CORE_MIN: 0.9, COMMON_MIN: 0.5, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], TINY: 14, TINY_FADE: 0.4, // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY); a lane shorter than TINY px is one dot, dimmer when less is covered (from TINY_FADE)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
@@ -49,6 +49,11 @@
         MIN_FILL: [0.09, 0.12, 0.16],
     };
 
+    // how widely a module is held inside a cluster: Core (CORE_MIN or more of its files), Common (COMMON_MIN or more), Rare. The glyph is
+    // as solid as the lane: filled, half, empty.
+    const TIER = { core: ['●', 'Core'], common: ['◐', 'Common'], rare: ['○', 'Rare'] };
+    const covTier = (n, t) => { const c = t ? n / t : 1; return c >= RING.CORE_MIN ? 'core' : c >= RING.COMMON_MIN ? 'common' : 'rare'; };
+    const tierText = (n, t) => { const k = covTier(n, t); return `${TIER[k][0]} ${TIER[k][1]}`; };
     const norm = a => ((a + 3 * Math.PI) % TAU) - Math.PI;
     const angTo = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]);
     const ptAt = (c, r, a) => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
@@ -434,7 +439,7 @@
         const key = n => `f:${n.id}`;
         const fade = b => (b.bucket ? RING.BUCKET_FADE : 1);
         const lset = new Map();
-        const lcov = (b, X) => { let st = lset.get(X.id); if (!st) lset.set(X.id, (st = new Set(X.files))); let n = 0; for (const i of b.mem) if (st.has(i)) n++; return { n, t: X.files.length }; };
+        const lcov = (b, X) => { let st = lset.get(X.id); if (!st) lset.set(X.id, (st = new Set(X.files))); let n = 0; for (const i of b.mem) if (st.has(i)) n++; return { n, t: X.files.length, name: X.label }; };
         const holdsOf = new Map();
         for (const b of mods) for (const i of b.mem) (holdsOf.get(i) || holdsOf.set(i, []).get(i)).push(b.k);
         const out = { els, nc: {}, pos: {}, cen: {}, stats: { ribbons: [], lanes: [], laneFit: 1 } };
@@ -868,7 +873,7 @@
                 }
                 const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = !b.bucket && cv.t && cov < RING.CORE_MIN, tiny = part && (a1 - a0) * rp < RING.TINY, hatch = part && !tiny ? { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) * 100)}`, col: b.color, duty: Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) } : null;
                 if (part && !tiny) add(`lg:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(b) }, m: b.k, pe: true });
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) * (tiny ? RING.TINY_FADE + (1 - RING.TINY_FADE) * cov : 1) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) * (tiny ? RING.TINY_FADE + (1 - RING.TINY_FADE) * cov : 1) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: b.bucket ? undefined : cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
@@ -909,7 +914,7 @@
             const { rm, ro } = rg(f);
             segs[c].forEach(x => {
                 const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), sw = x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, cap = sw / 2 / rm, mdl = (x.a0 + x.a1) / 2, a0 = Math.min(x.a0 + pd + cap, mdl - 0.002), a1 = Math.max(x.a1 - pd - cap, mdl + 0.002);
-                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
+                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, lc: x.b.bucket ? undefined : lcov(x.b, f), pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             const fname = f.label.length > 24 ? `${f.label.slice(0, 23)}\u2026` : f.label;
@@ -1071,14 +1076,18 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
                 ...(bu ? [['Bundle', `${M.roots[bu.X].label} + ${M.roots[bu.Y].label}: ${bu.n} modules, ${ctx.fmt(bu.m)} shared functions`]] : []),
                 ...(fc ? [['This file', `${ctx.name(M.doc.nodes[fc.i].id)} holds ${ctx.fmt(fc.n)} of ${ctx.fmt(b.size)} (${Math.round((100 * fc.n) / Math.max(1, b.size))}%)`]] : []),
-                ...(lc && lc.t ? [['In this cluster', `${lc.n} of ${lc.t} files (${Math.round((100 * lc.n) / lc.t)}%)${lc.n / lc.t < RING.CORE_MIN ? ', not core' : ''}`]] : []),
+                ...(lc && lc.t > 1 ? [['Role', `${tierText(lc.n, lc.t)} in ${lc.name || 'this cluster'}: ${lc.n} of ${lc.t} files (${Math.round((100 * lc.n) / lc.t)}%)`]] : []),
                 ...(b.fam != null ? [['Only in cluster', M.roots[b.fam].label]] : []),
                 ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
-                ['', 'A file holds a module when it has at least one of its functions.']]);
+                ['', `A file holds a module when it has at least one of its functions. Core: ${Math.round(100 * RING.CORE_MIN)}% or more of a cluster's files, Common: ${Math.round(100 * RING.COMMON_MIN)}% or more, Rare: fewer.`]]);
         };
         const fileTip = (ev, i) => {
             const n = M.doc.nodes[i], held = mods.filter(b => b.mem.includes(i)).sort((a, b) => b.size - a.size);
-            ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, ctx.fmt(b.size)]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
+            // the glyph of each module is its tier inside the file's own (deepest) cluster
+            let leaf = M.roots[M.famOf[i]];
+            for (let k = leaf.kids.find(x => x.files.includes(i)); k; k = leaf.kids.find(x => x.files.includes(i))) leaf = k;
+            const lset = new Set(leaf.files), glyph = b => (leaf.files.length > 1 ? `${tierText(b.mem.filter(j => lset.has(j)).length, leaf.files.length)}  ` : '');
+            ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, `${glyph(b)}${ctx.fmt(b.size)}`]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
         };
 
         // ---- hover / pin: a module's chain lights, the rest fades. The lists are made once per layout, so a hover touches only its own elements.
@@ -1424,5 +1433,5 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
     }
 
-    window.NwayRing = { mount, autoView, chooseView, RING, _layout: { RING, lcaNode, clusterTree, modulesOf, buildModel, plan, placeFamilies, geometry, newSim, badAttrs, rg, band } };
+    window.NwayRing = { mount, autoView, chooseView, RING, _layout: { covTier, tierText, RING, lcaNode, clusterTree, modulesOf, buildModel, plan, placeFamilies, geometry, newSim, badAttrs, rg, band } };
 })();

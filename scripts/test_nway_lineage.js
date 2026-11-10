@@ -196,6 +196,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
     // --- Ring view (nway_ring.js): pure layout ------------------------------------------------------
     {
         const RL = window.NwayRing._layout, RING = window.NwayRing.RING;
+        // tooltip tiers: a module's share of a cluster's files
+        assert.deepStrictEqual([RL.covTier(8, 8), RL.covTier(7, 8), RL.covTier(4, 8), RL.covTier(3, 8), RL.covTier(1, 1)], ['core', 'common', 'common', 'rare', 'core'], 'core / common / rare by share of the cluster');
         // 12 files in three families (A: two sub-clusters of 3, B: 4 files, C: 2 files); lanes are the modules
         const fam = ['A', 'A', 'A', 'A', 'A', 'A', 'B', 'B', 'B', 'B', 'C', 'C'], sub = ['a1', 'a1', 'a1', 'a2', 'a2', 'a2', '', '', '', '', '', ''];
         const rdoc = withPath => {

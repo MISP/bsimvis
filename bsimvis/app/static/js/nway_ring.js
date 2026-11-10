@@ -39,7 +39,7 @@
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
-        CORE_MIN: 0.9, GAUGE_W: 2, // a lane held by fewer than CORE_MIN of its cluster's files gets a coverage gauge inside it
+        CORE_MIN: 0.9, ZEBRA: 6, ZEBRA_DUTY: [0.25, 0.75], // a lane held by fewer than CORE_MIN of its cluster's files is striped across; the coloured share of each stripe period is the coverage (kept within ZEBRA_DUTY)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
@@ -866,13 +866,8 @@
                     const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                const cv = lcov(b, X);
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
-                if (!b.bucket && cv.t && cv.n / cv.t < RING.CORE_MIN) {
-                    const rg0 = rp - RING.LANE_STROKE / 2 - 3, am = a0 + (a1 - a0) * (cv.n / cv.t), arcD = (x0, x1) => `M${P(ptAt(C, rg0, x0))} A${f1(rg0)},${f1(rg0)} 0 0 1 ${P(ptAt(C, rg0, x1))}`;
-                    add(`gt:${sk}:${X.id}`, 'path', { d: arcD(a0, a1) }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.GAUGE_W, opacity: 0.25 * fade(b) }, m: b.k, pe: true });
-                    add(`gf:${sk}:${X.id}`, 'path', { d: arcD(a0, am) }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.GAUGE_W, 'stroke-linecap': 'butt', opacity: fade(b) }, m: b.k, pe: true });
-                }
+                const cv = lcov(b, X), part = !b.bucket && cv.t && cv.n / cv.t < RING.CORE_MIN, duty = part ? Math.min(RING.ZEBRA_DUTY[1], Math.max(RING.ZEBRA_DUTY[0], cv.n / cv.t)) : 1;
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': part ? 'butt' : 'round', 'stroke-dasharray': part ? `${f1(RING.ZEBRA * duty)} ${f1(RING.ZEBRA * (1 - duty))}` : null, opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));

@@ -41,8 +41,8 @@
 .cov-big small { font-size:0.7rem; color:var(--dim); font-weight:400; margin-left:4px; }
 .cov-acts { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
 .cov-lin { height:300px; border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
-.cov-lin .lin-root, .cov-lin .lin-body { flex:1; min-height:0; display:flex; flex-direction:column; }
-.cov-lin .lin-tb { display:none; }
+.cov-lin .lin-root { flex:1; min-height:0; }
+.cov-lin .lin-tb, .cov-lin .lin-glist { display:none; }
 .cov-foot { margin-top:auto; display:flex; gap:6px; flex-wrap:wrap; }
 .cov-btn { display:inline-flex; align-items:center; gap:6px; }
 .cov-btn i { color:var(--c, inherit); }

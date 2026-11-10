@@ -1,6 +1,7 @@
 """Which clusters of a dendrogram the file search shows, and how they nest.
 
-Pure: no I/O. `nodes` is {cid: {"parent": cid | None, "n": members, "coh": cohesion}}.
+`prune` is pure; `load_display_tree` at the bottom reads the stored tree.
+`nodes` is {cid: {"parent": cid | None, "n": members, "coh": cohesion}}.
 The full tree is far too deep to show, and a fixed cohesion floor hides loose but
 real clusters, so a node is kept only if it adds information over the nearest
 kept ancestor:
@@ -16,6 +17,8 @@ with the biggest cohesion jumps survive.
 Self-check: uv run python -I bsimvis/app/services/cluster_display.py
 """
 
+import hashlib
+import json
 import math
 
 DEFAULTS = {
@@ -95,6 +98,51 @@ def _cap_depth(nodes, kept, depth):
     out = {c: {"parent": p} for c, p in kept.items()}
     for c in out:
         out[c]["depth"] = len(chain(c)) - 1
+    return out
+
+
+def load_display_tree(r, collection, algo, cache=None, **opts):
+    """{cid: {"parent", "depth", "n", "coh"}} of the kept clusters of one tree.
+
+    `algo` is the final key namespace (axis / engine / node type already in it).
+    Reads the tree_links blob (one GET) and the meta of nodes with enough
+    members only: a small cluster is never kept, and a child is never bigger
+    than its parent, so the 30 KB distribution blobs of the long tail are not
+    touched. `cache` (a redis client) keeps the result for an hour, keyed by
+    the blob's hash, so a rebuild invalidates it.
+    """
+    from bsimvis.app.services.cluster_utils import get_cluster_metas, real_links
+
+    o = {**DEFAULTS, **opts}
+    raw = r.get(f"{collection}:bin_cluster:tree_links:{algo}")
+    if not raw:
+        return {}
+    tag = hashlib.sha1(raw if isinstance(raw, bytes) else raw.encode())
+    tag.update(json.dumps(o, sort_keys=True).encode())
+    ck = f"files:clusterdisp:{collection}:{algo}:{tag.hexdigest()[:16]}"
+    if cache is not None:
+        hit = cache.get(ck)
+        if hit:
+            return json.loads(hit)
+
+    links = real_links(json.loads(raw))
+    size = {str(l["child"]): int(l.get("size") or 0) for l in links}
+    parent = {str(l["child"]): str(l["parent"]) for l in links}
+    cands = [c for c, n in size.items() if n >= o["min_members"]]
+    nodes = {}
+    for i in range(0, len(cands), 500):
+        metas = get_cluster_metas(
+            r, collection, algo, cands[i : i + 500], "bin_cluster"
+        )
+        for c, m in metas.items():
+            nodes[c] = {
+                "parent": parent.get(c),
+                "n": int(m.get("member_count") or size[c]),
+                "coh": float(m.get("cohesion_score") or 0),
+            }
+    out = {c: {**v, **nodes[c]} for c, v in prune(nodes, **o).items()}
+    if cache is not None:
+        cache.setex(ck, 3600, json.dumps(out))
     return out
 
 

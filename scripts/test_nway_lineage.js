@@ -388,6 +388,12 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                     }
                     for (const e of gg.els) if (e.m === m.k) assert.strictEqual(e.s.fill || e.s.stroke, m.cat.color, 'lens colour');
                 }
+                // one fan per module (and arc) and file: no file is reached from two levels of the same chain
+                for (const m of b.M.mods) {
+                    const seen = new Map();
+                    for (const e of gg.els) if (e.id.startsWith('i:') && e.m === m.k) { const q = `${e.id.split(':')[1]}|${e.f}`; seen.set(q, (seen.get(q) || 0) + 1); }
+                    for (const [q, n] of seen) assert.strictEqual(n, 1, `${label}/${lens}/nested=${nested}: ${m.label} has ${n} fans for ${q}`);
+                }
                 for (const m of cross) assert.ok(gg.els.some(e => e.id.startsWith('s:') && e.m === m.k) && gg.els.some(e => e.id.startsWith('o:') && e.m === m.k), `${label}/${lens}: cross module ${m.label} keeps its outer segment and ribbons`);
                 assert.deepStrictEqual(RL.badAttrs(gg.els), []);
                 for (const r of gg.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends');

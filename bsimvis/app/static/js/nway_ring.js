@@ -147,11 +147,12 @@
     }
 
     // circle sizes follow the member count; sub-clusters are packed inside their parent
-    function sizeNode(n) {
-        n.kids.forEach(sizeNode);
+    // lanes(n) = modules held by the cluster: sibling circles are kept apart by their lane rings plus room that grows with the lanes
+    function sizeNode(n, lanes = () => 0) {
+        n.kids.forEach(k => sizeNode(k, lanes));
         const cnt = n.files.length, k = n.kids, base = RING.R_BASE[0] + RING.R_BASE[1] * Math.sqrt(cnt);
         if (!k.length) { n.r = Math.max(base, RING.R_LEAF[0] + RING.R_LEAF[1] * Math.sqrt(cnt)); return; }
-        const g = RING.PACK_GAP, pad = RING.PACK_PAD;
+        const g = Math.max(RING.PACK_GAP, 2 * (RING.LANE_OFF + RING.LANE_STROKE)) + Math.min(40, 2 * Math.sqrt(Math.max(...k.map(lanes)))), pad = RING.PACK_PAD;
         let req;
         if (k.length === 1) { req = k[0].r + 2 * pad; k[0].off = [0, 0]; }
         else if (k.length === 2) { const w = 2 * k[0].r + 2 * k[1].r + g; k[0].off = [-w / 2 + k[0].r, 0]; k[1].off = [w / 2 - k[1].r, 0]; req = w / 2 + pad; }
@@ -216,7 +217,6 @@
     // o: { minPct (gate, percent of all functions), tier ('hide' drops the tier buckets), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey }
     function buildModel(doc, R, C, o = {}) {
         const N = doc.nodes.length, T = clusterTree(doc), roots = T.roots, hsl = o.hsl || ((h, l) => `hsl(${h},62%,${l}%)`);
-        roots.forEach(sizeNode);
         // colours: a cluster has the hue its columns have in the table; without paths, one hue per family
         const colour = (c, fi) => {
             const t = T.hasPath && o.tree && o.tree.byId.get(c.gid);
@@ -224,6 +224,9 @@
         };
         roots.forEach((f, fi) => { const walk = c => { c.col = colour(c, fi); c.kids.forEach(walk); }; walk(f); f.famCol = f.other ? 'var(--lin-grey)' : f.col; });
         const mods = R && C ? modulesOf(R, C, N, T.famOf, roots.length, o) : [];
+        const laneCount = new Map();
+        const lanes = n => { if (!laneCount.has(n.id)) { const set = new Set(n.files); laneCount.set(n.id, mods.filter(m => m.mem.some(i => set.has(i))).length); } return laneCount.get(n.id); };
+        roots.forEach(f => sizeNode(f, lanes));
         mods.sort((a, b) => b.size - a.size);
         mods.forEach((b, k) => {
             b.k = k;
@@ -734,6 +737,27 @@
         let FM = new Map();
         const feedsOf = X => FM.get(X.id) || FM.set(X.id, []).get(X.id);
         // the lane ring of a cluster: one lane per feed, then down to the lanes of the sub-clusters that hold it, or to the files
+        // a band bends away from the circles of the clusters it is not related to (siblings of its target and of the target's ancestors)
+        const avoid = (X, P0, c0, c1, P1) => {
+            const obs = [];
+            for (let A = X; A.parent; A = A.parent) for (const K of A.parent.kids) if (K !== A && nc[K.id]) obs.push({ c: nc[K.id], r: K.r + RING.LANE_OFF + RING.LANE_STROKE });
+            if (!obs.length) return [c0, c1];
+            c0 = c0.slice(); c1 = c1.slice();
+            for (let it = 0; it < 8; it++) {
+                let moved = false;
+                for (let k = 1; k < 12; k++) {
+                    const t = k / 12, pt = bez(P0, c0, c1, P1, t), b0 = 3 * t * (1 - t) * (1 - t), b1 = 3 * t * t * (1 - t), nn = b0 * b0 + b1 * b1;
+                    for (const o of obs) {
+                        const dx = pt[0] - o.c[0], dy = pt[1] - o.c[1], d = Math.hypot(dx, dy) || 1, pen = (o.r - d) * 1.1;
+                        if (pen <= 0) continue;
+                        c0[0] += ((dx / d) * pen * b0) / nn; c0[1] += ((dy / d) * pen * b0) / nn; c1[0] += ((dx / d) * pen * b1) / nn; c1[1] += ((dy / d) * pen * b1) / nn;
+                        moved = true;
+                    }
+                }
+                if (!moved) break;
+            }
+            return [c0, c1];
+        };
         const laneRing = (X, feeds) => {
             if (!feeds.length) return;
             const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx * (fd.cov ?? 1) }));
@@ -752,7 +776,7 @@
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
-                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
+                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });

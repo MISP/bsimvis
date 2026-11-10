@@ -47,6 +47,7 @@
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
         BUDGET: [6000, 12000], // estimated elements above which the drawing gets lighter: no parent-to-lane bands, then clusters, rings and family ribbons only
+        HEAVY: 2100, HEAVY_FRAME_MS: 50, // estimated elements above which a moving drawing is lightened, reuses its arc order and rounds to whole pixels, at most 20 frames a second
         FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 33, // a redraw loop stops after this many frames or ms; at most 30 frames a second
         MIN_FILL: [0.09, 0.12, 0.16],
     };
@@ -62,7 +63,8 @@
     const angTo = (a, b) => Math.atan2(b[1] - a[1], b[0] - a[0]);
     const ptAt = (c, r, a) => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
     const sum = (a, f = x => x) => a.reduce((s, x) => s + f(x), 0);
-    const f1 = v => (Math.round(v * 10) / 10).toString();
+    let f1p = 10; // 10 = tenths of a pixel; 1 while a heavy drawing moves
+    const f1 = v => (Math.round(v * f1p) / f1p).toString();
     const P = p => `${f1(p[0])},${f1(p[1])}`;
     const polyD = pts => `M${pts.map(P).join(' L')}Z`;
 
@@ -442,6 +444,7 @@
         const { roots, mods } = M, sim = S.sim, nested = S.nested !== false, open = S.open || new Set();
         const mode = o.mode ?? M.modeOf(nested).mode, light = mode >= 1, lean = mode >= 2;
         const nF = roots.length, pl = M.plan, px = pl.px;
+        f1p = o.reuse ? 1 : 10;
         const els = [];
         // a cluster is drawn at its packed size r0, or larger when its parts were dragged out of it (set below once positions are known)
         const eachN = (n, f) => { f(n); n.kids.forEach(k => eachN(k, f)); };
@@ -1450,7 +1453,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
         // The loop always ends: it stops once the motion settles, after RING.FRAMES_MAX frames or RING.MS_MAX ms of settling,
         // runs at most 30 frames a second, and pauses while the page is hidden.
-        let frames = 0, t0 = 0, lastT = 0, cost = 0;
+        let frames = 0, t0 = 0, lastT = 0, cost = 0, heavy = false;
         function run() {
             if (raf || dead || document.hidden) return;
             frames = 0; t0 = performance.now();
@@ -1460,19 +1463,20 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             raf = 0;
             if (dead || document.hidden) return;
             const now = performance.now();
-            if (now - lastT < Math.max(RING.FRAME_MS, 1.5 * cost)) { raf = requestAnimationFrame(step); return; }
+            if (now - lastT < Math.max(heavy ? RING.HEAVY_FRAME_MS : RING.FRAME_MS, 1.5 * cost)) { raf = requestAnimationFrame(step); return; }
             lastT = now;
             const e = S.sim.tick();
             // while things move, big drawings use the next lighter mode; the full drawing comes back once the motion stops
-            liveMode = cur.est > RING.BUDGET[1] * 0.5 ? Math.max(cur.mode, 2) : cur.est > RING.BUDGET[0] * 0.35 ? Math.max(cur.mode, 1) : null;
-            live = true;
+            heavy = cur.est > RING.HEAVY;
+            liveMode = cur.est > RING.BUDGET[1] * 0.5 ? Math.max(cur.mode, 2) : heavy ? Math.max(cur.mode, 1) : null;
+            live = heavy;
             paint();
             live = false;
             cost = performance.now() - now;
             frames++;
             const drag = !!S.sim.drag, active = e > RING.SETTLE || (drag && pointerMoved);
             pointerMoved = false;
-            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { liveMode = null; paint(); return; }
+            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { if (heavy) { liveMode = null; paint(); } return; }
             raf = requestAnimationFrame(step);
         }
         // Escape clears the pin

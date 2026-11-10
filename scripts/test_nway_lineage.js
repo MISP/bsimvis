@@ -263,6 +263,18 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
         for (const k of A.kids) { const q = dr.sim.pts[`f:${k.id}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a sub-cluster keeps its offset'); }
         for (const i of A.files) { const q = dr.sim.pts[`n:${d.nodes[i].id}`]; assert.ok(Math.hypot(q.dx - p.dx, q.dy - p.dy) < 0.5, 'a file keeps its offset'); }
         const after = RL.geometry(M, { sim: dr.sim, nested: true, open: new Set() });
+        // circles dragged to random places: a ribbon never pinches to nothing or twists in the middle
+        {
+            let worst = 1, seed = 7;
+            const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+            for (let trial = 0; trial < 60; trial++) {
+                const sm = draw(M), fk = `f:${M.roots[trial % 3].id}`, pp = sm.sim.pts[fk];
+                sm.sim.drag = { key: fk, px: pp.hx + (rnd() - 0.5) * 900, py: pp.hy + (rnd() - 0.5) * 900, gx: 0, gy: 0 };
+                for (let i = 0; i < 60; i++) { sm.sim.tick(); RL.geometry(M, { sim: sm.sim, nested: true, open: new Set() }); }
+                for (const r of RL.geometry(M, { sim: sm.sim, nested: true, open: new Set() }).stats.ribbons) worst = Math.min(worst, r.minW / Math.max(1e-9, Math.min(r.wX, r.wY)));
+            }
+            assert.ok(worst >= 0.9, `narrowest dragged ribbon is ${worst.toFixed(3)} of its end width`);
+        }
         for (let u = 0; u < 3; u++) for (let v = u + 1; v < 3; v++) {
             const a = after.cen[u], b = after.cen[v];
             assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) >= RL.rg(M.roots[u]).ro + RL.rg(M.roots[v]).ro + RING.FAM_GAP - 1, 'families keep their spacing');
@@ -688,7 +700,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             const href = tableUrl(new URLSearchParams('collection=more_mirai_yara&cluster_uuid=bc27&group=lane,region&track=lanes:3&cg_x=1&columns=twins'));
             assert.ok(href.startsWith('/diff/nway?') && /cluster_uuid=bc27/.test(href) && /track=lanes%3A3/.test(href) && !/cg_x/.test(href) && !/\/files\/clusters\//.test(href), `back goes to the table: ${href}`);
             assert.ok(/NwayPanel\.tableUrl\(bq\)/.test(viewS), 'the lineage page uses it for its back link');
-            assert.ok(/class="nway-chip" data-lineage[^>]*><i class="fa-solid fa-sitemap"><\/i> Lineage<\/button>/.test(panelSrc), 'a visible Lineage button among the table controls');
+            assert.ok(/data-lineage[^>]*><i class="fa-solid fa-sitemap"><\/i> Lineage<\/button>/.test(panelSrc), 'a visible Lineage tab among the lenses');
             assert.ok(/localStorage\.getItem\('nway\.lview'\)[\s\S]{0,200}qs\.set\('lview', v\)/.test(panelSrc) && /localStorage\.getItem\('nway\.ring'\)/.test(panelSrc), 'the table opens the lineage page in the remembered view');
             assert.ok(/store\.set\('nway\.lview', k\)/.test(viewS) && /store\.set\('nway\.ring'/.test(viewS) && /get: k => \{ try \{ return localStorage\.getItem\(k\)/.test(viewS), 'a pick is remembered, storage wrapped in try/catch');
         }

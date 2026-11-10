@@ -642,17 +642,19 @@
                 const x0 = ptAt(cen[X], roX, sx[0]), x1 = ptAt(cen[X], roX, sx[1]), y0 = ptAt(cen[Y], roY, sy[0]), y1 = ptAt(cen[Y], roY, sy[1]), mx = (sx[0] + sx[1]) / 2, my = (sy[0] + sy[1]) / 2, wpx = (sx[1] - sx[0]) * roX;
                 const hk = `r:${b.k}:${X}:${Y}`, hm = sim.d(hk, (x0[0] + y0[0]) / 2, (x0[1] + y0[1]) / 2);
                 const h = Math.max(RING.ARM_MIN, wpx * RING.ARM_W, Math.hypot(x0[0] - y0[0], x0[1] - y0[1]) * RING.ARM_D), cb = (p, an) => [p[0] + Math.cos(an) * h + hm[0], p[1] + Math.sin(an) * h + hm[1]];
-                // which end of the partner slot x1 joins: the pairing that does not twist the body, kept until the layout is reset
-                const dst = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1]);
-                if (sim.orient[hk] === undefined) sim.orient[hk] = dst(x1, y1) + dst(y0, x0) < dst(x1, y0) + dst(y1, x0);
-                const flipO = sim.orient[hk], ya = flipO ? y1 : y0, yb = flipO ? y0 : y1;
-                const c1 = cb(x1, mx), c2 = cb(ya, my), c3 = cb(yb, my), c4 = cb(x0, mx);
-                const d = `M${P(x0)} A${f1(roX)},${f1(roX)} 0 0 1 ${P(x1)} C${P(c1)} ${P(c2)} ${P(ya)} A${f1(roY)},${f1(roY)} 0 0 ${flipO ? 0 : 1} ${P(yb)} C${P(c3)} ${P(c4)} ${P(x0)}Z`;
-                // width of the body: the two long edges A (x1 to y0) and B (y1 to x0) at matching parameters
-                let minW = Infinity;
-                for (let t = 0; t <= 1.0001; t += 1 / 16) { const pa = bez(x1, c1, c2, ya, t), pb = bez(yb, c3, c4, x0, 1 - t); minW = Math.min(minW, Math.hypot(pa[0] - pb[0], pa[1] - pb[1])); }
+                const dd = (u, v) => Math.hypot(u[0] - v[0], u[1] - v[1]);
                 const mxp = ptAt(cen[X], roX, mx), myp = ptAt(cen[Y], roY, my), ccl = [mxp, cb(mxp, mx), cb(myp, my), myp];
-                out.stats.ribbons.push({ cl: ccl, k: b.k, X, Y, wX: Math.hypot(x1[0] - x0[0], x1[1] - x0[1]), wY: Math.hypot(yb[0] - ya[0], yb[1] - ya[1]), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
+                // one centre curve whose width runs from the slot at X to the slot at Y and never reaches 0: the two edges
+                // cannot cross, so the body cannot twist whatever the drag does to the circles
+                const { L, R: Rr } = band(...ccl, Math.max(dd(x0, x1), 1), Math.max(dd(y0, y1), 1));
+                const last = L.length - 1;
+                // each edge starts at the slot end nearest to it, and ends at the nearest end of the other slot
+                const lx0 = dd(L[0], x0) <= dd(L[0], x1), ly0 = dd(L[last], y0) <= dd(L[last], y1);
+                L[0] = lx0 ? x0 : x1; Rr[0] = lx0 ? x1 : x0; L[last] = ly0 ? y0 : y1; Rr[last] = ly0 ? y1 : y0;
+                const A = lx0 ? L : Rr, B = lx0 ? Rr : L, arcSweep = B[last] === y0 ? 1 : 0;
+                const d = `M${P(x0)} A${f1(roX)},${f1(roX)} 0 0 1 ${P(x1)} ${B.map(q => `L${P(q)}`).join(' ')} A${f1(roY)},${f1(roY)} 0 0 ${arcSweep} ${P(A[last])} ${A.slice(0, last).reverse().map(q => `L${P(q)}`).join(' ')}Z`;
+                const minW = Math.min(...L.map((q, k) => dd(q, Rr[k])));
+                out.stats.ribbons.push({ cl: ccl, k: b.k, X, Y, wX: dd(x0, x1), wY: dd(y0, y1), arcX: (sx[1] - sx[0]) * roX, arcY: (sy[1] - sy[0]) * roY, minW });
                 add(`o:${b.k}:${X}:${Y}`, 'path', { d }, { s: { fill: b.color, stroke: 'var(--lin-card)' }, sa: { opacity: 0.5 * fade(b), 'stroke-width': 0.6 }, m: b.k, bucket: b.bucket, drag: hk, pair: { X, Y, n: b.pairRows(X, Y) } });
         };
         // a bundle: the ribbons of one cluster pair leave their slots, run side by side along the axis between the two centres and come back apart

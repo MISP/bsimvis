@@ -1152,8 +1152,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const t = b.fnTiers, tot = t.core + t.common + t.rare;
             if (!tot) return '';
             const col = { core: 'var(--success)', common: 'var(--warning, #d97706)', rare: 'var(--text-muted, #888)' };
+            // the icons of the table's Functions dropdown
+            const ico = { core: 'fa-solid fa-bullseye', common: 'fa-solid fa-circle-half-stroke', rare: 'fa-regular fa-circle' };
             const bar = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<i style="width:${((100 * t[k]) / tot).toFixed(1)}%;background:${col[k]}"></i>`).join('');
-            const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<span class="nway-tip-sw"><i style="background:${col[k]}"></i>${TIER[k][1]} ${ctx.fmt(t[k])}</span>`).join('');
+            const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<span class="nway-tip-sw"><i class="${ico[k]}" style="color:${col[k]}"></i>${TIER[k][1]} ${ctx.fmt(t[k])}</span>`).join('');
             return `<div class="nway-tip-h">Its functions</div><div class="nway-tip-fnbar">${bar}</div><div class="nway-tip-legend">${txt}</div>${ctx.rowTier && ctx.rowTier() ? '<div class="dim nway-tip-legend">the current tab shows only these</div>' : ''}`;
         };
         const metaHtml = b => {

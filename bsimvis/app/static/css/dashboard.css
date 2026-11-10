@@ -3331,7 +3331,6 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-tip-row { display: grid; grid-template-columns: 110px 1fr 24px; gap: 6px; align-items: center; }
 .nway-tip-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nway-tip-sw { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
-.nway-tip-sw i { width: 9px; height: 9px; border-radius: 2px; }
 .nway-tip-fnbar { display: flex; height: 8px; border-radius: 3px; overflow: hidden; background: var(--border); }
 .nway-tip-fnbar i { display: block; height: 100%; }
 .nway-tip-bar { position: relative; height: 8px; background: var(--border); border-radius: 3px; }

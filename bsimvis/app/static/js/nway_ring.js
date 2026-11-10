@@ -40,6 +40,7 @@
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
         OWN_OFF: 10, // below a family's own ring, lanes of modules held in one cluster only sit this far inside the shared lanes
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
+        COV_NUDGE: 0.3, // radians: in the crossing sweeps a partly held module's sort key is pushed back by up to this much, so solid arcs gather on one side (0 = off)
         CORE_MIN: 0.9, COMMON_MIN: 0.5, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
@@ -616,7 +617,8 @@
                             const q = ptAt(cen[t.p], rg(roots[t.p]).ro, (y.a0 + y.a1) / 2), an = angTo(cen[c], q), w = t.size + 1;
                             vx += w * Math.cos(an); vy += w * Math.sin(an);
                         }
-                        return norm(Math.atan2(vy, vx) - (tos[c] + Math.PI));
+                        const cv = lcov(x.b, roots[c]);
+                        return norm(Math.atan2(vy, vx) - (tos[c] + Math.PI)) + RING.COV_NUDGE * (cv.t ? 1 - cv.n / cv.t : 0);
                     };
                     const order = r.cross.map((x, i) => [x, keyOf(x), i]).sort((u, v) => u[1] - v[1] || u[2] - v[2]).map(o => o[0]);
                     if (order.every((x, i) => x === r.cross[i])) return;

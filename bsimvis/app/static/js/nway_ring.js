@@ -23,7 +23,7 @@
         LEAF_MAX: 60, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 24, // families beyond this many merge into "Other files"
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
-        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, OWN_RAMP: 0.12, LANE_EASE: 0.35, // LANE_EASE: share of the remaining angle a lane covers per frame
+        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, LANE_EASE: 0.35, // LANE_EASE: share of the remaining angle a lane covers per frame
          // OWN_MARGIN: radians kept free between the lanes of shared modules and those held inside one cluster
          // bands bend around unrelated circles: clearance, and the most a control point moves (share of the band length)
          // circle radius a + b*sqrt(files)
@@ -812,14 +812,26 @@
             if (shared.length && own.length) {
                 arrange(shared);
                 relax(shared);
-                const ts = Math.atan2(sum(shared, q => q.w * Math.sin(q.c)), sum(shared, q => q.w * Math.cos(q.c))), half = Math.max(...shared.map(q => Math.abs(norm(q.c - ts)) + q.w / 2)) + RING.OWN_MARGIN;
-                // a lane inside the sector is pushed to its nearest edge through a short smooth ramp (OWN_RAMP) instead of a hard snap, so a drag moves it
-                // continuously: at the sector centre it would sit on the shared lanes, but only for a narrow window of angles
+                // The shared lanes block their angles (each with a margin). Lone lanes whose natural angle falls in a blocked stretch go to the biggest free arc of
+                // the ring (the nearest point of it), so they leave toward where the room is, not toward the nearest edge of a possibly wide, mixed sector.
+                const blocked = [];
+                for (const q of shared) { const h = q.w / 2 + RING.LANE_GAP + RING.OWN_MARGIN, c0 = ((q.c % TAU) + TAU) % TAU; blocked.push([c0 - h, c0 + h]); if (c0 - h < 0) blocked.push([c0 - h + TAU, c0 + h + TAU]); if (c0 + h > TAU) blocked.push([c0 - h - TAU, c0 + h - TAU]); }
+                blocked.sort((u, v) => u[0] - v[0]);
+                const merged = [];
+                for (const iv of blocked) { const last = merged[merged.length - 1]; if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]); else merged.push(iv.slice()); }
+                // free arcs between the blocked stretches, taken over one turn [0, TAU) (the stretches already cover the wrap through the copies above)
+                const free = [];
+                let at = 0;
+                for (const iv of merged) { if (iv[1] <= 0) continue; if (iv[0] > at) free.push([at, Math.min(iv[0], TAU)]); at = Math.max(at, iv[1]); if (at >= TAU) break; }
+                if (at < TAU) free.push([at, TAU]);
+                if (free.length > 1 && free[0][0] === 0 && free[free.length - 1][1] === TAU) { const f = free.pop(); free[0] = [f[0] - TAU, free[0][1]]; }
                 for (const q of own) {
-                    const d = norm(q.c - ts), lim = half + q.w / 2;
-                    if (Math.abs(d) >= lim) continue;
-                    const u = Math.min(1, Math.abs(d) / RING.OWN_RAMP);
-                    q.c = ts + (d >= 0 ? 1 : -1) * lim * u * u * (3 - 2 * u);
+                    const h = q.w / 2, fit = free.filter(f => f[1] - f[0] >= 2 * h);
+                    if (!fit.length) continue;
+                    const inFree = fit.some(f => [0, TAU, -TAU].some(o => q.c + o >= f[0] + h && q.c + o <= f[1] - h));
+                    if (inFree) continue;
+                    const big = fit.reduce((m, f) => (f[1] - f[0] > m[1] - m[0] ? f : m)), lo = big[0] + h, hi = big[1] - h;
+                    q.c = [0, TAU, -TAU].map(o => Math.min(hi, Math.max(lo, q.c + o))).reduce((m, v) => (Math.abs(norm(v - q.c)) < Math.abs(norm(m - q.c)) ? v : m));
                 }
                 ports.forEach(q => { q.c = ((q.c % TAU) + TAU) % TAU; });
                 arrange(ports);

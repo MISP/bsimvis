@@ -710,7 +710,7 @@
                 const cov = Math.min(1, cn(i) / Math.max(1, b.size)), s0 = acc, s1 = acc + ((a1 - a0) * wt[n]) / wsum, p0 = ptAt(center, rr, s0), p1 = ptAt(center, rr, s1), t = pos[i], sm = ptAt(center, rr, (s0 + s1) / 2);
                 acc = s1;
                 // the fan keeps the width of its slot on the lane (no fixed landing width), so thickness follows the file's rows
-                const we = Math.max(1.2, Math.hypot(p1[0] - p0[0], p1[1] - p0[1]));
+                const dotD = 2 * (RING.FILE_R[0] + Math.sqrt(M.doc.nodes[i].functions || 0) * RING.FILE_R[1] * (nested ? 1 : 1.4)), we = Math.min(dotD, Math.max(1.2, Math.hypot(p1[0] - p0[0], p1[1] - p0[1])));
                 const dxt = t[0] - sm[0], dyt = t[1] - sm[1], dl = Math.hypot(dxt, dyt) || 1, ud = [dxt / dl, dyt / dl], nr = [-ud[1], ud[0]], uin = [(center[0] - sm[0]) / rr, (center[1] - sm[1]) / rr], hh = Math.max(14, dl * 0.4);
                 const sd = (p0[0] - sm[0]) * nr[0] + (p0[1] - sm[1]) * nr[1] > 0 ? 1 : -1, fa = [t[0] + nr[0] * we / 2 * sd, t[1] + nr[1] * we / 2 * sd], fb = [t[0] - nr[0] * we / 2 * sd, t[1] - nr[1] * we / 2 * sd];
                 const ar = (p, u) => [p[0] + u[0] * hh, p[1] + u[1] * hh], br = f => [f[0] - ud[0] * hh, f[1] - ud[1] * hh];
@@ -752,7 +752,7 @@
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
-                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
+                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), bd = band(P0, [P0[0] + u0[0] * h, P0[1] + u0[1] * h], [P1[0] + u1[0] * h, P1[1] + u1[1] * h], P1, w0, p.wp, 16);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });

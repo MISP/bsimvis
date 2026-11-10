@@ -245,7 +245,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(c && c.parent && c.parent.id === src, `${u.id} comes from the parent level`);
         }
         const inner = g.els.filter(e => e.id.startsWith('i:'));
-        assert.ok(inner.length > 0 && inner.every(e => { const c = M.byId.get(e.drag.slice(2)); return c && (!c.kids.length); }), 'ribbons to files start at a cluster without sub-clusters');
+        assert.ok(inner.length > 0 && inner.every(e => { const c = M.byId.get(e.drag.slice(2)); return c && (!c.kids.length || lanes.some(l => l.own && l.lane === c.id && e.id.startsWith(`i:${l.sk}:`))); }), 'ribbons to files start at a cluster without sub-clusters, or at the lane of a single-cluster module');
         // nesting off: ring straight to the files, no lanes
         const flat = draw(M, false).g;
         assert.strictEqual(flat.els.filter(e => e.id.startsWith('u:')).length, 0, 'no bands without nesting');
@@ -363,7 +363,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok([...lk.values()].every(n => n === 1), 'ids are unique');
         }
 
-        // single-cluster modules live inside their cluster: no outer segment, a lane on the lowest cluster holding them all, a chain down to every holder
+        // single-cluster modules live inside their cluster: no outer segment, one lane on the lowest cluster holding them all, a fan straight to every holder
         {
             const one = { ...d, nodes: d.nodes.map(n => ({ ...n, path: [{ id: 'one', label: 'One' }] })) };
             for (const [label, dd] of [['synthetic', d], ['real-shaped', yara], ['one cluster', one]]) for (const lens of ['modules', 'lanes']) for (const nested of [true, false]) {
@@ -374,16 +374,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                     assert.ok(!gg.els.some(e => e.id.startsWith('s:') && e.m === m.k), `${tag} has no outer segment`);
                     const lca = RL.lcaNode(f, hold, nested);
                     assert.ok(ids.has(`l:${m.k}.:${lca.id}`), `${tag} has a lane on its lowest cluster`);
-                    assert.ok(!gg.els.some(e => e.id.startsWith(`u:${m.k}.:${lca.id}:`)), 'no band from the outer ring into its first lane');
+                    assert.ok(!gg.els.some(e => e.id.startsWith(`u:${m.k}.:`)), 'no band: one lane on the lowest cluster, no lanes below it');
                     for (const i of m.mem) {
-                        // every level from the lowest cluster down to the leaf that holds the file has its lane
-                        let n = lca;
-                        for (;;) {
-                            assert.ok(ids.has(`l:${m.k}.:${n.id}`), `${tag}: lane on ${n.id}`);
-                            const k = nested ? n.kids.find(K => K.files.includes(i)) : null;
-                            if (!k) break;
-                            n = k;
-                        }
                         assert.ok(gg.els.some(e => e.id.startsWith(`i:${m.k}.:`) && e.id.endsWith(`:${i}`)), `${tag}: a fan to file ${i}`);
                     }
                     for (const e of gg.els) if (e.m === m.k) assert.strictEqual(e.s.fill || e.s.stroke, m.cat.color, 'lens colour');

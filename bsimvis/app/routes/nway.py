@@ -30,7 +30,7 @@ CLUSTER_NAME_MIN_COHESION = 0.8
 TABS = ("all", "core", "common", "rare", "unique", "partial")
 # a tab may also be a comma list of tiers ("common,rare" = everything that is not core); the UI offers this one
 TAB_COUNTED = TABS + ("common,rare",)
-COMMON_MIN = 0.5  # share of the files a function needs to be Common (Core: `core_min`)
+# Common starts at half of Core, as the Lanes lens bands do (_lane_tiers)
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _PROGRESS_ID = re.compile(r"^[\w-]{8,40}$")
 
@@ -245,7 +245,7 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=(), restrict=None):
     return scope, members, groups, children
 
 
-def _in_tab(row, tab, k, n, focus=False, twin=False, core_min=0.9):
+def _in_tab(row, tab, k, n, focus=False, twin=False, core_min=0.8):
     if "," in tab:
         return any(_in_tab(row, t, k, n, focus, twin, core_min) for t in tab.split(","))
     # twin columns hold several files each: tabs count the files, not the columns
@@ -260,7 +260,7 @@ def _in_tab(row, tab, k, n, focus=False, twin=False, core_min=0.9):
         return span >= k
     # core / common / rare split the rows held by 2+ files by share of the files
     core = max(2, math.ceil(core_min * n))
-    common = min(core, max(2, math.ceil(COMMON_MIN * n)))
+    common = max(2, math.ceil(core / 2))
     if tab == "core":
         return span >= core
     return common <= span < core if tab == "common" else 2 <= span < common
@@ -432,7 +432,7 @@ def _tab_args(doc, args):
     if any(t not in TABS for t in tab.split(",")):
         abort(400, f"tab must be one of {TABS} or a comma list of them")
     try:
-        core_min = min(1.0, max(0.5, float(args.get("core_min", 0.9))))
+        core_min = min(1.0, max(0.5, float(args.get("core_min", 0.8))))
     except ValueError:
         abort(400, "core_min must be a number")
     try:

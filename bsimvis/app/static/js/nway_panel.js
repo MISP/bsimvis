@@ -34,7 +34,7 @@
     // Sliders whose value is a whole number.
     const INT_RANGES = ['k', 'twin_depth', 'group_lane_depth', 'group_lane_fold', 'group_split_min'];
     const DEFAULTS = {
-        tab: 'all', scope: 'code', k: 2, core_min: 0.9, min_edge: '', mode: 'stored',
+        tab: 'all', scope: 'code', k: 2, core_min: 0.8, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
@@ -702,7 +702,7 @@
                 ? 'All: every function. Core: in both groups. Unique: in one group only. Counts follow the code axis.'
                 : focus
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts follow the code axis.'
-                : `All: every function group. Core: present in at least the Core share of the ${n} columns. Common: in at least half. Rare: in two or more, fewer than half. Not core: Common and Rare together. Unique: present in exactly one file. Counts follow the code axis.`;
+                : `All: every function group. Core: present in at least the Core share of the ${n} columns. Common: in at least half the Core share. Rare: in two or more, fewer than that. Not core: Common and Rare together. Unique: present in exactly one file. Counts follow the code axis.`;
             const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster, strings..." value="${escapeAttr(s.q)}"></div>`;
             const axisDd = this._dd('Code axis', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], s.scope, 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.', v => `data-set="scope:${v}"`);
             const tabIcons = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], common: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], rare: ['fa-regular fa-circle', 'var(--text-muted, #888)'], 'common,rare': ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
@@ -718,7 +718,7 @@
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
                 d.columns_mode === 'twins' || (s.columns === 'twins' && !focus && d.columns_mode !== 'by') ? this._slider('Column levels', 'twin_depth', Number(s.twin_depth), 1, 6, 1, 'Same code columns: 1 groups only files with identical shared rows. Higher nests them under looser groups of files whose shared rows overlap.') : '',
                 (d.columns_mode === 'twins' || (s.columns === 'twins' && d.columns_mode !== 'by')) && Number(s.twin_depth) > 1 && !focus ? this._slider('Column overlap', 'twin_link', Number(s.twin_link), 0, 1, 0.05, 'Outermost column group: files must share at least this much of their rows (average Jaccard) to be grouped.') : '',
-                /core|common|rare/.test(s.tab) && !focus ? this._slider('Core share', 'core_min', Number(s.core_min), 0.5, 1, 0.05, 'A function is Core when this share of the columns hold it (1 = every column). Common: at least half. Rare: the rest held by two or more.') : '',
+                /core|common|rare/.test(s.tab) && !focus ? this._slider('Core share', 'core_min', Number(s.core_min), 0.5, 1, 0.05, 'A function is Core when this share of the columns hold it (1 = every column). Common: at least half of that. Rare: the rest held by two or more.') : '',
                 advanced,
             ].join('');
             const sc = d.shared_cluster;

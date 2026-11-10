@@ -23,7 +23,7 @@
         LEAF_MAX: 60, // a leaf cluster with more files is one circle with a count until clicked
         FAM_MAX: 24, // families beyond this many merge into "Other files"
         CUT: [0.3, 0.6, 0.85], // fallback: lineage edges below this similarity split family, cluster, sub-cluster
-        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 14, PACK_PAD: 14, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, LANE_EASE: 0.35, // LANE_EASE: share of the remaining angle a lane covers per frame
+        R_BASE: [24, 13], R_LEAF: [16, 11], PACK_GAP: 24, PACK_PAD: 20, AVOID_MARGIN: 6, AVOID_BEND: 0.25, OWN_MARGIN: 0.1, LANE_EASE: 0.35, // LANE_EASE: share of the remaining angle a lane covers per frame
          // OWN_MARGIN: radians kept free between the lanes of shared modules and those held inside one cluster
          // bands bend around unrelated circles: clearance, and the most a control point moves (share of the band length)
          // circle radius a + b*sqrt(files)
@@ -39,6 +39,7 @@
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
+        CORE_MIN: 0.9, GAUGE_W: 2, // a lane held by fewer than CORE_MIN of its cluster's files gets a coverage gauge inside it
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
         FAM_GAP: 40, SEP: 110, MARGIN: 50, // family spacing when dragged, spacing at home, canvas margin
         FOLLOW: 0.3, DAMP: 0.8, SETTLE: 0.2, DRAG_PX: 4,
@@ -155,7 +156,7 @@
         n.kids.forEach(k => sizeNode(k, lanes));
         const cnt = n.files.length, k = n.kids, base = RING.R_BASE[0] + RING.R_BASE[1] * Math.sqrt(cnt);
         if (!k.length) { n.r = Math.max(base, RING.R_LEAF[0] + RING.R_LEAF[1] * Math.sqrt(cnt)); return; }
-        const g = Math.max(RING.PACK_GAP, 2 * (RING.LANE_OFF + RING.LANE_STROKE)) + Math.min(40, 2 * Math.sqrt(Math.max(...k.map(lanes)))), pad = RING.PACK_PAD;
+        const g = Math.max(RING.PACK_GAP, 2 * (RING.LANE_OFF + RING.LANE_STROKE)) + Math.min(40, 2 * Math.sqrt(Math.max(...k.map(lanes)))) + (n.level === 0 ? 10 : 0), pad = RING.PACK_PAD;
         let req;
         if (k.length === 1) { req = k[0].r + 2 * pad; k[0].off = [0, 0]; }
         else if (k.length === 2) { const w = 2 * k[0].r + 2 * k[1].r + g; k[0].off = [-w / 2 + k[0].r, 0]; k[1].off = [w / 2 - k[1].r, 0]; req = w / 2 + pad; }
@@ -374,7 +375,7 @@
     function placeFiles(files, c, rb, pos) {
         files.forEach((i, k) => {
             if (files.length <= 8) { const a = -Math.PI / 2 + (TAU * k) / files.length, rho = files.length === 1 ? 0 : rb * 0.55; pos[i] = [c[0] + rho * Math.cos(a), c[1] + rho * Math.sin(a)]; }
-            else { const rho = rb * 0.68 * Math.sqrt((k + 0.5) / files.length), a = k * 2.399963; pos[i] = [c[0] + rho * Math.cos(a), c[1] + rho * Math.sin(a)]; }
+            else { const rho = rb * 0.8 * Math.sqrt((k + 0.5) / files.length), a = k * 2.399963; pos[i] = [c[0] + rho * Math.cos(a), c[1] + rho * Math.sin(a)]; }
         });
     }
 
@@ -432,6 +433,8 @@
         const add = (id, tag, a, extra = {}) => { els.push({ id, tag, a, ...extra }); return els[els.length - 1]; };
         const key = n => `f:${n.id}`;
         const fade = b => (b.bucket ? RING.BUCKET_FADE : 1);
+        const lset = new Map();
+        const lcov = (b, X) => { let st = lset.get(X.id); if (!st) lset.set(X.id, (st = new Set(X.files))); let n = 0; for (const i of b.mem) if (st.has(i)) n++; return { n, t: X.files.length }; };
         const holdsOf = new Map();
         for (const b of mods) for (const i of b.mem) (holdsOf.get(i) || holdsOf.set(i, []).get(i)).push(b.k);
         const out = { els, nc: {}, pos: {}, cen: {}, stats: { ribbons: [], lanes: [], laneFit: 1 } };
@@ -493,7 +496,7 @@
             if (n.level && !nested) return;
             add(`c:${n.id}`, 'circle', { cx: f1(C[0]), cy: f1(C[1]), r: f1(n.r) }, { s: { fill: n.col, stroke: n.col }, sa: { opacity: RING.MIN_FILL[lvl], 'stroke-width': n.level ? 1 : 1.2, 'stroke-dasharray': n.level ? '3 3' : null }, drag: key(n), cl: n });
             const label = n.loose ? '' : n.label;
-            if (n.level && label) add(`cl:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] + 3), 'text-anchor': 'middle', 'font-size': 9 }, { text: label, cls: 'ring-sub' });
+            if (n.level && label) add(`cl:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] - n.r + 13), 'text-anchor': 'middle', 'font-size': n.level === 1 ? 11 : 9 }, { text: label, cls: 'ring-sub', s: { fill: n.col }, lab: { id: n.id, r: n.r, lvl: n.level } });
             if (agg(n)) add(`ca:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] + 4), 'text-anchor': 'middle', 'font-size': 12 }, { text: `${n.files.length}`, cls: 'ring-sub', cl: n, drag: key(n) });
             n.kids.forEach(drawNode);
         };
@@ -863,7 +866,13 @@
                     const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                const cv = lcov(b, X);
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                if (!b.bucket && cv.t && cv.n / cv.t < RING.CORE_MIN) {
+                    const rg0 = rp - RING.LANE_STROKE / 2 - 3, am = a0 + (a1 - a0) * (cv.n / cv.t), arcD = (x0, x1) => `M${P(ptAt(C, rg0, x0))} A${f1(rg0)},${f1(rg0)} 0 0 1 ${P(ptAt(C, rg0, x1))}`;
+                    add(`gt:${sk}:${X.id}`, 'path', { d: arcD(a0, a1) }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.GAUGE_W, opacity: 0.25 * fade(b) }, m: b.k, pe: true });
+                    add(`gf:${sk}:${X.id}`, 'path', { d: arcD(a0, am) }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.GAUGE_W, 'stroke-linecap': 'butt', opacity: fade(b) }, m: b.k, pe: true });
+                }
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
@@ -896,7 +905,7 @@
             if (aggOf[i]) continue;
             const rr = RING.FILE_R[0] + Math.sqrt(M.doc.nodes[i].functions || 0) * RING.FILE_R[1] * (nested ? 1 : 1.4);
             add(`n:${i}`, 'circle', { cx: f1(pos[i][0]), cy: f1(pos[i][1]), r: f1(rr) }, { s: { fill: M.nodeColor(i), stroke: 'var(--lin-card)' }, sa: { 'stroke-width': 1.5 }, cls: 'hold', h: (holdsOf.get(i) || []).join(' '), drag: nk(i), file: i });
-            if (!light && (M.N <= RING.HIDE_FILES || (S.focusSet && S.focusSet.has(i)))) add(`nl:${i}`, 'text', { x: f1(pos[i][0]), y: f1(pos[i][1] + 3), 'text-anchor': 'middle', 'font-size': RING.FILE_FONT }, { text: (M.doc.nodes[i].file_name || M.doc.nodes[i].id).slice(0, 4), cls: 'ring-fl' });
+            if (!light && (M.N <= RING.HIDE_FILES || (S.focusSet && S.focusSet.has(i)))) add(`nl:${i}`, 'text', { x: f1(pos[i][0]), y: f1(pos[i][1] + 3), 'text-anchor': 'middle', 'font-size': RING.FILE_FONT }, { text: (M.doc.nodes[i].file_name || M.doc.nodes[i].id).slice(0, 4), cls: 'ring-fl', lab: { file: i, r: rr } });
         }
 
         // family rings (rounded arcs) and labels
@@ -907,7 +916,9 @@
                 add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, 'stroke-linecap': wide ? 'round' : 'butt', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
-            add(`fl:${c}`, 'text', { x: f1(tx), y: f1(ty), 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600 }, { text: `${f.label}  ${f.files.length} files`, cls: 'ring-fam', drag: `f:${f.id}` });
+            const fname = f.label.length > 24 ? `${f.label.slice(0, 23)}\u2026` : f.label;
+            add(`fl:${c}`, 'text', { x: f1(tx), y: f1(ty), 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 600 }, { text: fname, cls: 'ring-fam', s: { fill: f.famCol }, drag: `f:${f.id}` });
+            add(`fn:${c}`, 'text', { x: f1(tx), y: f1(ty + 14), 'text-anchor': 'middle', 'font-size': 10 }, { text: `${f.files.length} files`, cls: 'ring-fam ring-famn', drag: `f:${f.id}` });
         });
         // which top-level cluster an element belongs to (a ribbon: both of its ends), for the fade of the others when one is focused
         for (const e of els) {
@@ -957,11 +968,13 @@
     const CSS = `
 .ring-root.hlm [data-m]:not(.on),.ring-root.hlm [data-h]:not(.on){opacity:.1!important}
 .ring-root circle.hold.on{stroke:var(--hc);stroke-width:3.5}
-.ring-root .ring-sub{fill:var(--text,#f8f8f2);opacity:.7;paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;pointer-events:none}
+.ring-root .ring-sub{opacity:.85;paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;pointer-events:none}
 .ring-root .ring-fl{fill:#fff;paint-order:stroke;stroke:rgba(0,0,0,.4);stroke-width:2px;pointer-events:none}
+.ring-root .ring-famn{font-weight:400;opacity:.6;fill:var(--text,#f8f8f2)!important}
 .ring-root .ring-fam{fill:var(--text,#f8f8f2);paint-order:stroke;stroke:var(--lin-card);stroke-width:3px;cursor:grab}
 .ring-root [data-drag]{cursor:grab}
 .ring-root circle[data-drag^="f:"]{cursor:pointer}
+.ring-root .ring-hide{display:none}
 .ring-root .ring-dim{opacity:.15!important}
 .ring-root .on.ring-dim{opacity:1!important}
 .ring-root circle.ring-pending{stroke-dasharray:6 4;stroke-width:2.5;animation:ring-pulse 1s ease-in-out infinite}
@@ -1053,7 +1066,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
         
         // ---- tooltips
-        const modTip = (ev, b, pr, prs, bu, fc) => {
+        const modTip = (ev, b, pr, prs, bu, fc, lc) => {
             if (!b) return;
             const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
             const lab = c => M.roots[c].label;
@@ -1062,6 +1075,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
                 ...(bu ? [['Bundle', `${M.roots[bu.X].label} + ${M.roots[bu.Y].label}: ${bu.n} modules, ${ctx.fmt(bu.m)} shared functions`]] : []),
                 ...(fc ? [['This file', `${ctx.name(M.doc.nodes[fc.i].id)} holds ${ctx.fmt(fc.n)} of ${ctx.fmt(b.size)} (${Math.round((100 * fc.n) / Math.max(1, b.size))}%)`]] : []),
+                ...(lc && lc.t ? [['In this cluster', `${lc.n} of ${lc.t} files (${Math.round((100 * lc.n) / lc.t)}%)${lc.n / lc.t < RING.CORE_MIN ? ', not core' : ''}`]] : []),
                 ...(b.fam != null ? [['Only in cluster', M.roots[b.fam].label]] : []),
                 ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
                 ['', 'A file holds a module when it has at least one of its functions.']]);
@@ -1096,7 +1110,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.m !== undefined) {
                 node.dataset.m = String(e.m);
                 node.style.cursor = 'pointer';
-                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs, e.bundle, e.fcov); });
+                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs, e.bundle, e.fcov, e.lc); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
                 node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
@@ -1123,6 +1137,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.h !== undefined) node.dataset.h = e.h;
             if (e.f !== undefined) node.dataset.f = String(e.f);
             if (e.drag) node.dataset.drag = e.drag;
+            if (e.lab) node.__lab = e.lab;
             listen(node, e);
             return node;
         }
@@ -1149,6 +1164,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 index();
                 rest();
                 applyFocus();
+                lp();
                 return frame;
             }
             for (const e of els) apply(nodes.get(e.id), e);
@@ -1189,6 +1205,32 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 const dim = fam != null && !(e.fams ? e.fams.includes(fam) : e.fam === undefined || e.fam === fam);
                 el.classList[dim ? 'add' : 'remove']('ring-dim');
                 el.classList[S.pend && e.id === `c:${S.pend.id}` ? 'add' : 'remove']('ring-pending');
+            }
+            lp();
+        }
+        // labels depend on the zoom: a cluster name needs room on screen, a file name needs a dot big enough to hold it; overlapping names lose to the outer cluster
+        let lpRaf = 0;
+        const lp = () => { if (!lpRaf && typeof requestAnimationFrame === 'function') lpRaf = requestAnimationFrame(() => { lpRaf = 0; labelPass(); }); };
+        function labelPass() {
+            if (dead || !frame) return;
+            const m = root.getScreenCTM();
+            if (!m) return;
+            const k = Math.hypot(m.a, m.b), fc = S.fc && M ? M.byId.get(S.fc.id) : null;
+            const inFc = id => { if (!fc) return false; for (let c = M.byId.get(id); c; c = c.parent) if (c === fc) return true; return false; };
+            const subs = [];
+            for (const e of frame.els) {
+                const L = e.lab, el = L && nodes.get(e.id);
+                if (!el) continue;
+                if (L.file !== undefined) { el.classList.toggle('ring-hide', !((S.focusSet && S.focusSet.has(L.file)) || L.r * k >= 7)); continue; }
+                const fit = el.textContent.length * (L.lvl === 1 ? 6 : 5) <= 1.9 * L.r, on = fit && (inFc(L.id) || L.r * k >= 34);
+                el.classList.toggle('ring-hide', !on);
+                if (on) subs.push([L.lvl, el]);
+            }
+            subs.sort((a, b) => a[0] - b[0]);
+            const kept = [];
+            for (const [, el] of subs) {
+                const r = el.getBoundingClientRect();
+                if (kept.some(q => r.left < q.right + 2 && r.right > q.left - 2 && r.top < q.bottom + 2 && r.bottom > q.top - 2)) el.classList.add('ring-hide'); else kept.push(r);
             }
         }
         function drawCrumb() {
@@ -1336,6 +1378,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         window.addEventListener('pointermove', move);
         window.addEventListener('pointerup', up);
         document.addEventListener('visibilitychange', onVis);
+        // zoom changes the transform of an ancestor group
+        const zobs = typeof MutationObserver === 'function' ? new MutationObserver(lp) : null;
+        if (zobs) for (let a = ctx.g; a && a !== ctx.svg.parentNode; a = a.parentNode) zobs.observe(a, { attributes: true, attributeFilter: ['transform'] });
+        window.addEventListener('pointerup', lp);
 
         return {
             draw: full,
@@ -1350,6 +1396,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             destroy() {
                 dead = true;
                 cancelAnimationFrame(raf);
+                if (zobs) zobs.disconnect();
+                window.removeEventListener('pointerup', lp);
                 ctx.svg.removeEventListener('pointerdown', down);
                 window.removeEventListener('pointermove', move);
                 window.removeEventListener('pointerup', up);

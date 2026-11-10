@@ -40,6 +40,8 @@
 .cov-big { margin-left:auto; font-size:1.35rem; font-weight:700; font-variant-numeric:tabular-nums; }
 .cov-big small { font-size:0.7rem; color:var(--dim); font-weight:400; margin-left:4px; }
 .cov-acts { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
+.cov-duo { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; align-items:start; }
+@media (min-width:1500px) { .cov-duo { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .cov-duo > .cov-card { grid-column:2; grid-row:1; position:sticky; top:8px; } .cov-duo > #cov-lanes { grid-column:1; grid-row:1; } .cov-duo .cov-lin { height:480px; } }
 .cov-lin { height:300px; border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
 .cov-lin .lin-root { flex:1; min-height:0; }
 .cov-lin .lin-tb, .cov-lin .lin-glist { display:none; }
@@ -480,8 +482,7 @@
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
                 <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
-                ${fn ? lineageCard() : ''}
-                ${fn ? `<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
+                ${fn ? `<div class="cov-duo">${lineageCard()}<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px; min-width:0;"></div></div>` : ''}
             </div>`;
             if (linInst) { linInst.destroy(); linInst = null; }
             if (fn) loadLanes(el, v, c).then(() => loadLineage(el, v, c)); // after lanes: same /nway build, so it hits the cache instead of racing it

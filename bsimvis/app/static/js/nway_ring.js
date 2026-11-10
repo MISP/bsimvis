@@ -223,7 +223,7 @@
             const bucket = !!(c.g && (c.g.kind === 'tier' || c.g.kind === 'fold'));
             if (mem.length && bucket) buckets++;
             if (mem.length && bucket && o.tier === 'hide') { bucketsHidden++; bucketFuncs += size[g]; return; }
-            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), rowTier: ['core', 'common', 'rare'].reduce((a, t) => (tiers[g][t] > tiers[g][a] ? t : a), 'rare'), pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
+            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), fnTiers: tiers[g], pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
         });
         mods.hidden = hidden; mods.buckets = buckets; mods.bucketsHidden = bucketsHidden; mods.bucketFuncs = bucketFuncs;
         return mods;
@@ -1147,6 +1147,15 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         const countBy = (metas, get, multi) => { const c = new Map(); for (const m of metas) for (const v of [].concat(multi ? get(m) || [] : [get(m)])) if (v !== null && v !== undefined && v !== '') c.set(String(v), (c.get(String(v)) || 0) + 1); return c; };
         const filesOf = idx => { const out = []; for (const i of idx) { const n = M.doc.nodes[i]; for (const id of n.members && n.members.length ? n.members : [n.id]) out.push(id); } return out; };
         // the lane tooltip's coverage bars (the table's: bar = share of the module's files, tick = share of all files), as HTML for the tooltip
+        // how widely the module's functions are held (the table's Core / Common / Rare function tiers), over the functions the page shows
+        const fnTierHtml = b => {
+            const t = b.fnTiers, tot = t.core + t.common + t.rare;
+            if (!tot) return '';
+            const col = { core: 'var(--success)', common: 'var(--warning, #d97706)', rare: 'var(--text-muted, #888)' };
+            const bar = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<i style="width:${((100 * t[k]) / tot).toFixed(1)}%;background:${col[k]}"></i>`).join('');
+            const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `${TIER[k][0]} ${TIER[k][1]} ${ctx.fmt(t[k])}`).join(' \u00b7 ');
+            return `<div class="nway-tip-h">Its functions</div><div class="nway-tip-fnbar">${bar}</div><div class="dim nway-tip-legend">${txt}${ctx.rowTier && ctx.rowTier() ? ' \u00b7 the current tab shows only these' : ''}</div>`;
+        };
         const metaHtml = b => {
             const fm = M.doc.file_meta;
             if (!fm) return '';
@@ -1164,7 +1173,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         };
         // a module's place in the clusters: Core / Common / Rare of a cluster, or unique to it
         // the badge: Core / Common / Rare in the hovered cluster (or in the whole set), Unique when no file outside it holds the module
-        const badgeOf = (b, lc) => { const u = ['\u25c6', 'Unique']; if (ctx.rowTier && ctx.rowTier()) return TIER[b.rowTier]; if (lc && lc.t > 1) return lc.n === b.mem.length ? u : TIER[covTier(lc.n, lc.t)]; return b.fam != null ? u : TIER[covTier(b.mem.length, M.N)]; };
+        const badgeOf = (b, lc) => { const u = ['\u25c6', 'Unique']; if (lc && lc.t > 1) return lc.n === b.mem.length ? u : TIER[covTier(lc.n, lc.t)]; return b.fam != null ? u : TIER[covTier(b.mem.length, M.N)]; };
         // a cluster is named by its biggest file, often a hash: say how big it is instead
         const cname = (s, n) => (s && !/[0-9a-f]{24,}/i.test(s) ? s : `cluster of ${n}`);
         const classRows = (b, lc) => {
@@ -1189,14 +1198,14 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 ...(fc ? [['This file', `${ctx.fmt(fc.n)} of ${ctx.fmt(b.size)} (${pct(fc.n, b.size)})`]] : []),
                 ...classRows(b, lc),
                 ['Files', `${filesOf(b.mem).length} of ${filesOf(M.doc.nodes.map((_, i) => i)).length}`],
-                ], metaHtml(b));
+                ], fnTierHtml(b) + metaHtml(b));
         };
         const fileTip = (ev, i) => {
             const n = M.doc.nodes[i], held = mods.filter(b => b.mem.includes(i)).sort((a, b) => b.size - a.size);
             // the glyph of each module is its tier inside the file's own (deepest) cluster
             let leaf = M.roots[M.famOf[i]];
             for (let k = leaf.kids.find(x => x.files.includes(i)); k; k = leaf.kids.find(x => x.files.includes(i))) leaf = k;
-            const lset = new Set(leaf.files), glyph = b => (ctx.rowTier && ctx.rowTier() ? `${TIER[b.rowTier].join(' ')}  ` : leaf.files.length > 1 ? `${tierText(b.mem.filter(j => lset.has(j)).length, leaf.files.length)}  ` : '');
+            const lset = new Set(leaf.files), glyph = b => (leaf.files.length > 1 ? `${tierText(b.mem.filter(j => lset.has(j)).length, leaf.files.length)}  ` : '');
             ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, `${glyph(b)}${ctx.fmt(b.size)}`]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
         };
 

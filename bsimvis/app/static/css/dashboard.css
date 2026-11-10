@@ -3330,6 +3330,8 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-tip-flag { font-weight: 400; font-size: 9px; padding: 0 4px; border-radius: 6px; background: var(--accent); color: var(--card-bg); }
 .nway-tip-row { display: grid; grid-template-columns: 110px 1fr 24px; gap: 6px; align-items: center; }
 .nway-tip-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-tip-fnbar { display: flex; height: 8px; border-radius: 3px; overflow: hidden; background: var(--border); }
+.nway-tip-fnbar i { display: block; height: 100%; }
 .nway-tip-bar { position: relative; height: 8px; background: var(--border); border-radius: 3px; }
 .nway-tip-bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
 .nway-tip-bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text, #fff); opacity: 0.8; }

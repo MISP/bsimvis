@@ -230,6 +230,8 @@
     // o: { minPct (gate, percent of all functions), tier ('hide' drops the tier buckets), oneArc, hsl(h, l) -> css colour, hue(i), tree (NwayColors.tree of the nodes), nodeColor(i), grey }
     function buildModel(doc, R, C, o = {}) {
         const N = doc.nodes.length, T = clusterTree(doc), roots = T.roots, hsl = o.hsl || ((h, l) => `hsl(${h},62%,${l}%)`);
+        // a collapsed cluster (the - button) loses its sub-clusters and is drawn as one circle with a count
+        for (const id of o.shut || []) { const c = T.byId.get(id); if (c) { c.kids = []; c.shut = true; } }
         // colours: a cluster has the hue its columns have in the table; without paths, one hue per family
         const colour = (c, fi) => {
             const t = T.hasPath && o.tree && o.tree.byId.get(c.gid);
@@ -465,7 +467,7 @@
         const nc = out.nc, cen = out.cen;
         const place = n => { const h = NH[n.id], d = sim.d(key(n), h[0], h[1]); nc[n.id] = [h[0] + d[0], h[1] + d[1]]; if (n.parent) sim.follow(key(n), key(n.parent), RING.FOLLOW); n.kids.forEach(place); };
         roots.forEach((f, c) => { place(f); cen[c] = nc[f.id]; });
-        const agg = n => (!nested || !n.kids.length) && n.files.length > RING.LEAF_MAX && !open.has(n.id);
+        const agg = n => (!nested || !n.kids.length) && (n.shut || (n.files.length > RING.LEAF_MAX && !open.has(n.id)));
         // files sit on the inner ring of their leaf cluster; the files of a collapsed circle sit at its centre
         const pos = out.pos, hpos = {}, owner = {}, aggOf = {};
         const leafPlace = n => {
@@ -509,9 +511,14 @@
             add(`c:${n.id}`, 'circle', { cx: f1(C[0]), cy: f1(C[1]), r: f1(n.r) }, { s: { fill: n.col, stroke: n.col }, sa: { opacity: RING.MIN_FILL[lvl], 'stroke-width': n.level ? 1 : 1.2, 'stroke-dasharray': n.level ? '3 3' : null }, drag: key(n), cl: n });
             const label = n.loose ? '' : n.label;
             if (n.level && label) add(`cl:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] - n.r + 13), 'text-anchor': 'middle', 'font-size': n.level === 1 ? 11 : 9 }, { text: label, cls: 'ring-sub', s: { fill: n.col }, lab: { id: n.id, r: n.r, lvl: n.level } });
+            if (!agg(n) && !n.loose && n.files.length > 1 && n.r >= 14) {
+                const br = Math.min(9, n.r * 0.3), bx = C[0] + n.r * 0.72, by = C[1] - n.r * 0.72;
+                add(`cm:${n.id}`, 'circle', { cx: f1(bx), cy: f1(by), r: f1(br) }, { cls: 'ring-plus', s: { fill: n.col }, cl: n, tog: 'minus' });
+                add(`cn:${n.id}`, 'text', { x: f1(bx), y: f1(by + br * 0.4), 'text-anchor': 'middle', 'font-size': f1(br * 1.5) }, { text: '\u2212', cls: 'ring-fl', pe: true });
+            }
             if (agg(n)) {
                 const br = Math.min(13, n.r * 0.4);
-                add(`cb:${n.id}`, 'circle', { cx: f1(C[0]), cy: f1(C[1] - 5), r: f1(br) }, { cls: 'ring-plus', s: { fill: n.col }, cl: n, drag: key(n) });
+                add(`cb:${n.id}`, 'circle', { cx: f1(C[0]), cy: f1(C[1] - 5), r: f1(br) }, { cls: 'ring-plus', s: { fill: n.col }, cl: n, tog: 'plus' });
                 add(`cp:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] - 5 + br * 0.42), 'text-anchor': 'middle', 'font-size': f1(br * 1.4) }, { text: '+', cls: 'ring-fl', pe: true });
                 add(`ca:${n.id}`, 'text', { x: f1(C[0]), y: f1(C[1] + br + 10), 'text-anchor': 'middle', 'font-size': 12 }, { text: `${n.files.length}`, cls: 'ring-sub', cl: n, drag: key(n) });
             }
@@ -920,6 +927,7 @@
             if (aggOf[i]) continue;
             const rr = RING.FILE_R[0] + Math.sqrt(M.doc.nodes[i].functions || 0) * RING.FILE_R[1] * (nested ? 1 : 1.4);
             add(`n:${i}`, 'circle', { cx: f1(pos[i][0]), cy: f1(pos[i][1]), r: f1(rr) }, { s: { fill: M.nodeColor(i), stroke: 'var(--lin-card)' }, sa: { 'stroke-width': 1.5 }, cls: 'hold', h: (holdsOf.get(i) || []).join(' '), drag: nk(i), file: i });
+            if (M.doc.nodes[i].members && M.doc.nodes[i].members.length > 1) add(`np:${i}`, 'text', { x: f1(pos[i][0] + rr * 0.9), y: f1(pos[i][1] - rr * 0.5), 'text-anchor': 'middle', 'font-size': 13 }, { text: '+', cls: 'ring-fl', pe: true });
             if (!light && (M.N <= RING.HIDE_FILES || (S.focusSet && S.focusSet.has(i)))) add(`nl:${i}`, 'text', { x: f1(pos[i][0]), y: f1(pos[i][1] + 3), 'text-anchor': 'middle', 'font-size': RING.FILE_FONT }, { text: (M.doc.nodes[i].file_name || M.doc.nodes[i].id).slice(0, 4), cls: 'ring-fl', lab: { file: i, r: rr } });
         }
 
@@ -1038,7 +1046,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         crumb.className = 'ring-crumb';
         crumb.style.display = 'none';
         ctx.host.appendChild(crumb);
-        const S = { sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), fc: null, fcTok: 0, focusSet: null, pend: null, err: '', noteBase: '', fadeNew: false, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
+        const S = { shut: new Set(), sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), fc: null, fcTok: 0, focusSet: null, pend: null, err: '', noteBase: '', fadeNew: false, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
         const opt = () => ({ nest: S.nested, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
         let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 };
         let byMod = new Map(), holdEls = new Map(), lit = [];
@@ -1144,16 +1152,17 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; fileTip(ev, e.file); });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', ctx.hideTip);
-                node.addEventListener('click', () => { if (!S.sim.moved) ctx.onFile(M.doc.nodes[e.file].id); });
+                node.addEventListener('click', () => { if (S.sim.moved) return; const nd = M.doc.nodes[e.file]; if (nd.members && nd.members.length > 1 && ctx.openNodes) openMerged({ id: nd.id }, [nd]); else ctx.onFile(nd.id); });
             } else if (e.cl) {
                 node.addEventListener('mouseenter', ev => {
                     if (S.sim.drag) return;
                     const c = e.cl;
-                    ctx.showTip(ev, c.label || 'Files', c.col, [['Files', String(c.files.length)], ...(e.tag === 'circle' ? [['', 'click to focus']] : [])]);
+                    ctx.showTip(ev, c.label || 'Files', c.col, [['Files', String(c.files.length)], ...(e.tog ? [['', e.tog === 'plus' ? 'click to expand' : 'click to collapse']] : e.tag === 'circle' ? [['', 'click to focus']] : [])]);
                 });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', ctx.hideTip);
-                if (e.tag === 'circle') node.addEventListener('click', () => { if (!S.sim.moved) focusCluster((M && M.byId.get(e.cl.id)) || e.cl); });
+                if (e.tog) node.addEventListener('click', () => toggleCluster((M && M.byId.get(e.cl.id)) || e.cl, e.tog));
+                else if (e.tag === 'circle') node.addEventListener('click', () => { if (!S.sim.moved) focusCluster((M && M.byId.get(e.cl.id)) || e.cl); });
             }
         }
         // 45 degree hatch fills for partial lanes, one pattern per colour and share, kept beside the drawing so a redraw does not drop them
@@ -1245,7 +1254,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 if (!el) continue;
                 const dim = fam != null && !(e.fams ? e.fams.includes(fam) : e.fam === undefined || e.fam === fam);
                 el.classList[dim ? 'add' : 'remove']('ring-dim');
-                el.classList[S.pend && e.id === `c:${S.pend.id}` ? 'add' : 'remove']('ring-pending');
+                el.classList[S.pend && e.id === S.pend.el ? 'add' : 'remove']('ring-pending');
             }
             lp();
         }
@@ -1319,13 +1328,23 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             setNote();
             if (ctx.camera && t) ctx.camera.restore(t);
         }
+        // + opens a collapsed cluster, - collapses it to one circle with a count
+        function toggleCluster(n, how) {
+            if (S.sim.moved) return;
+            S.fc = null; S.focusSet = null; S.fcTok++; S.pend = null; S.err = '';
+            if (how === 'minus') { S.shut.add(n.id); S.open.delete(n.id); } else { S.shut.delete(n.id); S.open.add(n.id); }
+            full();
+            applyFocus();
+            drawCrumb();
+            setNote();
+        }
         // the merged (twin) columns inside the cluster: ask the server to open them, then merge the new doc in without touching the view state
-        function openMerged(n) {
-            const nodesIn = n.files.map(i => M.doc.nodes[i]).filter(x => x.members && x.members.length > 1);
+        function openMerged(n, only) {
+            const nodesIn = only || n.files.map(i => M.doc.nodes[i]).filter(x => x.members && x.members.length > 1);
             if (!nodesIn.length || !ctx.openNodes) return;
             const key = nodesIn.map(x => x.id).join('|'), tok = S.fcTok;
             if (S.pend && S.pend.key === key) return;
-            S.pend = { id: n.id, key, count: sum(nodesIn, x => x.members.length) };
+            S.pend = { id: n.id, el: only ? `n:${M.doc.nodes.indexOf(only[0])}` : `c:${n.id}`, key, count: sum(nodesIn, x => x.members.length) };
             setNote();
             applyFocus();
             ctx.openNodes(nodesIn.map(x => x.id)).then(doc => {
@@ -1349,10 +1368,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!doc) { M = null; return; }
             let h = 0;
             if (R) for (let r = 0; r < R.n; r++) h = (h * 31 + (R.match(r) ? 1 : 0)) | 0;
-            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, S.min, S.tier, R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
+            const k = [doc.nodes.map(n => n.id).join('|'), ctx.lens(), S.arc, S.min, S.tier, [...S.shut].sort().join(','), R ? R.n : 0, C ? C.cats.map(c => c.key).join('|') : '', h].join('#');
             if (M && k === key) return;
             key = k;
-            M = buildModel(doc, R, C, { minPct: S.min, tier: S.tier, arc: S.arc, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
+            M = buildModel(doc, R, C, { shut: S.shut, minPct: S.min, tier: S.tier, arc: S.arc, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
         }
 

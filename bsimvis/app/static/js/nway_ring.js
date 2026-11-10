@@ -48,7 +48,7 @@
         FILE_R: [3.5, 0.2], FILE_FONT: 8, HIDE_FILES: 90, // file dot radius a + b*sqrt(functions); labels hidden above this many drawn files
         BUDGET: [6000, 12000], // estimated elements above which the drawing gets lighter: no parent-to-lane bands, then clusters, rings and family ribbons only
         HEAVY: 2100, HEAVY_FRAME_MS: 50, // estimated elements above which a moving drawing is lightened, reuses its arc order and rounds to whole pixels, at most 20 frames a second
-        FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 33, // a redraw loop stops after this many frames or ms; at most 30 frames a second
+        FRAMES_MAX: 240, MS_MAX: 4000, FRAME_MS: 12, // a redraw loop stops after this many frames or ms; every animation frame (at most about 80 a second)
         MIN_FILL: [0.09, 0.12, 0.16],
     };
 
@@ -1231,22 +1231,30 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         function paint() {
             frame = geometry(M, S, { mode: liveMode ?? cur.mode, reuse: live });
             const els = frame.els;
-            const same = els.length === ids.length && els.every((e, i) => e.id === ids[i]);
-            if (!same) {
-                const before = new Set(ids);
-                root.replaceChildren();
-                nodes = new Map();
+            // the element list changes while things move (ribbons swap places, a mode lightens the drawing): add and remove only the elements that
+            // changed and re-order the rest, so the surviving nodes (and their hidden labels) are never rebuilt
+            const sameSet = els.length === ids.length && els.every(e => nodes.has(e.id));
+            let before_ = null;
+            if (!sameSet) {
+                before_ = new Set(ids);
+                const want = new Set(els.map(e => e.id));
+                for (const [id, n] of nodes) if (!want.has(id)) { n.remove(); nodes.delete(id); }
+                for (const e of els) if (!nodes.has(e.id)) { const n = draw1(e); if (e.lab) n.classList.add('ring-hide'); nodes.set(e.id, n); }
+                ids = [];
+            }
+            if (!sameSet || els.some((e, i) => e.id !== ids[i])) {
                 ids = els.map(e => e.id);
-                for (const e of els) { const n = draw1(e); nodes.set(e.id, n); root.appendChild(n); }
-                for (const e of els) apply(nodes.get(e.id), e);
-                if (S.fadeNew) for (const e of els) if (!before.has(e.id)) nodes.get(e.id).classList.add('ring-new');
+                for (const e of els) root.appendChild(nodes.get(e.id));
+            }
+            for (const e of els) apply(nodes.get(e.id), e);
+            if (!sameSet) {
+                if (S.fadeNew) for (const e of els) if (!before_.has(e.id)) nodes.get(e.id).classList.add('ring-new');
+                clear();
                 index();
                 rest();
                 applyFocus();
                 lp();
-                return frame;
             }
-            for (const e of els) apply(nodes.get(e.id), e);
             return frame;
         }
         function full() {
@@ -1476,7 +1484,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             frames++;
             const drag = !!S.sim.drag, active = e > RING.SETTLE || (drag && pointerMoved);
             pointerMoved = false;
-            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { if (heavy) { liveMode = null; paint(); } return; }
+            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { if (heavy) { liveMode = null; paint(); } lp(); return; }
             raf = requestAnimationFrame(step);
         }
         // Escape clears the pin

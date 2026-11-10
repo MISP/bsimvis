@@ -809,13 +809,15 @@
                 }
             };
             const shared = ports.filter(q => !q.noBand), own = ports.filter(q => q.noBand);
-            if (shared.length && own.length) {
+            // on a family's own ring the cross-family segments of the outer ring are blocked too: their fans come down to the files in that direction
+            const outer = X.level === 0 ? (segs[X.famIdx] || []).filter(x => x.a1 > x.a0) : [];
+            if ((shared.length || outer.length) && own.length) {
                 arrange(shared);
                 relax(shared);
                 // The shared lanes block their angles (each with a margin). Lone lanes whose natural angle falls in a blocked stretch go to the biggest free arc of
                 // the ring (the nearest point of it), so they leave toward where the room is, not toward the nearest edge of a possibly wide, mixed sector.
-                const blocked = [];
-                for (const q of shared) { const h = q.w / 2 + RING.LANE_GAP + RING.OWN_MARGIN, c0 = ((q.c % TAU) + TAU) % TAU; blocked.push([c0 - h, c0 + h]); if (c0 - h < 0) blocked.push([c0 - h + TAU, c0 + h + TAU]); if (c0 + h > TAU) blocked.push([c0 - h - TAU, c0 + h - TAU]); }
+                const blocked = [], blockers = shared.map(q => [q.c, q.w / 2]).concat(outer.map(x => [(x.a0 + x.a1) / 2, (x.a1 - x.a0) / 2]));
+                for (const [bc, bw] of blockers) { const h = bw + RING.LANE_GAP + RING.OWN_MARGIN, c0 = ((bc % TAU) + TAU) % TAU; blocked.push([c0 - h, c0 + h]); if (c0 - h < 0) blocked.push([c0 - h + TAU, c0 + h + TAU]); if (c0 + h > TAU) blocked.push([c0 - h - TAU, c0 + h - TAU]); }
                 blocked.sort((u, v) => u[0] - v[0]);
                 const merged = [];
                 for (const iv of blocked) { const last = merged[merged.length - 1]; if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]); else merged.push(iv.slice()); }

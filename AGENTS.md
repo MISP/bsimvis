@@ -265,8 +265,8 @@ label and the file dots. No lane shading.
 outer ribbons). A module held inside one cluster has no ring segment: its lane sits on the lowest
 cluster node that contains all its holders (the lane ring of a sub-cluster, or, when that is the
 family root or nesting is off, a lane ring just inside the circle's edge, `ROOT_LANE_OFF` -6),
-and its chain stops there: one lane, then a fan straight to the holder files (no lane per
-sub-cluster, no band from the outer ring). Cross-family modules still go down lane by lane. Its width is its functions in the family times `lanePx`; the ring's
+and its chain goes down only: lane -> lanes of the sub-clusters that hold it -> files, no band
+from the outer ring. Its width is its functions in the family times `lanePx`; the ring's
 px-per-function scale is computed from the cross-family arcs only, in the part of the ring not
 reserved for the outward side: `OUTWARD_KEEP` (0.4) of every ring, away from the other clusters, stays
 free of cross arcs so their ribbons do not wrap round the circle (0 gave 1051 crossings on yara lanes,

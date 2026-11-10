@@ -335,8 +335,8 @@
         for (const n of M.byId.values()) {
             const set = new Set(n.files), has = x => [...x.hold].some(i => set.has(i));
             const rp = n.r + (n.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF);
-            // the lanes of this ring: cross arcs coming down to it, and the single-cluster modules that start here
-            const fed = n.level === 0 ? lay.filter(o => o.lca === n).map(o => o.x) : [...cross.filter(has), ...lay.filter(o => o.lca === n).map(o => o.x)];
+            // the lanes of this ring: cross arcs coming down to it, and the single-cluster modules whose chain passes through it (root: only those starting there)
+            const fed = n.level === 0 ? lay.filter(o => o.lca === n).map(o => o.x) : [...cross.filter(has), ...lay.filter(o => has(o.x) && n.files.every(i => (o.lca._set || (o.lca._set = new Set(o.lca.files))).has(i))).map(o => o.x)];
             if (!fed.length) continue;
             px = Math.min(px, (RING.LANE_FIT * TAU * rp - fed.length * RING.LANE_GAP * rp) / sum(fed, x => Math.max(x.size, 1)));
         }
@@ -757,8 +757,7 @@
                 }
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
-                // a single-cluster module (noBand) stops at the lowest cluster holding it: its fan goes straight to the holder files, no lane per sub-cluster
-                if (kids.length && !p.noBand) {
+                if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
                     const sp = splitKids(here, p.x, p.w);
                     here.forEach((K, n) => feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + sp[n].off), slot: sp[n].w * (rp - 3.5), cov: sp[n].cov, srcDrag: key(X), srcId: `${X.id}`, centre: C }));

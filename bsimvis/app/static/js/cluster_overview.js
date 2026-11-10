@@ -481,7 +481,7 @@
                 ${fn ? `<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
             if (linInst) { linInst.destroy(); linInst = null; }
-            if (fn) { loadLanes(el, v, c); loadLineage(el, v, c); }
+            if (fn) loadLanes(el, v, c).then(() => loadLineage(el, v, c)); // after lanes: same /nway build, so it hits the cache instead of racing it
         },
 
         /** The N-way table on its own page with these controls (`tab` is its All / Core / Partial / Unique). */

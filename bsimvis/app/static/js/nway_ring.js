@@ -1154,7 +1154,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const col = { core: 'var(--success)', common: 'var(--warning, #d97706)', rare: 'var(--text-muted, #888)' };
             // the icons of the table's Functions dropdown
             const ico = { core: 'fa-solid fa-bullseye', common: 'fa-solid fa-circle-half-stroke', rare: 'fa-regular fa-circle' };
-            const bar = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<i style="width:${((100 * t[k]) / tot).toFixed(1)}%;background:${col[k]}"></i>`).join('');
+            // solid for Core, the Ring's 45 degree zebra for a partly held module for the others: wide stripes for Common, thin for Rare
+            const zebra = (c, d) => `repeating-linear-gradient(45deg, ${c} 0 ${d}px, transparent ${d}px ${RING.HATCH}px)`;
+            const hatch = { core: col.core, common: zebra(col.common, RING.HATCH * 0.5), rare: zebra(col.rare, RING.HATCH * 0.25) };
+            const bar = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<i style="width:${((100 * t[k]) / tot).toFixed(1)}%;background:${hatch[k]}"></i>`).join('');
             const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<span class="nway-tip-sw"><i class="${ico[k]}" style="color:${col[k]}"></i>${TIER[k][1]} ${ctx.fmt(t[k])}</span>`).join('');
             return `<div class="nway-tip-h">Its functions</div><div class="nway-tip-fnbar">${bar}</div><div class="nway-tip-legend">${txt}</div>${ctx.rowTier && ctx.rowTier() ? '<div class="dim nway-tip-legend">the current tab shows only these</div>' : ''}`;
         };

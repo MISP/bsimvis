@@ -27,14 +27,14 @@
  * uploaded samples, so every value goes through escapeHtml / escapeAttr.
  */
 (function () {
-    const TABS = [['all', 'All'], ['core', 'Core'], ['partial', 'Partial'], ['unique', 'Unique']];
+    const TABS = [['all', 'All'], ['core', 'Core'], ['common', 'Common'], ['rare', 'Rare'], ['common,rare', 'Not core'], ['unique', 'Unique']];
     const PAGE = 50;
     const NWAY_TIMEOUT_MS = 180000;
     const SORTS = [['name', 'Function'], ['span', 'Span'], ['weight', 'Features'], ['support', 'Support'], ['cohesion', 'Cohesion']];
     // Sliders whose value is a whole number.
     const INT_RANGES = ['k', 'twin_depth', 'group_lane_depth', 'group_lane_fold', 'group_split_min'];
     const DEFAULTS = {
-        tab: 'all', scope: 'code', k: 2, min_edge: '', mode: 'stored',
+        tab: 'all', scope: 'code', k: 2, core_min: 0.9, min_edge: '', mode: 'stored',
         q: '', tags: '', sort_col: '', sort_dir: 'desc', offset: 0,
         columns: 'twins', child_presence: 0.5, twin_depth: 3, twin_link: 0.5,
         column: '', focus: '', focus_rule: 'any', side: '',
@@ -44,7 +44,7 @@
         track: '', order: '', lane_graph: '', track_only: '', tfocus: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
-    const API_KEYS = ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min', 'order'];
+    const API_KEYS = ['tab', 'scope', 'k', 'core_min', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'column', 'focus', 'focus_rule', 'side', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_lane_depth', 'group_lane_link', 'group_lane_tier', 'group_lane_fold', 'group_split_min', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'family', 'ignore', 'cover_min', 'leak_max', 'calls', 'consts', 'feat_min', 'feat_max', 'support_min', 'order'];
     // Family stats columns: Cover, Leak, Score (+ Reach for strings).
     const FAM_COLS = [['cover', 'Cover', 'Share of the family files that hold it'], ['leak', 'Leak', 'Files of the contrast (every other column, minus the ignored ones) that also hold it'], ['score', 'Score', 'Cover x (1 - leak share), softened by reach. 100% = in every family file and in no other']];
     const STR_PAGE = 100;
@@ -249,7 +249,7 @@
                 extra: () => this._cmpExtra(),
                 onRun: (cmp, out) => {
                     this._scrollSave();
-                    this._set({ cmp: JSON.stringify(cmp), col_set: out.id, col_by: '', col_open: '', side: '', sort_col: '', tab: this.state.tab === 'partial' ? 'core' : this.state.tab, offset: 0 });
+                    this._set({ cmp: JSON.stringify(cmp), col_set: out.id, col_by: '', col_open: '', side: '', sort_col: '', tab: /common|rare/.test(this.state.tab) ? 'core' : this.state.tab, offset: 0 });
                 },
             });
             this._bindCmp(this.el);
@@ -702,11 +702,11 @@
                 ? 'All: every function. Core: in both groups. Unique: in one group only. Counts follow the code axis.'
                 : focus
                 ? 'All: every function. Core: on both the focus and the rest side. Unique: on one side only. Counts follow the code axis.'
-                : `All: every function group. Core: present in all ${n} columns. Partial: present in at least k columns. Unique: present in exactly one file. Counts follow the code axis.`;
+                : `All: every function group. Core: present in at least the Core share of the ${n} columns. Common: in at least half. Rare: in two or more, fewer than half. Not core: Common and Rare together. Unique: present in exactly one file. Counts follow the code axis.`;
             const search = `<div class="search-input-wrapper nway-search"><i class="fa-solid fa-magnifying-glass"></i><input type="text" data-text="q" placeholder="Search name, address, tags, cluster, strings..." value="${escapeAttr(s.q)}"></div>`;
             const axisDd = this._dd('Code axis', [['code', 'Code', 'fa-solid fa-code', 'var(--info, #3b82f6)'], ['library', 'Library', 'fa-solid fa-cubes', 'var(--warning, #d97706)'], ['all', 'All', 'fa-solid fa-layer-group', 'var(--success)']], s.scope, 'Code: functions of the program itself. Library: functions recognised as library code (stdlib, statically linked). All: both.', v => `data-set="scope:${v}"`);
-            const tabIcons = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], partial: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
-            const tabDd = this._dd('Functions', TABS.filter(([key]) => !(focus && key === 'partial')).map(([key, label]) => [key, label, tabIcons[key][0], tabIcons[key][1], this._count(key)]), s.tab, tabTip, v => `data-tab="${v}"`);
+            const tabIcons = { all: ['fa-solid fa-layer-group', 'var(--info, #3b82f6)'], core: ['fa-solid fa-bullseye', 'var(--success)'], common: ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], rare: ['fa-regular fa-circle', 'var(--text-muted, #888)'], 'common,rare': ['fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'], unique: ['fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'] };
+            const tabDd = this._dd('Functions', TABS.filter(([key]) => !(focus && /common|rare/.test(key))).map(([key, label]) => [key, label, tabIcons[key][0], tabIcons[key][1], this._count(key)]), s.tab, tabTip, v => `data-tab="${v}"`);
             const cur = PRESETS.find(([, , v]) => String(v.min_edge) === String(s.min_edge) && Number(v.child_presence) === Number(s.child_presence));
             const presetLook = { strict: ['fa-solid fa-crosshairs', 'var(--token-instruction, #e11d48)'], balanced: ['fa-solid fa-scale-balanced', 'var(--info, #3b82f6)'], loose: ['fa-solid fa-expand', 'var(--warning, #d97706)'] };
             const presetDd = this._dd('Match', PRESETS.map(([k, text, , t]) => [k, text, presetLook[k][0], presetLook[k][1], undefined, t]).concat(cur ? [] : [['custom', 'Custom', 'fa-solid fa-sliders', 'var(--dim)', undefined, 'Min edge or Child presence set by hand in Advanced.']]), cur ? cur[0] : 'custom', 'Strict, Balanced or Loose set Min edge and Child presence together. Open Advanced to set them by hand.', v => (v === 'custom' ? '' : `data-preset="${v}"`));
@@ -718,7 +718,7 @@
                 this._seg('Mode', 'mode', [['stored', 'Stored', 'reads built pair docs'], ['virtual', 'Virtual', 'recomputes from vectors']], 'Stored reads the similarity pairs already built. Virtual recomputes the matches from the function vectors, as a fresh collection of just these files would.'),
                 d.columns_mode === 'twins' || (s.columns === 'twins' && !focus && d.columns_mode !== 'by') ? this._slider('Column levels', 'twin_depth', Number(s.twin_depth), 1, 6, 1, 'Same code columns: 1 groups only files with identical shared rows. Higher nests them under looser groups of files whose shared rows overlap.') : '',
                 (d.columns_mode === 'twins' || (s.columns === 'twins' && d.columns_mode !== 'by')) && Number(s.twin_depth) > 1 && !focus ? this._slider('Column overlap', 'twin_link', Number(s.twin_link), 0, 1, 0.05, 'Outermost column group: files must share at least this much of their rows (average Jaccard) to be grouped.') : '',
-                s.tab === 'partial' && !focus ? this._slider(`In at least (of ${n})`, 'k', s.k, 2, Math.max(2, n), 1, 'Partial tab: keep functions present in at least this many columns.') : '',
+                /core|common|rare/.test(s.tab) && !focus ? this._slider('Core share', 'core_min', Number(s.core_min), 0.5, 1, 0.05, 'A function is Core when this share of the columns hold it (1 = every column). Common: at least half. Rare: the rest held by two or more.') : '',
                 advanced,
             ].join('');
             const sc = d.shared_cluster;
@@ -1124,7 +1124,7 @@
         // Partial does not exist in focus mode.
         _setFocus(ids, n) {
             if (ids.length >= n) return;
-            this._set({ focus: ids.join(','), side: '', offset: 0, sort_col: '', tab: ids.length && this.state.tab === 'partial' ? 'core' : this.state.tab });
+            this._set({ focus: ids.join(','), side: '', offset: 0, sort_col: '', tab: ids.length && /common|rare/.test(this.state.tab) ? 'core' : this.state.tab });
         }
 
         _notes() {

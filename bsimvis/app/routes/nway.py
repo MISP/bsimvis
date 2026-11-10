@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import re
 from collections import Counter, defaultdict
 
@@ -26,7 +27,10 @@ from bsimvis.app.services.tag_taxonomy import tag_body, tag_in_scope, tag_prefix
 
 # A stored cluster only names a row when its members agree this much.
 CLUSTER_NAME_MIN_COHESION = 0.8
-TABS = ("all", "core", "partial", "unique")
+TABS = ("all", "core", "common", "rare", "unique", "partial")
+# a tab may also be a comma list of tiers ("common,rare" = everything that is not core); the UI offers this one
+TAB_COUNTED = TABS + ("common,rare",)
+COMMON_MIN = 0.5  # share of the files a function needs to be Common (Core: `core_min`)
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _PROGRESS_ID = re.compile(r"^[\w-]{8,40}$")
 
@@ -241,7 +245,9 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=(), restrict=None):
     return scope, members, groups, children
 
 
-def _in_tab(row, tab, k, n, focus=False, twin=False):
+def _in_tab(row, tab, k, n, focus=False, twin=False, core_min=0.9):
+    if "," in tab:
+        return any(_in_tab(row, t, k, n, focus, twin, core_min) for t in tab.split(","))
     # twin columns hold several files each: tabs count the files, not the columns
     span = row.get("file_span", row["span"]) if twin else row["span"]
     if tab == "all":
@@ -250,7 +256,14 @@ def _in_tab(row, tab, k, n, focus=False, twin=False):
         return span == 1
     if tab == "unique":  # always one file, even when columns are child groups
         return row.get("file_span", span) == 1
-    return span == n if tab == "core" else span >= k
+    if tab == "partial":  # legacy: at least k files, core included
+        return span >= k
+    # core / common / rare split the rows held by 2+ files by share of the files
+    core = max(2, math.ceil(core_min * n))
+    common = min(core, max(2, math.ceil(COMMON_MIN * n)))
+    if tab == "core":
+        return span >= core
+    return common <= span < core if tab == "common" else 2 <= span < common
 
 
 def _row_fids(row):
@@ -416,8 +429,12 @@ def _tab_args(doc, args):
     twin = doc["columns_mode"] == "twins"
     n = len(doc["file_columns"] if twin else doc["columns"])
     tab = args.get("tab", "core")
-    if tab not in TABS:
-        abort(400, f"tab must be one of {TABS}")
+    if any(t not in TABS for t in tab.split(",")):
+        abort(400, f"tab must be one of {TABS} or a comma list of them")
+    try:
+        core_min = min(1.0, max(0.5, float(args.get("core_min", 0.9))))
+    except ValueError:
+        abort(400, "core_min must be a number")
     try:
         k = max(2, int(args.get("k", 2)))
     except ValueError:
@@ -435,6 +452,7 @@ def _tab_args(doc, args):
         "n": n,
         "tab": tab,
         "k": k,
+        "core_min": core_min,
         "side": side,
         "scope": scope,
     }
@@ -442,17 +460,19 @@ def _tab_args(doc, args):
 
 def _tab_counts(rows, ta):
     """{tab: {code, library}}: the rows of each tab, before any filter."""
-    k, n, focus, twin = ta["k"], ta["n"], ta["focus"], ta["twin"]
+    k, n, focus, twin, cm = ta["k"], ta["n"], ta["focus"], ta["twin"], ta["core_min"]
     return {
         t: {
             "code": sum(
-                1 for r in rows if _in_tab(r, t, k, n, focus, twin) and not r["library"]
+                1
+                for r in rows
+                if _in_tab(r, t, k, n, focus, twin, cm) and not r["library"]
             ),
             "library": sum(
-                1 for r in rows if _in_tab(r, t, k, n, focus, twin) and r["library"]
+                1 for r in rows if _in_tab(r, t, k, n, focus, twin, cm) and r["library"]
             ),
         }
-        for t in TABS
+        for t in TAB_COUNTED
     }
 
 
@@ -471,7 +491,7 @@ def _filter_rows(doc, args, rows, ctx, ta, r=None, pool_id=None):
     sup_min = fnum("support_min", args)
 
     def keep(row):
-        if not _in_tab(row, tab, k, n, focus, twin):
+        if not _in_tab(row, tab, k, n, focus, twin, ta["core_min"]):
             return False
         if focus and side and not row["mask"] & (1 if side == "focus" else 2):
             return False
@@ -637,6 +657,7 @@ def _page(doc, args, r=None, pool_id=None):
         "limit": limit,
         "tab": tab,
         "k": k,
+        "core_min": ta["core_min"],
         "scope": scope,
         "counts": counts,
         "tag_axis_counts": doc["tag_axis_counts"],

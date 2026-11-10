@@ -762,6 +762,13 @@
             const lim = (c, o) => { const dx = c[0] - o[0], dy = c[1] - o[1], m = Math.hypot(dx, dy); return m > cap ? [o[0] + (dx * cap) / m, o[1] + (dy * cap) / m] : c; };
             return [lim(c0, o0), lim(c1, o1)];
         };
+        // the stems keep their inward / outward lean, blended with the chord so the curve stays an S without overshooting the child
+        const softStems = (P0, P1, u0, u1, h) => {
+            const dx = P1[0] - P0[0], dy = P1[1] - P0[1], dl = Math.hypot(dx, dy) || 1, d = [dx / dl, dy / dl], k = Math.min(h, dl / 3);
+            const mix = (u, v) => { const m = [u[0] + v[0], u[1] + v[1]], ml = Math.hypot(m[0], m[1]) || 1; return [m[0] / ml, m[1] / ml]; };
+            const a = mix(u0, d), b = mix(u1, [-d[0], -d[1]]);
+            return [[P0[0] + a[0] * k, P0[1] + a[1] * k], [P1[0] + b[0] * k, P1[1] + b[1] * k]];
+        };
         const laneRing = (X, feeds) => {
             if (!feeds.length) return;
             const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx * (fd.cov ?? 1) }));
@@ -780,7 +787,7 @@
                 const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
-                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, [P0[0] + (P1[0] - P0[0]) / 3, P0[1] + (P1[1] - P0[1]) / 3], [P0[0] + ((P1[0] - P0[0]) * 2) / 3, P0[1] + ((P1[1] - P0[1]) * 2) / 3], P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
+                    const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, ...softStems(P0, P1, u0, u1, h), P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });

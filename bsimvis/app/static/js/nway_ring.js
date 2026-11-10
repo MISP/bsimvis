@@ -296,7 +296,7 @@
     function plan(M) {
         const { roots, mods } = M;
         const all = [];
-        for (const b of mods) if (b.fam == null) for (let u = 0; u < b.fams.length; u++) for (let v = u + 1; v < b.fams.length; v++) all.push([b, b.fams[u], b.fams[v], b.pairRows(b.fams[u], b.fams[v])]);
+        for (const b of mods) if (b.fam == null) for (let u = 0; u < b.fams.length; u++) for (let v = u + 1; v < b.fams.length; v++) if (b.pairRows(b.fams[u], b.fams[v])) all.push([b, b.fams[u], b.fams[v], b.pairRows(b.fams[u], b.fams[v])]);
         // the safety limit of outer ribbons: the smallest are left out, on both ends
         const skip = new Set();
         let truncated = 0;
@@ -309,7 +309,7 @@
             for (const b of mods) {
                 if (!b.fams.includes(c)) continue;
                 if (b.fam != null) { layers[c].push({ b, size: b.rowsIn[c], hold: new Set(b.mem.filter(i => M.famOf[i] === c)), key: '' }); continue; }
-                const ps = b.fams.filter(p => p !== c && !skip.has(`${b.k}|${Math.min(c, p)}|${Math.max(c, p)}`));
+                const ps = b.fams.filter(p => p !== c && b.pairRows(c, p) && !skip.has(`${b.k}|${Math.min(c, p)}|${Math.max(c, p)}`));
                 const arc = (run, key) => ({ b, slots: run.map(p => ({ p, size: b.pairRows(c, p) })), size: sum(run, p => b.pairRows(c, p)), hold: new Set(run.flatMap(p => [...(b.hold.get(`${c}|${p}`) || [])])), key, ...(run.length === 1 ? { partner: run[0] } : {}) });
                 if (!ps.length) continue;
                 // one arc per partner, per run of nearby partners, or one for all of them

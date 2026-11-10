@@ -922,7 +922,7 @@
                     const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = cv.t && cov < RING.CORE_MIN, hatch = part ? hatchOf(b, cov) : null;
+                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = cv.t && cov < RING.CORE_MIN, hatch = part && !o.reuse ? hatchOf(b, cov) : null;
                 if (part) add(`lg:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rl, a0))} A${f1(rl)},${f1(rl)} 0 0 1 ${P(ptAt(C, rl, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(b) }, m: b.k, pe: true });
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rl, a0))} A${f1(rl)},${f1(rl)} 0 0 1 ${P(ptAt(C, rl, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: b.bucket ? undefined : cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp: rl, own: p.noBand });
@@ -968,7 +968,7 @@
                 const pd = Math.min(RING.SEG_PAD, (x.a1 - x.a0) * 0.2), sw = x.b.bucket ? RING.SEG_STROKE * 0.5 : RING.SEG_STROKE, cap = sw / 2 / rm, mdl = (x.a0 + x.a1) / 2, a0 = Math.min(x.a0 + pd + cap, mdl - 0.002), a1 = Math.max(x.a1 - pd - cap, mdl + 0.002);
                 const cv = lcov(x.b, f), cov = cv.t ? cv.n / cv.t : 1, part = cv.t && cov < RING.CORE_MIN;
                 if (part) add(`sg:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(x.b) }, m: x.b.k, pe: true });
-                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, hatch: part ? hatchOf(x.b, cov) : null, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, lc: x.b.bucket ? undefined : cv, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
+                add(`s:${c}:${x.b.k}:${x.key}`, 'path', { d: `M${P(ptAt(cen[c], rm, a0))} A${f1(rm)},${f1(rm)} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${P(ptAt(cen[c], rm, a1))}` }, { s: { stroke: x.b.color }, hatch: part && !o.reuse ? hatchOf(x.b, cov) : null, sa: { fill: 'none', 'stroke-width': sw, 'stroke-linecap': 'round', opacity: fade(x.b) }, m: x.b.k, bucket: x.b.bucket, drag: `f:${f.id}`, seg: c, lc: x.b.bucket ? undefined : cv, pair: x.partner != null ? { X: Math.min(c, x.partner), Y: Math.max(c, x.partner), n: x.size } : undefined, pairs: x.partner == null && x.slots ? x.slots.map(t => ({ X: Math.min(c, t.p), Y: Math.max(c, t.p), n: t.size })) : undefined });
             });
             const [tx, ty] = ptAt(cen[c], ro + 40, nF > 1 ? angTo(ctr, cen[c]) : -Math.PI / 2);
             const fname = f.label.length > 24 ? `${f.label.slice(0, 23)}\u2026` : f.label;
@@ -1030,6 +1030,8 @@
 .ring-root [data-drag]{cursor:grab}
 .ring-root circle[data-drag^="f:"]{cursor:pointer}
 .ring-root .ring-hide{display:none}
+.ring-root.ring-moving text{visibility:hidden}
+.ring-root.ring-moving path,.ring-root.ring-moving circle{shape-rendering:optimizeSpeed}
 .ring-root .ring-dim{opacity:.15!important}
 .ring-root .on.ring-dim{opacity:1!important}
 .ring-root circle.ring-plus{stroke:#fff;stroke-width:1.5;cursor:pointer}
@@ -1220,7 +1222,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         }
         function apply(node, e) {
             const prev = node.__v || (node.__v = {});
-            for (const [k, v] of Object.entries(e.a)) { const s = String(v); if (prev[k] !== s) { prev[k] = s; node.setAttribute(k, s); } }
+            for (const k in e.a) { const s = String(e.a[k]); if (prev[k] !== s) { prev[k] = s; node.setAttribute(k, s); } }
             for (const [k, v] of Object.entries(e.sa || {})) { const s = v == null ? '' : String(v); if (prev[`@${k}`] !== s) { prev[`@${k}`] = s; if (v == null) node.removeAttribute(k); else node.setAttribute(k, s); } }
             if (e.text !== undefined && node.textContent !== e.text) node.textContent = e.text;
             for (const [k, v] of Object.entries(e.s || {})) { if (prev[`$${k}`] !== v) { prev[`$${k}`] = v; node.style.setProperty(k, v); } }
@@ -1478,13 +1480,14 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             heavy = cur.est > RING.HEAVY;
             liveMode = cur.est > RING.BUDGET[1] * 0.5 ? Math.max(cur.mode, 2) : heavy ? Math.max(cur.mode, 1) : null;
             live = heavy;
+            root.classList.toggle('ring-moving', heavy);
             paint();
             live = false;
             cost = performance.now() - now;
             frames++;
             const drag = !!S.sim.drag, active = e > RING.SETTLE || (drag && pointerMoved);
             pointerMoved = false;
-            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { if (heavy) { liveMode = null; paint(); } lp(); return; }
+            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { root.classList.remove('ring-moving'); if (heavy) { liveMode = null; paint(); } lp(); return; }
             raf = requestAnimationFrame(step);
         }
         // Escape clears the pin

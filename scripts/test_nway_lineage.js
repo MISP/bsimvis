@@ -339,7 +339,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(!b.M.plan.segs.flat().some(x => x.b.other), 'no merged other segment');
             const ribKs = new Set(gg.els.filter(e => e.id.startsWith('o:')).map(e => Number(e.id.split(':')[1])));
             for (const m of cross) assert.ok(ribKs.has(m.k), `${label}/${lens}: cross module ${m.label} has an outer ribbon`);
-            for (const m of cross) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(gg.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'one ribbon per family pair');
+            for (const m of cross) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.strictEqual(gg.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), m.pairRows(m.fams[u], m.fams[v]) > 0, 'one ribbon per family pair that shares functions, none for a pair that shares none');
             for (const r of gg.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'both ends of a ribbon have the same width');
             assert.deepStrictEqual(RL.badAttrs(gg.els), [], `${label}/${lens}: finite attributes`);
             assert.ok(b.M.modeOf(true).est < RING.BUDGET[0] && b.M.modeOf(true).mode === 0, `${label}/${lens}: full drawing under the budget`);
@@ -373,7 +373,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             for (const m of one.M.mods.filter(x => x.fam == null)) for (const c of m.fams) assert.ok(segCount.has(`${c}|${m.k}`), 'every module keeps a segment on each circle it spans');
             assert.strictEqual(go.els.filter(e => e.id.startsWith('o:')).length, gp.els.filter(e => e.id.startsWith('o:')).length, 'the same ribbons as with one arc per partner');
             for (const r of go.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends in one-arc mode');
-            for (const m of one.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(go.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'a ribbon per family pair');
+            for (const m of one.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.strictEqual(go.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), m.pairRows(m.fams[u], m.fams[v]) > 0, 'a ribbon per family pair that shares functions');
             assert.deepStrictEqual(RL.badAttrs(go.els), [], `${label}/${lens}: finite attributes in one-arc mode`);
             assert.ok(go.els.filter(e => e.id.startsWith('s:')).length <= gp.els.filter(e => e.id.startsWith('s:')).length, 'never more segments than per-partner');
             // one chain below the ring per module and cluster
@@ -450,7 +450,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
                     assert.deepStrictEqual(g1.els.map(e => [e.id, e.a]), g2.els.map(e => [e.id, e.a]), `${label}/${lens}/${mode}: two runs are identical`);
                     assert.deepStrictEqual(RL.badAttrs(g1.els), []);
                     for (const r of g1.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ribbon ends');
-                    for (const m of builds[mode].M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(g1.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), `${label}/${lens}/${mode}: a ribbon per family pair`);
+                    for (const m of builds[mode].M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.strictEqual(g1.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), m.pairRows(m.fams[u], m.fams[v]) > 0, `${label}/${lens}/${mode}: a ribbon per family pair that shares functions`);
                     const ids = g1.els.map(e => e.id);
                     assert.strictEqual(new Set(ids).size, ids.length, 'ids are unique');
                 }
@@ -501,7 +501,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.strictEqual(on.els.filter(e => e.id.startsWith('o:')).length, off.els.filter(e => e.id.startsWith('o:')).length, `${label}/${lens}: a stripe per ribbon`);
             assert.strictEqual(on.stats.ribbons.length, off.stats.ribbons.length);
             for (const r of on.stats.ribbons) assert.ok(Math.abs(r.arcX - r.arcY) < 1e-6, 'equal ends');
-            for (const m of b.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.ok(on.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), 'a stripe per family pair');
+            for (const m of b.M.mods.filter(x => x.fam == null)) for (let u = 0; u < m.fams.length; u++) for (let v = u + 1; v < m.fams.length; v++) assert.strictEqual(on.els.some(e => e.id === `o:${m.k}:${m.fams[u]}:${m.fams[v]}`), m.pairRows(m.fams[u], m.fams[v]) > 0, 'a stripe per family pair that shares functions');
             assert.deepStrictEqual(RL.badAttrs(on.els), []);
             assert.deepStrictEqual(on.els.map(e => [e.id, e.a]), on2.els.map(e => [e.id, e.a]), 'deterministic');
             assert.ok(on.els.some(e => e.bundle) || on.stats.ribbons.length === 0 || true);

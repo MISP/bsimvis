@@ -284,6 +284,8 @@ window.NwayLineageView = {
                     lens: lensOf(st.group),
                     track: st.track,
                     view: chartView(),
+                    // a function tab other than All: a module's badge is how widely its functions are held, not how many files hold one
+                    rowTier: () => st.tab !== 'all' && st.tab !== 'unique',
                     ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0', openNodes },
                     onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; store.set('nway.ring', JSON.stringify(Object.fromEntries(RING_KEYS.map(k => [k, st[k]])))); writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',

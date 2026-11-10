@@ -38,6 +38,7 @@
         ARC_DEFAULT: 'group', GROUP_DEG: 40, ORDER_SWEEPS: 6, // arcs per module: partner | group | one; partners closer than GROUP_DEG share an arc in group mode; sweeps of the crossing-minimising order (0 = by direction only)
         MIN_PCT: 0.5, MIN_OPTS: [0, 0.25, 0.5, 1, 2, 5], // gate: modules with fewer functions than this percent of all functions of the set are hidden (0 = off)
         RIBBON_SAFE: 5000, // safety limit of outer ribbons, with a note when it triggers
+        OWN_OFF: 10, // below a family's own ring, lanes of modules held in one cluster only sit this far inside the shared lanes
         ROOT_LANE_OFF: -6, // lane ring of a family's own circle, just inside its edge (the outer ring band is r+6..r+22)
         CORE_MIN: 0.9, COMMON_MIN: 0.5, GHOST: 0.28, HATCH: 6, HATCH_DUTY: [0.25, 0.75], TINY: 14, TINY_FADE: 0.4, // a lane held by fewer than CORE_MIN of its cluster's files is a faint full lane under a 45 degree hatch whose coloured share is the coverage (kept within HATCH_DUTY); a lane shorter than TINY px is one dot, dimmer when less is covered (from TINY_FADE)
         LANE_OFF: 8, LANE_W: 0.12, LANE_FIT: 0.85, LANE_GAP: 0.05, LANE_STROKE: 7,
@@ -866,7 +867,8 @@
             }
             const kids = kidsOf(X);
             ports.forEach(p => {
-                const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2;
+                // below a family's own ring the modules held only in this cluster get a ring of their own, just inside the shared lanes
+                const b = p.x.b, sk = `${b.k}.${p.x.key}`, a0 = p.c - p.w / 2, a1 = p.c + p.w / 2, rl = p.noBand && X.level > 0 ? rp - RING.OWN_OFF : rp;
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                     const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, ...softStems(P0, P1, u0, u1, h), P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
@@ -874,15 +876,15 @@
                     const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
                     add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
-                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = !b.bucket && cv.t && cov < RING.CORE_MIN, tiny = part && (a1 - a0) * rp < RING.TINY, hatch = part && !tiny ? { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) * 100)}`, col: b.color, duty: Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) } : null;
-                if (part && !tiny) add(`lg:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(b) }, m: b.k, pe: true });
-                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) * (tiny ? RING.TINY_FADE + (1 - RING.TINY_FADE) * cov : 1) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: b.bucket ? undefined : cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
-                out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
+                const cv = lcov(b, X), cov = cv.t ? cv.n / cv.t : 1, part = !b.bucket && cv.t && cov < RING.CORE_MIN, tiny = part && (a1 - a0) * rl < RING.TINY, hatch = part && !tiny ? { id: `rh${b.color.replace(/[^a-z0-9]/gi, '')}${Math.round(Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) * 100)}`, col: b.color, duty: Math.min(RING.HATCH_DUTY[1], Math.max(RING.HATCH_DUTY[0], cov)) } : null;
+                if (part && !tiny) add(`lg:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rl, a0))} A${f1(rl)},${f1(rl)} 0 0 1 ${P(ptAt(C, rl, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: RING.GHOST * fade(b) }, m: b.k, pe: true });
+                add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rl, a0))} A${f1(rl)},${f1(rl)} 0 0 1 ${P(ptAt(C, rl, a1))}` }, { s: { stroke: b.color }, hatch, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) * (tiny ? RING.TINY_FADE + (1 - RING.TINY_FADE) * cov : 1) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, lc: b.bucket ? undefined : cv, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
+                out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp: rl, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
                     const sp = splitKids(here, p.x, p.w);
-                    here.forEach((K, n) => feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + sp[n].off), slot: sp[n].w * (rp - 3.5), cov: sp[n].cov, srcDrag: key(X), srcId: `${X.id}`, centre: C, arc: { c: C, r: rp - 3.5, m: a0 + sp[n].off } }));
-                } else if (!agg(X)) inner(C, rp - 3.5, a0, a1, holdersIn(X, p.x), p.x, key(X), M.famFiles[X.famIdx]);
+                    here.forEach((K, n) => feedsOf(K).push({ x: p.x, from: ptAt(C, rl - 3.5, a0 + sp[n].off), slot: sp[n].w * (rl - 3.5), cov: sp[n].cov, srcDrag: key(X), srcId: `${X.id}`, centre: C, arc: { c: C, r: rl - 3.5, m: a0 + sp[n].off } }));
+                } else if (!agg(X)) inner(C, rl - 3.5, a0, a1, holdersIn(X, p.x), p.x, key(X), M.famFiles[X.famIdx]);
             });
         };
         const walk = X => { laneRing(X, feedsOf(X)); kidsOf(X).forEach(walk); };

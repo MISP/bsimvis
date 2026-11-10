@@ -717,13 +717,24 @@
         };
         // routing: family ring -> lane on each cluster level -> files; a cluster without sub-clusters fans straight to its files
         const holdersIn = (n, x) => n.files.filter(i => x.hold.has(i));
+        // a sub-cluster's share of a module: wt = rows summed over its holder files (splits the parent slot), cov = the largest holder's
+        // share of the module (a lower bound of what the sub-cluster holds; sizes its lane)
+        const kidShare = (K, x) => {
+            const c = x.b.cnt, h = holdersIn(K, x), v = h.map(i => (c ? c[i] : 0) || 1);
+            return { wt: Math.max(1, sum(v, t => t)), cov: Math.max(0.08, Math.min(1, Math.max(...v) / Math.max(1, x.b.size))) };
+        };
+        const splitKids = (here, x, span) => {
+            const sh = here.map(K => kidShare(K, x)), tot = sum(sh, q => q.wt);
+            let acc = 0;
+            return sh.map(q => { const w = (span * q.wt) / tot, r = { off: acc + w / 2, w, cov: q.cov }; acc += w; return r; });
+        };
         const kidsOf = X => (nested ? X.kids : []);
         let FM = new Map();
         const feedsOf = X => FM.get(X.id) || FM.set(X.id, []).get(X.id);
         // the lane ring of a cluster: one lane per feed, then down to the lanes of the sub-clusters that hold it, or to the files
         const laneRing = (X, feeds) => {
             if (!feeds.length) return;
-            const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx }));
+            const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx * (fd.cov ?? 1) }));
             const fsc = Math.min(1, (RING.LANE_FIT * TAU * rp - ports.length * RING.LANE_GAP * rp) / sum(ports, p => p.wp));
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
@@ -746,7 +757,8 @@
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
-                    here.forEach((K, n) => { const sw = p.w / here.length; feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + (n + 0.5) * sw), slot: sw * (rp - 3.5), srcDrag: key(X), srcId: `${X.id}`, centre: C }); });
+                    const sp = splitKids(here, p.x, p.w);
+                    here.forEach((K, n) => feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + sp[n].off), slot: sp[n].w * (rp - 3.5), cov: sp[n].cov, srcDrag: key(X), srcId: `${X.id}`, centre: C }));
                 } else if (!agg(X)) inner(C, rp - 3.5, a0, a1, holdersIn(X, p.x), p.x, key(X), M.famFiles[X.famIdx]);
             });
         };
@@ -763,7 +775,8 @@
             if (!nested || !f.kids.length) { if (!agg(f)) segs[c].forEach(x => inner(cen[c], ri, x.a0, x.a1, [...x.hold], x, `f:${f.id}`, M.famFiles[c])); }
             else segs[c].forEach(x => {
                 const mA = (x.a0 + x.a1) / 2, here = f.kids.filter(K => holdersIn(K, x).length).sort((u, v) => norm(angTo(cen[c], nc[u.id]) - mA) - norm(angTo(cen[c], nc[v.id]) - mA));
-                here.forEach((K, n) => { const sw = (x.a1 - x.a0) / here.length; feedsOf(K).push({ x, from: ptAt(cen[c], ri, x.a0 + (n + 0.5) * sw), slot: sw * ri, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c] }); });
+                const sp = splitKids(here, x, x.a1 - x.a0);
+                here.forEach((K, n) => feedsOf(K).push({ x, from: ptAt(cen[c], ri, x.a0 + sp[n].off), slot: sp[n].w * ri, cov: sp[n].cov, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c] }));
             });
             walk(f);
         });

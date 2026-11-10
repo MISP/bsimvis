@@ -626,7 +626,17 @@
         const snapshot = () => placed.map(r => ({ order: r.cross.slice(), cs: r.cross.map(x => x.c) }));
         const restore = sn => placed.forEach((r, i) => { r.cross = sn[i].order; r.cross.forEach((x, k) => { x.c = sn[i].cs[k]; x.a0 = r.mid0 + x.c - x.w / 2; x.a1 = r.mid0 + x.c + x.w / 2; }); });
         // crossing-minimising order: an arc goes where the arcs it connects to lie, seen from its ring's centre (barycentre sweeps over all rings)
-        if (RING.ORDER_SWEEPS > 0 && nF > 1) {
+        // while things move (o.reuse) the order found by the last full frame is kept: the sweeps count crossings, which costs more than all the rest of a frame
+        const akey = x => `${x.b.k}|${x.key}`, ao = sim.arcOrder;
+        if (o.reuse && ao && ao.M === M && ao.nF === nF && placed.every((r, c) => ao.ord[c].length === r.cross.length && r.cross.every(x => ao.set[c].has(akey(x))))) {
+            placed.forEach((r, c) => {
+                if (r.cross.length < 2) return;
+                const at_ = new Map(ao.ord[c].map((k, i) => [k, i])), order = r.cross.slice().sort((u, v) => at_.get(akey(u)) - at_.get(akey(v))), cs = r.cross.map(x => x.c).sort((u, v) => u - v);
+                order.forEach((x, i) => (x.c = cs[i]));
+                r.cross = order;
+                relax(r);
+            });
+        } else if (RING.ORDER_SWEEPS > 0 && nF > 1) {
             let best = { n: crossCount(), sn: snapshot() };
             for (let sweep = 0; sweep < RING.ORDER_SWEEPS; sweep++) {
                 let changed = false;
@@ -657,6 +667,7 @@
             }
             restore(best.sn);
         }
+        { const ord = placed.map(r => r.cross.map(akey)); sim.arcOrder = { M, nF, ord, set: ord.map(o_ => new Set(o_)) }; }
         placed.forEach((r, c) => (segs[c] = [...r.inner_, ...r.cross]));
         out.segs = segs;
 
@@ -1064,7 +1075,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.host.appendChild(crumb);
         const S = { shut: new Set(), sim: newSim(), nested: ctx.opts.nest !== false, open: new Set(), fc: null, fcTok: 0, focusSet: null, pend: null, err: '', noteBase: '', fadeNew: false, arc: ['partner', 'group', 'one'].includes(ctx.opts.arc) ? ctx.opts.arc : RING.ARC_DEFAULT, min: ctx.opts.min ?? RING.MIN_PCT, list: !!ctx.opts.list, tier: ctx.opts.tier === 'hide' ? 'hide' : 'show', bundle: ctx.opts.bundle ?? RING.BUNDLE_DEFAULT };
         const opt = () => ({ nest: S.nested, arc: S.arc, min: S.min, list: S.list, tier: S.tier, bundle: S.bundle });
-        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 }, liveMode = null;
+        let M = null, key = '', nodes = new Map(), ids = [], raf = 0, dead = false, press = null, frame = null, mods = [], cur = { mode: 0, est: 0 }, liveMode = null, live = false;
         let byMod = new Map(), holdEls = new Map(), lit = [];
         const mkEl = (tag, text) => { const e = document.createElementNS(NS, tag); if (text != null) e.textContent = text; return e; };
 
@@ -1215,7 +1226,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         }
         // the DOM is rebuilt only when the element list changes (a new layout, mode or opened circle); a physics frame updates attributes
         function paint() {
-            frame = geometry(M, S, { mode: liveMode ?? cur.mode });
+            frame = geometry(M, S, { mode: liveMode ?? cur.mode, reuse: live });
             const els = frame.els;
             const same = els.length === ids.length && els.every((e, i) => e.id === ids[i]);
             if (!same) {
@@ -1454,12 +1465,14 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const e = S.sim.tick();
             // while things move, big drawings use the next lighter mode; the full drawing comes back once the motion stops
             liveMode = cur.est > RING.BUDGET[1] * 0.5 ? Math.max(cur.mode, 2) : cur.est > RING.BUDGET[0] * 0.35 ? Math.max(cur.mode, 1) : null;
+            live = true;
             paint();
+            live = false;
             cost = performance.now() - now;
             frames++;
             const drag = !!S.sim.drag, active = e > RING.SETTLE || (drag && pointerMoved);
             pointerMoved = false;
-            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { if (liveMode !== null) { liveMode = null; paint(); } return; }
+            if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { liveMode = null; paint(); return; }
             raf = requestAnimationFrame(step);
         }
         // Escape clears the pin

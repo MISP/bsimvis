@@ -622,8 +622,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.strictEqual(merges, 1); assert.notStrictEqual(cur.doc, merged); assert.ok(cur.doc.nodes.length > merged.nodes.length, 'more nodes after opening');
             assert.strictEqual(g0.children[0], rootBefore, 'the same SVG root'); assert.strictEqual(track, pinBefore, 'the pin stays'); assert.strictEqual(camCalls.length, camN, 'the camera does not move on a merge'); assert.deepStrictEqual([...S2.open], openSet, 'S.open stays');
             const after = shotPts();
-            for (const id of nodesBefore) if (!ids.includes(id)) assert.deepStrictEqual(after[`n:${id}`], moved[`n:${id}`], `the physics point of ${id} is untouched`);
-            for (const k of Object.keys(moved).filter(k => k.startsWith('f:'))) assert.deepStrictEqual(after[k], moved[k], `${k} is untouched`);
+            for (const id of nodesBefore) if (!ids.includes(id)) assert.deepStrictEqual([after[`n:${id}`].dx, after[`n:${id}`].dy], [moved[`n:${id}`].dx, moved[`n:${id}`].dy], `the drag offset of ${id} is untouched (its home follows the repacked cluster)`);
+            for (const k of Object.keys(moved).filter(k => k.startsWith('f:'))) assert.deepStrictEqual([after[k].dx, after[k].dy], [moved[k].dx, moved[k].dy], `${k} drag offset is untouched`);
             assert.ok(S2.fc && S2.fc.id === f0, 'the focus stays'); assert.ok(!circle(f0).cls.has('ring-pending'), 'no pending state left');
             // the new files sit inside their new cluster, inside the family
             const fr = ring.frame(), newIdx = cur.doc.nodes.map((n, i) => [n, i]).filter(([n]) => /#[12]$/.test(n.id)).map(([, i]) => i), famC = fr.nc[f0], famR = fr.els.find(e => e.id === `c:${f0}`).a.r;

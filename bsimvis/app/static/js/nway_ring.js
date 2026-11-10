@@ -1333,7 +1333,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (S.sim.moved) return;
             S.fc = null; S.focusSet = null; S.fcTok++; S.pend = null; S.err = '';
             if (how === 'minus') { S.shut.add(n.id); S.open.delete(n.id); } else { S.shut.delete(n.id); S.open.add(n.id); }
+            // its files start again from the cluster's current spot
+            for (const i of n.files) { const nid = M.doc.nodes[i].id; delete S.sim.fhomes[nid]; delete S.sim.pts[`n:${nid}`]; }
             full();
+            if (how === 'plus' && ctx.camera && frame) { const m = M.byId.get(n.id); if (m) ctx.camera.to(clusterBox(m)); }
             applyFocus();
             drawCrumb();
             setNote();
@@ -1373,6 +1376,19 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             key = k;
             M = buildModel(doc, R, C, { shut: S.shut, minPct: S.min, tier: S.tier, arc: S.arc, hsl: ctx.hsl, hue: ctx.hue, tree: ctx.tree(), nodeColor: ctx.nodeColor, grey: ctx.grey });
             mods = M.mods;
+            // a cluster that grew or shrank (opened, collapsed, merged files opened) repacks its family: forget that family's frozen homes so its parts
+            // follow the new layout; drags, the family's own spot and the other families stay (the family constraint pushes neighbours apart)
+            const sig = S.sim.sig || (S.sim.sig = {});
+            for (const f of M.roots) {
+                const ids = [], w = c => { ids.push(c.id); c.kids.forEach(w); };
+                w(f);
+                const g = ids.map(id => `${id}:${Math.round(M.byId.get(id).r)}`).join('|');
+                if (sig[f.id] !== undefined && sig[f.id] !== g) {
+                    ids.forEach(id => { if (id !== f.id) delete S.sim.homes[id]; });
+                    f.files.forEach(i => delete S.sim.fhomes[doc.nodes[i].id]);
+                }
+                sig[f.id] = g;
+            }
         }
 
         // ---- dragging

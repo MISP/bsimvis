@@ -256,7 +256,10 @@
             if (v.selectedClusterUuid !== uuid || !host.isConnected) return;
             if (linInst) linInst.destroy();
             doc.scope = 'code';
-            linInst = window.NwayLineage.mount(host, { view: 'tree', lens: 'modules', laneNames: false, onNode: () => true });
+            // same default as the lineage page: the remembered pick, else Ring for a wide enough set (NwayRing.autoView)
+            let mem = ''; try { mem = localStorage.getItem('nway.lview') || ''; } catch (e) { /* ignore */ }
+            const pick = window.NwayRing ? window.NwayRing.chooseView('', mem, doc).view : 'tree';
+            linInst = window.NwayLineage.mount(host, { view: pick === 'tracks' || pick === 'ring' ? pick : 'tree', lens: 'modules', laneNames: false, onNode: () => true });
             linInst.setDoc(doc, 'modules');
         } catch (e) {
             if (host.isConnected) host.innerHTML = `<div class="dim" style="font-size:0.78rem; padding:10px;">${escapeHtml(e.message || String(e))}</div>`;

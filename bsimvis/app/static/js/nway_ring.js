@@ -1153,8 +1153,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!tot) return '';
             const col = { core: 'var(--success)', common: 'var(--warning, #d97706)', rare: 'var(--text-muted, #888)' };
             const bar = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<i style="width:${((100 * t[k]) / tot).toFixed(1)}%;background:${col[k]}"></i>`).join('');
-            const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `${TIER[k][0]} ${TIER[k][1]} ${ctx.fmt(t[k])}`).join(' \u00b7 ');
-            return `<div class="nway-tip-h">Its functions</div><div class="nway-tip-fnbar">${bar}</div><div class="dim nway-tip-legend">${txt}${ctx.rowTier && ctx.rowTier() ? ' \u00b7 the current tab shows only these' : ''}</div>`;
+            const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<span class="nway-tip-sw"><i style="background:${col[k]}"></i>${TIER[k][1]} ${ctx.fmt(t[k])}</span>`).join('');
+            return `<div class="nway-tip-h">Its functions</div><div class="nway-tip-fnbar">${bar}</div><div class="nway-tip-legend">${txt}</div>${ctx.rowTier && ctx.rowTier() ? '<div class="dim nway-tip-legend">the current tab shows only these</div>' : ''}`;
         };
         const metaHtml = b => {
             const fm = M.doc.file_meta;

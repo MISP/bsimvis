@@ -769,6 +769,23 @@
             const a = mix(u0, d), b = mix(u1, [-d[0], -d[1]]);
             return [[P0[0] + a[0] * k, P0[1] + a[1] * k], [P1[0] + b[0] * k, P1[1] + b[1] * k]];
         };
+        // L / R sides of a band, their two ends moved onto the start arc (parent ring, centred on arc.m, width w0) and the end arc (lane, a0..a1), with the arcs as caps
+        const arcEnds = (bd, arc, w0, C1, r1, a0, a1) => {
+            const L = bd.L.map(q => q.slice()), R = bd.R.map(q => q.slice()), n = L.length - 1, cap = (c, r, f, t) => [1, 2, 3].map(i => ptAt(c, r, f + ((t - f) * i) / 4));
+            const near = (A, B, S0, S1) => Math.hypot(A[0] - S0[0], A[1] - S0[1]) + Math.hypot(B[0] - S1[0], B[1] - S1[1]);
+            const shift = (A, B, ang0, ang1, c, r, atEnd) => {
+                let e0 = ptAt(c, r, ang0), e1 = ptAt(c, r, ang1), aA = ang0, aB = ang1;
+                if (near(A[atEnd ? n : 0], B[atEnd ? n : 0], e0, e1) > near(A[atEnd ? n : 0], B[atEnd ? n : 0], e1, e0)) { [e0, e1] = [e1, e0]; [aA, aB] = [aB, aA]; }
+                const i0 = atEnd ? n : 0, dA = [e0[0] - A[i0][0], e0[1] - A[i0][1]], dB = [e1[0] - B[i0][0], e1[1] - B[i0][1]];
+                for (let k = 0; k <= n; k++) { const t = atEnd ? k / n : 1 - k / n, wt = t * t * t; A[k][0] += dA[0] * wt; A[k][1] += dA[1] * wt; B[k][0] += dB[0] * wt; B[k][1] += dB[1] * wt; }
+                return [aA, aB];
+            };
+            const [eA, eB] = shift(L, R, a0, a1, C1, r1, true);
+            const endCap = cap(C1, r1, eA, eB);
+            let startCap = [];
+            if (arc) { const hw = w0 / 2 / arc.r, [sA, sB] = shift(L, R, arc.m - hw, arc.m + hw, arc.c, arc.r, false); startCap = cap(arc.c, arc.r, sB, sA); }
+            return L.concat(endCap, R.reverse(), startCap);
+        };
         const laneRing = (X, feeds) => {
             if (!feeds.length) return;
             const C = nc[X.id], rp = X.r + (X.level === 0 ? RING.ROOT_LANE_OFF : RING.LANE_OFF), ports = feeds.map(fd => ({ ...fd, wp: Math.max(fd.x.size, 1) * M.lanePx * (fd.cov ?? 1) }));
@@ -776,9 +793,11 @@
             out.stats.laneFit = Math.min(out.stats.laneFit, fsc);
             ports.forEach(p => { p.wp *= fsc; p.w = p.wp / rp; p.c = ((angTo(C, p.from) % TAU) + TAU) % TAU; });
             ports.sort((p, q) => p.c - q.c);
+            // free room on the ring is shared out: lanes are pushed apart by half of it, so links of different modules do not pile up in one direction
+            const spread = ports.length > 1 ? 0.5 * Math.max(0, (TAU - sum(ports, p => p.w) - ports.length * RING.LANE_GAP) / ports.length) : 0;
             for (let it = 0; it < 80 && ports.length > 1; it++) {
                 for (let k = 0; k < ports.length; k++) {
-                    const j = (k + 1) % ports.length, dj = ports[j].c - ports[k].c + (j === 0 ? TAU : 0), gap = dj - (ports[k].w + ports[j].w) / 2 - RING.LANE_GAP;
+                    const j = (k + 1) % ports.length, dj = ports[j].c - ports[k].c + (j === 0 ? TAU : 0), gap = dj - (ports[k].w + ports[j].w) / 2 - RING.LANE_GAP - spread;
                     if (gap < 0) { ports[k].c += gap / 2; ports[j].c -= gap / 2; }
                 }
             }
@@ -788,14 +807,16 @@
                 if (!light && !p.noBand) {
                     const P1 = ptAt(C, rp + 4, p.c), P0 = p.from, dist = Math.hypot(P1[0] - P0[0], P1[1] - P0[1]), h = Math.max(20, dist * 0.4), cl = Math.hypot(p.centre[0] - P0[0], p.centre[1] - P0[1]) || 1, u0 = [(p.centre[0] - P0[0]) / cl, (p.centre[1] - P0[1]) / cl], u1 = [Math.cos(p.c), Math.sin(p.c)];
                     const w0 = Math.min(Math.max(p.slot, p.wp * 0.8), p.wp * 2, p.slot > 0 ? p.slot : Infinity, RING.LANE_FIT * TAU * rp), [k0, k1] = avoid(X, P0, ...softStems(P0, P1, u0, u1, h), P1), bd = band(P0, k0, k1, P1, w0, p.wp, 16);
-                    add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(bd.L.concat(bd.R.reverse())) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
+                    // both ends follow the round arcs: the start sits on the parent's ring, the end on this lane, instead of a straight cut
+                    const poly = arcEnds(bd, p.arc, w0, C, rp + 4, a0, a1);
+                    add(`u:${sk}:${X.id}:${p.srcId}`, 'path', { d: polyD(poly) }, { s: { fill: b.color }, sa: { opacity: 0.34 * fade(b) }, m: b.k, bucket: b.bucket, drag: p.srcDrag, lane: X.id, src: p.srcId, sk });
                 }
                 add(`l:${sk}:${X.id}`, 'path', { d: `M${P(ptAt(C, rp, a0))} A${f1(rp)},${f1(rp)} 0 0 1 ${P(ptAt(C, rp, a1))}` }, { s: { stroke: b.color }, sa: { fill: 'none', 'stroke-width': b.bucket ? RING.LANE_STROKE * 0.55 : RING.LANE_STROKE, 'stroke-linecap': 'round', opacity: fade(b) }, m: b.k, bucket: b.bucket, drag: key(X), lane: X.id, sk, own: p.noBand, pair: p.x.partner != null ? { X: Math.min(X.famIdx, p.x.partner), Y: Math.max(X.famIdx, p.x.partner), n: p.x.size } : undefined, pairs: p.x.partner == null && p.x.slots ? p.x.slots.map(t => ({ X: Math.min(X.famIdx, t.p), Y: Math.max(X.famIdx, t.p), n: t.size })) : undefined });
                 out.stats.lanes.push({ k: b.k, node: X.id, w: p.w, wp: p.wp, rp, own: p.noBand });
                 if (kids.length) {
                     const here = kids.filter(K => holdersIn(K, p.x).length).sort((u, v) => norm(angTo(C, nc[u.id]) - p.c) - norm(angTo(C, nc[v.id]) - p.c));
                     const sp = splitKids(here, p.x, p.w);
-                    here.forEach((K, n) => feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + sp[n].off), slot: sp[n].w * (rp - 3.5), cov: sp[n].cov, srcDrag: key(X), srcId: `${X.id}`, centre: C }));
+                    here.forEach((K, n) => feedsOf(K).push({ x: p.x, from: ptAt(C, rp - 3.5, a0 + sp[n].off), slot: sp[n].w * (rp - 3.5), cov: sp[n].cov, srcDrag: key(X), srcId: `${X.id}`, centre: C, arc: { c: C, r: rp - 3.5, m: a0 + sp[n].off } }));
                 } else if (!agg(X)) inner(C, rp - 3.5, a0, a1, holdersIn(X, p.x), p.x, key(X), M.famFiles[X.famIdx]);
             });
         };
@@ -813,7 +834,7 @@
             else segs[c].forEach(x => {
                 const mA = (x.a0 + x.a1) / 2, here = f.kids.filter(K => holdersIn(K, x).length).sort((u, v) => norm(angTo(cen[c], nc[u.id]) - mA) - norm(angTo(cen[c], nc[v.id]) - mA));
                 const sp = splitKids(here, x, x.a1 - x.a0);
-                here.forEach((K, n) => feedsOf(K).push({ x, from: ptAt(cen[c], ri, x.a0 + sp[n].off), slot: sp[n].w * ri, cov: sp[n].cov, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c] }));
+                here.forEach((K, n) => feedsOf(K).push({ x, from: ptAt(cen[c], ri, x.a0 + sp[n].off), slot: sp[n].w * ri, cov: sp[n].cov, srcDrag: `f:${f.id}`, srcId: `${f.id}`, centre: cen[c], arc: { c: cen[c], r: ri, m: x.a0 + sp[n].off } }));
             });
             walk(f);
         });

@@ -2087,6 +2087,15 @@ def _lineage_order(doc, args):
     }
 
 
+_LINEAGE_FILE_META = (
+    "language_id",
+    "format",
+    "file_size",
+    "batch_name",
+    "collection",
+    "tags",
+)
+
 # ponytail: past this many function ids `rows.fids` is left out, the client keeps `fid`
 LINEAGE_FIDS_MAX = 200_000
 
@@ -2255,4 +2264,9 @@ def get_nway_lineage():
     out["columns_mode"] = doc["columns_mode"]
     out["min_edge"] = doc["min_edge"]
     out["warnings"] = doc["warnings"]
+    # per file metadata (the ring tooltip's distributions); a node's `members` are these ids
+    out["file_meta"] = {
+        c["id"]: {k: c.get(k) for k in _LINEAGE_FILE_META}
+        for c in (doc.get("file_columns") or doc["columns"])
+    }
     return out

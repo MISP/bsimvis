@@ -777,13 +777,16 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         };
 
         // ---- tooltip / drawer ----
-        const showTip = (ev, title, dot, rows) => {
+        const showTip = (ev, title, dot, rows, html) => {
             tip.selectAll('*').remove();
             const t = tip.append('div').attr('class', 't');
-            t.append('span').attr('class', 'lin-dot').style('background', dot);
+            // a {color, glyph, tag} badge (Core / Rare ...) in the colour of the thing, else the plain dot
+            if (dot && typeof dot === 'object') t.append('span').text(`${dot.glyph} ${dot.tag}`).style('color', dot.color).style('border', '1px solid').style('border-radius', '6px').style('padding', '0 6px').style('margin-right', '8px').style('font-weight', '700').style('white-space', 'nowrap');
+            else t.append('span').attr('class', 'lin-dot').style('background', dot);
             t.append('span').text(title);
             const kv = tip.append('div').attr('class', 'lin-kv');
             for (const [k, v] of rows) { kv.append('span').attr('class', 'k').text(k); kv.append('span').text(v); }
+            if (html) tip.append('div').style('margin-top', '6px').style('font-size', '11px').html(html); // the caller escapes every value
             tip.style('display', 'block');
             moveTip(ev);
         };
@@ -1704,6 +1707,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                         if (n) pickNode(n);
                     },
                     showTip, moveTip, hideTip, fmt, name: nameOf, nodeColor: i => nodeColor(st.doc, i),
+                    laneName: cat => { const g = cat && cat.g; return g ? NG.shownName(st.S.names[g.id]) || '' : ''; },
                     tree: () => st.doc._colors || (st.doc._colors = window.NwayColors.tree(st.doc.nodes.map(n => ({ id: n.id, path: n.path })))),
                     hsl, hue: hueOf, grey: GREY, fit: () => fit(true),
                     camera: { get: () => st.t, to: bb => zoomBox(bb), restore: t => s.transition().duration(450).call(zoom.transform, t) },

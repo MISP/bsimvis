@@ -1140,19 +1140,55 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
         
         // ---- tooltips
+        // the metadata distributions of the files that hold a module (architecture, format, size, batch, collection, tags)
+        const SIZES = n => { n = Number(n); return !n ? null : n < 16384 ? '<16 KB' : n < 65536 ? '16-64 KB' : n < 262144 ? '64-256 KB' : n < 1048576 ? '256 KB-1 MB' : n < 4194304 ? '1-4 MB' : '>4 MB'; };
+        const DIMS = [['Architecture', m => m.language_id], ['Format', m => m.format], ['Size', m => SIZES(m.file_size)], ['Batch', m => m.batch_name], ['Collection', m => m.collection], ['Tags', m => m.tags, true]];
+        const countBy = (metas, get, multi) => { const c = new Map(); for (const m of metas) for (const v of [].concat(multi ? get(m) || [] : [get(m)])) if (v !== null && v !== undefined && v !== '') c.set(String(v), (c.get(String(v)) || 0) + 1); return c; };
+        const filesOf = idx => { const out = []; for (const i of idx) { const n = M.doc.nodes[i]; for (const id of n.members && n.members.length ? n.members : [n.id]) out.push(id); } return out; };
+        // the lane tooltip's coverage bars (the table's: bar = share of the module's files, tick = share of all files), as HTML for the tooltip
+        const metaHtml = b => {
+            const fm = M.doc.file_meta;
+            if (!fm) return '';
+            const here = filesOf(b.mem).map(id => fm[id]).filter(Boolean), all = M.allMeta || (M.allMeta = Object.values(fm));
+            if (!here.length) return '';
+            let out = '<div class="dim nway-tip-legend">bar: share of the module\'s files · tick: share of all files</div>';
+            for (const [title, get, multi] of DIMS) {
+                const h = countBy(here, get, multi), a = countBy(all, get, multi);
+                if (!h.size || (h.size === 1 && a.size === 1)) continue; // the same for the whole set: no information
+                const top = [...h].sort((x, y) => y[1] - x[1]).slice(0, 4), uniform = h.size === 1 && a.size > 1 && top[0][1] === here.length;
+                out += `<div class="nway-tip-h">${escapeHtml(title)}${uniform ? ' <span class="nway-tip-flag" title="Every file of this module shares it, the other files do not all">only this</span>' : ''}${h.size > top.length ? ` <span class="dim">+${h.size - top.length} more</span>` : ''}</div>`;
+                for (const [v, n] of top) out += `<div class="nway-tip-row" title="${escapeAttr(v)}"><span class="nway-tip-v">${escapeHtml(v)}</span><span class="nway-tip-bar"><i style="width:${((100 * n) / here.length).toFixed(0)}%"></i><b style="left:${((100 * (a.get(v) || 0)) / all.length).toFixed(0)}%"></b></span><span class="dim">${n}</span></div>`;
+            }
+            return out;
+        };
+        // a module's place in the clusters: Core / Common / Rare of a cluster, or unique to it
+        // the badge: Core / Common / Rare in the hovered cluster (or in the whole set), Unique when no file outside it holds the module
+        const badgeOf = (b, lc) => { const u = ['\u25c6', 'Unique']; if (lc && lc.t > 1) return lc.n === b.mem.length ? u : TIER[covTier(lc.n, lc.t)]; return b.fam != null ? u : TIER[covTier(b.mem.length, M.N)]; };
+        // a cluster is named by its biggest file, often a hash: say how big it is instead
+        const cname = (s, n) => (s && !/[0-9a-f]{24,}/i.test(s) ? s : `cluster of ${n}`);
+        const classRows = (b, lc) => {
+            const pct = (n, t) => `${Math.round((100 * n) / Math.max(1, t))}%`, line = (name, n, t) => ['In', `${name} \u00b7 ${n} of ${t} files (${pct(n, t)})`];
+            if (lc && lc.t > 1) return [line(cname(lc.name, lc.t), lc.n, lc.t)];
+            const rows = [];
+            for (const c of (b.fam != null ? [b.fam] : b.fams)) {
+                const f = M.roots[c], n = b.mem.filter(i => M.famOf[i] === c).length;
+                if (f.files.length > 1 || b.fam != null) rows.push(line(cname(f.label, f.files.length), n, f.files.length));
+            }
+            return (rows.length > 4 ? [...rows.slice(0, 4), ['', `+${rows.length - 4} more clusters`]] : rows).map((r, i) => (i ? ['', r[1]] : r));
+        };
         const modTip = (ev, b, pr, prs, bu, fc, lc) => {
             if (!b) return;
-            const doc = M.doc, names = b.mem.slice(0, 6).map(i => ctx.name(doc.nodes[i].id)).join(', ') + (b.mem.length > 6 ? ` +${b.mem.length - 6} more` : '');
-            const lab = c => M.roots[c].label;
-            ctx.showTip(ev, b.label, b.color, [
-                pr ? ['Shared', `${ctx.fmt(pr.n)} functions shared between ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)} in the module)`] : ['Functions', ctx.fmt(b.size)],
-                ...(prs ? prs.slice(0, 8).map(q => ['Shared', `${ctx.fmt(q.n)} between ${lab(q.X)} and ${lab(q.Y)} (of ${ctx.fmt(b.size)} in the module)`]) : []),
-                ...(bu ? [['Bundle', `${M.roots[bu.X].label} + ${M.roots[bu.Y].label}: ${bu.n} modules, ${ctx.fmt(bu.m)} shared functions`]] : []),
-                ...(fc ? [['This file', `${ctx.name(M.doc.nodes[fc.i].id)} holds ${ctx.fmt(fc.n)} of ${ctx.fmt(b.size)} (${Math.round((100 * fc.n) / Math.max(1, b.size))}%)`]] : []),
-                ...(lc && lc.t > 1 ? [['Role', `${tierText(lc.n, lc.t)} in ${lc.name || 'this cluster'}: ${lc.n} of ${lc.t} files (${Math.round((100 * lc.n) / lc.t)}%)`]] : []),
-                ...(b.fam != null ? [['Only in cluster', M.roots[b.fam].label]] : []),
-                ['Held by', `${b.mem.length} file${b.mem.length === 1 ? '' : 's'}${b.fams.length > 1 ? ` in ${b.fams.length} families` : ''}`], ['Files', names],
-                ['', `A file holds a module when it has at least one of its functions. Core: ${Math.round(100 * RING.CORE_MIN)}% or more of a cluster's files, Common: ${Math.round(100 * RING.COMMON_MIN)}% or more, Rare: fewer.`]]);
+            const lab = c => cname(M.roots[c].label, M.roots[c].files.length), pct = (n, t) => `${Math.round((100 * n) / Math.max(1, t))}%`;
+            const nm = (ctx.laneName && ctx.laneName(b.cat)) || b.label;
+            const [glyph, tag] = badgeOf(b, lc);
+            ctx.showTip(ev, nm, { color: b.color, glyph, tag }, [
+                ['Functions', pr ? `${ctx.fmt(pr.n)} shared by ${lab(pr.X)} and ${lab(pr.Y)} (of ${ctx.fmt(b.size)})` : `${ctx.fmt(b.size)}${M.nFuncs ? ` · ${pct(b.size, M.nFuncs)} of the set` : ''}`],
+                ...(prs ? prs.slice(0, 3).map(q => ['Shared', `${lab(q.X)} + ${lab(q.Y)}: ${ctx.fmt(q.n)}`]) : []),
+                ...(bu ? [['Bundle', `${lab(bu.X)} + ${lab(bu.Y)}: ${bu.n} modules, ${ctx.fmt(bu.m)} functions`]] : []),
+                ...(fc ? [['This file', `${ctx.fmt(fc.n)} of ${ctx.fmt(b.size)} (${pct(fc.n, b.size)})`]] : []),
+                ...classRows(b, lc),
+                ['Files', `${filesOf(b.mem).length} of ${filesOf(M.doc.nodes.map((_, i) => i)).length}`],
+                ], metaHtml(b));
         };
         const fileTip = (ev, i) => {
             const n = M.doc.nodes[i], held = mods.filter(b => b.mem.includes(i)).sort((a, b) => b.size - a.size);

@@ -40,6 +40,9 @@
 .cov-big { margin-left:auto; font-size:1.35rem; font-weight:700; font-variant-numeric:tabular-nums; }
 .cov-big small { font-size:0.7rem; color:var(--dim); font-weight:400; margin-left:4px; }
 .cov-acts { margin-left:auto; display:flex; gap:6px; flex-wrap:wrap; }
+.cov-lin { height:300px; border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
+.cov-lin .lin-root, .cov-lin .lin-body { flex:1; min-height:0; display:flex; flex-direction:column; }
+.cov-lin .lin-tb { display:none; }
 .cov-foot { margin-top:auto; display:flex; gap:6px; flex-wrap:wrap; }
 .cov-btn { display:inline-flex; align-items:center; gap:6px; }
 .cov-btn i { color:var(--c, inherit); }
@@ -228,6 +231,36 @@
             <div id="cov-fn-body" style="display:flex; flex-direction:column; gap:10px;">${spin(`Aligning functions across ${num(c.count)} files…`)}</div>
             <div class="cov-foot">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}</div>
         </div>`;
+    }
+
+    function lineageCard() {
+        return `<div class="cov-card">
+            ${title('fa-solid fa-sitemap', 'var(--accent)', 'Lineage', 'Who inherited what from whom: a preview of the lineage tree of this cluster\'s files. Drag to pan, scroll to zoom.')}
+            <div id="cov-lin" class="cov-lin">${spin('Building the lineage…')}</div>
+            <div class="cov-foot">${btn('fa-solid fa-sitemap', 'var(--accent)', 'Full lineage', 'ClusterDetailView.openLineage(event)')}</div>
+        </div>`;
+    }
+
+    // ponytail: the lineage page's widget with its toolbar hidden; a node click is swallowed, no dock here.
+    let linInst = null;
+    async function loadLineage(el, v, c) {
+        const host = el.querySelector('#cov-lin');
+        const uuid = c.cluster_uuid;
+        const qs = new URLSearchParams({ cluster_uuid: uuid, axis: v.axis, columns: 'files', order: 'tree', scope: 'code', tab: 'all', group: 'region,role' });
+        if (v.params && v.params.pool) qs.set('pool', v.params.pool);
+        else qs.set('collection', v.collection || '');
+        try {
+            const res = await fetch(`/api/bin_sim/nway/lineage?${qs}`, { signal: AbortSignal.timeout(180000) });
+            const doc = await res.json();
+            if (!res.ok) throw new Error(doc.message || doc.error || `HTTP ${res.status}`);
+            if (v.selectedClusterUuid !== uuid || !host.isConnected) return;
+            if (linInst) linInst.destroy();
+            doc.scope = 'code';
+            linInst = window.NwayLineage.mount(host, { view: 'tree', lens: 'modules', laneNames: false, onNode: () => true });
+            linInst.setDoc(doc, 'modules');
+        } catch (e) {
+            if (host.isConnected) host.innerHTML = `<div class="dim" style="font-size:0.78rem; padding:10px;">${escapeHtml(e.message || String(e))}</div>`;
+        }
     }
 
     const laneName = (names, g) => (names[g.id] && !/^unnamed/i.test(names[g.id])) ? names[g.id] : g.hint ? `${g.hint}…` : `${ones(g.mask)}-file lane`;
@@ -444,9 +477,11 @@
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
                 <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
+                ${fn ? lineageCard() : ''}
                 ${fn ? `<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
-            if (fn) loadLanes(el, v, c);
+            if (linInst) { linInst.destroy(); linInst = null; }
+            if (fn) { loadLanes(el, v, c); loadLineage(el, v, c); }
         },
 
         /** The N-way table on its own page with these controls (`tab` is its All / Core / Partial / Unique). */

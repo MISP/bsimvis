@@ -220,6 +220,51 @@ def is_noise_cluster(meta):
     return _packed_share(meta) >= OVERVIEW_MAX_PACKED
 
 
+FAMILY_MIN_COH = (
+    0.5  # a looser cluster is an umbrella: its tight children are the families
+)
+_FAM_KEYS = ("cid", "cluster_uuid", "cluster_name", "cohesion_score", "matching")
+
+
+def pick_families(roots, metas, min_coh=FAMILY_MIN_COH):
+    """Families = the first cohesive level of the display tree, ranked like the file search.
+
+    A loose cluster (cohesion < min_coh) is replaced by the families inside it and kept
+    as a group in the map; a loose cluster with none inside stays a family itself.
+    -> (map tree, ranked families, hidden count). Pure: `metas` is {cid: stored meta}.
+    """
+    from bsimvis.app.services.cluster_display import score
+
+    families, hidden = [], 0
+
+    def node(c):
+        nonlocal hidden
+        base = {k: c.get(k) for k in _FAM_KEYS}
+        kids = []
+        if (c.get("cohesion_score") or 0) < min_coh:
+            kids = [n for n in map(node, c.get("children") or []) if n]
+        if kids:
+            return {**base, "family": False, "children": kids}
+        if is_noise_cluster(metas.get(str(c.get("cid")), {})):
+            hidden += 1
+            return None
+        fam = {**base, "family": True, "subs": len(c.get("children") or [])}
+        families.append(fam)
+        return fam
+
+    tree = [n for n in map(node, roots) if n]
+    families.sort(
+        key=lambda f: -score(f.get("matching") or 0, f.get("cohesion_score") or 0)
+    )
+    return tree, families, hidden
+
+
+def _all_cids(nodes):
+    for c in nodes:
+        yield c["cid"]
+        yield from _all_cids(c.get("children") or [])
+
+
 def _uploads(r, col, bins=24):
     """Files added over time: `bins` equal spans between the first and last entry_date."""
     key = f"{col}:idx:file:entry_date"
@@ -270,9 +315,9 @@ def get_collection_overview():
         roots = fams.get("clusters", [])
         r = get_redis()
         metas = get_cluster_metas(
-            r, col, fams.get("algo"), [c["cid"] for c in roots], "bin_cluster"
+            r, col, fams.get("algo"), list(_all_cids(roots)), "bin_cluster"
         )
-        kept = [c for c in roots if not is_noise_cluster(metas.get(str(c["cid"]), {}))]
+        tree, kept, hidden = pick_families(roots, metas)
         recent = _call(
             search_files,
             collection=col,
@@ -283,21 +328,10 @@ def get_collection_overview():
         rare = _call(search_files_by_cluster, collection=col, unclustered=1, limit=8)
         return {
             "has_clusters": fams.get("has_clusters", False),
-            "families": [
-                {
-                    k: c.get(k)
-                    for k in (
-                        "cid",
-                        "cluster_uuid",
-                        "cluster_name",
-                        "cohesion_score",
-                        "matching",
-                    )
-                }
-                for c in kept
-            ],
-            "families_hidden": len(roots) - len(kept),
-            "families_total": fams.get("roots_total", 0),
+            "families": kept,
+            "family_map": tree,
+            "families_hidden": hidden,
+            "families_total": len(kept),
             "unclustered_total": fams.get("unclustered_total", 0),
             "recent": recent.get("files", []),
             "rare": rare.get("files", []),
@@ -572,3 +606,40 @@ def unified_search_stream():
         # Chunks are useless if a proxy buffers them into one response.
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+if __name__ == "__main__":
+    # Self-check: uv run python -I bsimvis/app/routes/home.py
+    big = {"function_count_stats": {"avg": 200}}
+    leaf = lambda cid, coh, n, kids=(): {
+        "cid": cid,
+        "cohesion_score": coh,
+        "matching": n,
+        "children": list(kids),
+    }
+    roots = [
+        leaf(
+            "A",
+            0.13,
+            300,
+            [
+                leaf("A1", 0.85, 13, [leaf("A1a", 0.97, 4)]),
+                leaf("A2", 0.3, 10, [leaf("A2a", 0.9, 4)]),
+                leaf("A3", 0.9, 6),
+            ],
+        ),
+        leaf("B", 0.85, 35, [leaf("B1", 1, 16)]),
+        leaf("C", 0.14, 8),
+    ]
+    metas = {k: big for k in ("A", "A1", "A1a", "A2", "A2a", "B", "B1", "C")}
+    metas["A3"] = {"function_count_stats": {"avg": 2}}
+    tree, fams, hidden = pick_families(roots, metas)
+    # loose A becomes a group of its tight children; A2 is loose too, so A2a is the family
+    assert [f["cid"] for f in fams] == ["B", "A1", "A2a", "C"], fams
+    assert hidden == 1  # A3: 2 functions per file
+    assert not tree[0]["family"]
+    assert [k["cid"] for k in tree[0]["children"]] == ["A1", "A2"]
+    assert tree[2]["family"] and fams[0]["subs"] == 1  # C: loose, nothing inside
+    packed = {"packer": [{"tag_id": "packer:upx", "coverage": 0.8, "children": []}]}
+    assert is_noise_cluster({"file_tag_distribution": packed})
+    print("home self-check OK")

@@ -164,17 +164,31 @@ window.CollectionDetailView = {
     /** Circle packing of the shown families: area = files, colour = cohesion. Click opens the cluster. */
     _drawFamilyMap() {
         const el = document.getElementById('cdo-map');
-        const fams = (this._ov || {}).families || [];
-        if (!el || !fams.length || !window.d3) return;
-        const W = el.clientWidth || 600, H = 260;
-        const root = d3.pack().size([W, H]).padding(3)(d3.hierarchy({ children: fams }).sum(d => Math.max(1, d.matching || 0)));
-        const nodes = root.leaves().map(n => {
-            const f = n.data, name = f.cluster_name || `Cluster ${f.cid}`;
-            const label = n.r > 26 ? `<text x="${n.x.toFixed(1)}" y="${(n.y + 4).toFixed(1)}" text-anchor="middle" class="cdo-map-t">${escapeHtml(name.length > n.r / 3.6 ? name.slice(0, Math.max(3, Math.floor(n.r / 3.6))) + '…' : name)}</text>` : '';
-            return `<g class="cdo-map-n" onclick="openCluster(${escapeAttr(jsString(f.cluster_uuid))}, true, event, 'overall')">
-                <circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="${n.r.toFixed(1)}" style="--c:${this._cohColor(f.cohesion_score)}"><title>${escapeHtml(`${name}\n${Number(f.matching || 0).toLocaleString()} files · cohesion ${Number(f.cohesion_score || 0).toFixed(2)}`)}</title></circle>${label}</g>`;
+        const ov = this._ov || {};
+        const tree = ov.family_map || ov.families || [];
+        if (!el || !tree.length || !window.d3) return;
+        const W = el.clientWidth || 600, H = 320;
+        // Loose clusters (no family of their own) are dashed groups around the families inside them.
+        const root = d3.pack().size([W, H]).padding(n => (n.depth ? 6 : 3))(
+            d3.hierarchy({ children: tree }, d => (d.cid === undefined || d.family === false ? d.children : null))
+                .sum(d => (d.cid && d.family !== false ? Math.max(1, d.matching || 0) : 0))
+                .sort((x, y) => y.value - x.value));
+        // Map labels drop the repeated prefix: 'mirai#Unix.Trojan.Mirai-8041698-0' -> 'Mirai-8041698-0'.
+        const brief = name => String(name).split('#').pop().split('.').pop() || String(name);
+        const short = (name, r) => { const t = brief(name); const k = Math.max(3, Math.floor(r / 3)); return t.length > k ? t.slice(0, k) + '…' : t; };
+        const tip = f => escapeHtml(`${f.cluster_name || `Cluster ${f.cid}`}\n${Number(f.matching || 0).toLocaleString()} files · cohesion ${Number(f.cohesion_score || 0).toFixed(2)}${f.family === false ? '\nLoose group: the families inside are tighter' : ''}`);
+        const open = f => `onclick="${escapeAttr(`event.stopPropagation(); openCluster(${jsString(f.cluster_uuid)}, true, event, 'overall')`)}"`;
+        const out = root.descendants().filter(n => n.depth > 0).map(n => {
+            const f = n.data, x = n.x.toFixed(1), y = n.y.toFixed(1), r = n.r.toFixed(1);
+            const name = f.cluster_name || `Cluster ${f.cid}`;
+            if (f.family === false) {
+                const lab = n.r > 40 ? `<text x="${x}" y="${(n.y - n.r + 12).toFixed(1)}" text-anchor="middle" class="cdo-map-g">${escapeHtml(short(name, n.r * 1.6))}</text>` : '';
+                return `<g class="cdo-map-grp" ${open(f)}><circle cx="${x}" cy="${y}" r="${r}"><title>${tip(f)}</title></circle>${lab}</g>`;
+            }
+            const lab = n.r > 15 ? `<text x="${x}" y="${(n.y + 3).toFixed(1)}" text-anchor="middle" class="cdo-map-t">${escapeHtml(short(name, n.r))}</text>` : '';
+            return `<g class="cdo-map-n" ${open(f)}><circle cx="${x}" cy="${y}" r="${r}" style="--c:${this._cohColor(f.cohesion_score)}"><title>${tip(f)}</title></circle>${lab}</g>`;
         }).join('');
-        el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Family map">${nodes}</svg>`;
+        el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Family map">${out}</svg>`;
     },
 
     /** Files added over time: one bar per span of the entry_date range. */
@@ -215,7 +229,7 @@ window.CollectionDetailView = {
         const hidden = ov.families_hidden ? `<span class="dim" style="font-size:0.72rem;">${Number(ov.families_hidden).toLocaleString()} small or packed not shown</span>` : '';
 
         const mapCard = fams.length ? `<div class="cov-card cdo-wide">
-            ${this._ovTitle('fa-solid fa-diagram-project', OK, 'Family map', 'The biggest file clusters. Circle area is the number of files, colour is cohesion (green = near-identical files). Click a circle to open the cluster.', ov.families_total)}
+            ${this._ovTitle('fa-solid fa-diagram-project', OK, 'Family map', 'File families: circle area is the number of files, colour is cohesion (green = near-identical files). A dashed circle is a loose cluster that groups several families. Click to open a cluster.', ov.families_total)}
             <div id="cdo-map"></div>
             <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', OK, 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']))}${hidden}</div>
         </div>` : '';
@@ -268,7 +282,11 @@ window.CollectionDetailView = {
             .cdo-map-n { cursor:pointer; }
             .cdo-map-n circle { fill:color-mix(in srgb, var(--c) 22%, var(--card-bg)); stroke:color-mix(in srgb, var(--c) 70%, transparent); stroke-width:1.2; }
             .cdo-map-n:hover circle { fill:color-mix(in srgb, var(--c) 40%, var(--card-bg)); stroke:var(--c); }
-            .cdo-map-t { fill:var(--text); font-size:11px; pointer-events:none; }
+            .cdo-map-t { fill:var(--text); font-size:9px; pointer-events:none; }
+            .cdo-map-grp { cursor:pointer; }
+            .cdo-map-grp circle { fill:color-mix(in srgb, var(--dim) 6%, transparent); stroke:var(--dim); stroke-width:1; stroke-dasharray:4 3; }
+            .cdo-map-grp:hover circle { stroke:var(--text); }
+            .cdo-map-g { fill:var(--dim); font-size:10px; pointer-events:none; }
             .cdo-bars { display:flex; align-items:flex-end; gap:2px; height:110px; }
             .cdo-bars > span { flex:1; height:100%; display:flex; align-items:flex-end; border-radius:2px; }
             .cdo-bars > span:hover { background:var(--hover); }

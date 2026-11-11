@@ -35,12 +35,20 @@ from itertools import combinations
 import numpy as np
 
 from bsimvis.app.services.bin_sim_tags import AXES, merge_tag_fields, tag_axis
-from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME, _LRU, BadParams
+from bsimvis.app.services.nway_diff_service import (
+    _DEFAULT_NAME,
+    _LRU,
+    _SUFFIX,
+    BadParams,
+    _decode,
+)
 from bsimvis.app.services.nway_match import PairEdges, concat_edges
+from bsimvis.app.services import nway_region_service, nway_role_service
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
-MODES = ("tag", "lane", "prefix")
+MODES = ("tag", "lane", "prefix", "role", "presence", "delta", "region")
 PREFIX_MIN = 2  # functions that must share a prefix before it makes a group
+LANE_BROAD_ROWS = 40  # lane size from which sampling spreads and a name with no shared prefix stays general
 LANE_MIN = 2  # units that must share a set of files before it makes a lane
 LANE_FIT = (
     0.9  # a unit with this share of a bundle's files, all inside it, joins the bundle
@@ -51,11 +59,12 @@ NAME_BUCKET = 12  # rows sharing one name that are paired up
 CALL_HUB = 25  # a caller with more callee rows than this says nothing
 CALL_MAX_FIDS = 30000  # call position reads one Redis set per function
 UNTAGGED = "(no tag)"
+SPLIT_MIN = 10  # a nested role / region level splits only a group of more units
+SPLIT_LEVELS = ("role", "region")
+ORDERED = 10**9  # rank of a group with a fixed place (role, presence, delta, region)
 # Grouped tree per (doc, filtered rows, group params): opening a group or
 # scrolling only rebuilds the flat entry list.
 _CACHE = _LRU(8)
-
-_SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 
 
 def _bits(mask, n):
@@ -67,6 +76,8 @@ def _pop(mask):
 
 
 def _fids(row):
+    if row.get("is_string"):
+        return []
     return [
         f for f in (row.get("files") or row["cells"]).values() if isinstance(f, str)
     ]
@@ -80,18 +91,55 @@ def _fileset(r):
 
 
 def _meta(rows, n):
-    """Totals of units: a unit is a row or a merged function (`_rows`)."""
+    """Totals of units: a unit is a row or a merged function (`_rows`).
+
+    Also what a header shows in the row columns: span range, feature range,
+    mean support, mean and lowest cohesion (a merged function counts its
+    cross-version cohesion), the role mix and `heat`, the units per column.
+    """
     union, held = 0, set()
+    heat = [0] * n
+    spans, sup, coh, weights, roles = [], [], [], [], Counter()
     for r in rows:
         union |= r["mask"]
         held |= _fileset(r)
-    return {
+        m = r["mask"]
+        while m:
+            b = m & -m
+            if b.bit_length() <= n:
+                heat[b.bit_length() - 1] += 1
+            m ^= b
+        spans.append(_unit_span(r))
+        members = r.get("_rows") or [r]
+        weights += [x["weight"] for x in members]
+        sup += [x["support"] for x in members if x.get("support") is not None]
+        c = r.get("_xcoh") if "_rows" in r else r.get("cohesion")
+        if c is not None:
+            coh.append(c)
+        if role := nway_role_service.unit_role(r):
+            roles[role] += 1
+    out = {
         "_held": held,
+        "units": len(rows),
         "rows": sum(len(r["_rows"]) if "_rows" in r else 1 for r in rows),
         "weight": sum(r["weight"] for r in rows),
         "union": _bits(union, n),
         "files": len(held),
+        "heat": heat,
     }
+    if spans:
+        out.update(span_lo=min(spans), span_hi=max(spans))
+    if weights:
+        out.update(w_lo=min(weights), w_hi=max(weights))
+    if sup:
+        out["support"] = round(sum(sup) / len(sup), 3)
+    if coh:
+        out.update(
+            cohesion=round(sum(coh) / len(coh), 3), cohesion_min=round(min(coh), 3)
+        )
+    if roles:
+        out["roles"] = dict(roles)
+    return out
 
 
 def _rank(g, sort):
@@ -316,13 +364,13 @@ def _row_tags(row, fmeta, axis):
     return ranked[:TAG_FANOUT]
 
 
-def _tag_path(tag):
-    """Two nesting levels of a tag, below its namespace: `yara:botnet` > `yara:botnet:mirai`."""
+def _tag_path(tag, depth=2):
+    """`depth` nesting levels of a tag, below its namespace: `yara:botnet` > `yara:botnet:mirai`."""
     chain = tag_prefixes(tag) + [tag_body(tag)[0]]
-    return chain[1:3] or chain[-1:]
+    return chain[1 : 1 + depth] or chain[-1:]
 
 
-def tag_groups(rows, fmeta, n, sort, axis, axis_b=""):
+def tag_groups(rows, fmeta, n, sort, axis, axis_b="", depth=2):
     """Tag tree on `axis`; with `axis_b`, `axis` top level crossed with the other's."""
     for a in (axis, axis_b):
         if a and a not in AXES:
@@ -355,7 +403,7 @@ def tag_groups(rows, fmeta, n, sort, axis, axis_b=""):
                 for b in tops
             ]
         else:
-            paths = [_tag_path(a) for a in a_tags]
+            paths = [_tag_path(a, depth) for a in a_tags]
         # two tags can share their first two levels: list the row once per path
         paths = [list(p) for p in dict.fromkeys(map(tuple, paths))] or [[UNTAGGED]]
         also[id(row)] = len(paths)
@@ -400,7 +448,11 @@ def _summary(nd, n):
 def name_key(row):
     """The row's name without compiler suffixes, or None for an auto name."""
     name = (row.get("name") or "").strip()
-    if not name or _DEFAULT_NAME.match(name) or row.get("name_from") == "cluster":
+    if (
+        not name
+        or _DEFAULT_NAME.match(name)
+        or row.get("name_from") in ("cluster", "string")
+    ):
         return None
     while m := _SUFFIX.search(name):
         name = name[: m.start()]
@@ -497,7 +549,12 @@ def merge_units(rows, doc, r, evidence, min_link):
         doc["_links"] = (row_of, _best_links(doc["edges"], row_of))
     row_of, best = doc["_links"]
     at = {id(row): i for i, row in enumerate(all_rows)}
-    cand = [(at[id(row)], row) for row in rows if id(row) in at]
+    # annotated copies (`family=`) carry their index instead of their identity
+    cand = [
+        (row["_at"] if "_at" in row else at[id(row)], row)
+        for row in rows
+        if "_at" in row or id(row) in at
+    ]
     link = {}  # (row, row) -> {"kinds", "sim"}
     # Rows are joined on files, lanes group on columns: with twin or child columns
     # one column holds several files, and two rows in one column may sit in different files.
@@ -522,7 +579,9 @@ def merge_units(rows, doc, r, evidence, min_link):
                 byname[key].append(i)
         for ids in byname.values():
             for a, b in combinations(ids[:NAME_BUCKET], 2):
-                add(a, b, "name", 0.0)
+                sim = best.get((min(a, b), max(a, b)), 0.0)
+                if sim >= min_link:
+                    add(a, b, "name", sim)
     if "call" in evidence:
         if sum(len(_fids(row)) for _, row in cand) > CALL_MAX_FIDS:
             note = "Call position skipped: too many functions. Filter the rows first."
@@ -578,6 +637,7 @@ def merge_units(rows, doc, r, evidence, min_link):
             units.append(byrow[i])
             continue
         members = [byrow[j] for j in sorted(g["rows"])]
+        pairs = list(combinations(sorted(g["rows"]), 2))
         cells = {
             f"{k}:{c}": f
             for k, row in enumerate(members)
@@ -592,6 +652,8 @@ def merge_units(rows, doc, r, evidence, min_link):
                 "_rows": members,
                 "_kinds": g["kinds"],
                 "_sim": g["sim"],
+                # how alike the joined rows are: the mean best edge over row pairs, 0 where the matcher found none
+                "_xcoh": sum(best.get(k, 0.0) for k in pairs) / len(pairs),
                 "_idx": min(g["rows"]),
                 "_fspan": _pop(g["fmask"]),
             }
@@ -599,8 +661,206 @@ def merge_units(rows, doc, r, evidence, min_link):
     return units, note
 
 
+def role_groups(units, n):
+    """One group per triage role, in reading order; units without a role go on to the next level."""
+    by = defaultdict(list)
+    loose = []
+    for u in units:
+        role = nway_role_service.unit_role(u)
+        (by[role] if role else loose).append(u)
+    out = []
+    for key, label, tip in nway_role_service.ROLES:
+        if not by[key]:
+            continue
+        g = _meta(by[key], n)
+        g.update(id=f"role:{key}", kind="role", role=key, label=label, tip=tip)
+        g["path"] = [g["id"]]
+        out.append((g, [(u, {}) for u in by[key]]))
+    if loose:
+        out.append(({"id": "", "path": [], "headless": True}, [(u, {}) for u in loose]))
+    return _fixed(out)
+
+
+def _fixed(groups):
+    """Keep `groups` in the given order, ahead of any plain row beside them."""
+    for i, (g, _) in enumerate(groups):
+        if not g.get("headless"):
+            g["_rank"] = (ORDERED + len(groups) - i, 0, 0)
+    return groups
+
+
+def _band(span, n):
+    if span >= n:
+        return "every"
+    if span <= 2:
+        return "few"
+    return "most" if span >= math.ceil(0.75 * n) else "some"
+
+
+def presence_groups(units, n, nfiles):
+    """Bands by how many files hold a unit: every, most (75%+), some, one or two."""
+    most = max(3, math.ceil(0.75 * nfiles))
+    text = {
+        "every": (f"In all {nfiles} files", "The core every file shares."),
+        "most": (f"In {most}\u2013{nfiles - 1} files", "Missing from a few files."),
+        "some": (f"In 3\u2013{most - 1} files", "Held by part of the set."),
+        "few": ("In one or two files", "Specific to one or two files."),
+    }
+    by = defaultdict(list)
+    for u in units:
+        by[_band(_unit_span(u), nfiles)].append(u)
+    out = []
+    for key in ("every", "most", "some", "few"):
+        if by[key]:
+            g = _meta(by[key], n)
+            label, tip = text[key]
+            g.update(id=f"presence:{key}", kind="presence", label=label, tip=tip)
+            g["path"] = [g["id"]]
+            out.append((g, [(u, {}) for u in by[key]]))
+    return _fixed(out)
+
+
+def _delta(u, n):
+    """Where a unit sits along the column order: kept, added, dropped, a span, scattered or rewritten."""
+    if "_rows" in u and len(u["_rows"]) > 1:
+        masks = [r["mask"] for r in u["_rows"]]
+        if all(masks) and all(not a & b for a, b in combinations(masks, 2)):
+            return ("rewritten",)
+    mask = u["mask"]
+    if mask == (1 << n) - 1:
+        return ("kept",)
+    lo, hi = (mask & -mask).bit_length() - 1, mask.bit_length() - 1
+    if mask != ((1 << (hi - lo + 1)) - 1) << lo:
+        return ("scattered",)
+    if hi == n - 1:
+        return ("added", lo)
+    if lo == 0:
+        return ("dropped", hi)
+    return ("span", lo, hi)
+
+
+def delta_groups(units, n, labels):
+    """Changes along the column order (the order the table shows): what came, went, or was rewritten."""
+    by = defaultdict(list)
+    for u in units:
+        by[_delta(u, n)].append(u)
+    lab = lambda i: labels[i] if i < len(labels) else f"column {i + 1}"
+
+    def place(k):
+        kind = k[0]
+        rank = {
+            "added": 0,
+            "rewritten": 1,
+            "span": 2,
+            "dropped": 3,
+            "scattered": 4,
+            "kept": 5,
+        }[kind]
+        return (rank, -(k[1] if len(k) > 1 else 0), -(k[2] if len(k) > 2 else 0))
+
+    def text(k):
+        kind = k[0]
+        if kind == "kept":
+            return "Kept", "In every column."
+        if kind == "rewritten":
+            return (
+                "Rewritten",
+                "One function the matcher split into versions that hold different columns.",
+            )
+        if kind == "scattered":
+            return "Scattered", "In columns that are not next to each other."
+        if kind == "added":
+            if k[1] == n - 1:
+                return f"New in {lab(k[1])}", "Only in the last column."
+            return f"Added in {lab(k[1])}", "From this column to the last."
+        if kind == "dropped":
+            return f"Dropped after {lab(k[1])}", "From the first column to this one."
+        if k[1] == k[2]:
+            return f"Only in {lab(k[1])}", "In this column alone."
+        return f"{lab(k[1])} to {lab(k[2])}", "Came and went between these columns."
+
+    out = []
+    for k in sorted(by, key=place):
+        g = _meta(by[k], n)
+        label, tip = text(k)
+        g.update(
+            id="delta:" + "-".join(map(str, k)), kind="delta", label=label, tip=tip
+        )
+        g["path"] = [g["id"]]
+        out.append((g, [(u, {}) for u in by[k]]))
+    return _fixed(out)
+
+
+def born_groups(units, n, labels, ids):
+    """Columns in lineage DFS order (`order=lineage`): one group per column a unit was born in.
+
+    Born = held there but not by the parent column. A parent precedes its
+    children in DFS order, so the first column holding a unit is the first one
+    it was born in.
+    """
+    by = defaultdict(list)
+    for u in units:
+        by[(u["mask"] & -u["mask"]).bit_length() - 1].append(u)
+    out = []
+    for j in sorted(by):
+        if j < 0:  # held by no column
+            continue
+        g = _meta(by[j], n)
+        lab = labels[j] if j < len(labels) else f"column {j + 1}"
+        g.update(
+            id=f"born:{ids[j]}",
+            kind="born",
+            column=ids[j],
+            label=f"In the root, {lab}" if j == 0 else f"Born in {lab}",
+            tip=(
+                "Held by the root of the lineage."
+                if j == 0
+                else "First held here: the parent column does not hold it."
+            ),
+        )
+        g["path"] = [g["id"]]
+        out.append((g, [(u, {}) for u in by[j]]))
+    if by.get(-1):
+        out.append(
+            ({"id": "", "path": [], "headless": True}, [(u, {}) for u in by[-1]])
+        )
+    return _fixed(out)
+
+
+def region_groups(units, n):
+    """One group per call-graph region, biggest first; library, runtime and the leftovers last."""
+    special = {k: (label, tip) for k, label, tip in nway_region_service.SPECIAL}
+    by, loose = defaultdict(list), []
+    for u in units:
+        k = nway_region_service.unit_region(u)
+        (by[k] if k else loose).append(u)
+    keys = sorted((k for k in by if k not in special), key=lambda k: (-len(by[k]), k))
+    keys += [k for k in special if k in by]
+    out = []
+    for k in keys:
+        g = _meta(by[k], n)
+        g.update(id=f"region:{k}", kind="region", region=k)
+        if k in special:
+            g["label"], g["tip"] = special[k]
+        g["path"] = [g["id"]]
+        out.append((g, [(u, {}) for u in by[k]]))
+    if loose:
+        out.append(({"id": "", "path": [], "headless": True}, [(u, {}) for u in loose]))
+    return _fixed(out)
+
+
 def _level(mode, units, ctx):
     """The groups of one level over `units`: [(meta, [(unit, extra)])]."""
+    if mode == "role":
+        return role_groups(units, ctx["n"])
+    if mode == "presence":
+        return presence_groups(units, ctx["n"], ctx["nfiles"])
+    if mode == "delta":
+        if ctx.get("born"):
+            return born_groups(units, ctx["n"], ctx["labels"], ctx["ids"])
+        return delta_groups(units, ctx["n"], ctx["labels"])
+    if mode == "region":
+        return region_groups(units, ctx["n"])
     if mode == "prefix":
         return prefix_groups(units, ctx["n"], ctx["sort"], ctx["prefix_min"])
     if mode == "lane":
@@ -608,8 +868,51 @@ def _level(mode, units, ctx):
             units, ctx["n"], ctx["sort"], ctx["lane_min"], ctx["lane_fit"]
         )
     return tag_groups(
-        units, ctx["fmeta"], ctx["n"], ctx["sort"], ctx["axis"], ctx["axis_b"]
+        units,
+        ctx["fmeta"],
+        ctx["n"],
+        ctx["sort"],
+        ctx["axis"],
+        ctx["axis_b"],
+        ctx["tag_depth"],
     )
+
+
+def _no_lone(nodes, ctx, parent_id="", parent_path=()):
+    """The functions no group took become one "Other functions" group, listed last.
+
+    Always at the top level; inside a group only when they sit beside sub-groups
+    (a group holding nothing but rows keeps them as its content).
+    """
+    loose = [n for n in nodes if not n["container"]]
+    if not loose or (parent_id and len(loose) == len(nodes)):
+        return nodes
+    units = [n["unit"] for n in loose]
+    g = _graft(_rest(units, ctx), parent_id, list(parent_path))
+    inner = _expand(
+        units, ctx, g["id"], g["path"], {id(n["unit"]): n["extra"] for n in loose}
+    )
+    box = {
+        "container": True,
+        "rank": g.pop("_rank"),
+        "id": g["id"],
+        "pairs": [(g, [])] + _flat(inner, ctx),
+    }
+    return [n for n in nodes if n["container"]] + [box]
+
+
+def _rest(units, ctx):
+    """The top-level group of what a level could not place, listed after the others."""
+    g = _meta(units, ctx["n"])
+    g.update(
+        id="rest",
+        kind="rest",
+        label="Other functions",
+        tip="Functions this grouping does not place.",
+    )
+    g["path"] = [g["id"]]
+    g["_rank"] = (-2, -2, -2)
+    return g
 
 
 def _graft(g, parent_id, parent_path):
@@ -620,7 +923,12 @@ def _graft(g, parent_id, parent_path):
     return g
 
 
-SORT_COLS = ("name", "span", "weight", "support", "cohesion")
+SORT_COLS = ("name", "span", "weight", "support", "cohesion", "cover", "leak", "score")
+
+
+def _stat(r, key):
+    """A row's family stat (`stats` is there only when `family=` is set)."""
+    return (r.get("stats") or {}).get(key) or 0
 
 
 def _unit_sortkey(u, ctx):
@@ -632,7 +940,15 @@ def _unit_sortkey(u, ctx):
             "span": u["_fspan"],
             "weight": max(r["weight"] for r in rs),
             "support": sum(r.get("support", 1.0) for r in rs) / len(rs),
-            "cohesion": sum(r.get("cohesion", 1.0) for r in rs) / len(rs),
+            "cohesion": u["_xcoh"],
+            **{
+                k: max(_stat(r, f) for r in rs)
+                for k, f in (
+                    ("cover", "cover"),
+                    ("leak", "leak_rate"),
+                    ("score", "score"),
+                )
+            },
         }
     else:
         vals = {
@@ -641,6 +957,9 @@ def _unit_sortkey(u, ctx):
             "weight": u["weight"],
             "support": u.get("support", 1.0),
             "cohesion": u.get("cohesion", 1.0),
+            "cover": _stat(u, "cover"),
+            "leak": _stat(u, "leak_rate"),
+            "score": _stat(u, "score"),
         }
     col = ctx["sort_col"]
     # the table's default order: most files first, then the heaviest
@@ -679,8 +998,7 @@ def _expand(units, ctx, parent_id, parent_path, carried):
                 link=round(u["_sim"], 3),
                 names=list(dict.fromkeys(row["name"] for row in members))[:4],
                 fids=list(dict.fromkeys(f for row in members for f in _fids(row))),
-                cohesion=sum(row.get("cohesion", 1.0) for row in members)
-                / len(members),
+                cohesion=u["_xcoh"],
             )
             best, m["name_from"] = best_name(members, ctx["fmeta"])
             m["names"] = [best] + [x for x in m["names"] if x != best][:3]
@@ -694,6 +1012,8 @@ def _expand(units, ctx, parent_id, parent_path, carried):
             pair = (_graft(m, parent_id, parent_path), [(row, {}) for row in members])
         node = {
             "container": False,
+            "unit": u,
+            "extra": carried.get(id(u), {}),
             "rank": _unit_rank(u, ctx),
             "key": _unit_sortkey(u, ctx),
             "pairs": [pair],
@@ -711,6 +1031,9 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
     """
     if not levels:
         return _expand(units, ctx, parent_id, parent_path, carried)
+    if parent_id and levels[0] in SPLIT_LEVELS and len(units) <= ctx["split_min"]:
+        # a small group is not split again by role or region
+        return _nodes(units, levels[1:], ctx, parent_id, parent_path, carried)
     if levels[0] == "lane" and (
         ctx.get("lane_depth", 1) > 1 or ctx.get("lane_tier") or ctx.get("lane_fold")
     ):
@@ -735,12 +1058,12 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
         nodes.append(
             {
                 "container": True,
-                "rank": _rank(g, ctx["sort"]),
+                "rank": g.pop("_rank", None) or _rank(g, ctx["sort"]),
                 "id": g["id"],
                 "pairs": pairs,
             }
         )
-    return nodes
+    return _no_lone(nodes, ctx, parent_id, parent_path) if parent_id else nodes
 
 
 TIERS = (("core", "Core"), ("common", "Common"), ("rare", "Rare"))
@@ -862,7 +1185,8 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
     if not ctx.get("lane_tier"):
         top = {"id": parent_id, "path": parent_path}
         nodes = with_fold(roots, top, "top")
-        return nodes + _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+        nodes += _nodes(loose, levels[1:], ctx, parent_id, parent_path, carried)
+        return _no_lone(nodes, ctx, parent_id, parent_path) if parent_id else nodes
     nodes = []
     bands, bounds = _lane_tiers(roots, loose, ctx)
     for t, (band, (lo, hi)) in enumerate(zip(bands, bounds)):
@@ -877,6 +1201,7 @@ def _lane_nodes(units, levels, ctx, parent_id, parent_path, carried):
         _graft(tg, parent_id, parent_path)
         inner = with_fold(lanes, tg, key)
         inner += _nodes(band["rows"], levels[1:], ctx, tg["id"], tg["path"], carried)
+        inner = _no_lone(inner, ctx, tg["id"], tg["path"])
         nodes.append(
             {
                 "container": True,
@@ -929,14 +1254,23 @@ def _annotate(pairs, fmeta):
     for g, _ in pairs:
         if g.get("under_mask"):
             g["under_id"] = by_mask.get(g["under_mask"])
-        if g.get("kind") not in ("lane", "tier", "fold"):
+        if g.get("kind") not in (
+            "lane",
+            "tier",
+            "fold",
+            "region",
+            "presence",
+            "delta",
+            "born",
+        ):
             continue
         best = {}
         for r in rows[g["id"]]:
-            if k := name_key(r):
+            # a tag-carried name is a rule name (powershell, linux_trojan_x), not a function name
+            if r.get("name_from") != "tag" and (k := name_key(r)):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
-        if g["kind"] == "lane":
+        if g["kind"] in ("lane", "region", "presence", "delta", "born"):
 
             def finds(r):
                 return [
@@ -952,8 +1286,20 @@ def _annotate(pairs, fmeta):
                 key=lambda x: x[:2],
                 reverse=True,
             )
-            g["fids"] = [f for _, _, r in ranked[:LANE_FIDS] for f in _fids(r)[:1]]
-            found = Counter(t for _, _, r in ranked for t in set(finds(r)))
+            # a big lane reads its strongest row plus ones spread over the rest,
+            # so its largest functions do not name all of it
+            top = ranked[:LANE_FIDS]
+            if len(ranked) >= LANE_BROAD_ROWS:
+                rest = ranked[1:]
+                top = ranked[:1] + [
+                    rest[i * len(rest) // (LANE_FIDS - 1)] for i in range(LANE_FIDS - 1)
+                ]
+            g["fids"] = [f for _, _, r in top for f in _fids(r)[:1]]
+            # the heaviest rows' functions, looked up for a similar-function name only
+            heavy = sorted(rows[g["id"]], key=lambda r: -r["weight"])[:LANE_NAME_FIDS]
+            g["name_fids"] = [f for r in heavy for f in _fids(r)[:1]]
+            found = Counter(t for _, _, r in ranked for t in sorted(set(finds(r))))
+            g["tag_rows"] = sum(hit for hit, _, _ in ranked)
             g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:
@@ -962,10 +1308,17 @@ def _annotate(pairs, fmeta):
                 g["hint"] = top + "*"
 
 
+_SYMBOL = re.compile(r"[a-z_][\w.:@]*")  # a symbol, not a cluster label like "mirai#x"
 LANE_NAMES_MAX = 40  # lanes named per request
 LANE_FIDS = 6  # heaviest functions of a lane the model reads findings and strings from
 LANE_CODE_FNS = 2  # ... and code from
-_DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+(\[\d+\])?;\s*$")
+LANE_NAME_FIDS = 20  # heaviest functions whose similar-function names the model sees
+_DECL = re.compile(r"^\s*[A-Za-z_][\w ]*[ *]\**\w+\s*(\[\d+\])?;\s*$")
+# decompiler noise: PowerPC condition-register packing, comment ends, lone braces
+_NOISE = re.compile(r"\bin_cr\d|\bunaff_cr\d|^\s*\|\s*\(uint\)|^\s*\*/|^\s*[{}]\s*$")
+# FID_conflict: is FunctionID picking one of several libc bodies, often wrongly
+_JUNK_NAME = re.compile(r"^(func_|LAB_|DAT_|FID_conflict:)|\+\d")
+_LIT = re.compile(r'"((?:[^"\\\n]|\\.){4,60})"')
 LANE_NAME_TTL = 30 * 86400
 LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
 _LANE_POOL = None
@@ -974,52 +1327,153 @@ _LANE_LOCK = threading.Lock()
 
 
 def _lane_evidence(l):
-    """(text, tags, strings, calls): the text the model names a lane from (names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
+    """(text, tags, strings, calls): the text the model names a lane from (platform, names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
     from bsimvis.app.routes.llm import get_code_for_llm
     from bsimvis.app.services import llm_tools, string_service
     from bsimvis.app.services.function_service import fetch_function_data
     from bsimvis.app.services.redis_client import get_redis
 
-    out = [
-        f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
-    ]
-    if l["sample"]:
-        out.append("Function names: " + ", ".join(l["sample"]))
-    tags, strings, code = list(l["tags"]), [], []
-    libs, inner, callers = Counter(), Counter(), Counter()
+    def named(name):
+        return name and not _DEFAULT_NAME.match(name) and not _JUNK_NAME.search(name)
+
+    def finding(t):
+        # an unknown-family yara hit is only worth its rule name
+        base, _, rule = t.partition("#")
+        t = f"yara:{rule}" if base.endswith(":unknown") and rule else base
+        return None if t.endswith(":unknown") else t
+
+    tags = [t for t in dict.fromkeys(map(finding, l["tags"])) if t]
+    by_string = l.get("kind") == "string"
+    strings, code = [], []
+    big = l["rows"] >= LANE_BROAD_ROWS and not l.get("hint")
+    if by_string:
+        strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
+    libs, inner, callers, platform = Counter(), Counter(), Counter(), Counter()
+    seen = set()
+    # functions read, and those with a string, with a finding
+    n_read = n_str = n_tag = 0
     for fid in l["fids"][:LANE_FIDS]:
         try:
             coll, md5, addr = llm_tools.parse_func_id(fid)
             _, _, meta, _ = fetch_function_data(coll, md5, addr, meta_only=True)
-            for t in (meta or {}).get("tags") or []:
-                t = t.split("#")[0]
-                if t.startswith(("capa:", "yara:")) and t not in tags:
-                    tags.append(t)
+            meta = meta or {}
+            if md5 not in seen:
+                # "ELF, PowerPC 32-bit": the file's format and CPU, not file(1)'s
+                # raw type string ("PowerPC or cisco 4500" reads as Cisco IOS)
+                seen.add(md5)
+                fm = _decode(get_redis().get(f"{coll}:file:{md5}:meta"))
+                fmt = (fm.get("file_format") or {}).get("Executable Format") or ""
+                fmt = (re.findall(r"\((\w[\w-]*)\)", fmt) or [fmt])[-1]
+                cpu = (fm.get("language_id") or meta.get("language_id") or "").split(
+                    ":"
+                )
+                cpu = f"{cpu[0]} {cpu[2]}-bit" if len(cpu) > 2 else cpu[0]
+                if fmt or cpu:
+                    platform[", ".join(x for x in (fmt, cpu) if x)] += 1
+            hits = [
+                f
+                for t in meta.get("tags") or []
+                if t.startswith(("capa:", "yara:")) and (f := finding(t))
+            ]
+            n_tag += bool(hits)
+            tags += [t for t in dict.fromkeys(hits) if t not in tags]
             graph = llm_tools.get_call_graph(fid)
             for c in graph.get("callees") or []:
-                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
+                if named(c.get("name")):
                     (libs if c.get("is_external") else inner)[c["name"]] += 1
             for c in graph.get("callers") or []:
-                if c.get("name") and not _DEFAULT_NAME.match(c["name"]):
+                if named(c.get("name")):
                     callers[c["name"]] += 1
-            for rec in string_service.function_strings(get_redis(), coll, md5, addr):
-                v = " ".join(str(rec.get("value") or "").split())[:60]
-                if len(v) >= 4 and v not in strings:
-                    strings.append(v)
-            if len(code) < LANE_CODE_FNS:
-                src, _ = get_code_for_llm(fid)
-                # the signature and body, without the block of variable declarations
+            own = [
+                " ".join(str(rec.get("value") or "").split())[:60]
+                for rec in string_service.function_strings(get_redis(), coll, md5, addr)
+            ]
+            src, _ = get_code_for_llm(fid)
+            text = (src or {}).get("code", "")
+            # plus the string literals of the code: paths, commands, messages the
+            # string table missed
+            own += [" ".join(m.split()) for m in _LIT.findall(text)]
+            own = [v for v in dict.fromkeys(own) if len(v) >= 4 and v not in strings]
+            strings += own
+            n_read += 1
+            n_str += bool(own)
+            if len(code) < LANE_CODE_FNS and not big:
+                # the signature and body, without declarations and decompiler noise
                 lines = [
                     x
-                    for x in (src or {}).get("code", "").splitlines()
+                    for x in text.splitlines()
                     if x.strip()
                     and not x.lstrip().startswith("/*")
                     and not _DECL.match(x)
+                    and not _NOISE.search(x)
                 ]
                 if lines:
-                    code.append("\n".join(lines[:14])[:600])
+                    code.append("\n".join(lines[:20])[:900])
         except Exception:
             pass
+    sample = list(l["sample"])
+    try:
+        # a stripped function goes by the name of its cohesive named cluster, as
+        # its row does on screen (rows are only named after grouping, page by page)
+        from bsimvis.app.routes.nway import _attach_clusters
+
+        one = [
+            {"name": "FUN_0", "cells": {"c": f}}
+            for f in (l.get("name_fids") or l["fids"])[:LANE_NAME_FIDS]
+        ]
+        _attach_clusters(get_redis(), one, {}, None, {})
+        sample += [
+            k
+            for k in dict.fromkeys(
+                name_key({**x, "name_from": None})
+                for x in one
+                if x.get("name_from") == "cluster"
+            )
+            if k and _SYMBOL.fullmatch(k) and k not in sample
+        ]
+    except Exception:
+        pass
+    out = [
+        (
+            f"{l['rows']} strings found together in {l['files']} of {l['total']} files of a malware family. The evidence below comes from the functions that use them."
+            if by_string
+            else f"{l['rows']} functions found together in {l['files']} of {l['total']} files of a malware family."
+        )
+    ]
+    if l.get("kind") == "summary":
+        # a band of the table, not a lane: it spans several modules
+        out.append(
+            "These functions span several modules: describe the group as a whole in "
+            "general terms (for example 'core bot logic and libc', 'attack and "
+            "scanner code'), not one of its capabilities."
+        )
+    if not by_string and n_read and l["rows"] > 3 * n_read:
+        out.append(
+            f"The evidence below comes from only {n_read} of the {l['rows']} functions; "
+            "the others are not shown and may do other things."
+        )
+        if big:
+            # a big lane with no shared name prefix is rarely one topic: the largest
+            # functions (often libc formatting or parsing) would name all of it
+            out.append(
+                "This is a large mixed group: answer in general terms (for example "
+                "'mixed application and library code'), and name a specific topic "
+                "only if the sample clearly covers most of it."
+            )
+    if platform:
+        out.append("Platform: " + platform.most_common(1)[0][0])
+    if big and l.get("roles"):
+        r = sorted(l["roles"].items(), key=lambda x: -x[1])
+        out.append("Roles of all its functions: " + ", ".join(f"{k} {v}" for k, v in r))
+    if sample and not by_string:
+        # a few names over many functions describe those few, not the lane
+        few = len(sample) < 10 and len(sample) * 4 < l["rows"]
+        head = (
+            f"Function names (only {len(sample)} of the {l['rows']} are named)"
+            if few
+            else "Function names"
+        )
+        out.append(f"{head}: " + ", ".join(sample))
     if libs:
         out.append("Library calls: " + ", ".join(k for k, _ in libs.most_common(12)))
     if inner:
@@ -1027,12 +1481,28 @@ def _lane_evidence(l):
     if callers:
         out.append("Called from: " + ", ".join(k for k, _ in callers.most_common(6)))
     if tags:
-        out.append("Findings: " + ", ".join(tags[:8]))
-    if strings:
-        out.append("Strings: " + " | ".join(strings[:10]))
+        # findings are read first, so count them over the whole lane when known
+        hit, of = (l["tag_rows"], l["rows"]) if l.get("tag_rows") else (n_tag, n_read)
+        head = (
+            f"Rule findings (on only {hit} of the {of} functions)"
+            if hit * 2 < of
+            else "Rule findings"
+        )
+        # a small model names the lane after any rule it sees: one that covers
+        # under a fifth of the lane is not lane evidence (it stays a chip)
+        if hit * 5 >= of:
+            out.append(f"{head}: " + ", ".join(tags[:8]))
+    if strings and not (big and n_str * 2 < n_read):
+        # one function's strings can mislead about a whole lane
+        head = (
+            f"Strings (from {n_str} of {n_read} functions read)"
+            if n_str * 2 < n_read
+            else "Strings"
+        )
+        out.append(f"{head}: " + " | ".join(strings[:12]))
     out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
     calls = [k for k, _ in libs.most_common(6)]
-    return "\n".join(out)[:2600], tags, strings, calls
+    return "\n".join(out)[:3400], tags, strings, calls
 
 
 def _name_lane(l, red):
@@ -1080,6 +1550,8 @@ def lane_names(lanes):
         hint = str(l.get("hint") or "")[:40]
         tags = [str(x)[:80] for x in (l.get("tags") or [])[:5]]
         fids = [str(x) for x in (l.get("fids") or [])[:LANE_FIDS]]
+        name_fids = [str(x) for x in (l.get("name_fids") or [])[:LANE_NAME_FIDS]]
+        tag_rows = int(l.get("tag_rows") or 0)
         if not (sample or hint or tags or fids):
             continue
         item = {
@@ -1089,8 +1561,16 @@ def lane_names(lanes):
             "hint": hint,
             "tags": tags,
             "fids": fids,
-            "v": 6,  # bump when the prompt changes, so cached names are redone
+            "name_fids": name_fids,
+            "tag_rows": tag_rows,
+            "roles": {
+                str(k)[:20]: int(v)
+                for k, v in list((l.get("roles") or {}).items())[:10]
+            },
+            "v": 10,  # bump when the prompt changes, so cached names are redone
         }
+        if l.get("kind") in ("string", "summary"):
+            item["kind"] = l["kind"]
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
         clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()
@@ -1154,6 +1634,9 @@ def group_rows(rows, doc, r, mode, params):
             )
         ),
         tuple(map(id, rows)),
+        # annotated copies are fresh objects, so an id can come back for another family
+        params.get("family"),
+        params.get("ignore"),
     )
     hit = key and _CACHE.get(key)
     if hit:
@@ -1176,6 +1659,7 @@ def group_rows(rows, doc, r, mode, params):
         "fmeta": doc["fmeta"],
         "axis": params.get("group_axis") or "origin",
         "axis_b": params.get("group_axis_b") or "",
+        "tag_depth": 2,
         "merge": bool(evidence),
         "note": "",
         "prefix_min": PREFIX_MIN,
@@ -1185,6 +1669,15 @@ def group_rows(rows, doc, r, mode, params):
         "lane_link": 0.0,
         "lane_tier": 0.0,
         "lane_fold": 0,
+        "split_min": SPLIT_MIN,
+        "nfiles": len(doc.get("file_columns") or doc["columns"]),
+        "labels": [
+            c.get("label") or c.get("file_name") or c.get("id") or ""
+            for c in doc["columns"]
+        ],
+        # columns in lineage DFS order (`order=lineage`): delta groups by born-in column
+        "born": "column_parents" in doc,
+        "ids": [c.get("id") for c in doc["columns"]],
         "sort_col": (
             params.get("sort_col") if params.get("sort_col") in SORT_COLS else ""
         ),
@@ -1227,6 +1720,16 @@ def group_rows(rows, doc, r, mode, params):
             ctx["lane_fold"] = max(0, int(params["group_lane_fold"]))
         except ValueError:
             raise BadParams("group_lane_fold must be an integer")
+    if params.get("group_split_min") not in (None, ""):
+        try:
+            ctx["split_min"] = max(0, int(params["group_split_min"]))
+        except ValueError:
+            raise BadParams("group_split_min must be an integer")
+    if params.get("group_tag_depth"):
+        try:
+            ctx["tag_depth"] = max(1, min(8, int(params["group_tag_depth"])))
+        except ValueError:
+            raise BadParams("group_tag_depth must be an integer")
     if params.get("group_prefix_min"):
         try:
             ctx["prefix_min"] = max(2, int(params["group_prefix_min"]))
@@ -1235,11 +1738,15 @@ def group_rows(rows, doc, r, mode, params):
     units = rows
     if evidence:
         try:
-            min_link = float(params.get("group_min_link") or 0.3)
+            raw = params.get("group_min_link")
+            min_link = 0.3 if raw in (None, "") else float(raw)
         except ValueError:
             raise BadParams("group_min_link must be a number")
         units, ctx["note"] = merge_units(rows, doc, r, evidence, min_link)
-    pairs = _nest(units, levels, ctx, "", [], {})
+    nodes = _nodes(units, levels, ctx, "", [], {})
+    if levels:
+        nodes = _no_lone(nodes, ctx)
+    pairs = _flat(nodes, ctx)
     _annotate(pairs, doc["fmeta"])
     # `fcover`: the files the group holds, one 0/1 per file column. Child and twin columns stand for
     # several files, so the column-level `union` alone would show a half-covered column as full.
@@ -1248,6 +1755,16 @@ def group_rows(rows, doc, r, mode, params):
         held = g.pop("_held", set())
         g["fcover"] = "".join("1" if f in held else "0" for f in fids)
     groups = {g["id"]: g for g, _ in pairs if not g.get("headless")}
+    # every group's biggest merged functions, so a closed header can name what it holds
+    merges = defaultdict(list)
+    for g, _ in pairs:
+        if g.get("kind") == "same":
+            for a in g["path"][:-1]:
+                merges[a].append([g["name"], len(g["fids"]), g["id"]])
+    for gid, ms in merges.items():
+        if gid in groups:
+            groups[gid]["merges"] = sorted(ms, key=lambda m: -m[1])[:3]
+            groups[gid]["merge_n"] = len(ms)
     entries = _entries(pairs, params)
     if key:
         _CACHE.put(key, (pairs, groups, ctx["note"]))
@@ -1324,6 +1841,100 @@ def demo():
     assert best_name(
         [mem("a", None, 9), mem("b", None, 1)], {"nameb": {"user_name": "b"}}
     ) == ("a", None)
+    # role: groups in reading order whatever their size; a row without a role carries on
+    rr = [
+        {**row(1, 9), "role": "library"},
+        {**row(1, 1), "role": "orchestrator"},
+        row(2, 3),
+    ]
+    got = role_groups(rr, 2)
+    assert [g["id"] for g, _ in got] == ["role:orchestrator", "role:library", ""], got
+    doc = {"rows": rr, "fmeta": {}, "columns": [{"id": "A"}, {"id": "B"}], "key": None}
+    ent, gs, _ = group_rows(rr, doc, None, "role", {})
+    assert list(gs) == ["role:orchestrator", "role:library", "rest"], gs
+    # presence bands over 4 columns; deltas along the column order
+    pr = [row(15, 1), row(7, 1), row(1, 1), row(8, 1), row(12, 1), row(5, 1)]
+    assert [g["id"] for g, _ in presence_groups(pr, 4, 4)] == [
+        "presence:every",
+        "presence:most",
+        "presence:few",
+    ]
+    got = {g["id"]: len(m) for g, m in delta_groups(pr, 4, list("ABCD"))}
+    assert got == {
+        "delta:added-3": 1,
+        "delta:added-2": 1,
+        "delta:dropped-2": 1,
+        "delta:dropped-0": 1,
+        "delta:scattered": 1,
+        "delta:kept": 1,
+    }, got
+    # columns in lineage DFS order: a row goes to the first column holding it
+    got = born_groups(pr, 4, list("ABCD"), list("ABCD"))
+    assert [(g["id"], g["label"], len(m)) for g, m in got] == [
+        ("born:A", "In the root, A", 4),
+        ("born:C", "Born in C", 1),
+        ("born:D", "Born in D", 1),
+    ], got
+    rew = {
+        "mask": 3,
+        "weight": 2,
+        "_rows": [row(1, 1), row(2, 1)],
+        "_fspan": 2,
+        "_xcoh": 0.4,
+        "_idx": 0,
+    }
+    assert delta_groups([rew], 2, ["A", "B"])[0][0]["label"] == "Rewritten"
+    # header stats: span and feature ranges, mean support and cohesion, units per column
+    st = _meta(
+        [
+            {**row(3, 4), "support": 1.0, "cohesion": 0.9},
+            {**row(1, 2), "support": 0.5, "cohesion": 0.3},
+        ],
+        2,
+    )
+    assert (st["span_lo"], st["span_hi"], st["w_lo"], st["w_hi"], st["heat"]) == (
+        1,
+        2,
+        2,
+        4,
+        [2, 1],
+    ), st
+    assert (st["support"], st["cohesion"], st["cohesion_min"]) == (0.75, 0.6, 0.3), st
+    # a nested role level splits only a group above the threshold
+    small = [
+        {**row(3, 1), "role": "logic", "region": "r1"},
+        {**row(3, 1), "role": "leaf", "region": "r1"},
+    ]
+    doc = {
+        "rows": small,
+        "fmeta": {},
+        "columns": [{"id": "A"}, {"id": "B"}],
+        "key": None,
+    }
+    _, gs, _ = group_rows(small, doc, None, "region,role", {})
+    assert list(gs) == ["region:r1"], gs
+    _, gs, _ = group_rows(small, doc, None, "region,role", {"group_split_min": "1"})
+    assert "region:r1/role:logic" in gs, gs
+    # no lone function at the top level: a prefix level's leftovers go into "Other functions"
+    lone = [row(1, 1, "attack_a"), row(1, 1, "attack_b"), row(1, 1, "main")]
+    _, gs, _ = group_rows(
+        lone,
+        {"rows": lone, "fmeta": {}, "columns": [{"id": "A"}], "key": None},
+        None,
+        "prefix",
+        {},
+    )
+    assert list(gs) == ["prefix:attack_", "rest"], gs
+    # inside a tier, a row beside the lanes goes into that tier's Other group
+    tr = [row(3, 1), row(3, 1), row(1, 1)]
+    tdoc = {"rows": tr, "fmeta": {}, "columns": [{"id": "A"}, {"id": "B"}], "key": None}
+    _, gs, _ = group_rows(tr, tdoc, None, "lane", {"group_lane_tier": "0.8"})
+    assert "tier:core/rest" not in gs and gs.get("tier:rare", {}).get("units") == 1, gs
+    tr2 = [row(3, 1), row(3, 1), row(1, 1), row(1, 1), row(2, 1)]
+    _, gs, _ = group_rows(
+        tr2, {**tdoc, "rows": tr2}, None, "lane", {"group_lane_tier": "0.5"}
+    )
+    assert any(k.endswith("/rest") for k in gs), gs
     # lanes: a set of files shared by 2+ rows is a lane; the other rows are plain, not forced into one
     rows = [row(3, 10), row(3, 5), row(3, 1), row(1, 4), row(12, 2)]
     lanes = lane_groups(rows, 4, "weight")
@@ -1399,7 +2010,7 @@ def demo():
     by_weight = _nest(kinds, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
     assert top(by_weight) == ["prefix:attack_", "lane:1110"], top(by_weight)
 
-    # at every level: under a prefix, a plain row covering more files comes before a lane
+    # under a prefix, a row beside the lanes goes into the prefix's Other group, after them
     under = [
         row(1, 5, "attack_a"),
         row(1, 5, "attack_b"),
@@ -1407,19 +2018,15 @@ def demo():
     ]
     inner = _nest(under, ["prefix", "lane"], {**sctx, "sort": "files"}, "", [], {})
     shape = ["row" if g.get("headless") else g["id"] for g, _ in inner]
-    assert shape == ["prefix:attack_", "row", "prefix:attack_/lane:1000"], shape
-    # ... while the lanes order lists the groups first, plain rows after
+    want = ["prefix:attack_", "prefix:attack_/lane:1000", "prefix:attack_/rest", "row"]
+    assert shape == want, shape
+    # ... whatever the group order
     lanes = _nest(under, ["prefix", "lane"], {**sctx, "sort": "lanes"}, "", [], {})
     shape = ["row" if g.get("headless") else g["id"] for g, _ in lanes]
-    assert shape == ["prefix:attack_", "prefix:attack_/lane:1000", "row"], shape
-    # ... and the other way round when features decide
+    assert shape == want, shape
     heavy = [row(1, 50, "attack_a"), row(1, 50, "attack_b"), row(7, 1, "attack_c")]
     flip = _nest(heavy, ["prefix", "lane"], {**sctx, "sort": "weight"}, "", [], {})
-    assert ["row" if g.get("headless") else g["id"] for g, _ in flip] == [
-        "prefix:attack_",
-        "prefix:attack_/lane:1000",
-        "row",
-    ]
+    assert ["row" if g.get("headless") else g["id"] for g, _ in flip] == want
 
     # names: suffixes and auto names
     assert name_key({"name": "resolv_lookup.part.0"}) == "resolv_lookup"
@@ -1437,10 +2044,13 @@ def demo():
             row(1, 6, "other", {"A": "a2"}),
         ],
     }
-    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.3)
+    units, note = merge_units(doc["rows"], doc, None, {"name"}, 0.0)
     merged = [u for u in units if "_rows" in u]
     assert len(units) == 3 and len(merged) == 1 and note == ""
     assert merged[0]["mask"] == 15 and merged[0]["_kinds"] == {"name"}
+    # annotated copies (family=) merge too: they match back by `_at`, not identity
+    copies = [{**rw, "_at": i} for i, rw in enumerate(doc["rows"])]
+    assert len(merge_units(copies, doc, None, {"name"}, 0.0)[0]) == 3
 
     # a merged function is grouped by the lane of ALL its files, with its rows under it
     ctx = {
@@ -1464,7 +2074,7 @@ def demo():
     merged_pair = next(p for p in got if p[0]["id"] == "lane:1111/same:0")
     assert merged_pair[0]["path"] == ["lane:1111", "lane:1111/same:0"]
     assert merged_pair[0]["fids"] == ["a1", "b1", "c1", "d1"]
-    assert merged_pair[0]["cohesion"] == 1.0
+    assert merged_pair[0]["cohesion"] == 0.0  # same name, no edge between the rows
     assert len(merged_pair[1]) == 2 and got[0][1] == []
     # no levels: the merged function and the plain rows are ordered together, like functions
     top = _nest(units, [], ctx, "", [], {})
@@ -1483,6 +2093,18 @@ def demo():
     assert order(sort_col="weight", reverse=False) == ["other6", "init7", "same:0"]
     assert order(sort_col="span", reverse=False)[-1] == "same:0"
     assert order(sort_col="name", reverse=False)[0] == "same:0"  # "init" < "other"
+    # a lane names its merged functions, with how many functions each holds
+    _, gs, _ = group_rows(
+        doc["rows"],
+        doc,
+        None,
+        "lane",
+        {"group_merge": "name", "group_lane_min": "1", "group_min_link": "0"},
+    )
+    lane = gs["lane:1111"]
+    assert lane["units"] == 1 and lane["merge_n"] == 1, lane
+    assert lane["merges"] == [["init", 4, "lane:1111/same:0"]], lane["merges"]
+    assert "merges" not in gs["lane:0100"]
     for mode in ("lane,lane", "bogus", "same"):
         try:
             group_rows(doc["rows"], doc, None, mode, {})
@@ -1624,13 +2246,17 @@ def demo():
     assert ids[0] == "tier:core" and ids.index("tier:core/lane:1111") == 1, ids
     # annotate: a shared prefix becomes the lane's hint
     named = [row(15, 4, n) for n in ("attack_a", "attack_b", "attack_c", "main")]
+    # a tag-carried name is a rule name: never part of the sample the lane is named from
+    named.append({**row(15, 4, "powershell"), "name_from": "tag"})
     nt = _nest(named, ["lane"], {**lctx, "lane_depth": 1}, "", [], {})
     fm = {"fattack_a": {"tags": ["capa:network#send", "yara:x", "origin:lib"]}}
     named[0]["cells"] = {"A": "fattack_a"}
     _annotate(nt, fm)
-    assert nt[0][0]["tags"] == ["capa:network", "yara:x"], nt[0][0]
-    assert len(nt[0][0]["fids"]) == 4, nt[0][0]
+    assert sorted(nt[0][0]["tags"]) == ["capa:network", "yara:x"], nt[0][0]
+    assert len(nt[0][0]["fids"]) == 5, nt[0][0]
     assert nt[0][0]["hint"] == "attack_*" and "main" in nt[0][0]["sample"], nt[0][0]
+    assert "powershell" not in nt[0][0]["sample"], nt[0][0]
+    assert nt[0][0]["tag_rows"] == 1 and len(nt[0][0]["name_fids"]) == 5, nt[0][0]
     print("nway_group_service demo ok")
 
 

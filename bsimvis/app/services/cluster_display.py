@@ -123,7 +123,7 @@ def _load(r, collection, algo, cache=None, **opts):
     if not raw:
         return {}, ""
     tag = hashlib.sha1(raw if isinstance(raw, bytes) else raw.encode())
-    tag.update(json.dumps(o, sort_keys=True).encode())
+    tag.update(json.dumps(o, sort_keys=True).encode() + b"|v2")  # stored-set format
     ck = f"files:clusterdisp:{collection}:{algo}:{tag.hexdigest()[:16]}"
     if cache is not None:
         hit = cache.get(ck)
@@ -166,7 +166,9 @@ def clear_display(r, collection, algo):
     k = _dkey(collection, algo)
     tag = r.get(k)
     if tag:
-        r.delete(f"{k}:{tag.decode() if isinstance(tag, bytes) else tag}")
+        hk = f"{k}:{tag.decode() if isinstance(tag, bytes) else tag}"
+        cids = {c.decode() if isinstance(c, bytes) else str(c) for c in r.hvals(hk)}
+        r.delete(hk, *[f"{hk}:c:{c}" for c in cids])
     r.delete(k)
 
 
@@ -201,16 +203,67 @@ def display_assignment(r, collection, algo, tree, tag, only=None):
     return allf if only is None else {f: c for f, c in allf.items() if f in only}
 
 
+def display_direct(r, collection, algo, tag, cids):
+    """{cid: [file ids]} directly under each kept cluster (stored sets)."""
+    hk = f"{_dkey(collection, algo)}:{tag}"
+    cids = list(cids)
+    pipe = r.pipeline(transaction=False)
+    for c in cids:
+        pipe.smembers(f"{hk}:c:{c}")
+    dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
+    return {c: [dec(m) for m in mem] for c, mem in zip(cids, pipe.execute())}
+
+
+def display_counts(r, collection, algo, tree, tag):
+    """{cid: number of files directly under it}, no file id leaves Kvrocks."""
+    hk = f"{_dkey(collection, algo)}:{tag}"
+    cids = list(tree)
+    pipe = r.pipeline(transaction=False)
+    for c in cids:
+        pipe.scard(f"{hk}:c:{c}")
+    return dict(zip(cids, pipe.execute()))
+
+
+def display_direct(r, collection, algo, tag, cids):
+    """{cid: [file ids]} directly under each kept cluster (stored sets)."""
+    hk = f"{_dkey(collection, algo)}:{tag}"
+    cids = list(cids)
+    pipe = r.pipeline(transaction=False)
+    for c in cids:
+        pipe.smembers(f"{hk}:c:{c}")
+    dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
+    return {c: [dec(m) for m in mem] for c, mem in zip(cids, pipe.execute())}
+
+
+def display_counts(r, collection, algo, tree, tag):
+    """{cid: number of files directly under it}, no file id leaves Kvrocks."""
+    hk = f"{_dkey(collection, algo)}:{tag}"
+    cids = list(tree)
+    pipe = r.pipeline(transaction=False)
+    for c in cids:
+        pipe.scard(f"{hk}:c:{c}")
+    return dict(zip(cids, pipe.execute()))
+
+
 def _build_display(r, collection, algo, tree, tag):
     k = _dkey(collection, algo)
     clear_display(r, collection, algo)
     hk = f"{k}:{tag}"
+    where = {}
     for c in sorted(tree, key=lambda c: tree[c]["depth"]):  # deeper wins
         mem = r.smembers(f"{collection}:bin_cluster:{algo}:{c}:members")
-        ids = [m.decode() if isinstance(m, bytes) else str(m) for m in mem]
+        for m in mem:
+            where[m.decode() if isinstance(m, bytes) else str(m)] = c
+    direct = {}
+    for f, c in where.items():
+        direct.setdefault(c, []).append(f)
+    fids = list(where)
+    for i in range(0, len(fids), 5000):
+        r.hset(hk, mapping={f: where[f] for f in fids[i : i + 5000]})
+    for c, ids in direct.items():
         for i in range(0, len(ids), 5000):
-            r.hset(hk, mapping={f: c for f in ids[i : i + 5000]})
-    r.set(k, tag)
+            r.sadd(f"{hk}:c:{c}", *ids[i : i + 5000])
+    r.set(k, tag)  # last: a reader never sees a half-built hash
 
 
 def demo():

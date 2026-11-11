@@ -777,6 +777,80 @@ def test_cluster_tags():
         pool_service.delete_pool(pool_id)
 
 
+def test_cluster_rename():
+    """Renaming a cluster by uuid sticks, is remembered for rebuilds, and resets."""
+    from bsimvis.app.services.cluster_utils import ClusterNameKeeper
+    from bsimvis.app.services.collection_config import resolve_collection_algo
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Cluster rename", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    collection = f"rename_{uuid.uuid4().hex[:8]}"
+    algo = resolve_collection_algo(collection, None)
+    fids = [f"{collection}:func:md5{i}:0x{i}" for i in range(3)]
+    c_uuid = "rn" + uuid.uuid4().hex[:8]
+    meta_key = f"{collection}:cluster:{algo}:9:meta"
+    keys = [f"{f}:meta" for f in fids] + [
+        meta_key,
+        f"{collection}:cluster:{algo}:9:members",
+        f"{collection}:cluster:list:{algo}",
+        f"{collection}:cluster_names:func",
+    ]
+    try:
+        for f in fids:
+            r.set(f"{f}:meta", json.dumps({"function_name": "f"}))
+        r.sadd(f"{collection}:cluster:{algo}:9:members", *fids)
+        r.sadd(f"{collection}:cluster:list:{algo}", "9")
+        r.set(
+            meta_key,
+            json.dumps(
+                {"cluster_id": "9", "cluster_uuid": c_uuid, "cluster_name": "auto"}
+            ),
+        )
+        body = {"collection": collection, "algo": algo, "cluster_uuid": c_uuid}
+        res = test_endpoint(
+            "POST",
+            "/api/cluster/meta",
+            data={**body, "cluster_name": "analyst name"},
+            label="POST /api/cluster/meta (by uuid)",
+        )
+        check(
+            "rename by uuid succeeds", (res or {}).get("status") == "success", str(res)
+        )
+        meta = json.loads(r.get(meta_key))
+        check(
+            "renamed cluster is flagged custom",
+            meta.get("cluster_name") == "analyst name" and meta.get("is_custom_name"),
+            str(meta),
+        )
+        # A rebuild gives the same members a new cluster label: the name follows them.
+        keeper = ClusterNameKeeper(r, collection, "func", algo, {"77": fids})
+        check(
+            "analyst name is remembered for the next build",
+            keeper.pick("77", "auto") == ("analyst name", True),
+            str(keeper.names),
+        )
+        res = test_endpoint(
+            "POST",
+            "/api/cluster/meta",
+            data={**body, "cluster_name": ""},
+            label="POST /api/cluster/meta (reset)",
+        )
+        meta = json.loads(r.get(meta_key))
+        check(
+            "empty name resets to the build name",
+            meta.get("cluster_name") == "auto" and not meta.get("is_custom_name"),
+            str(meta),
+        )
+        keeper = ClusterNameKeeper(r, collection, "func", algo, {"77": fids})
+        check("reset forgets the saved name", not keeper.names, str(keeper.names))
+    finally:
+        r.delete(*keys)
+
+
 def test_function_search_unindexed_cluster():
     """?cluster_uuid= / ?cluster_id= find a cluster with no idx:func bucket.
 
@@ -853,6 +927,213 @@ def test_function_search_unindexed_cluster():
         )
     finally:
         r.delete(*keys)
+
+
+def test_function_live_discovery():
+    """/api/similarity/discover + /discover/persist on a synthetic collection.
+
+    Vectors are 10 unit-tf features each, so unweighted cosine = shared / 10:
+    B shares 7 (0.7, below the 0.9 build threshold, above the discovery floor),
+    C shares 10 (1.0, stored up front), D shares 3 (0.3, below the floor).
+    """
+    from bsimvis.app.services.pool_service import pool_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Live below-threshold similarity discovery", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    coll = f"live_disc_{uuid.uuid4().hex[:8]}"
+    algo = "unweighted_cosine"
+    r.hset(
+        f"global:collection:{coll}:meta",
+        mapping={"algo": algo, "min_features": 5, "min_score": 0.9},
+    )
+    feats = [f"h{i:02d}" for i in range(20)]
+    funcs = {
+        "a": feats[0:10],
+        "b": feats[0:7] + feats[10:13],
+        "c": feats[0:10],
+        "d": feats[0:3] + feats[13:20],
+    }
+    fid = {k: f"{coll}:func:md5{k}:00{k}" for k in funcs}
+    for k, fs in funcs.items():
+        f = fid[k]
+        r.zadd(f"{f}:vec:tf", {h: 1 for h in fs})
+        r.set(f"{f}:vec:norm", str(len(fs) ** 0.5))
+        r.zadd(f"{coll}:idx:func:bsim_features_count", {f: len(fs)})
+        r.sadd(f"{coll}:all_functions", f)
+        r.set(
+            f"{f}:meta",
+            json.dumps(
+                {
+                    "function_id": f,
+                    "function_name": f"fn_{k}",
+                    "file_md5": f"md5{k}",
+                    "entrypoint_address": f"00{k}",
+                }
+            ),
+        )
+        for h in fs:
+            r.zadd(f"{coll}:feature:{h}:functions", {f: 1})
+    # Partner filter fixture: only B carries func tag `keepme`.
+    r.sadd(f"{coll}:idx:func:tags:keepme", fid["b"])
+    r.sadd(f"{coll}:reg:func:tags", f"{coll}:idx:func:tags:keepme")
+    # C is an existing stored edge.
+    stored_sid = f"{coll}:sim:{algo}:md5c:00c::md5a:00a"
+    r.zadd(f"{coll}:sim:score:{algo}", {stored_sid: 1.0})
+
+    anchor = {"collection": coll, "md5": "md5a", "address": "00a"}
+    score_key = f"{coll}:sim:score:{algo}"
+
+    body = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, min_score="0.01"),
+            label="GET /api/similarity/discover",
+        )
+        or {}
+    )
+    ids = [p.get("id2") for p in body.get("pairs", [])]
+    floor = body.get("floor")
+    check(
+        "discover: min_score clamps up to the discovery floor",
+        floor is not None and body.get("min_score") == floor,
+        str({k: body.get(k) for k in ("min_score", "floor")}),
+    )
+    check(
+        "discover: sub-threshold partner found live, stored/self/below-floor left out",
+        ids == [fid["b"]]
+        and body["pairs"][0].get("live") is True
+        and abs(body["pairs"][0]["score"] - 0.7) < 1e-6,
+        f"ids={ids} floor={floor}",
+    )
+    check(
+        "discover: writes no similarity",
+        r.zcard(score_key) == 1,
+        f"zcard={r.zcard(score_key)}",
+    )
+
+    kept = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, func_tag="keepme"),
+            label="GET /api/similarity/discover (func_tag)",
+        )
+        or {}
+    )
+    dropped = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, exclude_func_tag="keepme"),
+            label="GET /api/similarity/discover (exclude_func_tag)",
+        )
+        or {}
+    )
+    check(
+        "discover: partner filters use function-search semantics",
+        [p["id2"] for p in kept.get("pairs", [])] == [fid["b"]]
+        and dropped.get("total") == 0,
+        f"kept={kept.get('total')} dropped={dropped.get('total')}",
+    )
+
+    saved = (
+        test_endpoint(
+            "POST",
+            "/api/similarity/discover/persist",
+            data=dict(anchor, partner_ids=[fid["b"], fid["c"], fid["d"]]),
+            label="POST /api/similarity/discover/persist",
+        )
+        or {}
+    )
+    reasons = {s["id"]: s["reason"] for s in saved.get("skipped", [])}
+    check(
+        "persist: saves B, skips stored C and below-floor D",
+        [s["id"] for s in saved.get("saved", [])] == [fid["b"]]
+        and reasons == {fid["c"]: "already_stored", fid["d"]: "below_floor"},
+        str(saved)[:300],
+    )
+    new_sid = f"{coll}:sim:{algo}:md5b:00b::md5a:00a"
+    doc = json.loads(r.get(new_sid) or "{}")
+    check(
+        "persist: one real edge, tagged discovered",
+        r.zcard(score_key) == 2 and "discovered" in (doc.get("user_tags") or []),
+        f"zcard={r.zcard(score_key)} user_tags={doc.get('user_tags')}",
+    )
+    found = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/search",
+            params={
+                "collection": coll,
+                "md5": "md5a",
+                "address": "00a",
+                "min_score": "0.5",
+                "sim_tag": "discovered",
+            },
+            label="GET /api/similarity/search (sim_tag=discovered)",
+        )
+        or {}
+    )
+    check(
+        "persist: saved edge visible to /api/similarity/search",
+        found.get("total") == 1,
+        f"total={found.get('total')}",
+    )
+    again = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=anchor,
+            label="GET /api/similarity/discover (after save)",
+        )
+        or {}
+    )
+    check(
+        "discover: a saved partner is no longer live",
+        again.get("total") == 0,
+        f"total={again.get('total')}",
+    )
+
+    # Pool scope: sweeps member collections, persists into the pool namespace.
+    pool_id = f"live_disc_pool_{uuid.uuid4().hex[:6]}"
+    pool_service.create_pool(
+        pool_id, pool_id, [coll], {"func_sim_params": {"algo": algo, "min_features": 5}}
+    )
+    pooled = (
+        test_endpoint(
+            "GET",
+            "/api/similarity/discover",
+            params=dict(anchor, pool=pool_id),
+            label="GET /api/similarity/discover (pool)",
+        )
+        or {}
+    )
+    pool_ids = sorted(p["id2"] for p in pooled.get("pairs", []))
+    check(
+        "discover (pool): finds B and C, the pool has no stored edges yet",
+        pool_ids == sorted([fid["b"], fid["c"]]),
+        f"ids={pool_ids}",
+    )
+    psaved = (
+        test_endpoint(
+            "POST",
+            "/api/similarity/discover/persist",
+            data=dict(anchor, pool=pool_id, partner_ids=[fid["b"]]),
+            label="POST /api/similarity/discover/persist (pool)",
+        )
+        or {}
+    )
+    check(
+        "persist (pool): edge lands in the pool namespace",
+        len(psaved.get("saved", [])) == 1
+        and r.zcard(f"global:pool:{pool_id}:sim:score") == 1,
+        str(psaved)[:200],
+    )
 
 
 def test_cluster_response_contract():
@@ -2119,6 +2400,67 @@ def run_all_tests():
         str(sorted(insights.keys()) if isinstance(insights, dict) else insights),
     )
 
+    # ── YARA workbench: lint, hit map, cluster seeds ───────────────────────
+    print(_color("\n  [YARA workbench]", BOLD))
+    lint = test_endpoint(
+        "POST",
+        "/api/yara/lint",
+        data={
+            "rule": 'rule t {\n strings:\n  $a = "ab"\n condition:\n  any of them\n}'
+        },
+    )
+    msgs = [w["message"] for w in (lint or {}).get("warnings", [])]
+    check(
+        "yara lint flags missing meta, short string, no ELF check",
+        any("meta `description` missing" in m for m in msgs)
+        and any("only 2 chars" in m for m in msgs)
+        and any("ELF magic" in m for m in msgs),
+        str(msgs)[:200],
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/seed/cluster",
+        data={},
+        expected_status=400,
+        label="POST /api/yara/seed/cluster without ids -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/seed/cluster",
+        data={"fids": ["not-a-fid"]},
+        expected_status=400,
+        label="POST /api/yara/seed/cluster bad fid -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/hitmap",
+        data={"collection": COLLECTION, "rule": "rule x {", "targets": []},
+        expected_status=400,
+        label="POST /api/yara/hitmap bad rule -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/scope",
+        data={"collection": COLLECTION, "rule": "rule x {", "targets": []},
+        expected_status=400,
+        label="POST /api/yara/scope bad rule -> 400",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/external-checks",
+        data={"format": "yara", "text": "rule x { condition: true }"},
+        expected_status=200,
+        label="POST /api/yara/external-checks",
+    )
+    for path in ("scope", "hitmap"):
+        test_endpoint(
+            "POST",
+            f"/api/yara/{path}",
+            data={"collection": COLLECTION, "run_id": "000000000000"},
+            expected_status=404,
+            label=f"POST /api/yara/{path} unknown run_id -> 404",
+        )
+
     # ── Unified search ─────────────────────────────────────────────────────
     print(_color("\n  [Unified search]", BOLD))
     # Scope the entity fanout; collection-name matching still searches globally.
@@ -3378,6 +3720,369 @@ def test_call_edge_id_dedup():
     )
 
 
+def test_yara_editor():
+    """Live YARA workbench: validate, test (P/R), seeds, registry, sweep, apply."""
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP – YARA workbench", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5_2:
+        print(_color("\n[SKIP] No second analysed test binary.", YELLOW))
+        return
+
+    size1 = os.path.getsize(TEST_BINARY)
+    ids = [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]
+    sets = {
+        "collection": COLLECTION,
+        "targets": [{"label": "one", "files": [ids[0]]}],
+        "negatives": [{"label": "two", "files": [ids[1]]}],
+    }
+    exact = f"rule only_one {{ condition: filesize == {size1} }}"
+    both = "rule any_elf { condition: uint32(0) == 0x464c457f }"
+
+    one = requests.get(
+        f"{BASE_URL}/api/file/search",
+        params={"collection": COLLECTION, "only_md5": file_md5},
+        timeout=30,
+    ).json()
+    check(
+        "only_md5 selects exactly one file",
+        [f["file_md5"] for f in one.get("files", [])] == [file_md5],
+        str(one.get("files")),
+    )
+    fh = requests.post(
+        f"{BASE_URL}/api/yara/test", json={**sets, "rule": both}, timeout=60
+    ).json()
+    check(
+        "a false hit carries its match evidence",
+        bool((fh.get("false_hits") or [{}])[0].get("matches")),
+        str(fh.get("false_hits")),
+    )
+    check(
+        "a true hit carries its match evidence",
+        bool((fh.get("true_hits") or [{}])[0].get("matches")),
+        str(fh.get("true_hits")),
+    )
+
+    bad = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": "rule a { condition: $nope }"},
+        label="POST /api/yara/validate (bad rule)",
+    )
+    check(
+        "validate maps the error to a line",
+        bad and not bad["ok"] and bad["errors"][0]["line"] == 1,
+        str(bad),
+    )
+    good = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": exact},
+        label="POST /api/yara/validate",
+    )
+    check("validate accepts a good rule", good and good["ok"])
+    inc = test_endpoint(
+        "POST",
+        "/api/yara/validate",
+        data={"rule": 'include "/etc/passwd"\nrule a { condition: true }'},
+        label="POST /api/yara/validate (include is refused)",
+    )
+    check("include directive is not honoured", inc and not inc["ok"], str(inc))
+
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": exact},
+        label="POST /api/yara/test (separates)",
+    )
+    m = (res or {}).get("metrics") or {}
+    check(
+        "separating rule: precision and recall are 1",
+        (m.get("precision"), m.get("recall")) == (1.0, 1.0),
+        str(m),
+    )
+    check(
+        "groups report their hit rates",
+        {g["label"]: g["hit_rate"] for g in res["groups"]} == {"one": 1.0, "two": 0.0},
+        str(res.get("groups")),
+    )
+
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": both},
+        label="POST /api/yara/test (matches both)",
+    )
+    m = (res or {}).get("metrics") or {}
+    check(
+        "matching both files: one false positive",
+        (m.get("tp"), m.get("fp"), m.get("precision")) == (1, 1, 0.5),
+        str(m),
+    )
+    check(
+        "the false hit is listed",
+        [f["id"] for f in res["false_hits"]] == [ids[1]],
+        str(res.get("false_hits")),
+    )
+
+    str_rule = "rule hex { strings: $m = { 7f 45 4c 46 } condition: $m at 0 }"
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": str_rule},
+        label="POST /api/yara/test (string stats)",
+    )
+    row = {x["id"]: x for x in (res or {}).get("strings", [])}.get("$m", {})
+    check(
+        "per-string counts cover targets and negatives",
+        (row.get("pos"), row.get("neg")) == (1, 1),
+        str(row),
+    )
+    check(
+        "hit landing is reported per string",
+        "hex:$m" in (res or {}).get("landing", {}),
+        str((res or {}).get("landing")),
+    )
+
+    rest = {**sets, "negatives": [{"label": "rest", "rest": True}]}
+    res = test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**rest, "rule": exact},
+        label="POST /api/yara/test (rest negatives)",
+    )
+    check(
+        "'rest' negatives exclude the targets",
+        (res or {}).get("metrics", {}).get("fp") == 0
+        and res["sample"]["negatives_scanned"] >= 1,
+        str((res or {}).get("sample")),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={**sets, "rule": "rule a {"},
+        expected_ok=True,
+        label="POST /api/yara/test (syntax error -> ok false)",
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/test",
+        data={"rule": exact, "targets": []},
+        expected_status=400,
+        label="POST /api/yara/test (no scope -> 400)",
+    )
+
+    sug = test_endpoint(
+        "POST",
+        "/api/yara/suggest",
+        data={**sets, "min_frac": 1.0},
+        label="POST /api/yara/suggest",
+    )
+    check(
+        "suggest answers with a strings list",
+        isinstance(sug and sug.get("strings"), list),
+    )
+    fsug = test_endpoint(
+        "POST",
+        "/api/yara/suggest/functions",
+        data={
+            **sets,
+            "nway": {
+                "collection": COLLECTION,
+                "md5s": f"{file_md5},{file_md5_2}",
+                "columns": "files",
+                "family": f"{COLLECTION}:{file_md5}",
+            },
+        },
+        label="POST /api/yara/suggest/functions",
+    )
+    check(
+        "suggest/functions answers with a functions list",
+        isinstance(fsug and fsug.get("functions"), list),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/suggest/functions",
+        data={**sets, "nway": {"collection": COLLECTION}},
+        expected_status=400,
+        label="POST /api/yara/suggest/functions (no family -> 400)",
+    )
+
+    # registry: versions, export, apply, sweep
+    saved = test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={
+            "rule": exact,
+            "scope": {"targets": sets["targets"], "negatives": sets["negatives"]},
+        },
+        label="POST /api/yara/rules",
+    )
+    uuid_ = (saved or {}).get("uuid")
+    check(
+        "save returns a uuid at version 1",
+        bool(uuid_) and saved["version"] == 1,
+        str(saved),
+    )
+    if not uuid_:
+        return
+    v2 = test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={"rule": exact.replace("only_one", "only_one2"), "uuid": uuid_},
+        label="POST /api/yara/rules (v2)",
+    )
+    check("saving the same uuid bumps the version", v2 and v2["version"] == 2, str(v2))
+    got = test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}",
+        params={"version": 1},
+        label="GET /api/yara/rules/<uuid>?version=1",
+    )
+    check(
+        "an old version reads back unchanged",
+        got and "only_one {" in got["text"],
+        str(got),
+    )
+    test_endpoint(
+        "POST",
+        "/api/yara/rules",
+        data={"rule": "rule a {"},
+        expected_status=400,
+        label="POST /api/yara/rules (does not compile -> 400)",
+    )
+    exp = test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}/export",
+        label="GET /api/yara/rules/<uuid>/export",
+    )
+    check(
+        "export header carries uuid and version",
+        exp and uuid_ in exp["content"] and "v2" in exp["content"],
+        str(exp),
+    )
+    check(
+        "rule appears in the list",
+        any(
+            r["uuid"] == uuid_
+            for r in (
+                test_endpoint("GET", "/api/yara/rules", label="GET /api/yara/rules")
+                or {}
+            ).get("rules", [])
+        ),
+    )
+
+    sweep = test_endpoint(
+        "POST",
+        "/api/yara/sweep",
+        data={**sets, "rule": exact},
+        label="POST /api/yara/sweep",
+    )
+    run = (sweep or {}).get("run_id")
+    if run:
+        for _ in range(60):
+            st = requests.get(f"{BASE_URL}/api/yara/run/{run}", timeout=20).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        check(
+            "sweep hits exactly the target file",
+            st.get("done")
+            and st.get("hits") == 1
+            and st.get("metrics", {}).get("recall") == 1.0
+            and st.get("metrics", {}).get("fp") == 0,
+            str(st),
+        )
+
+    app = test_endpoint(
+        "POST",
+        "/api/yara/apply",
+        data={**sets, "rule": exact.replace("only_one", "only_one2"), "uuid": uuid_},
+        label="POST /api/yara/apply",
+    )
+    run = (app or {}).get("run_id")
+    if run:
+        for _ in range(60):
+            st = requests.get(f"{BASE_URL}/api/yara/run/{run}", timeout=20).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        tagged = _search_file_md5s(
+            {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
+        )
+        check("apply tags exactly the matching file", tagged == {file_md5}, str(tagged))
+        # the tag popup names the editor rule and shows its text
+        _prov = requests.get(
+            f"{BASE_URL}/api/tags/provenance",
+            params={"tag": "yara:custom:only_one2"},
+            timeout=20,
+        ).json()
+        _recs = (_prov.get("provenance") or {}).get("yara:custom:only_one2") or []
+        _src = requests.get(
+            f"{BASE_URL}/api/tags/rule_source",
+            params={"id": f"custom:{uuid_}"},
+            timeout=20,
+        ).json()
+        check(
+            "apply: the custom tag's provenance is the editor rule, with its text",
+            f"custom:{uuid_}" in [r.get("id") for r in _recs]
+            and "only_one2" in (_src.get("text") or ""),
+            f"{_recs} / {str(_src)[:120]}",
+        )
+        # a rename must drop the old version's tag
+        test_endpoint(
+            "POST",
+            "/api/yara/rules",
+            data={"rule": exact.replace("only_one", "renamed"), "uuid": uuid_},
+            label="POST /api/yara/rules (v3, renamed)",
+        )
+        app = test_endpoint(
+            "POST",
+            "/api/yara/apply",
+            data={**sets, "rule": exact.replace("only_one", "renamed"), "uuid": uuid_},
+            label="POST /api/yara/apply (renamed)",
+        )
+        for _ in range(60):
+            st = requests.get(
+                f"{BASE_URL}/api/yara/run/{app['run_id']}", timeout=20
+            ).json()
+            if st.get("done"):
+                break
+            time.sleep(2)
+        check(
+            "renamed rule: old tag is gone, new tag is set",
+            not _search_file_md5s(
+                {"collection": COLLECTION, "tag": "yara:custom:only_one2"}
+            )
+            and _search_file_md5s(
+                {"collection": COLLECTION, "tag": "yara:custom:renamed"}
+            )
+            == {file_md5},
+        )
+        _ids = lambda tag: [
+            r.get("id")
+            for r in (
+                requests.get(
+                    f"{BASE_URL}/api/tags/provenance", params={"tag": tag}, timeout=20
+                ).json()["provenance"][tag]
+            )
+        ]
+        check(
+            "renamed rule: provenance follows the rename",
+            f"custom:{uuid_}" not in _ids("yara:custom:only_one2")
+            and f"custom:{uuid_}" in _ids("yara:custom:renamed"),
+        )
+    test_endpoint(
+        "DELETE", f"/api/yara/rules/{uuid_}", label="DELETE /api/yara/rules/<uuid>"
+    )
+    test_endpoint(
+        "GET",
+        f"/api/yara/rules/{uuid_}",
+        expected_status=404,
+        label="GET /api/yara/rules/<uuid> (deleted -> 404)",
+    )
+
+
 def test_strings():
     """Ghidra strings flow analyze -> index -> API, pivot, search and tagging.
 
@@ -3640,6 +4345,26 @@ def test_strings():
             )
     finally:
         pool_service.delete_pool(pid)
+
+
+def test_branch_badge():
+    """The dashboard page and icons carry the checkout's branch, hashed to a stable hue."""
+    page = requests.get(f"{BASE_URL}/collections").text
+    m = re.search(r'data-branch="([^"]+)" data-branch-hue="(\d+)"', page)
+    if not check("index stamps branch on <html>", m, page[:300]):
+        return
+    name, hue = m.groups()
+    check("title names the branch", f"<title>[{name}] BSimVis</title>" in page)
+    check("favicon link carries the hue", f'href="/favicon.svg?h={hue}"' in page)
+    again = requests.get(f"{BASE_URL}/").text
+    check("hue is stable across loads", f'data-branch-hue="{hue}"' in again)
+    for icon in ("/favicon.svg", "/logo.svg"):
+        r = requests.get(f"{BASE_URL}{icon}")
+        check(
+            f"{icon} served tinted",
+            r.ok and r.headers.get("content-type", "").startswith("image/svg+xml"),
+            f"{r.status_code} {r.headers.get('content-type')}",
+        )
 
 
 def test_maintenance_remove_validation():
@@ -5083,6 +5808,456 @@ def _nway_rows(body):
     return {frozenset((r.get("files") or r["cells"]).values()) for r in rows}
 
 
+def test_nway_roles():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-roles – N-way triage roles, role grouping, overrides", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – role checks skipped.", YELLOW))
+        return
+    order = [
+        "orchestrator",
+        "entry",
+        "logic",
+        "compute",
+        "leaf",
+        "plumbing",
+        "runtime",
+        "library",
+    ]
+    st, body = _nway(tab="all", columns="files", scope="all")
+    rows = (body or {}).get("items", [])
+    check(
+        "nway roles: every row carries a role from the rules",
+        st == 200
+        and rows
+        and all(r.get("role") in order and r.get("role_src") == "rules" for r in rows),
+        f"status {st}, roles {sorted({str(r.get('role')) for r in rows})}",
+    )
+    st, gb = _nway(
+        tab="all", columns="files", scope="all", group="role", group_open="all"
+    )
+    kinds = [g.get("kind") for g in (gb or {}).get("groups", {}).values()]
+    seen = [g["role"] for g in (gb or {}).get("groups", {}).values()]
+    check(
+        "nway group=role: role groups in reading order",
+        st == 200
+        and kinds
+        and set(kinds) == {"role"}
+        and seen == [k for k in order if k in seen],
+        f"status {st}, groups {seen}",
+    )
+    # lens levels: every header fills the row columns (ranges, means, heat per column)
+    for level, kind in (
+        ("presence", "presence"),
+        ("delta", "delta"),
+        ("region", "region"),
+    ):
+        st, lb = _nway(
+            tab="all", columns="files", scope="all", group=level, group_open="all"
+        )
+        gs = list((lb or {}).get("groups", {}).values())
+        ncol = len((lb or {}).get("columns") or [])
+        check(
+            f"nway group={level}: {kind} headers carry span, features and heat",
+            st == 200
+            and gs
+            and all(g.get("kind") == kind for g in gs)
+            and all(
+                "span_lo" in g and "w_lo" in g and len(g.get("heat") or []) == ncol
+                for g in gs
+            ),
+            f"status {st}, kinds {sorted({str(g.get('kind')) for g in gs})}",
+        )
+        if level == "region":
+            held = sum(g["units"] for g in gs)
+            check(
+                "nway group=region: the regions hold every row once",
+                held == lb.get("total", 0) - len(gs),
+                f"{held} units in {len(gs)} regions, total {lb.get('total')}",
+            )
+    # no lone function at the top level: every row sits in a group
+    for level in ("lane", "prefix", "region"):
+        st, nb = _nway(
+            tab="all", columns="files", scope="all", group=level, group_open="all"
+        )
+        items = (nb or {}).get("items", [])
+        check(
+            f"nway group={level}: no row sits outside a group",
+            st == 200 and items and all(it.get("g") for it in items),
+            f"status {st}, {sum(1 for it in items if not it.get('g'))} top-level rows",
+        )
+    # nor beside sub-groups deeper down: a group holding sub-groups holds no row of its own
+    for chain, extra in (
+        ("lane,region", {"group_lane_tier": "0.8", "group_split_min": "0"}),
+        ("presence,region", {"group_split_min": "0"}),
+    ):
+        st, nb = _nway(
+            tab="all",
+            columns="files",
+            scope="all",
+            group=chain,
+            group_open="all",
+            **extra,
+        )
+        gs = (nb or {}).get("groups", {})
+        parents = {p for g in gs.values() for p in g["path"][:-1]}
+        mixed = [
+            it["g"]
+            for it in (nb or {}).get("items", [])
+            if not it.get("header") and it.get("g") in parents
+        ]
+        check(
+            f"nway group={chain}: no row sits beside sub-groups",
+            st == 200 and gs and not mixed,
+            f"status {st}, rows beside sub-groups under {sorted(set(mixed))[:3]}",
+        )
+    st, pb = _nway(tab="all", columns="files", scope="all", group="presence")
+    check(
+        "nway group=presence: bands count files",
+        st == 200
+        and all("files" in g["label"] for g in (pb or {}).get("groups", {}).values()),
+        str([g.get("label") for g in (pb or {}).get("groups", {}).values()]),
+    )
+    st, _ = _nway(tab="all", columns="files", group="region,role", group_split_min="x")
+    check("nway group_split_min: not an integer is refused", st == 400, f"status {st}")
+    url = f"{BASE_URL}/api/bin_sim/nway/role"
+    bad = requests.post(url, json={"func_ids": [], "role": "leaf"}, timeout=30)
+    worse = requests.post(
+        url, json={"func_ids": ["x:func:y:1"], "role": "boss"}, timeout=30
+    )
+    check(
+        "nway role: missing functions and unknown roles are refused",
+        bad.status_code == 400 and worse.status_code == 400,
+        f"{bad.status_code} / {worse.status_code}",
+    )
+    if not rows:
+        return
+    row = rows[0]
+    fids = [
+        f for f in (row.get("files") or row["cells"]).values() if isinstance(f, str)
+    ]
+    key = frozenset(fids)
+    pick = "compute" if row["role"] != "compute" else "leaf"
+
+    def again():
+        _, b = _nway(tab="all", columns="files", scope="all")
+        return next(
+            (
+                r
+                for r in (b or {}).get("items", [])
+                if frozenset(
+                    v
+                    for v in (r.get("files") or r["cells"]).values()
+                    if isinstance(v, str)
+                )
+                == key
+            ),
+            {},
+        )
+
+    set_r = requests.post(url, json={"func_ids": fids, "role": pick}, timeout=30)
+    now = again()
+    check(
+        "nway role: an override wins over the rules and shows as the analyst's",
+        set_r.status_code == 200
+        and now.get("role") == pick
+        and now.get("role_src") == "user",
+        f"{set_r.status_code}, got {now.get('role')} / {now.get('role_src')}",
+    )
+    clear = requests.post(url, json={"func_ids": fids, "role": ""}, timeout=30)
+    back = again()
+    check(
+        "nway role: clearing the override gives the rules back",
+        clear.status_code == 200
+        and back.get("role") == row["role"]
+        and back.get("role_src") == "rules",
+        f"{clear.status_code}, got {back.get('role')} / {back.get('role_src')}",
+    )
+
+
+def test_nway_indicators():
+    print(_color(f"\n{'='*60}", CYAN))
+    print(
+        _color(" STEP 3c-sexies – N-way family stats, strings table, indicators", BOLD)
+    )
+    print(_color(f"{'='*60}", CYAN))
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – indicator checks skipped.", YELLOW))
+        return
+    lane = f"{COLLECTION}:{file_md5}"
+    st, body = _nway(family=lane, tab="all", columns="files")
+    rows = (body or {}).get("items", [])
+    check(
+        "nway family: rows carry stats",
+        st == 200 and rows and all("stats" in r for r in rows),
+        f"HTTP {st}",
+    )
+    check(
+        "nway family: family and contrast are the two files",
+        st == 200
+        and body["family"]["family"] == [lane]
+        and len(body["family"]["contrast"]) == 1,
+        str((body or {}).get("family")),
+    )
+    st, cb = _nway(calls="1", consts="1", columns="files", tab="all")
+    crow = (cb or {}).get("items", [])
+    check(
+        "nway calls/consts: rows carry callers, callees and constants",
+        st == 200
+        and crow
+        and all(
+            {"callers", "callees"} <= set(x["calls"]) and "total" in x["consts"]
+            for x in crow
+        ),
+        f"HTTP {st}",
+    )
+    st, gb = _nway(
+        family=lane, tab="all", columns="files", group_merge="name,call", limit=500
+    )
+    check(
+        "nway family: group_merge keeps the rows",
+        st == 200 and gb["total"] > 0,
+        f"HTTP {st} total {(gb or {}).get('total')} vs {len(rows)}",
+    )
+    check(
+        "nway family: cover is a share of the family",
+        all(
+            0 <= r["stats"]["cover"] <= 1 and 0 <= r["stats"]["score"] <= 1
+            for r in rows
+        ),
+    )
+    st, sb = _nway(strings="1", columns="files", tab="all")
+    check(
+        "nway strings=1: every row carries its inline strings",
+        st == 200
+        and sb["items"]
+        and all({"total", "top"} <= set(r.get("strings", {})) for r in sb["items"]),
+        f"HTTP {st}",
+    )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/strings",
+        params={
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "columns": "files",
+            "group": "lane",
+            "refs": "1",
+            "group_open": "all",
+        },
+        timeout=60,
+    )
+    gb = resp.json() if resp.status_code == 200 else {}
+    gitems = gb.get("items", [])
+    check(
+        "nway strings: group=lane gives headers, lane groups and refs",
+        resp.status_code == 200
+        and gb.get("groups")
+        and any(x.get("header") for x in gitems)
+        and all("refs" in x for x in gitems if not x.get("header")),
+        f"HTTP {resp.status_code} {str(gb)[:120]}",
+    )
+    check(
+        "nway strings: refs carry the functions and their metadata for the signature",
+        all(
+            f in gb.get("functions_metadata", {})
+            for x in gitems
+            if not x.get("header")
+            for d in x["refs"]["direct"]
+            for f in d["cells"].values()
+        ),
+    )
+    check(
+        "nway strings: a string lane names the functions that use its strings",
+        all("fids" in g for g in gb.get("groups", {}).values()),
+    )
+    check(
+        "nway strings: refs name the function rows using the string",
+        any(x["refs"]["direct"] for x in gitems if not x.get("header")),
+        "no string with a referencing function row",
+    )
+    sv = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/strings",
+        params={
+            "collection": COLLECTION,
+            "md5s": f"{file_md5},{file_md5_2}",
+            "columns": "files",
+            "refs": "1",
+        },
+        timeout=60,
+    ).json()
+    hit = next((x for x in sv.get("items", []) if x["refs"]["direct"]), None)
+    if hit:
+        st, qb = _nway(q=hit["name"], columns="files", tab="all", scope="all")
+        names = {x["name"] for x in hit["refs"]["direct"]}
+        check(
+            "nway q: a string finds the functions that reference it",
+            st == 200 and names <= {x.get("name") for x in qb["items"]},
+            f"{names} not in {[x.get('name') for x in qb.get('items', [])][:6]}",
+        )
+    base_ex = {
+        "collection": COLLECTION,
+        "md5s": f"{file_md5},{file_md5_2}",
+        "columns": "files",
+    }
+    if hit:
+        resp = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        )
+        eb = resp.json() if resp.status_code == 200 else {}
+        check(
+            "nway expand: a string gives the function rows that reference it, with presence",
+            resp.status_code == 200
+            and eb["items"]
+            and all(
+                {"present", "total", "on"} <= set(c)
+                for c in eb["items"][0]["cells"].values()
+            ),
+            f"HTTP {resp.status_code}",
+        )
+        fn = next(
+            (
+                x
+                for x in _nway(columns="files", tab="all", scope="all")[1]["items"]
+                if x["name"] in {d["name"] for d in hit["refs"]["direct"]}
+            ),
+            None,
+        )
+        if fn:
+            resp = requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/expand",
+                params={
+                    **base_ex,
+                    "kind": "function",
+                    "cells": json.dumps(fn.get("files") or fn["cells"]),
+                },
+                timeout=60,
+            )
+            check(
+                "nway expand: a function row gives the strings its functions reference",
+                resp.status_code == 200
+                and hit["name"] in {x["name"] for x in resp.json()["items"]},
+                f"HTTP {resp.status_code}",
+            )
+            for kind in ("callers", "callees", "consts"):
+                resp = requests.get(
+                    f"{BASE_URL}/api/bin_sim/nway/expand",
+                    params={
+                        **base_ex,
+                        "kind": kind,
+                        "cells": json.dumps(fn.get("files") or fn["cells"]),
+                    },
+                    timeout=60,
+                )
+                body = resp.json() if resp.status_code == 200 else {}
+                check(
+                    f"nway expand: kind={kind} gives rows with per-column presence",
+                    resp.status_code == 200
+                    and all(
+                        0 <= c["via"] <= c["present"] <= c["total"]
+                        for x in body.get("items", [])
+                        for c in x["cells"].values()
+                    ),
+                    f"HTTP {resp.status_code}",
+                )
+    if hit:
+        eb = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        ).json()
+        check(
+            "nway expand: via <= present <= total in every cell",
+            all(
+                0 <= c["via"] <= c["present"] <= c["total"]
+                for x in eb["items"]
+                for c in x["cells"].values()
+            ),
+        )
+    if hit:
+        # sub-rows are keyed by the columns of the same request, opened twin columns included
+        opened = {"columns": "twins", "col_open": '["*"]'}
+        cols = [
+            c["id"]
+            for c in requests.get(
+                f"{BASE_URL}/api/bin_sim/nway",
+                params={**base_ex, **opened, "limit": 1},
+                timeout=60,
+            ).json()["columns"]
+        ]
+        eb = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/expand",
+            params={**base_ex, **opened, "kind": "string", "id": hit["id"]},
+            timeout=60,
+        ).json()
+        check(
+            "nway expand: cells follow the opened columns of the table",
+            eb["items"] and all(set(x["cells"]) == set(cols) for x in eb["items"]),
+            f"{cols} vs {[list(x['cells']) for x in eb['items'][:1]]}",
+        )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/expand",
+        params={**base_ex, "kind": "bogus"},
+        timeout=60,
+    )
+    check(
+        "nway expand: bad kind is a 400",
+        resp.status_code == 400,
+        f"HTTP {resp.status_code}",
+    )
+    st, _ = _nway(family="nope:0", columns="files")
+    check("nway family: unknown column is rejected", st == 400, f"HTTP {st}")
+    st, ign = _nway(
+        family=lane, ignore=f"{COLLECTION}:{file_md5_2}", columns="files", tab="all"
+    )
+    check(
+        "nway family: ignored columns leave the contrast",
+        st == 200 and ign["family"]["contrast"] == [] and ign["family"]["ignored"],
+        str((ign or {}).get("family")),
+    )
+    base = {
+        "collection": COLLECTION,
+        "md5s": f"{file_md5},{file_md5_2}",
+        "family": lane,
+        "columns": "files",
+    }
+    resp = requests.get(f"{BASE_URL}/api/bin_sim/nway/strings", params=base, timeout=60)
+    sb = resp.json() if resp.status_code == 200 else {}
+    check(
+        "nway strings: answers with rows and a family",
+        resp.status_code == 200 and "items" in sb and "family" in sb,
+        f"HTTP {resp.status_code}",
+    )
+    check(
+        "nway strings: stats carry reach for each shown row",
+        all(r["stats"]["reach"] is not None for r in sb.get("items", [])),
+    )
+    sc = [r["stats"]["score"] for r in sb.get("items", [])]
+    check("nway strings: best score first", sc == sorted(sc, reverse=True), str(sc[:5]))
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/indicators", params=base, timeout=60
+    )
+    ib = resp.json() if resp.status_code == 200 else {}
+    sc = [x["stats"]["score"] for x in ib.get("items", [])]
+    check(
+        "nway indicators: ranked list",
+        resp.status_code == 200 and sc == sorted(sc, reverse=True),
+        f"HTTP {resp.status_code}",
+    )
+    resp = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/indicators",
+        params={k: v for k, v in base.items() if k != "family"},
+        timeout=60,
+    )
+    check(
+        "nway indicators: family is required",
+        resp.status_code == 400,
+        f"HTTP {resp.status_code}",
+    )
+
+
 def test_nway_column_groups():
     print(_color(f"\n{'='*60}", CYAN))
     print(_color(" STEP 3c-quinquies – N-way column groups (col_by / col_set)", BOLD))
@@ -5486,6 +6661,282 @@ def test_nway_lineage():
         "nway lineage: read-only, repeat call answers the same",
         r.status_code == 200 and r.json() == got["tree"],
     )
+    _check_lineage_rows(base, url, got["tree"])
+    _check_lineage_groups(base, url, got["tree"])
+    _check_lineage_twins(base, url, got["tree"])
+    _check_nway_lineage_order(got["tree"])
+
+
+def _check_lineage_rows(base, url, tree):
+    """Lineage `rows` are every row; `match` is the /nway row filter of the same params."""
+    rows = tree.get("rows") or {}
+    n = rows.get("n", -1)
+    vprint(
+        "lineage sample:",
+        json.dumps(
+            {
+                "rows": {
+                    k: v[:3] if isinstance(v, list) else v for k, v in rows.items()
+                },
+                "regions": tree.get("regions"),
+                "counts": tree.get("counts"),
+                "nodes": tree.get("nodes"),
+            }
+        ),
+    )
+    keys = ("fid", "fids", "name", "mask", "role", "region", "library", "weight")
+    check(
+        "nway lineage rows: column-wise lists of n entries each",
+        n > 0 and all(len(rows.get(k) or []) == n for k in keys + ("match",)),
+        str({k: len(rows.get(k) or []) for k in keys})[:200],
+    )
+    _, every = _nway(tab="all", scope="all", limit=1)
+    check(
+        "nway lineage rows: n is every row of the set (the tree ignores filters)",
+        every and n == every["total"],
+        f"{n} vs {every and every['total']}",
+    )
+    ids = [x["id"] for x in tree.get("nodes", [])]
+    check(
+        "nway lineage rows: mask is hex, bit i = nodes[i] holds the fids' file",
+        n > 0
+        and all(
+            {ids[i] for i in range(len(ids)) if int(m, 16) >> i & 1}
+            == {
+                f"{f.partition(':func:')[0]}:{f.partition(':func:')[2].partition(':')[0]}"
+                for f in fs
+            }
+            for m, fs in zip(rows["mask"], rows["fids"])
+        )
+        and all(f == fs[0] for f, fs in zip(rows["fid"], rows["fids"])),
+        str(list(zip(rows.get("mask", []), rows.get("fid", [])))[:3]),
+    )
+    check(
+        "nway lineage regions: every row region is described, with label and kind",
+        all(g in tree.get("regions", {}) for g in rows.get("region", []) if g)
+        and all(
+            set(v) == {"label", "kind"} for v in (tree.get("regions") or {}).values()
+        ),
+        str(tree.get("regions"))[:200],
+    )
+    _, page = _nway(tab="core", scope="code", limit=1)
+    check(
+        "nway lineage counts: same tab counts as /nway",
+        page and tree.get("counts") == page["counts"],
+        f"{tree.get('counts')} vs {page and page['counts']}",
+    )
+    q = next((x[:3] for x in rows.get("name", []) if len(x) >= 3), "fun").lower()
+    for params in (
+        {},
+        {"tab": "all", "scope": "all"},
+        {"tab": "unique", "scope": "all", "q": q},
+        {"tab": "all", "scope": "all", "feat_min": 10},
+    ):
+        r = requests.get(url, params={**base, **params}, timeout=60)
+        _, page = _nway(limit=1, **params)
+        got = r.json()["rows"]["match"] if r.status_code == 200 else None
+        check(
+            f"nway lineage rows: match counts the /nway filtered rows {params}",
+            got is not None and page and sum(got) == page["total"],
+            f"{got and sum(got)} vs {page and page.get('total')}",
+        )
+
+
+def _check_lineage_groups(base, url, tree):
+    """`group=<lens preset>`: the /nway groups of the first level, rows.group = a row's deepest one."""
+    check(
+        "nway lineage groups: none without a group param",
+        "groups" not in tree and "group" not in tree.get("rows", {}),
+    )
+    # the table's own grouping params (its client defaults)
+    table = {
+        "tab": "all",
+        "scope": "code",
+        "group_merge": "name,call",
+        "group_sort": "lanes",
+        "group_lane_link": 0.5,
+        "group_lane_tier": 0.8,
+        "group_lane_fold": 3,
+    }
+    q = next((x[:3] for x in tree["rows"]["name"] if len(x) >= 3), "fun").lower()
+    for group in ("region,role", "lane,region", "presence,region", "role,region"):
+        for extra in ({}, {"q": q}):
+            params = {**table, **extra, "group": group}
+            r = requests.get(url, params={**base, **params}, timeout=60)
+            t = r.json() if r.status_code == 200 else {}
+            _, page = _nway(**params, group_open="all", limit=0)
+            listed, rows = t.get("groups") or [], t.get("rows") or {}
+            idx, match = rows.get("group") or [], rows.get("match") or []
+            ng = (page or {}).get("groups") or {}
+            vprint(
+                f"lineage groups {group} {extra}:",
+                json.dumps([[g["id"], g.get("label"), g["rows"]] for g in listed]),
+            )
+            check(
+                f"nway lineage groups {group} {extra}: the /nway groups, same meta",
+                r.status_code == 200
+                and t.get("group") == group
+                and t.get("nfiles") == 2
+                and listed
+                and all(g == ng.get(g["id"]) for g in listed),
+                f"HTTP {r.status_code} {[g['id'] for g in listed]} vs {list(ng)}",
+            )
+            check(
+                f"nway lineage groups {group} {extra}: a matching row has a group, a filtered one none",
+                len(idx) == rows.get("n")
+                and all(
+                    (i is not None) == bool(m) and (i is None or 0 <= i < len(listed))
+                    for i, m in zip(idx, match)
+                ),
+            )
+            first = {g["id"] for g in listed}
+            check(
+                f"nway lineage groups {group} {extra}: first level only, top groups split the matching rows",
+                all(set(g["path"]) <= first for g in listed)
+                and sum(g["rows"] for g in listed if len(g["path"]) == 1) == sum(match),
+                str([(g["id"], g["rows"]) for g in listed]),
+            )
+    r = requests.get(url, params={**base, "group": "bogus"}, timeout=60)
+    check("nway lineage groups: a bad group is a 400", r.status_code == 400)
+
+
+def _check_lineage_twins(base, url, tree):
+    """columns=twins: nodes are twin columns with their member files."""
+    r = requests.get(url, params={**base, "columns": "twins"}, timeout=60)
+    check(
+        "nway lineage twins: the fixture pair is one twin column, too few nodes -> 400",
+        r.status_code == 400,
+        f"HTTP {r.status_code}",
+    )
+    _, tw = _nway(tab="all", scope="all", limit=1, columns="twins")
+    twin = (tw or {"columns": [{}]})["columns"][0].get("id")
+    r = requests.get(
+        url,
+        params={**base, "columns": "twins", "col_open": json.dumps([twin])},
+        timeout=60,
+    )
+    t = r.json() if r.status_code == 200 else {}
+    check(
+        "nway lineage twins: opened twin -> one node per file column, members set",
+        t.get("columns_mode") == "twins"
+        and len(t["nodes"]) == 2
+        and all(x["id"].startswith(twin + "/") for x in t["nodes"])
+        and sorted(m for x in t["nodes"] for m in x["members"])
+        == sorted(x["id"] for x in tree["nodes"])
+        and all(x["file_name"] for x in t["nodes"]),
+        f"HTTP {r.status_code} {str(t.get('nodes'))[:300]}",
+    )
+    _, op = _nway(
+        tab="all", scope="all", limit=1, columns="twins", col_open=json.dumps([twin])
+    )
+    check(
+        "nway lineage twins: node path = its /nway column's path (same colours)",
+        t
+        and op
+        and [x["path"] for x in t["nodes"]]
+        == [c.get("path") or [] for c in op["columns"]]
+        and t["nodes"][0]["path"],
+        f"{[x.get('path') for x in t.get('nodes', [])]}",
+    )
+    check(
+        "nway lineage twins: same edge counts as the file tree",
+        t
+        and [(e["gained"], e["lost"], e["shared"]) for e in t["edges"]]
+        == [(e["gained"], e["lost"], e["shared"]) for e in tree["edges"]]
+        and t["rows"]["n"] == tree["rows"]["n"],
+        f"{t.get('edges')} vs {tree.get('edges')}",
+    )
+    check(
+        "nway lineage files: a file node has members = [its id]",
+        all(x["members"] == [x["id"]] for x in tree.get("nodes", [])),
+    )
+
+
+def _check_nway_lineage_order(tree):
+    """/nway order=lineage: columns in lineage DFS order, column_parents, born groups."""
+    st, body = _nway(tab="all", scope="all", limit=0, order="lineage")
+    cols = [c["id"] for c in (body or {}).get("columns", [])]
+    vprint("order=lineage sample:", cols, (body or {}).get("column_parents"))
+    check(
+        "nway order=lineage: root first, column_parents = the lineage tree",
+        st == 200
+        and body.get("order") == "lineage"
+        and cols[0] == tree["root"]
+        and body["column_parents"]
+        == {
+            tree["root"]: None,
+            **{e["child"]: e["parent"] for e in tree["edges"]},
+        },
+        f"HTTP {st} {cols} {body and body.get('column_parents')}",
+    )
+    check(
+        "nway order=lineage: row masks follow the new column order",
+        body
+        and all(
+            {cols[i] for i in range(len(cols)) if x["mask"] >> i & 1} == set(x["cells"])
+            for x in body["items"]
+        ),
+    )
+    other = next(c for c in cols if c != tree["root"]) if len(cols) > 1 else None
+    _, flip = _nway(tab="all", scope="all", limit=1, order="lineage", root=other)
+    check(
+        "nway order=lineage: root= puts that file first",
+        flip and [c["id"] for c in flip["columns"]] == [other, tree["root"]],
+        str(flip and [c["id"] for c in flip["columns"]]),
+    )
+    _, plain = _nway(tab="all", scope="all", limit=1)
+    check(
+        "nway order=lineage: absent by default (no column_parents, no order)",
+        plain and "column_parents" not in plain and "order" not in plain,
+    )
+    check(
+        "nway order=lineage: column base = its index in the default order",
+        plain
+        and body
+        and [plain["columns"][c["base"]]["id"] for c in body["columns"]] == cols,
+    )
+    _, tw = _nway(tab="all", scope="all", limit=1, columns="twins", order="lineage")
+    check(
+        "nway order=lineage: a single twin column has no lineage to order by",
+        tw and "column_parents" not in tw and len(tw["columns"]) == 1,
+    )
+    _, born = _nway(
+        tab="all",
+        scope="all",
+        limit=0,
+        order="lineage",
+        group="delta",
+        group_open="all",
+    )
+    gs = (born or {}).get("groups", {})
+    rows = [x for x in (born or {}).get("items", []) if not x.get("header")]
+    want = {
+        f"born:{c}": sum(1 for x in rows if x["mask"] & -x["mask"] == 1 << i)
+        for i, c in enumerate(cols)
+    }
+    check(
+        "nway order=lineage group=delta: born groups, one per column, first holder wins",
+        gs
+        and all(g["kind"] == "born" for g in gs.values())
+        and {g: m["rows"] for g, m in gs.items()}
+        == {k: v for k, v in want.items() if v}
+        and gs.get(f"born:{cols[0]}", {}).get("label", "").startswith("In the root, ")
+        and all(
+            m["label"].startswith("Born in ")
+            for g, m in gs.items()
+            if g != f"born:{cols[0]}"
+        )
+        and all(
+            x["g"] == f"born:{cols[(x['mask'] & -x['mask']).bit_length() - 1]}"
+            for x in rows
+        ),
+        str({g: (m["rows"], m["label"]) for g, m in gs.items()})[:300],
+    )
+    _, delta = _nway(tab="all", scope="all", limit=1, group="delta")
+    check(
+        "nway group=delta without order=lineage: unchanged delta groups",
+        delta and all(g["kind"] == "delta" for g in delta["groups"].values()),
+    )
 
 
 def test_nway_diff():
@@ -5504,6 +6955,17 @@ def test_nway_diff():
         "nway: columns are the two requested files",
         [c["md5"] for c in core["columns"]] == [file_md5, file_md5_2],
         str(core["columns"]),
+    )
+    _nc = [i["name_conflict"] for i in core["items"] if i.get("name_conflict")]
+    check(
+        "nway name_conflict: 2+ Ghidra names, no FUN_, spread in (0, 1]",
+        all(
+            len(c["names"]) >= 2
+            and not any(n.startswith(("FUN_", "FID_conflict")) for n, _ in c["names"])
+            and 0 < c["spread"] <= 1
+            for c in _nc
+        ),
+        str(_nc[:3]),
     )
 
     # An analyst rename survives re-matching and resets cleanly.
@@ -5528,6 +6990,14 @@ def test_nway_diff():
             and _hit.get("user_named") == "llm",
             f"HTTP {_rn_resp.status_code} {str(_hit)[:200]}",
         )
+        check(
+            "nway name_conflict: an analyst name is never a conflicting name",
+            not any(
+                n == "analyst_renamed_fn"
+                for n, _ in (_hit.get("name_conflict") or {}).get("names", [])
+            ),
+            str(_hit.get("name_conflict")),
+        )
         _rn("")
         _, _rb = _nway(tab="core", scope="all", limit=1000)
         _hit = next((i for i in _rb["items"] if i["cells"] == _first["cells"]), {})
@@ -5535,6 +7005,23 @@ def test_nway_diff():
             "nway rename: empty name resets to the derived one",
             _hit.get("name") != "analyst_renamed_fn" and not _hit.get("user_named"),
             str(_hit)[:200],
+        )
+
+    # AI suggest names the row's stripped neighbours first; that lookup never errors.
+    if _first:
+        _sg = lambda fids: requests.post(
+            f"{BASE_URL}/api/notes/rename/suggest", json={"func_ids": fids}, timeout=180
+        )
+        _sg_none = _sg([f"{COLLECTION}:func:{'0' * 32}:00000000"])
+        _sg_row = _sg(_rf)
+        check(
+            "rename suggest: unknown function is a 404, a real row a name or an LLM error",
+            _sg_none.status_code == 404
+            and (
+                (_sg_row.status_code == 200 and _sg_row.json().get("name"))
+                or _sg_row.status_code == 502
+            ),
+            f"HTTP {_sg_none.status_code} / {_sg_row.status_code} {_sg_row.text[:200]}",
         )
 
     # The name is searchable, batch-settable, and every change is kept in history.
@@ -5936,6 +7423,7 @@ def test_nway_diff():
         columns="twins",
         group="lane",
         group_merge="name",
+        group_min_link=0,  # the fixture's same-name rows share no edge
         group_open="all",
     )
     check(
@@ -5977,9 +7465,12 @@ def test_nway_diff():
             f"{_label}: every row names a group on the page (or none, at the top)",
             all(i.get("g") in _groups or i.get("g") == "" for i in _items),
         )
+        _tops = [k for k, m in _groups.items() if len(m["path"]) == 1]
         check(
-            f"{_label}: no catch-all group",
-            all(m["kind"] not in ("other", "rest") for m in _groups.values()),
+            f"{_label}: what no group takes sits in one Other group, listed last",
+            all(m["kind"] != "other" for m in _groups.values())
+            and ("rest" not in _tops or _tops[-1] == "rest"),
+            str(_tops),
         )
         # Collapsed (the default): one header per group, no rows.
         _, _shut = _nway(tab="all", scope="all", limit=1000, group=_mode, **_extra)
@@ -6096,6 +7587,7 @@ def test_nway_diff():
             limit=1000,
             group="lane",
             group_merge="name",
+            group_min_link=0,  # the fixture's same-name rows share no edge
             sort_col="weight",
             sort_dir=_dir,
             group_open="all",
@@ -6228,6 +7720,76 @@ def test_nway_diff():
         "nway group: group_lane_link=2 is a 400",
         _nway(group="lane", group_lane_link=2)[0] == 400,
     )
+    # tag facets: counts per level, and tags= is OR inside an axis, AND across axes
+    _, _fb = _nway(tab="all", scope="all", limit=1000, facets=1)
+    _fac = (_fb or {}).get("tag_facets") or {}
+    check(
+        "nway facets: facets=1 gives every axis as [level, parent, rows], parents listed",
+        _fac
+        and all(
+            n > 0 and (not p or p in {x[0] for x in lv})
+            for lv in _fac.values()
+            for _, p, n in lv
+        ),
+        f"{list(_fac)}",
+    )
+    _ax = next((a for a, lv in _fac.items() if lv), None)
+    if _ax:
+        _id, _, _n = _fac[_ax][0]
+        _, _tb = _nway(tab="all", scope="all", limit=1000, tags=_id)
+        check(
+            "nway facets: tags=<level> keeps exactly the rows its count says",
+            _tb and _tb["total"] == _n,
+            f"{_id}: {_tb and _tb['total']} vs {_n}",
+        )
+        _two = [x[0] for x in _fac[_ax][:2]]
+        _, _ob = _nway(tab="all", scope="all", limit=1000, tags=",".join(_two))
+        check(
+            "nway facets: two levels of one axis are an OR",
+            _ob and _ob["total"] >= _n,
+        )
+        _other = next((a for a in _fac if a != _ax and _fac[a]), None)
+        if _other:
+            _, _ab = _nway(
+                tab="all", scope="all", limit=1000, tags=f"{_id},{_fac[_other][0][0]}"
+            )
+            check(
+                "nway facets: levels of two axes are an AND",
+                _ab and _ab["total"] <= min(_n, _fac[_other][0][2]),
+            )
+    check(
+        "nway group: group_tag_depth=x is a 400",
+        _nway(group="tag", group_tag_depth="x")[0] == 400,
+    )
+    _, _td = _nway(
+        tab="all", scope="all", group="tag", group_tag_depth=1, group_open="all"
+    )
+    _st, _lt2 = _nway(
+        tab="all", scope="all", group="lane,tag", group_tag_depth=1, group_open="all"
+    )
+    _lanes = {
+        g
+        for g, m in ((_lt2 or {}).get("groups") or {}).items()
+        if m.get("kind") == "lane"
+    }
+    check(
+        "nway group: lane,tag nests tag groups inside the lanes",
+        _st == 200
+        and (
+            not _lanes
+            or any(
+                m["path"][0] in _lanes and len(m["path"]) > 1
+                for m in _lt2["groups"].values()
+                if m.get("kind") == "tag"
+            )
+        ),
+        f"{_st}",
+    )
+    check(
+        "nway group: group_tag_depth=1 nests one tag level",
+        _td is not None and all(">" not in g for g in _td["groups"]),
+        f"{_td and list(_td['groups'])[:5]}",
+    )
     # tiers and folds only regroup: every row stays, tiers start open, folds closed
     _, _lt = _nway(
         tab="all",
@@ -6310,7 +7872,11 @@ def test_nway_diff():
     # Groups of every kind at one level are ordered together, file coverage first by default.
     for _chain in ("lane", "prefix", "prefix,lane"):
         _, _o = _nway(tab="all", scope="all", limit=1000, group=_chain)
-        _tops = [m["files"] for m in _o["groups"].values() if len(m["path"]) == 1]
+        _tops = [
+            m["files"]
+            for m in _o["groups"].values()
+            if len(m["path"]) == 1 and m["kind"] != "rest"
+        ]
         check(
             f"nway group={_chain}: top groups are ordered by file coverage",
             _tops and _tops == sorted(_tops, reverse=True),
@@ -6323,8 +7889,8 @@ def test_nway_diff():
         _ws and _ws == sorted(_ws, reverse=True),
         str(_ws),
     )
-    # Plain rows are siblings of the groups: ordered with them, not appended after them.
-    for _gs, _want in (("weight", "before"), ("files", "after")):
+    # No lone row at the top: rows no lane takes sit in "Other functions", after the lanes.
+    for _gs in ("weight", "files"):
         _, _mix = _nway(
             tab="all",
             scope="all",
@@ -6335,7 +7901,9 @@ def test_nway_diff():
             group_open="all",
         )
         _its = _mix["items"]
-        _plain = [n for n, i in enumerate(_its) if not i.get("header") and i["g"] == ""]
+        _plain = [
+            n for n, i in enumerate(_its) if not i.get("header") and i["g"] == "rest"
+        ]
         _wide = next(
             (
                 n
@@ -6345,10 +7913,8 @@ def test_nway_diff():
             None,
         )
         check(
-            f"nway group: plain rows are ordered with the lanes (group_sort={_gs})",
-            _plain
-            and _wide is not None
-            and (min(_plain) < _wide if _want == "before" else min(_plain) > _wide),
+            f"nway group: rows no lane takes sit in Other functions, after the lanes (group_sort={_gs})",
+            _plain and _wide is not None and min(_plain) > _wide,
             f"plain rows at {_plain[:3]}, 2-file lane at {_wide}",
         )
     check(
@@ -6942,6 +8508,196 @@ def _check_runtime_unweighted_matching():
         score_u >= score_w - 1e-9,
         f"weighted={score_w}, unweighted={score_u}",
     )
+
+
+def test_nway_build_job():
+    """A set over `nway.auto_build_max_members` is built by a NWAY_BUILD job only.
+
+    Run in-process with the threshold patched to 1, so the two fixture files
+    count as a large set: requests answer 428, the job runner builds once and
+    keeps the doc in Redis, and later requests read it without touching Kvrocks.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-sext – N-way build job (large sets)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(_color("\n[SKIP] Need two binaries – nway build checks skipped.", YELLOW))
+        return
+    from flask import Flask
+    from bsimvis.app.routes import nway as nway_routes
+    from bsimvis.app.services import nway_diff_service as nds
+    from bsimvis.app.routes.bin_sim import job_service
+    from bsimvis.app.services.redis_client import get_raw_queue_redis
+
+    args = {"md5s": f"{file_md5},{file_md5_2}", "collection": COLLECTION}
+    app = Flask(__name__)
+    call = lambda fn: _unwrap(fn, app, args)
+    real = (nds.auto_build_max, job_service.enqueue_job, nds._load_base)
+    loads = []
+    nds.auto_build_max = lambda: 1
+    job_service.enqueue_job = lambda *a, **k: None  # the live worker must not race us
+    nds.invalidate()
+    key = jid = None
+    try:
+        body, status = call(nway_routes.get_nway)
+        key = body.get("key")
+        check(
+            "nway build: a large set is refused with 428 needs_build",
+            status == 428 and body.get("error") == "needs_build" and not body["job"],
+            f"HTTP {status} {str(body)[:200]}",
+        )
+        if status != 428:
+            return
+        if key:
+            get_raw_queue_redis().delete(f"nway:built:base:{key}")
+        queued, status = call(nway_routes.post_nway_build)
+        jid = queued.get("id")
+        again, _ = call(nway_routes.get_nway)
+        check(
+            "nway build: the job is queued and /nway re-attaches to it",
+            status == 202
+            and jid
+            and (again.get("job") or {}).get("id") == jid
+            and (again.get("job") or {}).get("progress_id") == queued["progress_id"],
+            f"HTTP {status} {queued} / {again.get('job')}",
+        )
+        payload = json.loads(job_service.r.hget(f"job:{jid}", "payload"))
+        ok = nway_routes.run_build_job(payload, job_service, jid)
+        job_service.complete_job(jid)
+        check(
+            "nway build: the job builds and keeps the base in Redis",
+            ok and get_raw_queue_redis().exists(f"nway:built:base:{key}"),
+            f"ok={ok}",
+        )
+        nds._load_base = lambda *a, **k: loads.append(1) or real[2](*a, **k)
+        nds.invalidate()
+        page, status = call(nway_routes.get_nway)
+        ready, _ = call(nway_routes.post_nway_build)
+        check(
+            "nway build: once built, /nway serves it without reading Kvrocks again",
+            status == 200 and page.get("total") is not None and not loads,
+            f"HTTP {status} loads={len(loads)} {str(page)[:200]}",
+        )
+        check(
+            "nway build: /nway/build answers ready for a built set",
+            ready.get("status") == "ready",
+            str(ready),
+        )
+        depths = body.get("depths") or []
+        check(
+            "nway build: the 428 offers build depths with estimates (2 files: Deep only)",
+            [d["id"] for d in depths] == ["deep"]
+            and depths[-1]["pair_k"] == 0
+            and all(d["pairs"] >= 1 and d["secs"] >= 0 for d in depths)
+            and body.get("functions", 0) > 0,
+            str(depths)[:300],
+        )
+        deep, s_deep = _unwrap(nway_routes.get_nway, app, {**args, "pair_k": 0})
+        sticky, s_sticky = call(nway_routes.get_nway)
+        check(
+            "nway build: a chosen depth sticks to the set for calls without pair_k",
+            s_deep == 428
+            and deep.get("pair_k") == 0
+            and s_sticky == 428
+            and sticky.get("key") == deep.get("key") != key,
+            f"HTTP {s_deep}/{s_sticky} {deep.get('pair_k')} {sticky.get('pair_k')}",
+        )
+        back, s_back = _unwrap(
+            nway_routes.get_nway, app, {**args, "pair_k": nds.pair_sample()[1]}
+        )
+        check(
+            "nway build: picking the built depth again serves the built set",
+            s_back == 200 and call(nway_routes.get_nway)[1] == 200,
+            f"HTTP {s_back}",
+        )
+    finally:
+        nds.auto_build_max, job_service.enqueue_job, nds._load_base = real
+        nds.invalidate()
+        if key:
+            get_raw_queue_redis().delete(f"nway:built:base:{key}")
+            get_raw_queue_redis().delete(f"nway:build_job:{key}")
+
+
+def test_nway_bridges():
+    """Sampled sets: bridges link files across pairs that were never read.
+
+    In-process, with the pair sampler patched to read no pair, so the two
+    fixture files can only be linked by bridges. Every bridged row must be a
+    row of the full read (pair_k=0): a bridge recovers rows, never invents one.
+    """
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" STEP 3c-sept – N-way bridges (sampled sets)", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    if not file_md5 or not file_md5_2:
+        print(
+            _color("\n[SKIP] Need two binaries – nway bridge checks skipped.", YELLOW)
+        )
+        return
+    from flask import Flask
+    from bsimvis.app.routes import nway as nway_routes
+    from bsimvis.app.services import nway_diff_service as nds
+
+    status, _ = _nway(sample_above=1, bridges="fid,lsh")
+    check("nway bridges: an unknown kind is a 400", status == 400, f"HTTP {status}")
+
+    args = {
+        "md5s": f"{file_md5},{file_md5_2}",
+        "collection": COLLECTION,
+        "tab": "all",
+        "scope": "all",
+        "limit": 0,
+    }
+    app = Flask(__name__)
+    call = lambda **extra: _unwrap(nway_routes.get_nway, app, {**args, **extra})
+    real = nds.nearest_pairs
+    nds.nearest_pairs = lambda *a, **k: []
+    nds.invalidate()
+    try:
+        full, s_full = call(pair_k=0)
+        bare, s_bare = call(sample_above=1, bridges="none")
+        bridged, s_br = call(sample_above=1, bridges="lane,fid,cluster")
+    finally:
+        nds.nearest_pairs = real
+        nds.invalidate()
+
+    multi = lambda body: [i for i in body.get("items", []) if i.get("span", 0) > 1]
+    check(
+        "nway bridges: with no pair read and no bridges, no row spans two files",
+        s_bare == 200 and not multi(bare),
+        f"HTTP {s_bare} rows={len(multi(bare))}",
+    )
+    rows = multi(bridged)
+    check(
+        "nway bridges: every two-file row of an unread pair is a bridged row",
+        s_br == 200 and all(i.get("bridged") for i in rows),
+        f"HTTP {s_br} {[i for i in rows if not i.get('bridged')][:2]}",
+    )
+    truth = {s for s in _nway_rows(full) if len(s) > 1}
+    got = {s for s in _nway_rows({"items": rows})}
+    wrong = got - truth
+    print(
+        f"  bridged rows: {len(got)} of {len(truth)} full-read rows, "
+        f"{len(wrong)} not in the full read"
+    )
+    check(
+        "nway bridges: bridges recover rows, and those agree with the full read (>= 95%)",
+        s_full == 200 and truth and got and len(wrong) <= 0.05 * len(got),
+        f"HTTP {s_full} {len(wrong)}/{len(got)} of {len(truth)} e.g. {list(wrong)[:2]}",
+    )
+    check(
+        "nway bridges: the warning reports the bridges",
+        any("Bridges over unread pairs" in w for w in bridged.get("warnings") or []),
+        str(bridged.get("warnings")),
+    )
+
+
+def _unwrap(fn, app, args):
+    """(body, status) of a route function run in a synthetic request."""
+    with app.test_request_context(query_string=args):
+        res = fn()
+    return res if isinstance(res, tuple) else (res, 200)
 
 
 def test_llm_pair_analysis_job():
@@ -10150,14 +11906,18 @@ if __name__ == "__main__":
     STEPS = [
         test_call_edge_id_dedup,
         test_strings,
+        test_yara_editor,
+        test_branch_badge,
         test_maintenance_remove_validation,
         test_maintenance_remove_file,
         test_pool_member_removal,
         test_pool_hierarchical_axis_fanout,
         test_cluster_tags,
+        test_cluster_rename,
         test_entrypoint_backfill,
         test_incremental_hierarchical_cluster_equivalence,
         test_function_search_unindexed_cluster,
+        test_function_live_discovery,
         test_cluster_response_contract,
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,
@@ -10167,9 +11927,13 @@ if __name__ == "__main__":
         test_bin_sim_diff_cache,
         test_nway_diff,
         test_nway_column_groups,
+        test_nway_indicators,
+        test_nway_roles,
         test_nway_function_meta,
         test_nway_lineage,
         test_nway_cluster_entry,
+        test_nway_build_job,
+        test_nway_bridges,
         test_llm_pair_analysis_job,
         test_search_job,
         test_bin_sim_notes_and_tags,
@@ -10200,9 +11964,13 @@ if __name__ == "__main__":
         "test_bin_sim_diff_cache": ["test_search_filters_and_sorting"],
         "test_nway_diff": ["test_search_filters_and_sorting"],
         "test_nway_column_groups": ["test_search_filters_and_sorting"],
+        "test_nway_indicators": ["test_search_filters_and_sorting"],
+        "test_nway_roles": ["test_search_filters_and_sorting"],
         "test_nway_function_meta": ["test_search_filters_and_sorting"],
         "test_nway_lineage": ["test_search_filters_and_sorting"],
         "test_nway_cluster_entry": ["test_search_filters_and_sorting"],
+        "test_nway_build_job": ["test_search_filters_and_sorting"],
+        "test_nway_bridges": ["test_search_filters_and_sorting"],
         "test_llm_pair_analysis_job": ["test_search_filters_and_sorting"],
         "test_search_job": ["test_search_filters_and_sorting"],
         "test_bin_sim_notes_and_tags": ["test_search_filters_and_sorting"],

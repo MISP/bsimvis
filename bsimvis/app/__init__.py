@@ -1,9 +1,51 @@
-from flask import Flask, send_from_directory, request, g
+from flask import Flask, Response, send_from_directory, request, g
 from flask_cors import CORS
 from flask_compress import Compress
+import colorsys
+import hashlib
+import html
 import os
+import re
+import subprocess
 import time
 import logging
+
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def git_branch():
+    """Branch of the checkout this app runs from, or None (no git / BRANCH_BADGE=0)."""
+    if os.getenv("BRANCH_BADGE", "1").lower() in ("0", "false", "no", "off"):
+        return None
+    # ponytail: one git call per page/icon load; cheap, and a checkout switch needs no restart
+    try:
+        out = subprocess.run(
+            ["git", "-C", _APP_DIR, "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    branch = out.stdout.strip()
+    return branch if out.returncode == 0 and branch else None
+
+
+def branch_hue(branch):
+    # md5, not hash(): str hashes are salted per process
+    return int(hashlib.md5(branch.encode()).hexdigest()[:8], 16) % 360
+
+
+def tint_svg(svg, hue):
+    """Move every #RRGGBB to `hue`, keeping its lightness and saturation."""
+
+    def sub(m):
+        rgb = (int(m.group(1)[i : i + 2], 16) / 255 for i in (0, 2, 4))
+        _, light, sat = colorsys.rgb_to_hls(*rgb)
+        r, g, b = colorsys.hls_to_rgb(hue / 360, light, sat)
+        return "#%02X%02X%02X" % (round(r * 255), round(g * 255), round(b * 255))
+
+    return re.sub(r"#([0-9A-Fa-f]{6})\b", sub, svg)
 
 
 def create_app():
@@ -153,12 +195,40 @@ def create_app():
     @app.route("/jobs")
     @app.route("/upload")
     def dashboard_ui(collection=None, rest=None, pool_id=None):
-        return send_from_directory(app.static_folder, "index.html")
+        return index()
 
-    # Serve the Bare JS frontend
+    # Serve the Bare JS frontend, stamped with the branch so a worktree tab is
+    # told apart by its title and icon colour.
     @app.route("/")
     def index():
-        return send_from_directory(app.static_folder, "index.html")
+        branch = git_branch()
+        if not branch:
+            return send_from_directory(app.static_folder, "index.html")
+        with open(os.path.join(app.static_folder, "index.html"), encoding="utf-8") as f:
+            page = f.read()
+        name = html.escape(branch.removeprefix("worktree-"), quote=True)
+        hue = branch_hue(branch)
+        page = page.replace(
+            "<title>BSimVis Dashboard</title>", f"<title>[{name}] BSimVis</title>", 1
+        )
+        page = page.replace(
+            '<html lang="en">',
+            f'<html lang="en" data-branch="{name}" data-branch-hue="{hue}">',
+            1,
+        )
+        page = page.replace('href="/favicon.svg"', f'href="/favicon.svg?h={hue}"', 1)
+        return Response(page, mimetype="text/html")
+
+    @app.route("/favicon.svg")
+    @app.route("/logo.svg")
+    def branch_icon():
+        name = request.path.lstrip("/")
+        branch = git_branch()
+        if not branch:
+            return send_from_directory(app.static_folder, name)
+        with open(os.path.join(app.static_folder, name), encoding="utf-8") as f:
+            svg = tint_svg(f.read(), branch_hue(branch))
+        return Response(svg, mimetype="image/svg+xml")
 
     @app.route("/<path:path>")
     def serve_static(path):
@@ -168,6 +238,6 @@ def create_app():
             return send_from_directory(app.static_folder, path)
         except NotFound:
             # SPA fallback: unknown paths are handled by the frontend router
-            return send_from_directory(app.static_folder, "index.html")
+            return index()
 
     return app

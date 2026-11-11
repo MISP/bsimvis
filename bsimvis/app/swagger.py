@@ -60,6 +60,7 @@ ns_scan = Namespace(
     "scan", description="Fast scan: compare a file without ingesting it"
 )
 ns_nway = Namespace("nway", description="N-way function set views")
+ns_yara = Namespace("yara", description="Live YARA rule workbench")
 ns_strings = Namespace(
     "strings", description="Strings extracted by Ghidra: per file, per function, pivot"
 )
@@ -87,6 +88,7 @@ api.add_namespace(ns_searches)
 api.add_namespace(ns_scan)
 api.add_namespace(ns_strings)
 api.add_namespace(ns_nway)
+api.add_namespace(ns_yara)
 
 # --- Models & Examples ---
 
@@ -1676,6 +1678,65 @@ class SimilaritySearch(Resource):
         return similarity_search()
 
 
+@ns_similarity.route("/discover")
+class SimilarityDiscover(Resource):
+    @ns_similarity.doc(
+        params={
+            "collection": {
+                "description": "Anchor function's collection",
+                "required": True,
+            },
+            "md5": {"description": "Anchor function's file md5", "required": True},
+            "address": {"description": "Anchor function's address", "required": True},
+            "pool": "Discover across this pool's member collections instead",
+            "min_score": "Floor; clamped up to similarity.discovery_min_score",
+            "max_score": "Upper bound on the live score",
+            "limit": "Rows returned (default 50, max 1000)",
+            "cross_binary": "true / false",
+        }
+    )
+    def get(self):
+        """Live similar functions below the stored edges' min_score (read-only).
+
+        Any /api/function/search filter (name, func_tag, file_name, q, ...) also
+        applies, to the partner function. Partners that already have a stored
+        edge are left out; rows have
+        `live: true` and no `sid`. Save one with POST /discover/persist.
+        """
+        from bsimvis.app.routes.function_similarity import discover_similar
+
+        return discover_similar()
+
+
+@ns_similarity.route("/discover/persist")
+class SimilarityDiscoverPersist(Resource):
+    @ns_similarity.expect(
+        api.model(
+            "SimilarityDiscoverPersistRequest",
+            {
+                "collection": fields.String(required=True, example="main"),
+                "md5": fields.String(required=True),
+                "address": fields.String(required=True),
+                "partner_ids": fields.List(
+                    fields.String,
+                    required=True,
+                    example=["main:func:0ed905e8abcdef12:00101144"],
+                ),
+                "pool": fields.String(),
+            },
+        )
+    )
+    def post(self):
+        """Stores live-discovered pairs as real edges tagged `discovered`.
+
+        Scores are recomputed server-side; pairs below the discovery floor or
+        already stored are reported under `skipped`.
+        """
+        from bsimvis.app.routes.function_similarity import persist_discovered
+
+        return persist_discovered()
+
+
 @ns_similarity.route("/tag")
 class SimilarityTag(Resource):
     @ns_similarity.expect(
@@ -2668,6 +2729,72 @@ class BinSimNwayNeighbors(Resource):
         return get_nway_neighbors()
 
 
+@ns_bin_sim.route("/nway/strings")
+class BinSimNwayStrings(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Same file set / column params as /nway (cluster_uuid, col_set, col_by, columns, col_open, pool, ...)",
+            "family": "Column ids describing the family (see /nway); rows get `stats` with cover, leak, reach and score. Without it rows carry no stats",
+            "ignore": "Column ids left out of the contrast",
+            "family_only": "With family: 1 (default) keeps strings some family file holds, 0 keeps all",
+            "cover_min": "Keep rows whose cover (0-1) is at least this",
+            "leak_max": "Keep rows whose leak rate (0-1) is at most this",
+            "min_length": "Shortest string kept (default 6)",
+            "group": "lane, prefix or lane,prefix: group the strings like /nway rows (lane = same set of files; group_lane_* and group_open / group_flip work as there). Rows come back in group order with a group id `g`; `groups` describes the ones on the page. Lane groups carry `fids`: functions that use their heaviest strings, which the lane names (POST /nway/lane_names with kind=string) are read from",
+            "refs": "1 adds `refs` to each string row: {direct: [{name, n}], functions}, the N-way function rows whose functions reference the string (the links stored in the database; `cells` = {file id: function id} of a few of them) and how many functions do. The response then carries `functions_metadata` for those function ids, as /nway does",
+            "scope": "code (default), library (strings tagged origin:lib) or all",
+            "q": "Substring of the string value",
+            "sort_col": "score (default with family), cover, leak, reach, span, weight or name",
+            "sort_dir": "asc or desc",
+            "offset": "Page offset",
+            "limit": "Page size (default 100, max 1000)",
+        }
+    )
+    def get(self):
+        """N-way table of strings: one row per string value, one column per file or group, with Cover / Leak / Reach / Score for a lane. `reach` counts the files of the collection outside the table holding the string."""
+        from bsimvis.app.routes.nway import get_nway_strings
+
+        return get_nway_strings()
+
+
+@ns_bin_sim.route("/nway/expand")
+class BinSimNwayExpand(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "kind": "function (sub-rows are the strings its functions reference), callers / callees (the rows that call it / it calls), consts (its constants) or string (sub-rows are the function rows that reference it)",
+            "cells": "kind=function, callers, callees, consts: JSON object `{file column id: function id}`, the row's `files` / `cells`",
+            "id": "kind=string: the string id (`id` of a /nway/strings row)",
+            "md5s": "Same file set / column params as /nway (cluster_uuid, col_set, col_by, columns, col_open, pool, ...)",
+        }
+    )
+    def get(self):
+        """Sub-rows of one N-way row with presence per column: `{items, total}`, each item `{id, name, cells: {column id: {present, total, on}}, span}`."""
+        from bsimvis.app.routes.nway import get_nway_expand
+
+        return get_nway_expand()
+
+
+@ns_bin_sim.route("/nway/indicators")
+class BinSimNwayIndicators(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "family": "Required. Column ids describing the family (see /nway)",
+            "ignore": "Column ids left out of the contrast",
+            "kinds": "string, function or both (default `string,function`)",
+            "cover_min": "Keep indicators whose cover (0-1) is at least this",
+            "leak_max": "Keep indicators whose leak rate (0-1) is at most this",
+            "scope": "code (default), library or all",
+            "limit": "Indicators returned (default 50, max 500)",
+            "md5s": "Same file set / column params as /nway",
+        }
+    )
+    def get(self):
+        """Strings and function blocks of the table ranked by how well they single out the family: `[{kind, id, preview, files, stats}]`, best score first."""
+        from bsimvis.app.routes.nway import get_nway_indicators
+
+        return get_nway_indicators()
+
+
 @ns_bin_sim.route("/nway/facets")
 class BinSimNwayFacets(Resource):
     @ns_bin_sim.doc(
@@ -2708,7 +2835,7 @@ class BinSimNwayLaneNames(Resource):
             {
                 "lanes": fields.List(
                     fields.Raw,
-                    description="Lane groups: id, files, total, rows, sample (function names), hint (shared prefix)",
+                    description="Lane groups: id, files, total, rows, sample (function names, or string values with kind=string), hint (shared prefix), fids (functions read for evidence), kind (string for a lane of strings)",
                 )
             },
         )
@@ -2718,6 +2845,28 @@ class BinSimNwayLaneNames(Resource):
         from bsimvis.app.routes.nway import post_nway_lane_names
 
         return post_nway_lane_names()
+
+
+@ns_bin_sim.route("/nway/role")
+class BinSimNwayRole(Resource):
+    @ns_bin_sim.doc(
+        body=ns_bin_sim.model(
+            "NwayRole",
+            {
+                "func_ids": fields.List(
+                    fields.String, required=True, description="Function ids"
+                ),
+                "role": fields.String(
+                    description="orchestrator, entry, logic, compute, leaf, plumbing, runtime or library; empty clears the override"
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Override the triage role of functions (a `role:<role>` user tag); the N-way rows take it over the call-graph rules."""
+        from bsimvis.app.routes.nway import post_nway_role
+
+        return post_nway_role()
 
 
 @ns_bin_sim.route("/nway/facets/explain")
@@ -2754,11 +2903,18 @@ class BinSimNwayLineage(Resource):
             "md5s": "Same file set / scope params as /nway (collection, pool, mode, min_edge, ...)",
             "root": "Root file, md5 or collection:md5 (default: the file with most functions)",
             "file": "Big sets (more than 60 files): file id (or md5) whose per-file overlay (by_file) to include",
-            "order": "tree (maximum spanning tree, default), chain (seriation, at most 200 files) or star (every file vs root)",
+            "order": "tree (maximum spanning tree, default; `lineage` is read as tree), chain (seriation, at most 200 files) or star (every file vs root)",
+            "columns": "files (default), twins (each node is a twin column) or children (each node is a child file cluster, opened with `col_open`); `nodes[i].members` are its files, `path` the groups it was opened out of",
+            "tab": "With q, k, scope, tags, column, feat_min, feat_max, support_min, ...: the /nway row filter, flagged per row in `rows.match` (the tree always uses every row)",
         }
     )
     def get(self):
-        """Lineage tree of the files: parent -> child edges with gained, lost, shared and recall_suspect counts."""
+        """Lineage tree of the files: parent -> child edges with gained, lost, shared and recall_suspect counts.
+
+        Also `rows` (every row, column-wise: n, fid, fids (left out on huge sets),
+        name, mask (hex, bit i = nodes[i]), role, region, library, weight, match),
+        `regions` ({id: {label, kind}}, display order) and `counts` (as /nway).
+        """
         from bsimvis.app.routes.nway import get_nway_lineage
 
         return get_nway_lineage()
@@ -2784,6 +2940,29 @@ class BinSimNwayCancel(Resource):
         return cancel_nway()
 
 
+@ns_bin_sim.route("/nway/build")
+class BinSimNwayBuild(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
+            "pair_k": "Build depth: one of the `depths` the 428 answer lists (fast = nway.pair_k, balanced = 64, deep = 0, every pair). It sticks to the set: later calls without pair_k read this build",
+        }
+    )
+    def post(self):
+        """Build a large set's N-way as a NWAY_BUILD job.
+
+        A set over `nway.auto_build_max_members` files is never built by a request:
+        `/nway` (and every call that reads its doc) answers 428 `needs_build` until
+        this job ran. Answers `{status: ready}` when built, else the job `id` and the
+        `progress_id` that `/nway/progress` and `/nway/cancel` take. The 428 answer
+        lists `depths`: `{id, label, pair_k, note, pairs, total_pairs, secs}`, the
+        file pairs each depth reads and its estimated build time.
+        """
+        from bsimvis.app.routes.nway import post_nway_build
+
+        return post_nway_build()
+
+
 @ns_bin_sim.route("/nway")
 class BinSimNway(Resource):
     @ns_bin_sim.doc(
@@ -2801,6 +2980,8 @@ class BinSimNway(Resource):
             "col_rest": "col_pick: other (default, the unpicked files are one `other` column) or drop (they leave the set)",
             "col_set": "Column groups saved by POST /nway/columns (replaces md5s; sets columns=by)",
             "col_presence": "columns=by: a group holds a function when any (default 0.5 child_presence otherwise), half or all of its files do",
+            "sample_above": "stored mode: files above which pairs are sampled (default nway.sample_above = 100)",
+            "bridges": "stored mode, sampled sets: what links files beyond the pairs read, a subset of lane,fid,cluster or none (default nway.bridges = lane). lane matches once, then reads the best pair between lanes sharing no file (nway.lane_k per lane, default 8, for nway.lane_rounds rounds, default 3); fid matches functions under min_features sharing a FunctionID hash at 1.0; above min_features a shared hash or primary cluster is kept only when its BSim score reaches min_score",
             "pair_k": "stored mode, sets over nway.sample_above files (default 100): file pairs read per file, its k best-scored partners plus nway.pair_random random ones (default nway.pair_k = 16; 0 reads every pair)",
             "child_presence": "children columns: share of a child's files that must hold a function for it to count as present (default 0.5)",
             "collection": "Collection for bare md5s",
@@ -2817,17 +2998,28 @@ class BinSimNway(Resource):
             "side": "focus (or two col_by groups) only: keep rows present on the focus or rest side (a / b for the first / second group)",
             "scope": "code (default), library or all",
             "column": "Only rows that have a function in this file (`<collection>:<md5>`)",
-            "q": "Search function names, addresses and tags",
-            "tags": "Comma-separated tag prefixes to keep",
+            "q": "Search function names, addresses, tags and cluster names; also functions that reference a string containing the text (3+ characters)",
+            "tags": "Comma-separated tag prefixes to keep: a row needs one of them on every tag axis named (OR inside an axis, AND across axes)",
+            "facets": "1 adds `tag_facets`: {axis: [[level id, parent id, rows]]}, every tag level the filtered rows carry, busiest first; each axis is counted over the rows passing the other axes' `tags`",
             "feat_min": "Minimum row weight",
             "feat_max": "Maximum row weight",
             "support_min": "Minimum share of file pairs matched inside a row (0-1)",
-            "sort_col": "span, weight, support, cohesion or name",
+            "sort_col": "span, weight, support, cohesion or name; with family also cover, leak or score",
+            "calls": "1 adds `calls` to each row: `{callers, callees}`, each `{total, top: [{name, n, of, ext}]}`, the other table rows it is called by / calls (a row is one neighbor however many files hold it; ext = a call out of the binary)",
+            "consts": "1 adds `consts` to each row: `{total, top: [{value, n, of}]}`, the pcode constants its functions use",
+            "strings": "1 adds `strings` to each row: `{total, top: [{id, value, n, of}]}`, the strings its functions reference (n = functions of the row referencing it)",
+            "family": "Comma-separated column ids (a file or a group) describing the family to single out. Rows get `stats`: cover (share of family files holding the row), leak (contrast files also holding it) and score. The response `family` lists the family, contrast and ignored file ids",
+            "ignore": "With family: column ids left out of the contrast (a sibling variant you do not want counted as leak)",
+            "cover_min": "With family: keep rows whose cover (0-1) is at least this",
+            "leak_max": "With family: keep rows whose leak rate (share of contrast files, 0-1) is at most this",
             "sort_dir": "asc or desc",
+            "order": "lineage: file or twin columns in lineage-tree DFS order (the /nway/lineage tree, most similar child first; `root` as there). Adds `column_parents` {column id: parent id or null} and `order`; group=delta then groups rows by the column they were born in (kind born). Other column modes ignore it",
+            "root": "order=lineage: root file (id or md5; default the file with most functions)",
             "group": "Group the rows: prefix (first word of the function name, e.g. `attack_*`), lane (same file set) and/or tag (nest under one tag axis), comma separated, each once, up to three; each level splits every group of the previous one. Functions a level cannot place (no prefix, a prefix held by one function) go on to the next level beside its groups. Optional when group_merge is set. Rows come back in group order with a group id `g`; `groups` describes the ones on the page. sort_col orders rows inside a group",
             "group_merge": "Merge rows that are probably one function first: name, call or name,call (shared function name, shared caller row). Rows that share a file are never merged. With a group level, the merged function is what gets grouped (it sits in the lane of all its files together); merged functions show as `same` sub-groups holding their rows, and are ordered with the plain rows by sort_col as if each were one function (span: files covered, weight: heaviest row, support/cohesion: mean)",
             "group_axis": "group=tag: origin (default), severity, category, user, capa, mitre, mbc, yara, ruleset, family or vuln",
             "group_axis_b": "group=tag: a second axis crossed with group_axis",
+            "group_tag_depth": "group=tag: tag levels below the namespace to nest (1-8, default 2)",
             "group_lane_fit": "group=lane: a unit whose files all lie inside a bundle and make up at least this share of the bundle's files (default 0.9) joins it, with `sub` (files missing) and `miss` set; 1 turns it off",
             "group_lane_link": "group=lane with group_lane_depth > 1: sibling lanes whose files overlap by at least this Jaccard share (0-1, default 0 = off) get a synthetic parent `mix:<files>` covering their union, with `core` (files all its lanes share) and `lanes`",
             "group_lane_depth": "group=lane: levels of nested lanes (default 1 = flat). Above 1 a lane sits under the smallest lane holding all its files, and its group counts include the sub-lanes",
@@ -4216,3 +4408,196 @@ class NwayFunctionSet(Resource):
         from bsimvis.app.routes.nway import post_function_set
 
         return post_function_set()
+
+
+_YARA_SETS = (
+    "`collection` or `pool`, `rule` (YARA source), and `targets` / `negatives`: lists "
+    'of `{label, queries: [search_files params] | files: ["coll:md5"] | rest: true}`. '
+    'Optional `pins: {"coll:md5": "target" | "negative" | "drop"}` moves single files '
+    "between the sets, or out of them."
+)
+
+
+def _yara(name, *a):
+    import importlib
+
+    return getattr(importlib.import_module("bsimvis.app.routes.yara_edit"), name)(*a)
+
+
+@ns_yara.route("/validate")
+class YaraValidate(Resource):
+    def post(self):
+        """Compile a rule: errors mapped to lines. Body: `{rule}`."""
+        return _yara("post_validate")
+
+
+@ns_yara.route("/test")
+class YaraTest(Resource):
+    @ns_yara.doc(
+        description="Scans the targets and a capped sample of the negatives. Body: "
+        + _YARA_SETS
+    )
+    def post(self):
+        """Precision / recall, per-group and per-string hits, hit landing."""
+        return _yara("post_test")
+
+
+@ns_yara.route("/seed/function")
+class YaraSeedFunction(Resource):
+    @ns_yara.doc(
+        params={
+            "collection": "Origin collection",
+            "md5": "File md5",
+            "addr": "Function entry (hex)",
+        }
+    )
+    def get(self):
+        """A function's raw bytes as a YARA hex string."""
+        return _yara("get_seed_function")
+
+
+@ns_yara.route("/suggest")
+class YaraSuggest(Resource):
+    @ns_yara.doc(
+        description="Body: `targets`, `negatives`, `min_frac` (default 0.8), scope as /test."
+    )
+    def post(self):
+        """Strings most target files hold and the negatives do not."""
+        return _yara("post_suggest")
+
+
+@ns_yara.route("/suggest/functions")
+class YaraSuggestFunctions(Resource):
+    @ns_yara.doc(
+        description="Body: `nway` (the N-way table's query, with `family`), `targets`, "
+        "`negatives`, scope as /test."
+    )
+    def post(self):
+        """Hex strings of the functions that single out an N-way family."""
+        return _yara("post_suggest_functions")
+
+
+@ns_yara.route("/external-checks")
+class YaraExternalChecks(Resource):
+    @ns_yara.doc(
+        description="Body: `{format, text}`, the contract of the rulezet-editor "
+        "Checks panel. `results.yarax`: diagnostics with line/column and a formatted "
+        "`fixed_text`. A tool that is not installed answers `available: false`."
+    )
+    def post(self):
+        """Advice from external YARA tools (YARA-X)."""
+        return _yara("post_external_checks")
+
+
+@ns_yara.route("/lint")
+class YaraLint(Resource):
+    def post(self):
+        """Missing meta, no ELF check, weak strings. Body: `{rule}`."""
+        return _yara("post_lint")
+
+
+@ns_yara.route("/hitmap")
+class YaraHitmap(Resource):
+    @ns_yara.doc(
+        description="Body: `rule`, `cap` (files per set, default 60), `min_cohesion`, "
+        "scope as /test. Maps each hit to its function and the function's clusters."
+    )
+    def post(self):
+        """Function clusters a rule's hits land in, with files and groups per cluster."""
+        return _yara("post_hitmap")
+
+
+@ns_yara.route("/scope")
+class YaraScope(Resource):
+    @ns_yara.doc(
+        description="Body: `rule`, `axis` (code, default; or overall, library, content), `min_purity` (default 0.8), `min_cohesion`, scope as "
+        "/test. Binary clusters holding target files, with purity against the whole "
+        "negative sets and the rule's hit/missed/false counts inside; `scope` covers "
+        "all targets, `focus` the ones the rule misses."
+    )
+    def post(self):
+        """File clusters worth focusing on to raise recall."""
+        return _yara("post_scope")
+
+
+@ns_yara.route("/seed/cluster")
+class YaraSeedCluster(Resource):
+    @ns_yara.doc(
+        description="Body: `collection` + `cluster_id`, or `fids` (e.g. an N-way row), "
+        "optional `per_arch` (default 16). Per language: the stable byte window of the "
+        "members (differing bytes `??`) and the share of sampled files that hold it."
+    )
+    def post(self):
+        """Hex seeds aligned across the members of a function cluster."""
+        return _yara("post_seed_cluster")
+
+
+@ns_yara.route("/draft")
+class YaraDraft(Resource):
+    def post(self):
+        """LLM draft rule from the suggested strings. Body as /suggest plus `name`."""
+        return _yara("post_draft")
+
+
+@ns_yara.route("/rules")
+class YaraRules(Resource):
+    def get(self):
+        """Saved rules, newest first."""
+        return _yara("list_rules")
+
+    @ns_yara.doc(
+        description="Body: `rule`, optional `uuid` (new version of it), `scope`, `note`."
+    )
+    def post(self):
+        """Saves the rule as the next version of its uuid."""
+        return _yara("save_rule")
+
+
+@ns_yara.route("/rules/<string:rule_uuid>")
+class YaraRuleOne(Resource):
+    @ns_yara.doc(params={"version": "Version number (default: latest)"})
+    def get(self, rule_uuid):
+        """One saved rule and its version list."""
+        return _yara("get_rule", rule_uuid)
+
+    def delete(self, rule_uuid):
+        """Deletes a rule and all its versions."""
+        return _yara("delete_rule", rule_uuid)
+
+
+@ns_yara.route("/rules/<string:rule_uuid>/export")
+class YaraRuleExport(Resource):
+    def get(self, rule_uuid):
+        """The rule as a `.yar` body with its uuid and version in a header comment."""
+        return _yara("export_rule", rule_uuid)
+
+    def post(self, rule_uuid):
+        """Writes the rule to data/yara_rules/custom/ for a human to commit."""
+        return _yara("export_to_vendored", rule_uuid)
+
+
+@ns_yara.route("/sweep")
+class YaraSweep(Resource):
+    @ns_yara.doc(
+        description="Body: `rule` and scope / `targets` as /test. Reads every file, writes nothing to Kvrocks."
+    )
+    def post(self):
+        """Full sweep job: exact precision / recall."""
+        return _yara("post_sweep")
+
+
+@ns_yara.route("/apply")
+class YaraApply(Resource):
+    @ns_yara.doc(
+        description="Body: `uuid` of a saved rule, `rule`, `collection` or `pool`. Writes `yara:custom:<rule>` file tags."
+    )
+    def post(self):
+        """Apply job: tag matching files, clear this rule's stale tags."""
+        return _yara("post_apply")
+
+
+@ns_yara.route("/run/<string:run_id>")
+class YaraRun(Resource):
+    def get(self, run_id):
+        """Progress and exact metrics of a sweep / apply."""
+        return _yara("get_run", run_id)

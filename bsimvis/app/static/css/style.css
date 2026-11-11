@@ -1097,10 +1097,20 @@ body {
     box-sizing: border-box;
 }
 
+/* One icon element. `:only-child` ignores text nodes, so `<i></i> Label` matches
+   too: never fix the width here. A 14px icon slot + 4px padding + border makes an
+   icon-only button exactly 24px square, and a labelled one grows with its text. */
 .btn-action:has(> i:only-child),
 .btn-action:has(> svg:only-child) {
-    width: 24px;
-    padding: 0;
+    padding: 0 4px;
+    gap: 4px;
+}
+
+.btn-action > i:only-child,
+.btn-action > svg:only-child {
+    flex: none;
+    width: 14px;
+    text-align: center;
 }
 
 .btn-action:hover {

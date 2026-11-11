@@ -11,15 +11,18 @@ or above `min_features`, exact FunctionID-hash matches below it, pairwise greedy
 then the bin-level discovery pass. It works for any set, whatever collections the
 files live in. Nothing is written to Kvrocks in either mode.
 
-`compute` is pure (no Flask, JSON-serialisable result) so a worker job can call
-it unchanged later; only the cache in front of it would move to Redis.
+`compute` is pure (no Flask), so a worker job calls it unchanged. A set over
+`nway.auto_build_max_members` files is never built on demand: a NWAY_BUILD job
+builds it once and keeps its base + matched rows in Redis (`nway:built:*`).
 """
 
 import hashlib
 import json
+import pickle
 import re
 import statistics
 import threading
+import zlib
 
 import numpy as np
 from collections import Counter, OrderedDict, defaultdict
@@ -27,6 +30,7 @@ from itertools import combinations
 
 from bsimvis.app.services import bsim_profiles, container_sim_service, lineage_service
 from bsimvis.app.services.bin_sim_service import (
+    _discover_edges_py,
     _origin_coll,
     bin_sim_service,
     discover_edges,
@@ -47,11 +51,20 @@ from bsimvis.app.services.collection_config import (
 )
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.nway_match import PairEdges, nway_match
+from bsimvis.app.services.redis_client import get_raw_queue_redis
 
 _MD5 = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
+_SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
 MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
 PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
+# Sampled sets: what links files beyond the pairs read (see `_bridges`). Measured on
+# 437 mirai files: `lane` pays per pair read; `fid`/`cluster` cost BSim checks for
+# a few rows. Cross-arch pair picking and a spanning tree were tried: no better
+# than a larger pair_k at the same budget.
+BRIDGES = ("lane", "fid", "cluster")
+BRIDGE_CHUNK = 5000  # candidate pairs whose vectors are held at once
+SCORABLE = ("unweighted_cosine", "binary_cosine", "jaccard", "weighted_cosine")
 SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
 
 
@@ -78,6 +91,17 @@ class TooLarge(Exception):
 
 class BadParams(ValueError):
     pass
+
+
+class NeedsBuild(Exception):
+    """A large set with no built doc yet: queue a NWAY_BUILD job (see `compute`)."""
+
+    def __init__(self, members, key, functions=0, pair_k=None):
+        super().__init__(f"{members} members: build it as a job")
+        self.members = members
+        self.key = key
+        self.functions = functions
+        self.pair_k = pair_k
 
 
 class MemberMissing(Exception):
@@ -172,6 +196,85 @@ def _single_flight(key, build):
         with _FLIGHTS_LOCK:
             _FLIGHTS.pop(key, None)
         flight["done"].set()
+
+
+BUILT_TTL = 7 * 24 * 3600
+
+
+def auto_build_max():
+    """Above this many files a set is built by a job, never by a request."""
+    return int(config_service.get("nway.auto_build_max_members", 50))
+
+
+def depth_key(scope, members):
+    """Queue-Redis key holding the pair_k a large set was last asked to build at."""
+    ident = json.dumps([scope, members], sort_keys=True).encode()
+    return f"nway:depth:{hashlib.md5(ident).hexdigest()}"
+
+
+# (id, label, pair_k, what it reads); pair_k None = nway.pair_k, 0 = every pair
+DEPTHS = (
+    ("fast", "Fast", None, "nearest partners of each file (nway.pair_k)"),
+    ("balanced", "Balanced", 64, "64 nearest partners of each file"),
+    ("deep", "Deep", 0, "every file pair: exact"),
+)
+
+
+def estimate(n_files, n_functions, pair_k):
+    """(file pairs read, seconds) of a build at `pair_k` (0 = every pair).
+
+    Fitted on 437 mirai files (212k functions, ~485 per file): a fixed cost
+    per function, plus per pair read a cost that grows with the functions per
+    file (pair docs list matched functions). Recalibrate on other hardware
+    with `nway.est_secs_per_function` / `nway.est_secs_per_pair_function`.
+    """
+    above, _, extra, _ = pair_sample()
+    total = n_files * (n_files - 1) // 2
+    pairs = total
+    if pair_k and n_files > above:
+        # k nearest + random partners overlap: ~0.72 of k + extra per file
+        pairs = min(total, int(0.72 * n_files * (pair_k + extra)))
+    per_fn = float(config_service.get("nway.est_secs_per_function", 1.4e-4))
+    per_pair = float(config_service.get("nway.est_secs_per_pair_function", 1.44e-5))
+    secs = per_fn * n_functions + per_pair * n_functions / max(n_files, 1) * pairs
+    return pairs, secs
+
+
+def build_depths(n_files, n_functions):
+    """The build choices a large set offers, with their estimated cost.
+
+    Depths reading the same pairs collapse into the deepest: under
+    `nway.sample_above` files every depth reads every pair, so only Deep is left.
+    """
+    out = []
+    for did, label, pair_k, note in DEPTHS:
+        k = pair_sample()[1] if pair_k is None else pair_k
+        pairs, secs = estimate(n_files, n_functions, k)
+        if out and out[-1]["pairs"] == pairs:
+            out.pop()
+        out.append(
+            {
+                "id": did,
+                "label": label,
+                "pair_k": k,
+                "note": note,
+                "pairs": pairs,
+                "total_pairs": n_files * (n_files - 1) // 2,
+                "secs": round(secs),
+            }
+        )
+    return out
+
+
+def _built(kind, key):
+    raw = get_raw_queue_redis().get(f"nway:built:{kind}:{key}")
+    # pickle: only this module writes these keys (app or worker), never a client
+    return pickle.loads(zlib.decompress(raw)) if raw else None
+
+
+def _keep_built(kind, key, value):
+    raw = zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)
+    get_raw_queue_redis().setex(f"nway:built:{kind}:{key}", BUILT_TTL, raw)
 
 
 def invalidate():
@@ -314,12 +417,7 @@ def virtual_params(scope, members, params):
     }
     # ponytail: top_k is ignored (it never binds at the caps); minhash_lsh and
     # milvus_sparse have no in-memory scorer.
-    if bsim_profiles.parse_algo(out["algo"])[0] not in (
-        "unweighted_cosine",
-        "binary_cosine",
-        "jaccard",
-        "weighted_cosine",
-    ):
+    if bsim_profiles.parse_algo(out["algo"])[0] not in SCORABLE:
         raise BadParams(f"mode=virtual cannot score with algo {out['algo']!r}")
 
     masks = set()
@@ -383,12 +481,22 @@ def _virtual_edges(r, columns, fid_sets, p, fids, ix):
     return edges
 
 
+def bridge_kinds(value):
+    """`lane,fid,cluster` (str or list) -> tuple in BRIDGES order; `none` or empty -> ()."""
+    asked = value.split(",") if isinstance(value, str) else list(value or ())
+    asked = {a.strip() for a in asked} - {"", "none"}
+    if asked - set(BRIDGES):
+        raise BadParams(f"bridges must be a subset of {','.join(BRIDGES)} or none")
+    return tuple(b for b in BRIDGES if b in asked)
+
+
 def pair_sample():
-    """(files above which pairs are sampled, nearest partners, random partners)."""
+    """(files above which pairs are sampled, nearest partners, random partners, bridges)."""
     return (
         int(config_service.get("nway.sample_above", 100)),
         int(config_service.get("nway.pair_k", 16)),
         int(config_service.get("nway.pair_random", 4)),
+        bridge_kinds(config_service.get("nway.bridges", "lane")),
     )
 
 
@@ -410,6 +518,165 @@ def nearest_pairs(scores, k, extra, seed):
             j += j >= i
             out.add((min(i, j), max(i, j)))
     return sorted(out)
+
+
+def lane_pairs(rows, scores, read, k):
+    """Unread file pairs that would join lanes sharing no file -> sorted [(i, j)].
+
+    `rows` are matched rows, `mask` bit i = file i. A lane is a set of 2+
+    files held by 2+ rows. Each lane takes its `k` best lanes it shares no
+    file with, ranked by their best stored file pair outside `read`, and
+    that pair is returned. One read pair is enough to join every row the two
+    lanes hold in common.
+    """
+    count = Counter(r["mask"] for r in rows if r["span"] > 1)
+    lanes = [m for m, c in count.items() if c >= 2]  # nway_group_service.LANE_MIN
+    if len(lanes) < 2:
+        return []
+    n = len(scores)
+    s = np.array(scores, np.float64)
+    np.fill_diagonal(s, -1.0)
+    # a read pair already had its say: those lanes stayed apart through it
+    for i, j in read:
+        s[i, j] = s[j, i] = -1.0
+    idx = [np.array([i for i in range(n) if m >> i & 1]) for m in lanes]
+    member = np.zeros((len(lanes), n), bool)
+    for a, ia in enumerate(idx):
+        member[a, ia] = True
+    near = np.stack(
+        [s[ia].max(axis=0) for ia in idx]
+    )  # lane -> best score to each file
+    best = np.stack([near[:, ib].max(axis=1) for ib in idx], axis=1)
+    best[(member.astype(np.int32) @ member.T.astype(np.int32)) > 0] = -1.0
+    out = set()
+    for a in range(len(lanes)):
+        for b in np.argsort(-best[a], kind="stable")[:k].tolist():
+            if best[a, b] <= 0:
+                break
+            j = idx[b][np.argmax(near[a, idx[b]])]
+            i = idx[a][np.argmax(s[idx[a], j])]
+            out.add((int(min(i, j)), int(max(i, j))))
+    return sorted(out)
+
+
+def bridge_candidates(groups, pos, read):
+    """Chain links across unread file pairs -> [(fid_a, fid_b)].
+
+    `groups` is `{key: {column: [fid, ...]}}` (one FunctionID hash, or one
+    cluster). Its files are chained in `pos` order, one link per consecutive
+    pair, skipping pairs in `read` (frozensets of columns): a read pair's doc
+    already decided. A group where one file holds several functions is
+    ambiguous and skipped.
+    """
+    # ponytail: a chain, not every pair -- a link that fails BSim splits the
+    # group; try more links per group if recall measures short.
+    out = []
+    for g in groups.values():
+        if len(g) < 2 or any(len(v) > 1 for v in g.values()):
+            continue
+        cols = sorted(g, key=pos.__getitem__)
+        out += [
+            (g[x][0], g[y][0])
+            for x, y in zip(cols, cols[1:])
+            if frozenset((x, y)) not in read
+        ]
+    return out
+
+
+def _bridges(r, scope, members, fid_sets, info, read, kinds, algo):
+    """Edges across the file pairs a sampled set did not read -> (edges, warning).
+
+    `info` is `{fid: (FunctionID hash, distinct feature count)}`. Two functions
+    under the BSim floor sharing a FunctionID hash match at 1.0, the sim
+    builder's own rule. Above the floor, a shared hash or a shared primary
+    cluster (cohesion >= `clustering.cohesion_cut`) is only a candidate, kept
+    when its BSim score reaches the collection's `min_score`.
+    """
+    if scope.get("pool"):
+        p = _pool_params(scope)[0]
+    else:
+        from bsimvis.app.services.scan_service import get_scan_service
+
+        p = get_scan_service()._params_for(members[0][0], {})
+    floor, min_score = int(p["min_features"]), float(p["min_score"])
+    owner = {f: c for c, fs in fid_sets.items() for f in fs}
+    pos = {c: i for i, c in enumerate(fid_sets)}
+    small = {f for f, (_, n) in info.items() if n < floor}
+    auto, check = [], set()
+
+    if "fid" in kinds:
+        groups = defaultdict(lambda: defaultdict(list))
+        for f, (h, _) in info.items():
+            if h:
+                groups[h][owner[f]].append(f)
+        for x, y in bridge_candidates(groups, pos, read):
+            if x in small and y in small:
+                auto.append((x, y, 1.0))
+            else:
+                check.add((x, y))
+
+    if "cluster" in kinds:
+        # tiny functions cluster on BSim noise (clustering.min_features is 0)
+        # ponytail: no cluster rev in the base key; a recluster shows up when the
+        # base is next rebuilt. BSim checks every link, so staleness costs recall only.
+        pool = scope.get("pool")
+        big = sorted(f for f in info if f not in small)
+        pipe = r.pipeline(transaction=False)
+        for f in big:
+            pipe.hkeys(
+                f"global:pool:{pool}:{f}:cluster_scores"
+                if pool
+                else f"{f}:cluster_scores"
+            )
+        # ponytail: one primary cluster per function; hdbscan's multi-cluster
+        # entries are skipped.
+        cid = {
+            f: (c[0].decode() if isinstance(c[0], bytes) else str(c[0]))
+            for f, c in zip(big, pipe.execute())
+            if len(c) == 1
+        }
+        ns = f"global:pool:{pool}" if pool else members[0][0]
+        calgo = resolve_collection_algo(ns)
+        ids = sorted(set(cid.values()))
+        pipe = r.pipeline(transaction=False)
+        for c in ids:
+            pipe.get(f"{ns}:cluster:{calgo}:{c}:meta")
+        cut = float(config_service.get("clustering.cohesion_cut", 0.9))
+        tight = {
+            c
+            for c, raw in zip(ids, pipe.execute())
+            if float(_decode(raw).get("cohesion_score") or 0) >= cut
+        }
+        groups = defaultdict(lambda: defaultdict(list))
+        for f, c in cid.items():
+            if c in tight:
+                groups[c][owner[f]].append(f)
+        check.update(bridge_candidates(groups, pos, read))
+
+    check = sorted(check)
+    cap = int(config_service.get("nway.bridge_max_checks", 200000))
+    unchecked = 0
+    if bsim_profiles.parse_algo(algo)[0] not in SCORABLE:
+        check, unchecked = [], len(check)
+    elif len(check) > cap:
+        check, unchecked = check[:cap], len(check) - cap
+    kept = []
+    for start in range(0, len(check), BRIDGE_CHUNK):
+        _report(0.9, f"checking bridge {start + 1}/{len(check)}")
+        chunk = check[start : start + BRIDGE_CHUNK]
+        vectors = load_vectors(r, {f for pair in chunk for f in pair})
+        for x, y in chunk:
+            kept += _discover_edges_py(vectors, [x], [y], algo, min_score)
+    warning = None
+    if auto or check or unchecked:
+        warning = (
+            f"Bridges over unread pairs: {len(auto):,} FunctionID match(es) under "
+            f"min_features, {len(kept):,} of {len(check):,} FunctionID/cluster "
+            f"candidates kept at BSim >= {min_score:g}"
+            + (f", {unchecked:,} not checked" if unchecked else "")
+            + "."
+        )
+    return auto + kept, warning
 
 
 def _pair_scores(r, scope, members, algo, pairs, sids):
@@ -479,31 +746,51 @@ def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
         seed = int(hashlib.md5(json.dumps(members).encode()).hexdigest()[:8], 16)
         keep = set(nearest_pairs(scores, sample[1], sample[2], seed))
         sampled = (len(keep), len(pairs))
+        all_pairs, all_sids = pairs, sids
         sids = [sid for p, sid in zip(pairs, sids) if p in keep]
         pairs = [p for p in pairs if p in keep]
 
     edges, missing = {}, []
-    for start in range(0, len(pairs), PAIR_CHUNK):
-        _report(
-            0.1 + 0.85 * start / len(pairs),
-            f"reading file pair {start + 1}/{len(pairs)}",
-        )
-        pipe = r.pipeline(transaction=False)
-        for sid in sids[start : start + PAIR_CHUNK]:
-            pipe.get(sid or "")
-        chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
-        for (i, j), raw in chunk:
-            doc = _decode(raw)
-            edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
-                fids,
-                ix,
-                (
-                    (m["func_a"], m["func_b"], float(m["similarity"]))
-                    for m in (doc.get("diff") or {}).get("matched") or []
-                ),
+
+    def read(pairs, sids):
+        for start in range(0, len(pairs), PAIR_CHUNK):
+            _report(
+                0.1 + 0.85 * start / len(pairs),
+                f"reading file pair {start + 1}/{len(pairs)}",
             )
-            if not doc:
-                missing.append((i, j))
+            pipe = r.pipeline(transaction=False)
+            for sid in sids[start : start + PAIR_CHUNK]:
+                pipe.get(sid or "")
+            chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
+            for (i, j), raw in chunk:
+                doc = _decode(raw)
+                edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
+                    fids,
+                    ix,
+                    (
+                        (m["func_a"], m["func_b"], float(m["similarity"]))
+                        for m in (doc.get("diff") or {}).get("matched") or []
+                    ),
+                )
+                if not doc:
+                    missing.append((i, j))
+
+    read(pairs, sids)
+    if sampled and "lane" in sample[3]:
+        # Second pass: match what was read, then read the best pair between lanes
+        # sharing no file, so a family split across far files can rejoin.
+        _report(0.6, "joining lanes")
+        funcs = {c["id"]: dict.fromkeys(fid_sets[c["id"]], 1.0) for c in columns}
+        sid_of = dict(zip(all_pairs, all_sids))
+        lane_k = int(config_service.get("nway.lane_k", 8))
+        for _ in range(int(config_service.get("nway.lane_rounds", 3))):
+            rows = nway_match(edges, funcs, default_min_edge())
+            extra = lane_pairs(rows, scores, keep, lane_k)
+            if not extra:
+                break
+            read(extra, [sid_of[p] for p in extra])
+            keep |= set(extra)
+        sampled = (len(keep), sampled[1])
 
     if missing:
         # No stored doc: edges from function-sim docs, each file's vectors read once.
@@ -552,6 +839,7 @@ def _fn_meta(meta):
             "parameters",
             "return_type",
             "bsim_features_count",
+            "instruction_count",
         )
         if k in meta
     }
@@ -591,12 +879,21 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
     for fid in all_fids:
         pipe.get(f"{fid}:meta")
     fmeta, library = {}, {}
-    weights = {}
+    weights, info = {}, {}
     for fid, raw in zip(all_fids, pipe.execute()):
         meta = _decode(raw)
         weights[fid] = float(meta.get("bsim_features_count") or 0) or 1.0
         library[fid] = any(is_library_tag(t) for t in merge_tag_fields(meta))
         fmeta[fid] = _fn_meta(meta)
+        # the BSim floor counts distinct features, as the sim builder does
+        info[fid] = (
+            meta.get("function_id_hash"),
+            int(
+                meta.get("bsim_unique_features_count")
+                or meta.get("bsim_features_count")
+                or 0
+            ),
+        )
 
     columns = [
         {
@@ -624,11 +921,26 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
         edges, fallback, sampled, stats = _stored_edges(
             r, scope, members, columns, algo, fid_sets, all_fids, ix, sample
         )
+    bridges = None
     if sampled:
         warnings = warnings + [
             f"Large set: read each file's closest partners only ({sampled[0]:,} of "
             f"{sampled[1]:,} file pairs). Support counts the pairs read."
         ]
+        kinds = {"fid", "cluster"} & set(sample[3])
+        if kinds:
+            found, note = _bridges(
+                r,
+                scope,
+                members,
+                fid_sets,
+                info,
+                {frozenset(k) for k in edges},
+                kinds,
+                algo,
+            )
+            bridges = PairEdges(all_fids, ix, found) if found else None
+            warnings += [note] if note else []
 
     columns = seriate(columns, edges, default_min_edge())
     return {
@@ -640,6 +952,7 @@ def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
         "fmeta": fmeta,
         "library": library,
         "edges": edges,
+        "bridges": bridges,
         "fallback_pairs": fallback,
         "pairs_read": sampled,
         "pair_stats": stats,
@@ -664,10 +977,17 @@ def _label(cells, fmeta, weights):
 
 def _tag_name(tag):
     """A function name carried by a tag: `fid:libc:1.2.6#__toread` -> `__toread`,
-    `yara:botnet:generic:Rule` -> `Rule`. Bare `fid:libc` names no function."""
+    `yara:botnet:generic:Rule` -> `Rule`, `capa:a:host-interaction:software` -> `host-interaction:software`. Bare `fid:libc` names no function.
+    """
     if "#" in tag:
-        return tag.rsplit("#", 1)[1] or None
+        name = tag.rsplit("#", 1)[1]
+        return (
+            None if name in ("", "ambiguous") else name
+        )  # #ambiguous: FID multi-match marker
     parts = tag.split(":")
+    # capa / mbc / mitre: the last two fields after the prefix tell more than the last one
+    if parts[0] in ("capa", "mbc", "mitre"):
+        return ":".join(parts[1:][-2:]) or None
     return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
 
 
@@ -678,6 +998,33 @@ def _row_tags(fids, fmeta):
     return ranked
 
 
+def _name_conflict(fids, fmeta):
+    """Distinct Ghidra names over one row's functions, or None when they agree.
+
+    Only the function's own name counts: no analyst / LLM name, no tag or
+    string name, no FUN_ / sub_ / thunk_, no FID_conflict. Compiler suffixes
+    (.part.0, .cold) are dropped first. `spread` is (names - 1) / (named - 1):
+    low when one function disagrees, 1 when every named function differs.
+    """
+    count, shown = Counter(), {}
+    for f in fids:
+        name = (fmeta.get(f) or {}).get("name") or ""
+        if not name or _DEFAULT_NAME.match(name) or name.startswith("FID_conflict"):
+            continue
+        while m := _SUFFIX.search(name):
+            name = name[: m.start()]
+        count[name.lower()] += 1
+        shown.setdefault(name.lower(), name)
+    if len(count) < 2:
+        return None
+    named = sum(count.values())
+    return {
+        "names": [[shown[k], c] for k, c in count.most_common()],
+        "named": named,
+        "spread": round((len(count) - 1) / (named - 1), 2),
+    }
+
+
 def _name_row(fids, fmeta, weights):
     """Name + tags of a set of functions: the rule N-way rows and the function hero share.
 
@@ -685,6 +1032,8 @@ def _name_row(fids, fmeta, weights):
     """
     out = {"tags": _row_tags(fids, fmeta)}
     out["name"], out["names"] = _label(fids, fmeta, weights)
+    if conflict := _name_conflict(fids, fmeta):
+        out["name_conflict"] = conflict
     if not out["names"] and _DEFAULT_NAME.match(out["name"]):
         tagged = next((n for t in out["tags"] if (n := _tag_name(t))), None)
         if tagged:
@@ -734,13 +1083,51 @@ def seriate(columns, edges, min_edge):
     return [by[i] for i in order]
 
 
+_TAG_PREFERENCE = {"capa": 0, "mbc": 0, "yara": 1}
+
+
+def _variants(rows):
+    """Rows that share a name are told apart.
+
+    A row named only by a tag (every function is FUN_xxx) takes the name of the tag the
+    other rows of that name lack, capa / mbc first: its old name stays in `name_was`.
+    Rows that still share a name, tag-named or not, are numbered `variant = {n, of}`
+    in table order (span, then weight)."""
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for name, group in by.items():
+        if len(group) < 2:
+            continue
+        sets = [set(r["tags"]) for r in group]
+        for row, own in zip(group, sets):
+            if row.get("name_from") != "tag":
+                continue
+            seen = set().union(*(s for s in sets if s is not own))
+            fresh = [
+                (_TAG_PREFERENCE.get(t.split(":")[0], 2), i, short)
+                for i, t in enumerate(row["tags"])
+                if t not in seen and (short := _tag_name(t)) and short != name
+            ]
+            if fresh:
+                row["name_was"], row["name"] = name, min(fresh)[2]
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for group in by.values():
+        if len(group) > 1:
+            for n, row in enumerate(group, 1):
+                row["variant"] = {"n": n, "of": len(group)}
+
+
 def _match(base, min_edge):
     weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
-    rows = nway_match(base["edges"], base["funcs"], min_edge)
+    rows = nway_match(base["edges"], base["funcs"], min_edge, base.get("bridges"))
     for row in rows:
         fids = list(row["cells"].values())
         row.update(_name_row(fids, base["fmeta"], weights))
         row["library"] = any(base["library"].get(f) for f in fids)
+    _variants(rows)
     return rows
 
 
@@ -980,6 +1367,24 @@ def coverage(rows, column_ids):
 def demo():
     import time
 
+    # name_conflict: Ghidra names only, suffixes folded, FUN_ / FID_conflict ignored
+    fm = {
+        "a": {"name": "udp_attack"},
+        "b": {"name": "udp_attack.part.0"},
+        "c": {"name": "http_attack"},
+        "d": {"name": "FUN_00401000"},
+        "e": {"name": "FID_conflict:memcpy"},
+        "f": {"name": "udp_attack", "user_name": "flood"},
+    }
+    c = _name_conflict(list(fm), fm)
+    assert c == {
+        "names": [["udp_attack", 3], ["http_attack", 1]],
+        "named": 4,
+        "spread": 0.33,
+    }, c
+    assert _name_conflict(["a", "b", "d", "e"], fm) is None
+    assert _name_row(["a", "c"], fm, {"a": 1, "c": 1})["name_conflict"]["spread"] == 1
+
     # Concurrent builds of one key run once; the waiter sees the leader's progress and result.
     calls, seen, started = [], [], threading.Event()
 
@@ -1003,6 +1408,26 @@ def demo():
 
     tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
     assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
+    assert _tag_name("capa:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("capa:communication/http/client") == "communication/http/client"
+    assert _tag_name("capa:a:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("yara:trojan:mirai:Mirai_ELF") == "Mirai_ELF"
+    # tag-named rows take the tag the others lack (capa before yara); the rest are numbered
+    vr = [
+        {
+            "name": "Mirai_ELF",
+            "name_from": "tag",
+            "tags": ["yara:a:Mirai_ELF", "yara:b:Other", "capa:x:xor"],
+        },
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "main", "tags": []},
+        {"name": "main", "tags": []},
+    ]
+    _variants(vr)
+    assert [r["name"] for r in vr[:3]] == ["x:xor", "Mirai_ELF", "Mirai_ELF"], vr
+    assert vr[0]["name_was"] == "Mirai_ELF" and "variant" not in vr[0]
+    assert [r["variant"]["n"] for r in vr[1:]] == [1, 2, 1, 2], vr
     cols = [{"id": i, "functions": 10} for i in "abcd"]
     ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
     got = [c["id"] for c in seriate(cols, ed, 0.5)]
@@ -1152,6 +1577,42 @@ def demo():
     assert all(i < j for i, j in pairs) and len(pairs) < 190
     assert any(fam[i] != fam[j] for i, j in pairs)
     assert all(sum(i == x or j == x for i, j in pairs) >= 3 for x in range(20))
+    # lanes sharing no file: one unread pair between them, the best scored
+    ln = [{"span": 2, "mask": 0b0011}] * 2 + [{"span": 2, "mask": 0b1100}] * 2
+    ls = np.full((4, 4), 0.1)
+    ls[1, 2] = ls[2, 1] = 0.6
+    assert lane_pairs(ln, ls, set(), 1) == [(1, 2)]
+    ls[0, 3] = ls[3, 0] = 0.4
+    assert lane_pairs(ln, ls, {(1, 2)}, 1) == [(0, 3)]  # the best pair left unread
+    assert lane_pairs(ln[:3], ls, set(), 1) == []  # one row is not a lane
+
+    # bridge chains: column order, read pairs skipped, ambiguous groups dropped
+    pos = {"A": 0, "B": 1, "C": 2, "D": 3}
+    groups = {
+        "h1": {"C": ["c1"], "A": ["a1"], "B": ["b1"]},
+        "h2": {"A": ["a2"], "D": ["d2", "d3"]},
+        "h3": {"B": ["b4"]},
+    }
+    got = bridge_candidates(groups, pos, {frozenset(("A", "B"))})
+    assert got == [("b1", "c1")], got
+    assert bridge_candidates(groups, pos, set()) == [("a1", "b1"), ("b1", "c1")]
+    assert bridge_kinds("cluster, lane") == ("lane", "cluster")
+    # build estimates: calibration point (437 files, 212k functions) and order
+    deep_pairs, deep_secs = estimate(437, 211798, 0)
+    assert deep_pairs == 95266 and 600 < deep_secs < 800, deep_secs
+    assert 5000 < estimate(437, 211798, 16)[0] < 8000
+    ds = build_depths(437, 211798)
+    assert [d["id"] for d in ds] == ["fast", "balanced", "deep"]
+    assert ds[0]["secs"] < ds[1]["secs"] < ds[2]["secs"]
+    assert estimate(60, 6000, 16)[0] == 60 * 59 // 2  # not sampled: every pair
+    assert [d["id"] for d in build_depths(60, 6000)] == ["deep"]
+    assert len(build_depths(120, 12000)) == 3
+    assert bridge_kinds("none") == () and bridge_kinds(["fid"]) == ("fid",)
+    try:
+        bridge_kinds("fid,lsh")
+        raise AssertionError("bad bridge kind accepted")
+    except BadParams:
+        pass
     print("nway_diff_service demo ok")
 
 
@@ -1180,10 +1641,26 @@ def compute(r, scope, members, params=None):
     min_edge = params.get("min_edge")
     min_edge = default_min_edge() if min_edge is None else float(min_edge)
 
-    sample = pair_sample()
+    sample = list(pair_sample())
+    if params.get("sample_above") is not None:
+        sample[0] = int(params["sample_above"])
+    # Large sets: the base (all the Kvrocks reads) comes from a job only, so a
+    # call-graph walk or a reload never re-reads every pair; matched rows for a
+    # new min_edge are CPU only and are kept next to it.
+    big = len(members) > auto_build_max()
+    if big and mode == "stored":
+        # A build's depth (pair_k) sticks to the set, so every view without
+        # one reads the base that was built, or re-attaches to its job.
+        dkey = depth_key(scope, members)
+        if params.get("pair_k") is not None:
+            get_raw_queue_redis().setex(dkey, BUILT_TTL, int(params["pair_k"]))
+        elif (stored := get_raw_queue_redis().get(dkey)) is not None:
+            sample[1] = int(stored)
     if params.get("pair_k") is not None:
-        sample = (sample[0], int(params["pair_k"]), sample[2])
-    sample = sample if sample[1] > 0 else None
+        sample[1] = int(params["pair_k"])
+    if params.get("bridges") is not None:
+        sample[3] = bridge_kinds(params["bridges"])
+    sample = tuple(sample) if sample[1] > 0 else None
 
     vparams = None
     if mode == "virtual":
@@ -1243,15 +1720,32 @@ def compute(r, scope, members, params=None):
     if doc is not None:
         return doc
 
+    bkey = hashlib.md5(repr(base_key).encode()).hexdigest()
+    rkey = hashlib.md5(repr(base_key + (min_edge,)).encode()).hexdigest()
+
     def build():
         base = _BASE_CACHE.get(base_key)
+        if base is None and big:
+            base = _built("base", bkey)
         if base is None:
+            if big and not params.get("build"):
+                pipe = r.pipeline(transaction=False)
+                for coll, md5 in members:
+                    pipe.scard(f"{coll}:idx:file:functions:{md5}")
+                depth = sample[1] if sample else 0
+                raise NeedsBuild(len(members), bkey, sum(pipe.execute()), depth)
             base = _load_base(r, scope, members, vparams, labels, warnings, sample)
-            _BASE_CACHE.put(base_key, base)
+            if big:
+                _keep_built("base", bkey, base)
+        _BASE_CACHE.put(base_key, base)
         rows = _MATCH_CACHE.get(base_key + (min_edge,))
+        if rows is None and big:
+            rows = _built("rows", rkey)
         if rows is None:
             rows = _match(base, min_edge)
-            _MATCH_CACHE.put(base_key + (min_edge,), rows)
+            if big:
+                _keep_built("rows", rkey, rows)
+        _MATCH_CACHE.put(base_key + (min_edge,), rows)
         return base, rows
 
     base, rows = _single_flight(base_key + (min_edge,), build)
@@ -1293,6 +1787,17 @@ def compute(r, scope, members, params=None):
         "fallback_pairs": base["fallback_pairs"],
         "pair_stats": base.get("pair_stats"),
         "warnings": base["warnings"],
+        # a built large set: lets the page offer a rebuild at another depth
+        "large": (
+            {
+                "members": len(members),
+                "limit": auto_build_max(),
+                "pair_k": sample[1] if sample else 0,
+                "depths": build_depths(len(members), len(base["fmeta"])),
+            }
+            if big
+            else None
+        ),
         # Read by nway_facets_service (cache key, pair scores); never sent to clients.
         "key": hashlib.md5(repr(doc_key).encode()).hexdigest(),
         "edges": base["edges"],

@@ -594,7 +594,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
                             </div>`).join('')}
                     </div>
                 </div>
-                <div style="color:var(--border); margin-top:8px; font-size:0.65rem;">💡 Use scroll wheel to cycle</div>
+                <div style="color:var(--border); margin-top:8px; font-size:0.65rem;">💡 Ctrl+wheel to cycle</div>
             </div>` : ''}
 
             <div class="diff-right-col">
@@ -632,7 +632,7 @@ function renderDiffPreview(data, name1, name2, score, extra = 0) {
 
                 ${rows.length > 12 ? `
                 <div style="background:var(--border); text-align:center; font-size:0.65rem; color:var(--subtle); padding:6px; border-top: 1px solid var(--border); flex-shrink:0;">
-                    💡 Use Ctrl+Scroll wheel to scroll code
+                    💡 Wheel to scroll code, Shift+wheel sideways
                 </div>` : ''}
             </div>
         </div>

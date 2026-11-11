@@ -10,7 +10,11 @@ from bsimvis.app.services.index_service import (
     get_pool_id,
     enrich_pool_data,
 )
-from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
+from bsimvis.app.services.function_service import (
+    fetch_function_data,
+    get_feature_map,
+    source_tokens,
+)
 from bsimvis.app.services.node_service import get_enriched_nodes
 from bsimvis.similarity import registry
 
@@ -284,7 +288,7 @@ def _diff_bin_sim(collection_a, md5_a, md5_b, collection_b, pool_id):
 
 
 def get_lines_data(source, f_map, common_hashes):
-    tokens = source.get("c_tokens", [])
+    tokens = source_tokens(source)
     if not tokens:
         return {}, []
 

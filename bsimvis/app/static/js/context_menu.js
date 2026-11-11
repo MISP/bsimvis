@@ -147,6 +147,8 @@
                 norm.tag_id = data.tag_id || norm.id;
                 norm.uuid = data.uuid || data.cluster_uuid;
                 norm.name = data.name || data.cluster_name || norm.uuid || norm.id;
+                // Which cluster to rename, independent of the page the menu opened on.
+                norm.rctx = JSON.stringify({ uuid: norm.uuid, collection: data.collection, pool: data.pool, axis: data.axis, node_type: data.node_type });
             }
         } else if (type === 'node' || type === 'function') {
             resolvedType = 'function';
@@ -226,7 +228,9 @@
         html += `<div class="context-menu-header">${escapeHtml(headerTitle)}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType) || (resolvedType === 'string' && norm.id)) {
+        // A live (not yet saved) similarity has no doc to bookmark or tag.
+        const isLiveSim = resolvedType === 'similarity' && !!(data && data.live);
+        if (!isLiveSim && (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType) || (resolvedType === 'string' && norm.id))) {
             const etype = resolvedType;
             const eid = (resolvedType === 'similarity' || resolvedType === 'bin_sim')
                 ? norm.sid
@@ -538,6 +542,17 @@
                     <span>Compare ${nwayFiles.length} Files (N-way)</span>
                 </div>`;
             }
+            if (window.yaraUrl) {
+                const pickedY = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
+                const yFiles = (pickedY.length ? pickedY : [norm.id]).slice(0, 200);
+                const yCol = yFiles[0].split(':')[0] || col;
+                const yUrl = window.yaraUrl(yCol, yFiles.filter(id => (id.split(':')[0] || col) === yCol).map(id => `only_md5=${id.split(':').pop()}`));
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(yUrl))}, event, { title: 'YARA workbench' })">
+                    <i class="fa-solid fa-shield-halved" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>YARA rule for ${yFiles.length > 1 ? yFiles.length + ' files' : 'this file'} <i class="fa-solid fa-flask" style="color:var(--warning,#d97706);margin-left:4px" title="Experimental"></i></span>
+                </div>`;
+            }
             if (window.NwayBasket) {
                 const picked = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
                 const basketIds = picked.length ? picked : [norm.id];
@@ -581,6 +596,13 @@
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Diff</span>
             </div>`;
+            if (isLiveSim && window.FunctionView) {
+                actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); FunctionView.saveDiscovered([${escapeAttr(jsString(norm.id2))}])">
+                <i class="fa-solid fa-link" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Save as similarity edge</span>
+            </div>`;
+            }
         } else if (resolvedType === 'bin_similarity') {
             const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(col, norm.md5_a, col, norm.md5_b);
             const diffTitle = `Bin Diff: ${String(norm.name_a || '')} vs ${String(norm.name_b || '')}`;
@@ -597,7 +619,7 @@
                 <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, JSON.parse(${escapeAttr(jsString(norm.rctx || '{}'))}))">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -613,7 +635,7 @@
                 <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, JSON.parse(${escapeAttr(jsString(norm.rctx || '{}'))}))">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -1363,6 +1385,18 @@
         return true;
     };
 
+    // The entity a cell stands for: its only one, or in a stacked cell (file A
+    // over file B) the one on the clicked line. A row of file squares is
+    // ambiguous and gets none.
+    const cellEntity = (cell, y) => {
+        const one = (els) => (new Set(els.map(el => el.dataset.entityData)).size === 1 ? els[0] : null);
+        const ents = [...cell.querySelectorAll('[data-entity-data]')].filter(el => !el.parentElement.closest('[data-entity-data]'));
+        if (ents.length < 2) return ents[0] || null;
+        const dist = ents.map(el => { const b = el.getBoundingClientRect(); return Math.max(0, b.top - y, y - b.bottom); });
+        const min = Math.min(...dist);
+        return one(ents) || one(ents.filter((el, i) => dist[i] === min));
+    };
+
     window.applyContextCellFilter = () => {
         const cell = window.currentContextMenu?.data?.__cell;
         if (cell && applyCellFilter(cell.filterCell, cell.value)) {
@@ -1376,6 +1410,15 @@
         // EntityRenderer owns its rows. Let its bubble handler open the unified
         // menu, which now includes this cell's filter/copy operations.
         if (event.target.closest('[data-entity-data]')) return;
+        // A right-click on a cell's padding means the cell's entity. Re-fire it
+        // there so every entity handler (inline or listener) runs, instead of
+        // the bare cell menu below swallowing the event.
+        const ent = cellEntity(cell, event.clientY);
+        if (ent && !ent.dispatchEvent(new MouseEvent('contextmenu', event))) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
         const value = cellValue(cell, event.target);
         if (!value) return;
 

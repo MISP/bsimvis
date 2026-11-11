@@ -6,6 +6,7 @@ bin_sim_service, similarity_service and cluster_service.
 
 import json
 import time
+import zlib
 from collections import Counter, defaultdict
 
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_policy, tag_prefixes
@@ -22,7 +23,7 @@ DISTRIBUTION_FIELDS = (
 )
 
 
-def _tag_distribution_label(roots):
+def _tag_distribution_label(roots, min_coverage=0.0):
     """Most prevalent leaf under a `tag_distribution` axis, short-form, or None.
 
     Walks the highest-count child at each level -- same "most common wins"
@@ -35,8 +36,104 @@ def _tag_distribution_label(roots):
     node = max(roots, key=lambda n: n.get("count", 0))
     while node.get("children"):
         node = max(node["children"], key=lambda c: c.get("count", 0))
+    if node.get("coverage", 1.0) < min_coverage:
+        return None
     tag_id = node.get("tag_id") or ""
     return tag_id.rsplit(":", 1)[-1] if tag_id else None
+
+
+NAME_ANCHORS = 20
+USER_TAG_NAME_MIN = 0.2  # share of members a user tag needs to name a cluster
+
+
+def _member_key(m):
+    """Member id without its collection / pool prefix, so builds and routes agree."""
+    for sep in (":func:", ":file:"):
+        if sep in m:
+            return m.split(sep, 1)[1]
+    return m
+
+
+def _names_hash(prefix, kind):
+    return f"{prefix}:cluster_names:{kind}"
+
+
+def _name_field(algo, anchors):
+    return f"{algo}|{zlib.crc32(','.join(anchors).encode()):08x}"
+
+
+def save_cluster_name(r, prefix, kind, algo, members, name):
+    """Remember an analyst name by a stable sample of its members (survives rebuilds).
+
+    kind is "func" or "bin"; prefix is the collection or `global:pool:{id}`.
+    An empty name forgets it. Drops older entries that anchor the same members."""
+    h = _names_hash(prefix, kind)
+    keys = sorted(
+        {_member_key(m) for m in members}, key=lambda k: zlib.crc32(k.encode())
+    )
+    anchors = keys[:NAME_ANCHORS]
+    for f, raw in (r.hgetall(h) or {}).items():
+        f = f.decode() if isinstance(f, bytes) else f
+        if f.startswith(f"{algo}|") and set(json.loads(raw)["anchors"]) & set(anchors):
+            r.hdel(h, f)
+    if name and anchors:
+        r.hset(
+            h,
+            _name_field(algo, anchors),
+            json.dumps({"name": name, "size": len(keys), "anchors": anchors}),
+        )
+
+
+class ClusterNameKeeper:
+    """Analyst names saved by `save_cluster_name`, matched to a fresh build's clusters.
+
+    A cluster takes a saved name when it holds at least half the anchors and its
+    size is the closest to the size the name was saved at (so a parent does not
+    take a child's name). `pick(label, default)` -> (name, is_custom)."""
+
+    def __init__(self, r, prefix, kind, algo, cluster_members):
+        self.names = {}
+        raw = r.hgetall(_names_hash(prefix, kind)) or {}
+        entries = []
+        for f, v in raw.items():
+            f = f.decode() if isinstance(f, bytes) else f
+            if f.startswith(f"{algo}|"):
+                entries.append(json.loads(v))
+        if not entries:
+            return
+        where = defaultdict(list)  # anchor -> entry indexes
+        for i, e in enumerate(entries):
+            for a in e["anchors"]:
+                where[a].append(i)
+        hits = defaultdict(Counter)  # label -> entry -> anchors held
+        sizes = {}
+        for label, members in cluster_members.items():
+            sizes[label] = len(members)
+            for m in members:
+                for i in where.get(_member_key(m), ()):
+                    hits[label][i] += 1
+        cands = []
+        for label, cnt in hits.items():
+            for i, n in cnt.items():
+                e = entries[i]
+                if n * 2 >= len(e["anchors"]):
+                    cands.append(
+                        (
+                            abs(sizes[label] - e["size"]) / max(e["size"], 1),
+                            -n,
+                            label,
+                            i,
+                        )
+                    )
+        used = set()
+        for _, _, label, i in sorted(cands):  # closest size first
+            if label not in self.names and i not in used:
+                self.names[label] = entries[i]["name"]
+                used.add(i)
+
+    def pick(self, label, default):
+        name = self.names.get(label)
+        return (name, True) if name else (default, False)
 
 
 def default_bin_cluster_name(
@@ -57,9 +154,11 @@ def default_bin_cluster_name(
     which falls back to the legacy lists untouched.
     """
     if tag_distribution:
-        label = _tag_distribution_label(
-            tag_distribution.get("family")
-        ) or _tag_distribution_label(tag_distribution.get("yara"))
+        label = (
+            _tag_distribution_label(tag_distribution.get("user"), USER_TAG_NAME_MIN)
+            or _tag_distribution_label(tag_distribution.get("family"))
+            or _tag_distribution_label(tag_distribution.get("yara"))
+        )
         if label:
             return label
     if avtype_list:
@@ -72,6 +171,40 @@ def default_bin_cluster_name(
             name = name[: MAX_CLUSTER_NAME_LEN - 3] + "..."
         return name
     return fallback
+
+
+def default_func_cluster_name(fids, metas, fallback):
+    """Name of a function cluster, by the rule N-way rows use: an analyst name, else
+    the most common non-default name (never FUN_/sub_/thunk_), else a name carried
+    by the members' tags, else `fallback`. `metas` maps function id -> function meta."""
+    from bsimvis.app.services.bin_sim_tags import normalize_tags
+    from bsimvis.app.services.nway_diff_service import (
+        _DEFAULT_NAME,
+        _fn_meta,
+        _name_row,
+    )
+
+    fmeta = {f: _fn_meta(metas.get(f) or {}) for f in fids}
+    weights = {f: float(fmeta[f].get("bsim_features_count") or 0) or 1.0 for f in fids}
+    row = _name_row(list(fids), fmeta, weights) if fids else {}
+    name = row.get("name")
+    if row.get("user_named") and name:
+        return name
+    # an analyst's tag on enough members beats tool-made names (yara, capa, fid)
+    tags = Counter(
+        t.rsplit(":", 1)[-1]
+        for f in fids
+        for t in normalize_tags((metas.get(f) or {}).get("user_tags"))
+    )
+    if tags:
+        top, n = tags.most_common(1)[0]
+        if n >= USER_TAG_NAME_MIN * len(fids):
+            return top
+    if name and not _DEFAULT_NAME.match(name):
+        return name
+    # nothing better than a Ghidra default: the most common one, as before
+    names = Counter(m["name"] for m in fmeta.values() if m.get("name"))
+    return names.most_common(1)[0][0] if names else fallback
 
 
 def collect_member_values(metas):
@@ -1036,6 +1169,48 @@ def demo():
     assert metas["bbbb"]["cluster_name"] == "zip-cluster", metas
     assert metas["aaaa"]["cluster_name"] == "elf-cluster", metas
     assert bin_cluster_ns("x", True) == "x:container"
+
+    # Analyst names survive a rebuild: matched by anchors, closest size wins.
+    class NameRedis:
+        h = {}
+
+        def hgetall(self, k):
+            return dict(self.h)
+
+        def hset(self, k, f, v):
+            self.h[f] = v
+
+        def hdel(self, k, f):
+            self.h.pop(f, None)
+
+    nr = NameRedis()
+    old_members = [f"C:file:m{i}" for i in range(10)]
+    save_cluster_name(nr, "C", "bin", "algo", old_members, "my family")
+    fresh = {
+        "7": [f"C:file:m{i}" for i in range(10)] + ["C:file:x1"],
+        "8": [f"C:file:m{i}" for i in range(20, 25)],
+    }
+    keeper = ClusterNameKeeper(nr, "C", "bin", "algo", fresh)
+    assert keeper.pick("7", "auto") == ("my family", True)
+    assert keeper.pick("8", "auto") == ("auto", False)
+    save_cluster_name(nr, "C", "bin", "algo", old_members, "")
+    assert ClusterNameKeeper(nr, "C", "bin", "algo", fresh).pick("7", "a") == (
+        "a",
+        False,
+    )
+
+    # A user tag names the cluster only above the coverage floor.
+    dist = {
+        "user": [
+            {"tag_id": "user:botnet", "count": 3, "coverage": 0.3, "children": []}
+        ],
+        "family": [
+            {"tag_id": "av:x:mirai", "count": 9, "coverage": 0.9, "children": []}
+        ],
+    }
+    assert default_bin_cluster_name([], [], [], "f", tag_distribution=dist) == "botnet"
+    dist["user"][0]["coverage"] = 0.1
+    assert default_bin_cluster_name([], [], [], "f", tag_distribution=dist) == "mirai"
 
     # inferred_tag_values: gated out below cohesion.
     summary = cluster_summary([{"tags": ["av:clamav:mirai"]}] * 10, member_count=10)

@@ -27,6 +27,8 @@ from bsimvis.app.services.cluster_display import (
     DEFAULTS,
     _load,
     display_assignment,
+    display_counts,
+    display_direct,
     score,
 )
 from bsimvis.app.services.cluster_utils import get_cluster_metas
@@ -121,20 +123,41 @@ def search_files_by_cluster():
         limit = int(request.args.get("limit", DEFAULT_ROOTS))
         per = int(request.args.get("per_cluster", DEFAULT_PER_CLUSTER))
 
-        cand = {_s(i) for i in query_files_advanced(r, col, filters_from_args())}
+        flt = filters_from_args()
         opts = _display_opts()
         tree, tag = _load(r, col, algo, get_queue_redis(), **opts)
-        if opts:  # custom display params: no precomputed hash, walk the members
-            where, matching, direct = _assign(r, col, algo, tree, cand)
+        cid, rest = request.args.get("cluster"), request.args.get("unclustered")
+        # No filter and default display: counts come straight from the stored
+        # sets and only the shown clusters' files are read, never all of them.
+        # ponytail: a deleted file counts until the next recluster rebuilds the sets.
+        fast = tree and not opts and not rest and not flt["fields"]
+        fast = fast and not any(flt["tags"].values())
+        if fast:
+            display_assignment(r, col, algo, tree, tag, only=set())  # build if stale
+            direct_n = display_counts(r, col, algo, tree, tag)
+            matching = dict.fromkeys(tree, 0)
+            for c, n in direct_n.items():
+                while c in matching:
+                    matching[c] += n
+                    c = tree[c]["parent"]
+            total = r.scard(f"{col}:all_files")
+            loose = ()
+            n_loose = max(total - sum(direct_n.values()), 0)
+            direct = display_direct(r, col, algo, tag, [str(cid)] if cid else [])
         else:
-            where, matching, direct = _assign_stored(r, col, algo, tree, tag, cand)
-        loose = cand - where.keys()
+            cand = {_s(i) for i in query_files_advanced(r, col, flt)}
+            if opts:  # custom display params: no stored sets, walk the members
+                where, matching, direct = _assign(r, col, algo, tree, cand)
+            else:
+                where, matching, direct = _assign_stored(r, col, algo, tree, tag, cand)
+            loose = cand - where.keys()
+            total, n_loose = len(cand), len(loose)
         out = {
             "collection": col,
             "algo": algo,
-            "total": len(cand),
+            "total": total,
             "has_clusters": bool(tree),
-            "unclustered_total": len(loose),
+            "unclustered_total": n_loose,
         }
 
         # More files of one cluster, or of the unclustered rest.
@@ -176,6 +199,8 @@ def search_files_by_cluster():
 
         # One sort over every file of the page's clusters, then only the first
         # `per` of each cluster are hydrated; `cluster=` loads the rest.
+        if fast:
+            direct = display_direct(r, col, algo, tag, nodes)
         by_node = {c: direct.get(c, []) for c in nodes}
         by = request.args.get("sort_by", "file_name")
         way = request.args.get("sort_order", "asc").lower()
@@ -208,7 +233,7 @@ def search_files_by_cluster():
             bin_cluster_map=cmap,
         )
         logging.info(
-            f"FILE SEARCH BY CLUSTER | {time.perf_counter()-t0:.3f}s | files={len(cand)} kept={len(tree)} roots={len(roots)}"
+            f"FILE SEARCH BY CLUSTER | {time.perf_counter()-t0:.3f}s | files={total} kept={len(tree)} roots={len(roots)}"
         )
         return out
     except Exception as e:

@@ -144,7 +144,6 @@
     const btn = (icon, color, label, js, tip) => `<button class="btn-code-action cov-btn" style="--c:${color}" ${tip ? `title="${escapeAttr(tip)}"` : ''} ${go(js)}><i class="${icon}"></i> ${escapeHtml(label)}</button>`;
     const sbar = parts => `<div class="cov-sbar">${parts.filter(p => p[1] > 0)
         .map(([color, v, label]) => `<span style="flex:${Number(v)}; background:${color}" title="${escapeAttr(`${label}: ${num(v)}`)}"></span>`).join('')}</div>`;
-    const fullBtn = () => btn('fa-solid fa-expand', 'var(--accent)', 'Full screen', 'ClusterDetailView.openFunctionsFull(event)', 'Open the N-way table on its own page');
 
     // ---- Members: the main file, the most central direct members, then the summary's sample of the subtree ----
     // ponytail: no file search here -- its bin_cluster_uuid index is empty for any node with children.
@@ -227,7 +226,7 @@
         return `<div class="cov-card">
             ${title(LOOK.all[0], LOOK.all[1], 'Functions', 'Code functions aligned across the member files. Core: in every file. Partial: in some. Unique: in one file only.', `<span class="cov-big" id="cov-fn-total"></span>`)}
             <div id="cov-fn-body" style="display:flex; flex-direction:column; gap:10px;">${spin(`Aligning functions across ${num(c.count)} files…`)}</div>
-            <div class="cov-foot">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}${fullBtn()}</div>
+            <div class="cov-foot">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}</div>
         </div>`;
     }
 
@@ -253,7 +252,7 @@
 
     const panelActs = m => `<div class="cov-acts">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}
         ${btn(LOOK.core[0], LOOK.core[1], `Core ${num(m.counts.core)}`, "ClusterOverview.openFunctions({ tab: 'core' })")}
-        ${btn(LOOK.unique[0], LOOK.unique[1], `Unique ${num(m.counts.unique)}`, "ClusterOverview.openFunctions({ tab: 'unique' })")}${fullBtn()}</div>`;
+        ${btn(LOOK.unique[0], LOOK.unique[1], `Unique ${num(m.counts.unique)}`, "ClusterOverview.openFunctions({ tab: 'unique' })")}</div>`;
 
     function matrix(m, medoid) {
         const { n, cols, lanes, names } = m;
@@ -364,6 +363,10 @@
         const { ok, d } = await f.promise;
         if (done) done();
         if (stale()) return;
+        if (!ok && d.error === 'needs_build') {
+            NwayPanel.buildGate(el.querySelector('#cov-fn-body'), d, qs, () => ClusterDetailView.renderOverviewTab());
+            return;
+        }
         if (!ok) {
             const msg = d.error === 'too_large'
                 ? `Too many files to align here (${num(d.members)}). The Functions tab groups them by sub-cluster.`
@@ -422,13 +425,11 @@
             if (fn) loadLanes(el, v, c);
         },
 
-        /** The Functions tab with these N-way controls (`tab` is its All / Core / Partial / Unique). */
+        /** The N-way table on its own page with these controls (`tab` is its All / Core / Partial / Unique). */
         openFunctions(state) {
-            const u = new URL(window.location.href);
-            u.searchParams.set('ntab', state.tab || 'all');
-            FOCUS_KEYS.forEach(k => (state[k] == null ? u.searchParams.delete(k) : u.searchParams.set(k, state[k])));
-            window.history.replaceState({ path: u.pathname + u.search }, '', u.pathname + u.search);
-            window.ClusterDetailView.switchTab('functions');
+            const out = { tab: state.tab || 'all' };
+            FOCUS_KEYS.forEach(k => { if (state[k] != null) out[k] = state[k]; });
+            window.ClusterDetailView.openFunctionsFull(window.event, out);
         },
 
         /** A lane's functions: Focus on its files, all of them required, none of the rest. */

@@ -1,9 +1,23 @@
 import json
 import logging
 import re
-from ollama import Client
+import ollama
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.config_service import config_service
+
+
+class Client(ollama.Client):
+    """Every chat call uses one context size and stays loaded. Ollama reloads the
+    model whenever num_ctx changes (15-30 s, longer behind other callers), so two
+    features with different sizes evict each other on every call. Without a size
+    it loads the model's whole context (262k for qwen3.8: 51 GB instead of 18)."""
+
+    def chat(self, *args, options=None, **kwargs):
+        kwargs.setdefault("keep_alive", "1h")
+        num_ctx = int(config_service.get("llm.num_ctx", 65536))
+        return super().chat(
+            *args, options={**(options or {}), "num_ctx": num_ctx}, **kwargs
+        )
 
 
 class LLMService:
@@ -310,11 +324,68 @@ class LLMService:
                     out.setdefault(item["id"], title)
         return out, None
 
+    def draft_yara(self, name, picks):
+        """A YARA rule from ranked string picks (`yara_edit_service.suggest` rows).
+
+        The strings are written by code, verbatim and escaped, so the model can
+        not invent one; it only chooses the `condition`, and a condition that
+        does not compile falls back to `2 of them`.
+        """
+        from bsimvis.app.services import yara_edit_service as ys
+
+        self._load_config()
+        ident = re.sub(r"\W", "_", name)[:40] or "family"
+        lines = [
+            '    $s%d = "%s" ascii wide'
+            % (i, p["value"].replace("\\", "\\\\").replace('"', '\\"'))
+            for i, p in enumerate(picks)
+        ]
+
+        def build(cond):
+            return (
+                f'rule {ident} {{\n  meta:\n    description = "{ident} family"\n'
+                "  strings:\n" + "\n".join(lines) + f"\n  condition:\n    {cond}\n}}\n"
+            )
+
+        cond = "2 of them"
+        listing = "\n".join(
+            f'$s{i}: "{p["value"][:60]}" in {p["pos"]}/{p["of"]} family files, {p["neg"]} others'
+            for i, p in enumerate(picks)
+        )
+        try:
+            text = (
+                Client(host=self.ollama_url, timeout=120)
+                .chat(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "Write only the condition line of a YARA rule that "
+                            "matches this malware family and avoids other files. Use "
+                            "only these string ids and 'any of', 'all of', 'N of', "
+                            "'and', 'or'.\n\n" + listing,
+                        }
+                    ],
+                    stream=False,
+                    think=False,
+                    options={"num_predict": 80, "temperature": 0},
+                )
+                .get("message", {})
+                .get("content", "")
+            )
+            guess = (
+                text.strip().strip("`").splitlines()[0].strip() if text.strip() else ""
+            )
+            if guess and ys.compile_source(build(guess))[0] is not None:
+                cond = guess
+        except Exception as e:
+            logging.error(f"LLMService draft_yara error: {e}")
+        return build(cond)
+
     def name_lane(self, evidence):
         """A description of at most six words for one lane of an N-way table, from its `evidence` text.
 
-        The first try is a short plain-text answer on a small context with the
-        model kept loaded (`keep_alive`): a warm call takes a fraction of a
+        The first try is a short plain-text answer: a warm call takes about a
         second. A refusal or an empty answer gets one slower try that lets the
         model think and asks for a general description. Returns (name, error).
         """
@@ -326,13 +397,27 @@ class LLMService:
             "attack', 'low-level byte utilities'). Function names that carry a "
             "rule or family prefix (for example linux_trojan_x) are evidence of "
             "the family. Library calls are strong evidence of what the code does "
-            "(socket and connect: network client). Always give a description: when "
+            "(socket and connect: network client). Strings (paths, commands, "
+            "messages, credentials) are strong evidence for the functions that use "
+            "them; describe what most of the lane's functions do, not one "
+            "function. A handle, URL or name inside a printed message is not a "
+            "capability: name what the code does with it. Much of a binary is "
+            "library or runtime code linked in (C library, threads, RPC, crypto, "
+            "compiler runtime such as soft-float or 64-bit division, a language "
+            "runtime): name such a lane as that library code. Rule findings are "
+            "automatic matches and can be wrong. Name only what the evidence "
+            "lines show: no API, system or technology none of them mentions. The "
+            "platform line is context; never describe the platform itself. "
+            "Say what the code does: the lane's malware family is already known, so "
+            "a family name alone is not a description. "
+            "Always give a description: when "
             "the evidence is thin, describe the general kind of code it looks like. "
-            "Never answer 'unknown' or 'unnamed'. Answer with the description only."
+            "Never answer 'unknown' or 'unnamed', and never answer with code, a "
+            "signature or a FUN_ name. Answer with the description only."
         )
         tries = (
-            {"think": False, "options": {"num_predict": 20, "num_ctx": 2560}},
-            {"think": True, "options": {"num_predict": 700, "num_ctx": 4096}},
+            {"think": False, "options": {"num_predict": 20}},
+            {"think": True, "options": {"num_predict": 700}},
         )
         error = None
         for i, t in enumerate(tries):
@@ -349,7 +434,6 @@ class LLMService:
                     ],
                     stream=False,
                     think=t["think"],
-                    keep_alive="1h",
                     options={**t["options"], "temperature": 0, "stop": ["\n"]},
                 )
                 text = response.get("message", {}).get("content", "")
@@ -358,8 +442,10 @@ class LLMService:
                 error = str(e)
                 continue
             name = " ".join(text.strip().strip("\"'`*.").split())[:60]
+            # a refusal, or code echoed back (a FUN_ name, a signature), gets the second try
             if name and not re.match(r"(?i)(unnamed|unknown|unclear)", name):
-                return name, None
+                if not re.search(r"FUN_|undefined\d|\w\(", name):
+                    return name, None
         return "", error
 
     def explain_block_change(self, ctx):
@@ -412,7 +498,7 @@ class LLMService:
                 stream=False,
                 think=False,
                 format=fmt,
-                options={"num_predict": 200, "temperature": 0.1, "num_ctx": 8192},
+                options={"num_predict": 200, "temperature": 0.1},
             )
             msg = response.get("message", {})
             value = json.loads(
@@ -1313,6 +1399,20 @@ def _selfcheck():
     assert out["f1"][2] is None  # no tag guessed from free text
     assert out["f2"] == ("no", "unrelated helper.", None)
     assert missing == ["f3"]
+
+    # A caller's own context size never reaches Ollama: one size, no reloads.
+    seen = {}
+    real_chat = ollama.Client.chat
+    ollama.Client.chat = lambda self, *a, **kw: seen.update(kw)
+    try:
+        Client().chat(
+            model="m", messages=[], options={"num_ctx": 2560, "num_predict": 20}
+        )
+    finally:
+        ollama.Client.chat = real_chat
+    num_ctx = int(config_service.get("llm.num_ctx", 65536))
+    assert seen["options"] == {"num_predict": 20, "num_ctx": num_ctx}, seen
+    assert seen["keep_alive"] == "1h"
 
     print("ok")
 

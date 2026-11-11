@@ -42,7 +42,7 @@ window.NwayView = {
             axis: q.get('axis') || '',
         };
         this._state = {};
-        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_lane_fit', 'group_prefix_min', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'cmp', 'col_pick', 'col_rest']) {
+        for (const k of ['tab', 'scope', 'k', 'min_edge', 'mode', 'q', 'tags', 'sort_col', 'sort_dir', 'offset', 'column', 'focus', 'focus_rule', 'side', 'columns', 'child_presence', 'group', 'group_axis', 'group_axis_b', 'group_merge', 'group_min_link', 'group_sort', 'group_lane_min', 'group_split_min', 'group_lane_fit', 'group_prefix_min', 'group_tag_depth', 'col_open', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'cmp', 'col_pick', 'col_rest', 'family', 'ignore', 'view', 'cover_min', 'leak_max', 'feat_min', 'feat_max', 'support_min', 'twin_depth', 'twin_link', 'track', 'order', 'root', 'lane_graph', 'track_only', 'tfocus']) {
             if (q.has(k)) this._state[k] = q.get(k);
         }
         this._collections = null;
@@ -52,7 +52,7 @@ window.NwayView = {
     // Graph and comparison tabs share the focused family and URL state.
     async _initFunction() {
         const q = new URLSearchParams(window.location.search);
-        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence'];
+        const CTL = ['mode', 'min_edge', 'columns', 'child_presence', 'twin_depth', 'twin_link', 'focus', 'focus_rule', 'col_by', 'col_by_multi', 'col_set', 'col_presence', 'col_pick', 'col_rest', 'col_open'];
         const source = {}, doc = {}, fx = {}, cg = {};
         for (const [k, v] of q) {
             if (k.startsWith('fx_')) fx[k.slice(3)] = v;
@@ -455,7 +455,7 @@ window.NwayView = {
             onSource: ids => { this._set.md5s = ids.split(','); this._set.batch = ''; this._set.cluster_uuid = ''; this._renderSet(); },
             onData: d => this._renderFileHero(d),
             onSlot: (slot, actions) => {
-                // Compare and Lineage sit at the right of the file-set header
+                // the ... menu (Compare, Family) sits at the right of the file-set header
                 const home = document.querySelector('[data-hero-actions]');
                 if (home && actions) home.replaceChildren(actions);
                 const edit = this._editEl;
@@ -480,6 +480,10 @@ window.NwayView = {
         const plural = (n, w) => `${Number(n)} ${w}${n === 1 ? '' : 's'}`;
         const kind = s.cluster_uuid ? 'Binary cluster' : s.batch ? 'Batch' : 'File set';
         const where = s.cluster_uuid ? `cluster ${s.cluster_uuid.slice(0, 8)}` : s.batch ? `batch ${s.batch.slice(0, 8)}` : 'your selection';
+        // Back to where the set came from: the cluster, the batch's files, else the previous page.
+        const back = s.cluster_uuid ? NwayPanel.backUrl(new URLSearchParams(window.location.search))
+            : s.batch ? `${window.Nav.buildUIUrl(s.collection || (s.md5s[0] ? this._split(s.md5s[0]).coll : ''), ['files'])}?batch_uuid=${encodeURIComponent(s.batch)}` : '';
+        const backBtn = back || history.length > 1 ? UI.Button.render({ className: 'btn-code-action', icon: 'fa-solid fa-arrow-left', label: back ? kind : 'Back', tooltip: back ? `Back to the ${s.cluster_uuid ? 'cluster' : 'batch'}` : 'Back to the previous page', attr: { 'data-nway-back': '' } }) : '';
         const colls = [...new Set(files.map(f => f.collection).filter(Boolean))];
         const archs = [...new Set(files.map(f => (f.language_id || '').split(':')[0]).filter(Boolean))];
         const funcs = files.reduce((n, f) => n + (Number(f.functions) || 0), 0);
@@ -498,10 +502,22 @@ window.NwayView = {
         if (st && st.median < 0.4) warns.push('weak: files may be unrelated');
         if (st && st.scored < st.total) warns.push(`${st.total - st.scored} pairs unscored`);
         const parts = [plural(files.length, 'file'), `${funcs.toLocaleString()} functions`, plural(colls.length, 'collection'), archs.join(' · ')].filter(Boolean);
+        // coming back from the lineage page: start folded, then unfold
+        let unfold = false;
+        try { unfold = sessionStorage.getItem('nway.heroAnim') === '1'; sessionStorage.removeItem('nway.heroAnim'); } catch (e) { /* storage unavailable */ }
+        const view = el.parentElement;
+        if (unfold) view.classList.add('nway-compact');
         el.hidden = false;
-        el.innerHTML = `<div class="nway-hero-top"><span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
+        el.innerHTML = `<div class="nway-hero-top">${backBtn}<span class="nway-hkind ${kind === 'File set' ? 'set' : ''}">${kind}</span><span class="dim">${escapeHtml(where)}</span><span class="nway-hero-actions" data-hero-actions></span></div>
             <div class="nway-hero-meta dim">${comp}</div>
             <div class="nway-hero-meta dim">${[...parts.map(escapeHtml), coh].join(' · ')}${warns.map(w => `<span class="nway-hpill warn">${escapeHtml(w)}</span>`).join('')}</div>`;
+        if (unfold) requestAnimationFrame(() => requestAnimationFrame(() => view.classList.remove('nway-compact')));
+        el.onclick = e => {
+            if (!e.target.closest('[data-nway-back]')) return;
+            if (back) return window.Nav.openPath(back, e);
+            e.preventDefault();
+            history.back();
+        };
     },
 
     // `coll:md5` (or a bare md5) -> its collection and md5.

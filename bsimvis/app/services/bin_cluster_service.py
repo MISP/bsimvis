@@ -13,6 +13,7 @@ from bsimvis.app.services.cluster_utils import (
     collect_member_values,
     set_tag_distribution_score,
     default_bin_cluster_name,
+    ClusterNameKeeper,
     function_count_stats,
     inferred_tag_values,
     resolve_hierarchical_inferred_tags,
@@ -600,6 +601,7 @@ class BinClusterService:
         # md5 itself for a collection-qualified id.
         axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
         prefix = f"{collection}:file:"
+        keeper = ClusterNameKeeper(self.r, collection, "bin", algo_ns, cluster_members)
         for label, members in cluster_members.items():
             members = [m if m.startswith(prefix) else f"{prefix}{m}" for m in members]
             pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{label}:members", *members)
@@ -630,6 +632,7 @@ class BinClusterService:
                 f"Binary Cluster {label}",
                 tag_distribution=summary.get("tag_distribution"),
             )
+            default_name, is_custom = keeper.pick(label, default_name)
 
             filename_freq = summary["filename_distribution"]
             md5_freq = summary["md5_distribution"]
@@ -678,6 +681,7 @@ class BinClusterService:
                 "snippet": snippet,
                 "cluster_uuid": c_uuid,
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "cohesion_score": float(cohesion_score),
                 "cohesion_exact": bool(cohesion_exact),
                 "medoid": pick_medoid(centrality),
@@ -2039,6 +2043,7 @@ class BinClusterService:
         # after this loop, once every touched cluster's gate result is known.
         gated_by_label = {}
 
+        keeper = ClusterNameKeeper(self.r, collection, "bin", algo_ns, cluster_members)
         for idx, label in enumerate(write_nodes):
             members = cluster_members[label]
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
@@ -2054,6 +2059,7 @@ class BinClusterService:
                 f"Binary Cluster {label}",
                 tag_distribution=summary.get("tag_distribution"),
             )
+            default_name, is_custom = keeper.pick(label, default_name)
 
             filename_freq = summary["filename_distribution"]
             md5_freq = summary["md5_distribution"]
@@ -2125,6 +2131,7 @@ class BinClusterService:
                 "snippet": snippet,
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "cohesion_score": float(cohesion_score),
                 # Mean over all pairs (unstored = 0): density, kept off the
                 # headline because chains and mixed families always score low.

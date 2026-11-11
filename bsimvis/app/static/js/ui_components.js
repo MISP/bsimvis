@@ -243,21 +243,28 @@ window.UI = {
                 if (view === 'pools' && viewKey === 'pool-detail') return 'active';
                 if (view === 'search' && viewKey === 'search-detail') return 'active';
                 if (view === 'nway' && viewKey === 'nway') return 'active';
+                if (view === 'yara' && viewKey === 'yara') return 'active';
                 if (view === 'scan' && viewKey === 'scan-detail') return 'active';
 
                 return '';
             };
 
+            // Set on <html> by the server from the git branch (app/__init__.py)
+            const branch = document.documentElement.dataset.branch;
+            const hue = Number(document.documentElement.dataset.branchHue) || 0;
+            const branchBadge = branch ? `<span class="branch-badge" style="--branch-hue:${hue}" title="Branch: ${escapeAttr(branch)}">${escapeHtml(branch)}</span>` : '';
+
             return `
                 <details class="more-menu global-menu">
-                    <summary title="Menu"><img src="/logo.svg" alt=""><span>BSimVis</span> <i class="fa-solid fa-chevron-down"></i></summary>
+                    <summary title="Menu"><img src="/logo.svg${branch ? `?h=${hue}` : ''}" alt=""><span>BSimVis</span>${branchBadge} <i class="fa-solid fa-chevron-down"></i></summary>
                     <div class="more-menu-list global-menu-list" onclick="this.closest('details').removeAttribute('open')">
                         <a href="/" id="nav-home" class="${isActive('home')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-house"></i> Home</a>
                         <a href="${buildNavUrl('collections')}" id="nav-collections" class="${isActive('collections')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-layer-group"></i> Collections</a>
                         <a href="${buildNavUrl('pools')}" id="nav-pools" class="${isActive('pools')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-diagram-project"></i> Pools</a>
                         <hr>
                         <a href="${buildNavUrl('scan')}" id="nav-scans" title="Scan a file without ingesting it" class="${isActive('scan')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-microscope"></i> Scan</a>
-                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff (experimental)" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
+                        <a href="/yara" id="nav-yara" title="Write and test YARA rules against file sets (experimental)" class="${isActive('yara')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-shield-halved"></i> YARA</a>
+                        <a href="${buildNavUrl('nway')}" id="nav-nway" title="N-way file diff" class="${isActive('nway')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-table-columns"></i> N-way diff</a>
                         <a href="${buildNavUrl('jobs')}" id="nav-jobs" class="${isActive('jobs')}" onclick="Nav.openPath(this.href, event)"><i class="fa-solid fa-server"></i> Jobs</a>
                         <hr>
                         <a href="#" id="nav-search" onclick="event.preventDefault(); SearchPalette.show();"><i class="fa-solid fa-magnifying-glass"></i> Search <kbd>Ctrl+K</kbd></a>

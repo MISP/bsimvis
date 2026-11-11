@@ -422,7 +422,7 @@ def _agentic_summarize(collection, func_name, code_with_context, custom_prompt):
     `llm_service.summarize_and_tag`, but the model may call `llm_tools` first --
     a standalone loop rather than `llm_chat_service`'s, since there is no chat
     session to persist here, just one verdict."""
-    from ollama import Client
+    from bsimvis.app.services.llm_service import Client
 
     from bsimvis.app.services.llm_tools import TOOLS, call_tool
 

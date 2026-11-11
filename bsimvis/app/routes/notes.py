@@ -159,6 +159,36 @@ def rename_functions():
     return {"status": "success", "renamed": done}
 
 
+def _neighbour_names(func_ids):
+    """({address: name}, [caller names]) for the stripped callees and callers of
+    `func_ids`, named after their cohesive named cluster the way the N-way table
+    names its rows: a stripped helper gets the real name of its unstripped twins."""
+    from bsimvis.app.routes.nway import _attach_clusters
+    from bsimvis.app.services.llm_tools import get_call_graph
+    from bsimvis.app.services.redis_client import get_redis
+
+    rows, callers = {}, set()
+    for fid in func_ids:
+        graph = get_call_graph(fid)
+        for side in ("callees", "callers"):
+            for c in graph.get(side) or []:
+                cid, name = c.get("id") or "", c.get("name") or ""
+                if cid in func_ids or ":func:" not in cid:
+                    continue
+                if re.fullmatch(r"FUN_[0-9a-fA-F]+", name):
+                    rows.setdefault(
+                        cid, {"cells": {0: cid}, "name": name, "side": side}
+                    )
+                elif side == "callers":
+                    callers.add(c.get("user_name") or name)
+    named = list(rows.values())
+    if named:
+        _attach_clusters(get_redis(), named, {}, None, {})
+    named = [r for r in named if r.get("name_from") == "cluster"]
+    callers |= {r["name"] for r in named if r["side"] == "callers"}
+    return {r["cells"][0].rsplit(":", 1)[1]: r["name"] for r in named}, sorted(callers)
+
+
 def suggest_function_name():
     """
     Asks the LLM for a name for the functions of one N-way row. Never applies it.
@@ -167,17 +197,24 @@ def suggest_function_name():
     from bsimvis.app.services.llm_service import llm_service
     from bsimvis.app.services.llm_tools import get_function
 
-    func_ids = (request.json or {}).get("func_ids") or []
+    func_ids = ((request.json or {}).get("func_ids") or [])[:3]
+    names, callers = _neighbour_names(func_ids)
     parts = []
-    for fid in func_ids[:3]:
+    for fid in func_ids:
         f = get_function(fid)
-        if f.get("code"):
-            parts.append(f"// {f.get('file_name')}\n{f['code'][:6000]}")
+        code = re.sub(
+            r"\bFUN_([0-9a-fA-F]+)\b",
+            lambda m: names.get(m.group(1).lower(), m.group(0)),
+            f.get("code") or "",
+        )
+        if code:
+            parts.append(f"// {f.get('file_name')}\n{code[:6000]}")
     if not parts:
         return {"error": "No code available"}, 404
     prompt = (
         "Name this function, which is the same function across several binaries. "
         "Reply with one C identifier in snake_case, nothing else.\n\n"
+        + (f"Called from: {', '.join(callers[:8])}\n\n" if callers else "")
         + "\n\n".join(parts)
     )
     reply = llm_service.chat([{"role": "user", "content": prompt}])

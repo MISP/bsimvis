@@ -12,6 +12,8 @@ from bsimvis.app.services.cluster_utils import (
     cluster_summary,
     collect_member_values,
     default_bin_cluster_name,
+    ClusterNameKeeper,
+    default_func_cluster_name,
     function_cluster_stats,
     set_tag_distribution_score,
     function_count_stats,
@@ -847,6 +849,8 @@ class ClusterService:
                     "function_name": name,
                     "user_name": m.get("user_name"),
                     "user_name_source": m.get("user_name_source"),
+                    "tags": m.get("tags"),
+                    "user_tags": m.get("user_tags"),
                     "bsim_features_count": feat_count,
                     "file_name": file_name,
                     "entrypoint_address": addr,
@@ -874,6 +878,7 @@ class ClusterService:
         if job_service and job_id:
             job_service.add_log(job_id, msg)
 
+        keeper = ClusterNameKeeper(self.r, collection, "func", algo, cluster_members)
         for idx, (label, members) in enumerate(cluster_members.items()):
             names = []
             feature_counts = []
@@ -885,9 +890,10 @@ class ClusterService:
                 if "bsim_features_count" in m:
                     feature_counts.append(m.get("bsim_features_count", 0))
 
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            default_name = default_func_cluster_name(
+                members, all_member_meta, f"Cluster {label}"
             )
+            default_name, is_custom = keeper.pick(label, default_name)
             avg_features = np.mean(feature_counts) if feature_counts else 0
 
             # Exact Average Internal Similarity (Cohesion) using sparse adjacency map
@@ -934,6 +940,7 @@ class ClusterService:
                 "snippet": snippet,
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "avg_features": float(avg_features),
                 "cohesion_score": float(cohesion_score),
                 "avg_stability": float(stabilities.get(label, 0.0)),
@@ -1917,6 +1924,7 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = m
 
+        keeper = ClusterNameKeeper(self.r, collection, "func", algo, cluster_members)
         for label in write_nodes:
             members = node_members[label]
             names = [
@@ -1928,9 +1936,10 @@ class ClusterService:
                 all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                 for fid in members
             ]
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            default_name = default_func_cluster_name(
+                members, all_member_meta, f"Cluster {label}"
             )
+            default_name, is_custom = keeper.pick(label, default_name)
             avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
             cohesion_score = node_cohesion.get(label, 1.0)
 
@@ -1963,6 +1972,7 @@ class ClusterService:
                 ),
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "avg_features": avg_features,
                 "cohesion_score": float(cohesion_score),
                 "avg_stability": float(cohesion_score),
@@ -2127,6 +2137,8 @@ class ClusterService:
                     "function_name": m.get("function_name"),
                     "user_name": m.get("user_name"),
                     "user_name_source": m.get("user_name_source"),
+                    "tags": m.get("tags"),
+                    "user_tags": m.get("user_tags"),
                     "bsim_features_count": m.get("bsim_features_count", 0),
                     "file_name": m.get("file_name"),
                     "entrypoint_address": m.get("entrypoint_address"),
@@ -2135,6 +2147,7 @@ class ClusterService:
 
         adj_sim = sim_edges.SimAdjacency(edge_set, len(id_to_idx))
 
+        keeper = ClusterNameKeeper(self.r, collection, "func", algo, cluster_members)
         for label, members in cluster_members.items():
             names = [
                 all_member_meta.get(fid, {}).get("function_name")
@@ -2145,9 +2158,10 @@ class ClusterService:
                 all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                 for fid in members
             ]
-            default_name = (
-                Counter(names).most_common(1)[0][0] if names else f"Cluster {label}"
+            default_name = default_func_cluster_name(
+                members, all_member_meta, f"Cluster {label}"
             )
+            default_name, is_custom = keeper.pick(label, default_name)
             avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 
             member_indices = [id_to_idx[fid] for fid in members]
@@ -2188,6 +2202,7 @@ class ClusterService:
                 ),
                 "cluster_uuid": label_to_uuid[label],
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "avg_features": avg_features,
                 "cohesion_score": float(cohesion_score),
                 "avg_stability": float(cohesion_score),
@@ -2389,9 +2404,12 @@ class ClusterService:
                     all_member_meta.get(fid, {}).get("bsim_features_count", 0)
                     for fid in members
                 ]
-                default_name = (
-                    Counter(names).most_common(1)[0][0] if names else f"Cluster {root}"
+                default_name = default_func_cluster_name(
+                    members, all_member_meta, f"Cluster {root}"
                 )
+                default_name, is_custom = ClusterNameKeeper(
+                    r, collection, "func", algo, {root: members}
+                ).pick(root, default_name)
                 avg_features = float(np.mean(feature_counts)) if feature_counts else 0.0
 
                 # Exact below COHESION_PAIR_CAP pairs, sampled above it:
@@ -2440,6 +2458,7 @@ class ClusterService:
                     ),
                     "cluster_uuid": c_uuid,
                     "cluster_name": default_name,
+                    "is_custom_name": is_custom,
                     "avg_features": avg_features,
                     "cohesion_score": float(cohesion_score),
                     "avg_stability": float(cohesion_score),
@@ -3173,6 +3192,9 @@ class ClusterService:
         pipe = r.pipeline(transaction=False)
         pipe.delete(cluster_list_key)
 
+        keeper = ClusterNameKeeper(
+            self.r, f"global:pool:{pool_id}", "bin", algo_ns, cluster_members
+        )
         for label, members in cluster_members.items():
             c_uuid = label_to_uuid[label]
             meta_key = f"global:pool:{pool_id}:bin_cluster:{c_uuid}:meta"
@@ -3191,6 +3213,7 @@ class ClusterService:
                 f"Pool File Cluster {c_uuid}",
                 tag_distribution=summary.get("tag_distribution"),
             )
+            default_name, is_custom = keeper.pick(label, default_name)
 
             filename_freq = summary["filename_distribution"]
             md5_freq = summary["md5_distribution"]
@@ -3231,6 +3254,7 @@ class ClusterService:
                 "cluster_id": int(label),
                 "name": default_name,
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "snippet": snippet,
                 "member_count": n_members,
                 "cohesion_score": float(cohesion_score),

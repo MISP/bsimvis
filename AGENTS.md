@@ -113,6 +113,22 @@ mapping). Function search takes `strings=` through the `strings` field in
 `index_config`; it is excluded from the bare `q` on purpose. Config: `[strings]` in
 `bsimvis_config.toml`. Ghidra side check: `scripts/test_strings_extract.py`.
 
+## YARA workbench
+
+`/yara` (`static/js/views/yara_view.js`, `routes/yara_edit.py`, `services/yara_edit_service.py`)
+is a live rule editor. A debounced `POST /api/yara/test` compiles the rule and scans the
+stored `{coll}:file:{md5}:raw` bytes of the target sets and a capped sample of the negative
+sets (`[yara_editor]` in the config), answering precision/recall, per-group and per-string
+hit counts, and where hits land (file offset -> LIEF address -> stored function list / string
+table; no Ghidra). Sets use the N-way column-set resolver (`nway.resolve_group`), plus
+`files` and `rest`. Rules are compiled with `includes=False`.
+
+Rule registry: `global:yara_rule:{uuid}` (+ `:v:{n}`, `:tags`) and `global:yara_rules` ZSET.
+`YARA_RULE_RUN` is the chunked sweep/apply job; sweep records hits in the queue Redis
+(`yara:sweep:{run}:*`, TTL) and writes nothing to Kvrocks; apply writes `yara:custom:<rule>`
+file tags. rulezet-editor is AGPL and is *fetched* by `scripts/fetch_vendor_assets.sh`
+(pinned sha), never committed; the view falls back to a textarea without it.
+
 ## Pools
 
 A pool (`pool_service.py`, `routes/pools.py`) is a named union of collections with its
@@ -130,8 +146,144 @@ skip BSim entirely and get a deterministic 1.0/0 match from their exact Ghidra
 FunctionID hash (`{fid}:funcid` pointer, `{coll}:funcid:{hash}` buckets) — BSim is
 false-positive-prone on tiny functions. Both the collection and pool build paths do this.
 
+Below the stored edges' floor, the function view's Similar tab can discover live:
+`GET /api/similarity/discover` (`SimilarityService.discover_live`, read-only,
+clamped to `similarity.discovery_min_score`) and `POST /api/similarity/discover/persist`
+(recomputes the score, writes through `_persist_and_index_batch`, user tag
+`discovered`). Partner filters reuse `/api/function/search` via its `ids=` param
+(`filter_ids_by_groups`) -- no second filter path.
+
 Binary similarity diff tables are paged, filtered and sorted **server-side**
 (`_page_diff` in `routes/bin_sim.py`). Don't reintroduce full-table client loads.
+
+## N-way lineage
+
+`GET /api/bin_sim/nway/lineage` builds the tree from every row and sends them as one
+compact column-wise `rows` list (fid, mask over `nodes`, role, region, `match` = the
+`/nway` row filter via `_filter_rows`), so the page paints any lens, filters and tracks
+without moving the tree. `/nway?order=lineage` puts the file columns in that tree's DFS
+order (`column_parents`, each column's default index as `base`). Both pages share one URL
+state: `track` (`fn:<fid>` or `<lens>:<key>`; lane hex bits and colours are over the
+default column order, `NwayColors` in `nway_colors.js`), and the lineage page keeps its
+own `layout` (tree / chain / star) and `lview`: Tree, Tracks (one lens group through the
+tree, or six small multiples) or Split (compact tree over a real `NwayPanel`, wired by
+`setTrack` / `onTrack` / `onRowHover`). With the table's `group` (the lens preset) the route
+also sends the first-level `groups` that `/nway` builds over the same filtered rows (same
+`group_rows` call, so same ids, meta and LLM names) and `rows.group` (each matching row's
+deepest one); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
+keys, and one lane-name cache keyed by content, so a lane is never named twice).
+**Merge files** on the lineage page: `columns=files`, `twins` (Same code) or `children` (Cluster, needs
+a `cluster_uuid` or a shared cluster; the same availability rule as the table's menu). `children` and
+`twins` docs both go through `nway_lineage_service.group_nodes` (a node holds a row when any member file
+does, `members` / `path` come from the group). Twins keep the first member's pair edges (they share
+their rows); child clusters differ, so the edge between two nodes is the strongest one over all their
+member pairs (most matched functions at `min_edge`), the same `PairEdges` value, and a node is named by
+its cluster. `columns=by` is refused (400). The view (`cols()`) falls back to files when the server
+answers 400 for children (old server, no shared cluster). Opening a cluster node uses the same
+`col_open` rule as twins: the `path` group ids on the nodes plus the node to open.
+Node check: `node scripts/test_nway_lineage.js`; the service self-check: `uv run python -I
+bsimvis/app/services/nway_lineage_service.py`.
+
+**Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
+`lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the
+file they start in (`added-N`, `dropped-N`, `span-N-M` take node N's Tree colour; kept / scattered / rewritten are grey).
+Tree, Tracks and Split keep painting Deltas by the node a row is born in (`st.C` is keyed `deltas:ring` for the Ring and
+rebuilt when the view changes). The group card is only in the left pane (a second copy in the drawer was the duplicate
+buttons). It ends with "All functions (N)", collapsed, filled on first open, 200 rows at a time (`ALL_ROWS`).
+
+**Open in table / Call graph** (the lane card): the URL carries `track`, `group` and the lineage page's `columns` /
+`col_open` plus `tfocus=1` (lineage-only: stripped from table and API links). The table (`nway_panel.js`) consumes it
+once (`_takePivot`, the URL loses it): `track_only=1` (default on after a pivot, in the URL otherwise off), then
+`_trackFocusStep`: a load with every header (`_keep` = no page limit, groups closed) so the tracked group is known
+whichever page it is on, then a load that opens only that group and its sub-groups (`_gdef = 'none'` + `_gflip`, the
+table's own group open/close mechanism, all their rows), then `_trackShow`: scroll the first tracked row to the middle,
+pulse the tracked rows 1.5 s (`nway-pulse`, no animation under `prefers-reduced-motion`). The Tracking chip has "Only
+these" / "Show all" (`nway-only` on the table hides every row and header that is not tracked, client side) and "N of M
+rows". Lane track keys (`lanes:<hex>`, `tier:*`, `delta:*`) are computed over the default column order on both pages and
+were checked equal on a twins and a children table.
+
+**Default view.** With no `lview` in the URL and no remembered pick (`localStorage` `nway.lview`; the Ring's
+settings are `nway.ring`; a URL param always wins) the page chooses once its doc is here, before the first
+draw: `NwayRing.autoView(doc)` = Ring with at least `RING.AUTO.FAMILIES` (3) families, or `FILES` (30)
+files in at least `FILES_FAMILIES` (2) families (the "Other files" family never counts), else Tree. The
+automatic choice is not written to the URL or remembered. The table's Lineage button (among its controls) opens
+the page in the remembered view; the page's back link always goes to the N-way table (`NwayPanel.tableUrl`).
+
+### Ring view (`lview=ring`)
+
+`static/js/nway_ring.js` (`window.NwayRing`) draws clusters of files as circles, the modules
+they hold as a ring of segments, shared modules as outer ribbons and lanes down the nested
+levels. It lives in the lineage canvas (toolbar, filters, dock, tooltip, Tracks list are the
+lineage's); pin = the table's `track`. The first half of the file is DOM-free
+(`clusterTree`, `modulesOf`, `buildModel`, `plan`, `geometry`, `newSim`) and checked in
+Node; `geometry` returns one frame as a flat element list, the renderer only diffs attributes.
+Clusters come from `node.path`, else the lineage tree is cut at weak edges. Modules are the
+current lens's groups. **A file holds a module when it has at least one of its functions**
+(no threshold, no control). Counts come from one pass over `rows.mask` (never
+`rowModel.held`): per module `rowsIn[family]` and `pair[x|y]`, the rows held by a file of
+both families. A cross-family segment is sized by the rows shared with its partner, so both
+ends of a ribbon are equal; a single-family module by its rows in the family. URL keys
+`rnest`, `rarc`, `rmin` (lineage-only, stripped from table and API links, as is a legacy `rfocus`).
+
+**Min size gate** (toolbar select, `rmin` in percent, default 0.5, 0 = off): the one deliberate
+exception to "nothing is dropped". A module (lane) whose own rows in the lens group, before
+any split between families, are fewer than `rmin`% of **all functions of the set (`R.n`)** is
+left out of everything (segments, ribbons, lanes, fans, colours) and never merged into an
+"other" segment. The denominator is the whole set, not a family or the module, so one gate
+means the same everywhere. The canvas note and the select's title always say how many modules
+are hidden and how many are shown. Scale and floor widths are computed after the gate.
+
+**Toolbar (all four views).** One pattern: the View picker (the table's pill dropdown, `NwayPanel._dd`: Tree,
+Tracks, Split, Ring, an "auto" badge while the page chose for you; arrows / Enter / Esc), the file search, zoom
+(floating: - + Fit) and at most two view essentials, then one "More" `.lin-btn` (`aria-expanded`, chevron) that
+opens a second row. Visible per view: Tree = Reuse layer; Tracks, Split = nothing extra; Ring = Min size and
+Reset layout. Behind More (every view): the tree's Layout and Root, Collapse deep, Expand all, 100%, Selection,
+Reuse layer (Tracks, Split), and for the Ring Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list
+(the lens chip legend, hidden by default). More starts open when the URL carries a non-default advanced key
+(`layout`, `root`, `rarc`, `rnest=0`, `rlist`, `rtier=hide`, `rbundle=0`). The on/off switches are `.lin-seg`
+groups of buttons with `aria-pressed`, never selects. Defaults: Arcs = grouped, Min size 0.5%, Nested on,
+Module list off; a key equal to its default stays out of the URL (`rarc`, `rnest`, `rmin`, `rlist`, `rtier`,
+`rbundle`; a legacy `rfocus` is stripped too), and none of them reaches the table or API links.
+
+**Arcs** (`rarc=partner|group|one`, default `RING.ARC_DEFAULT` = group): how many ring
+segments a cross-family module gets on a circle. `partner`: one per partner family. `group`: partners
+seen from the circle's home position closer than `GROUP_DEG` (40) degrees share one arc.
+`one`: one arc for all. A shared arc is sized by the sum of its pair rows, its ribbons leave it as
+consecutive slots ordered by partner angle (ends stay equal), and the lane chain below starts at
+that arc. `ORDER_SWEEPS` (6; 0 = order by direction only): the arcs of each ring are re-ordered
+by the barycentre of the arcs they connect to on the other rings. Measured on the saved real sets
+(yara modules/lanes, alois): per partner has the fewest crossings (yara modules 2219 against 3325 grouped
+and 4100 one-arc), grouped cuts the segments about 40-50% for about 50% more crossings, the sweeps help
+grouped and one-arc by 5-35% and are neutral for per partner. Grouped is the default by the user's choice; per partner has the fewest crossings.
+
+**Colours:** a module or lane is painted exactly with its lens group's colour (`cat.color`, the
+same string the Tree uses; grey stays grey where the lens says so), never tinted by cluster; a
+golden-angle hue only when the lens gives none. The cluster colour is only on the circle, its
+label and the file dots. No lane shading.
+
+**Where a module sits.** The outer family ring carries only cross-family modules (the ones with
+outer ribbons). A module held inside one cluster has no ring segment: its lane sits on the lowest
+cluster node that contains all its holders (the lane ring of a sub-cluster, or, when that is the
+family root or nesting is off, a lane ring just inside the circle's edge, `ROOT_LANE_OFF` -6),
+and its chain goes down only: lane -> lanes of the sub-clusters that hold it -> files, no band
+from the outer ring. Its width is its functions in the family times `lanePx`; the ring's
+px-per-function scale is computed from the cross-family arcs only, in the part of the ring not
+reserved for the outward side: `OUTWARD_KEEP` (0.4) of every ring, away from the other clusters, stays
+free of cross arcs so their ribbons do not wrap round the circle (0 gave 1051 crossings on yara lanes,
+0.4 gives 581). The arc order keeps the better of the by-direction order and the barycentre sweeps
+(by a crossing count), so sweeps never add crossings. Its tooltip says "Only in
+cluster X".
+
+**Nothing is dropped.** Every module is drawn (cross-family: ring arc, lanes at each level, files;
+single-cluster: lanes inside) and every cross-family module has one outer ribbon per family pair it spans. A segment thinner than the scale gives is
+drawn `FLOOR` (2 px, less on a genuinely full ring); the px-per-function scale shrinks
+instead. Only `RIBBON_SAFE` (5000 ribbons) can omit ribbons, with a note in the canvas.
+Constants are all in `RING`: `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120 files),
+`LEAF_MAX` 60 (larger leaves are one circle until clicked), `FAM_MAX` 24, `PX_MAX` 2.5,
+`LANE_W` 0.12 (shrunk by `lanePx` to fit), `LANE_FIT` 0.85, `BUDGET`
+[6000, 12000] estimated elements (above: no parent-to-lane bands; above the second:
+clusters and family ribbons only; the mode is shown in the canvas note). The redraw loop
+stops after 240 frames or 4 s.
 
 ## Homepage and unified search
 
@@ -192,6 +344,9 @@ job keys.
 | `scan:{id}:rows:{coll}:{md5}` | **String** | One scored pair's diff rows, served paged. |
 | `scans:recent` | **ZSET** | Scan id -> creation time, trimmed to 1000. The listing index; the docs expire on their own. |
 | `nway:progress:{pid}` / `nway:cancel:{pid}` | **String** | A running `/nway` call's progress, and its cancel flag (checked at each progress step). 120 s TTL. |
+| `nway:built:base:{key}` / `nway:built:rows:{key}` | **String** | zlib-pickled base / matched rows of a set over `nway.auto_build_max_members` files, written by the `nway_build` job (or a later min_edge). 7 day TTL. Such a set is never built by a request: `/nway` answers 428 `needs_build`. |
+| `nway:build_job:{key}` | **String** | That set's last `nway_build` job id, so a reload re-attaches to it. 7 day TTL. |
+| `nway:depth:{set}` | **String** | The `pair_k` a large set was last asked to build at (fast / balanced / deep; 0 = every pair), so every `/nway` call without `pair_k` reads that build or re-attaches to its job. 7 day TTL. |
 | `nway:titles:{sha1}` | **String** | LLM titles of an N-way row's reference blocks (JSON), 30 day TTL. Written by a background thread in the app, never by a job. |
 | `nway:colset:{sha1}` | **String** | Saved N-way compare: the members and column groups that `POST /api/bin_sim/nway/columns` resolved from file queries (JSON), read back by `col_set`. 1 h TTL. |
 

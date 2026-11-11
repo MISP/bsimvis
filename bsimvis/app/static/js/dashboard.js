@@ -532,6 +532,7 @@ window.ModuleLoader = {
             'scan': window.ScanView,
             'scan-detail': window.ScanView,
             'nway': window.NwayView,
+            'yara': window.YaraView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -680,7 +681,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'yara', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
@@ -3091,14 +3092,16 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             const otherMd5 = isFunc1Anchor ? m2 : m1;
 
             return `
-            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}"
+            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}"${p.live ? ' data-live="1"' : ''}
                 data-entity-data='${escapeAttr(JSON.stringify(p))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
                 <td>
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
                         onclick="openDiffDirectly(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || ''))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || ''))}, event)"
                         title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
-                    ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
+                    ${p.live
+                        ? `<span class="mono" style="display:inline-block; margin-top:3px; font-size:0.65rem; color:var(--warning, #d97706); border:1px dashed currentColor; border-radius:3px; padding:0 4px;" title="Computed live below the stored edges' min score; not saved. Select and save, or right-click.">live</span>`
+                        : EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
                 </td>
                 <td style="min-width: 300px;">${EntityRenderer.renderFunction(otherData, { hideNote: true })}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(otherAddr)}</span></td>
@@ -3823,6 +3826,19 @@ window.addEventListener('load', () => {
         }
     };
 
+    // Footer chip of the running/queued N-way builds (NWAY_BUILD jobs), in every
+    // `.nway-build-status` host: the main footer and the N-way table footer.
+    let nwayBuilds = [];
+    window.renderNwayBuildStatus = (jobs) => {
+        if (jobs) nwayBuilds = jobs.filter(j => j.type === 'nway_build');
+        document.querySelectorAll('.nway-build-status').forEach(el => {
+            el.innerHTML = nwayBuilds.map(j => {
+                const run = j.status === 'running';
+                return `<span class="table-footer-badge" style="cursor:pointer;" title="N-way build job ${escapeAttr(j.id)} (click for details)" onclick="window.showJobDetails && window.showJobDetails(${escapeAttr(JSON.stringify(j.id))})"><i class="fa-solid ${run ? 'fa-circle-notch fa-spin' : 'fa-clock'}"></i> N-way build ${run ? `${Number(j.progress) || 0}%` : 'queued'}</span>`;
+            }).join('');
+        });
+    };
+
     let jobStatusInFlight = false;
     window.updateJobStatusIcon = async () => {
         // ponytail: one poll at a time. Without this, a slow /api/jobs/stats lets
@@ -3927,6 +3943,7 @@ window.addEventListener('load', () => {
                     .join(' ');
             };
 
+            window.renderNwayBuildStatus(activeJobList);
             const matchingJob = activeJobList.find(job => isJobInContext(job) && isJobRelevant(job));
             const statusBadge = document.getElementById('view-job-status');
             if (statusBadge) {
@@ -4333,77 +4350,60 @@ function updateD3ClusterName(cid, newName) {
     });
 }
 
-async function renameBinCluster(clusterId, currentName) {
-    const newName = prompt(`Enter new name for binary cluster ${clusterId}:`, currentName);
-    if (!newName || newName === currentName) return;
+// One rename for function and file clusters. `ctx` (all optional) names the cluster
+// when the page URL does not: {uuid, collection, pool, algo, axis, node_type}.
+// An empty name resets the cluster to the name its build gave it.
+async function renameAnyCluster(isBin, clusterId, currentName, ctx = {}) {
+    const label = isBin ? 'binary cluster' : 'cluster';
+    const input = prompt(`New name for ${label} ${ctx.uuid || clusterId} (empty = reset):`, currentName);
+    if (input === null) return;
+    const newName = input.trim();
+    if (newName === (currentName || '')) return;
 
     const { collection, params } = getRoutingState();
-    const algo = params.get('algo') || 'unweighted_cosine';
-    const nodeType = params.get('node_type') || 'file';
-
+    const body = {
+        collection: ctx.collection || collection,
+        pool: ctx.pool || undefined,
+        algo: ctx.algo || params.get('algo') || 'unweighted_cosine',
+        cluster_name: newName
+    };
+    if (ctx.uuid) body.cluster_uuid = ctx.uuid; else body.cluster_id = clusterId;
+    if (isBin) {
+        body.node_type = ctx.node_type || params.get('node_type') || 'file';
+        body.axis = ctx.axis || params.get('axis') || 'overall';
+    }
     try {
-        const res = await fetch('/api/bin_cluster/meta', {
+        const res = await fetch(isBin ? '/api/bin_cluster/meta' : '/api/cluster/meta', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection, algo, node_type: nodeType, cluster_id: clusterId, cluster_name: newName })
+            body: JSON.stringify(body)
         });
-        const data = await res.json();
-        if (data.status === 'success') {
-            const el = document.getElementById(`name-display-bin-${clusterId}`);
-            if (el) el.innerText = newName;
-            updateD3ClusterName(clusterId, newName);
-            if (typeof showToast === 'function') {
-                showToast(`Binary cluster renamed to ${newName}`, 'success');
-            }
-        } else {
-            if (typeof showToast === 'function') {
-                showToast(`Rename failed: ${data.error}`, 'error');
-            }
-        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+        const name = data.cluster_name || newName;
+        document.dispatchEvent(new CustomEvent('cluster-renamed', { detail: { isBin, id: String(clusterId), uuid: ctx.uuid || '', name } }));
+        if (typeof showToast === 'function') showToast(`Renamed to ${name}`, 'success');
     } catch (err) {
-        if (typeof showToast === 'function') {
-            showToast(`Error renaming binary cluster: ${err}`, 'error');
-        }
+        if (typeof showToast === 'function') showToast(`Rename failed: ${err.message || err}`, 'error');
     }
 }
 
-async function renameCluster(clusterId, currentName) {
-    const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
-    if (!newName || newName === currentName) return;
+// Every copy of the name on screen is tagged data-cluster-name="<uuid or id>".
+document.addEventListener('cluster-renamed', e => {
+    const { isBin, id, uuid, name } = e.detail;
+    document.querySelectorAll('[data-cluster-name]').forEach(el => {
+        const k = el.dataset.clusterName;
+        if (k === uuid || k === id) el.textContent = name;
+    });
+    const el = document.getElementById(isBin ? `name-display-bin-${id}` : `name-display-${id}`);
+    if (el) el.innerText = name;
+    updateD3ClusterName(id, name);
+    if (uuid) updateD3ClusterName(uuid, name);
+    if (window.ClusterDetailView && ClusterDetailView.onRenamed) ClusterDetailView.onRenamed(uuid || id, name);
+});
 
-    const { collection, params } = getRoutingState();
-    const algo = params.get('algo') || 'unweighted_cosine';
-
-    try {
-        const res = await fetch('/api/cluster/meta', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                collection,
-                algo,
-                cluster_id: clusterId,
-                cluster_name: newName
-            })
-        });
-        if (res.ok) {
-            const el = document.getElementById(`name-display-${clusterId}`);
-            if (el) el.innerText = newName;
-            updateD3ClusterName(clusterId, newName);
-            if (typeof showToast === 'function') {
-                showToast(`Cluster renamed to ${newName}`, 'success');
-            }
-        } else {
-            if (typeof showToast === 'function') {
-                showToast("Failed to rename cluster", "error");
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        if (typeof showToast === 'function') {
-            showToast("Error renaming cluster", "error");
-        }
-    }
-}
+const renameBinCluster = (clusterId, currentName, ctx) => renameAnyCluster(true, clusterId, currentName, ctx);
+const renameCluster = (clusterId, currentName, ctx) => renameAnyCluster(false, clusterId, currentName, ctx);
 
 function switchClusterView(mode) {
     const { viewKey, params } = getRoutingState();
@@ -4600,6 +4600,7 @@ window.applyCollectionSearch = applyCollectionSearch;
 window.applyPoolSearch = applyPoolSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
+window.renameBinCluster = renameBinCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
 window.resetColumnWidths = resetColumnWidths;

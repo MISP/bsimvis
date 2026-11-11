@@ -399,6 +399,12 @@ tr:nth-child(even) {
     cursor: pointer;
 }
 
+/* Hover previews wait for a short dwell: hidden (and click-through) for 400ms each time they are shown. */
+#code-preview-tooltip, #diff-preview-tooltip, #note-preview-tooltip, #hierarchy-tooltip, #bin-hierarchy-tooltip, #binary-preview-tooltip, #tag-tooltip {
+    animation: tip-dwell 0s linear 0.4s both;
+}
+@keyframes tip-dwell { from { visibility: hidden; } to { visibility: visible; } }
+
 /* Code Preview Tooltip Wrapper */
 #code-preview-tooltip {
     position: fixed;
@@ -412,6 +418,26 @@ tr:nth-child(even) {
     flex-direction: column;
     gap: 10px;
 }
+
+/* Function preview header */
+#code-preview-tooltip .fp-card { padding: 0; }
+.fp-head { flex-shrink: 0; display: flex; flex-direction: column; gap: 5px; padding: 10px 12px 9px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.fp-name { font: 600 0.95rem 'Consolas', monospace; color: var(--text); overflow-wrap: anywhere; line-height: 1.25; }
+.fp-ns { color: var(--subtle); font-weight: 400; }
+.fp-sig { font: 0.72rem 'Consolas', monospace; color: var(--subtle); overflow-wrap: anywhere; }
+.fp-punct { color: var(--subtle); }
+.fp-cc { color: var(--subtle); font-style: italic; }
+.fp-file { font-size: 0.7rem; color: var(--subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-facts, .fp-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.fp-chip { font: 0.66rem 'Consolas', monospace; color: var(--text); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); background: var(--card-bg); }
+.fp-chip b { font-weight: 400; color: var(--subtle); }
+.fp-addr { color: var(--token-address); border-color: color-mix(in srgb, var(--token-address) 45%, transparent); }
+.fp-warn { color: var(--token-warning); border-color: color-mix(in srgb, var(--token-warning) 45%, transparent); }
+.fp-tag { font-size: 0.64rem; padding: 0 6px; border-radius: 10px; border: 1px solid; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fp-more, .fp-dim { font-size: 0.64rem; color: var(--subtle); }
+.fp-cluster { font-size: 0.66rem; color: var(--accent); padding: 0 6px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.fp-loading { padding: 10px 12px; font-size: 0.7rem; color: var(--subtle); }
+#code-preview-tooltip .fp-card .code-preview-scroll { padding: 6px 4px 6px 0 !important; }
 
 #token-tooltip {
     position: fixed;
@@ -2851,6 +2877,9 @@ a.home-card:hover,
 .nway-note.warn, .nway-note.err { border-style: solid; color: var(--text); }
 .nway-note.warn { border-left: 3px solid var(--token-warning); }
 .nway-note.err { border-left: 3px solid var(--token-instruction); }
+.nway-note { position: relative; padding-right: 28px; }
+.nway-note-x { position: absolute; top: 4px; right: 6px; background: none; border: 0; color: var(--subtle, #8b949e); cursor: pointer; padding: 2px 4px; }
+.nway-note-x:hover { color: var(--text); }
 .nway-note ul { margin: 6px 0 0; padding-left: 18px; }
 .nway-state { padding: 40px 20px; text-align: center; color: var(--dim); }
 .nway-busy { position: fixed; right: 20px; bottom: 20px; z-index: 50; width: 340px; padding: 12px 14px; border-radius: 10px; background: var(--card-bg, #222); border: 1px solid var(--border); box-shadow: 0 4px 16px rgba(0,0,0,.35); pointer-events: none; }
@@ -2905,7 +2934,7 @@ a.home-card:hover,
 .nway-fill .nway-card { flex: 1; min-height: 360px; display: flex; flex-direction: column; }
 .nway-fill .nway-body { flex: 1; min-height: 0; align-items: stretch; }
 .nway-fill .nway-scroll { flex: 1; min-height: 0; max-height: none; }
-.nway-fill .nway-legend { max-height: none; }
+.nway-fill .nway-legend { max-height: none; height: auto; }
 .nway-table td:first-child { background: var(--bg); }
 .nway-table tbody tr:nth-child(even) td:first-child { background: var(--card-bg); }
 .nway-table tbody tr:hover td:first-child { background: var(--hover); }
@@ -3047,8 +3076,10 @@ a.home-card:hover,
 .nway-strip { display: inline-flex; flex-wrap: wrap; gap: calc(var(--sq, 11px) / 6); min-width: 0; max-width: 100%; vertical-align: middle; }
 .nway-strip i { width: var(--sq, 11px); height: var(--sq, 11px); cursor: pointer; border-radius: 2px; border: 1px solid var(--border); background: transparent; }
 .nway-strip i.on { background: var(--rc); border-color: var(--rc); }
-.nway-hue .nway-strip.hued i.on { --fc: hsl(var(--h) 62% 58%); background: var(--fc); border-color: var(--fc); }
-html.light-theme .nway-hue .nway-strip.hued i.on { --fc: hsl(var(--h) 62% 42%); }
+.nway-strip i.part { background: color-mix(in srgb, var(--rc) 30%, transparent); border-color: var(--rc); }
+.nway-hue .nway-strip.hued i.on, .nway-hue .nway-strip.hued i.part { --fc: hsl(var(--h) 62% var(--l, 58%)); background: var(--fc); border-color: var(--fc); }
+.nway-hue .nway-strip.hued i.part { background: color-mix(in srgb, var(--fc) 30%, transparent); }
+html.light-theme .nway-hue .nway-strip.hued i.on, html.light-theme .nway-hue .nway-strip.hued i.part { --fc: hsl(var(--h) 62% var(--ll, 42%)); }
 .nway-sw { display: none; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: middle; background: hsl(var(--h) 62% 58%); }
 .nway-hue .nway-sw { display: inline-block; }
 html.light-theme .nway-sw { background: hsl(var(--h) 62% 42%); }
@@ -3065,6 +3096,19 @@ html.light-theme .nway-sw { background: hsl(var(--h) 62% 42%); }
 .nway-node.center { border-color: var(--accent); cursor: default; }
 .nway-node.static { cursor: default; }
 .nway-node-name { min-width: 0; overflow: hidden; }
+/* a long signature wraps (three lines at most) instead of being cut to its return type and name */
+.nway-node .entity-function { align-items: flex-start !important; }
+.nway-node .entity-name { white-space: normal !important; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; }
+.nway-rz { position: absolute; opacity: 0; transition: opacity 0.1s; }
+.nway-rz.x { top: 6px; right: -3px; bottom: 10px; width: 7px; cursor: ew-resize; }
+.nway-rz.y { left: 6px; right: 10px; bottom: -3px; height: 7px; cursor: ns-resize; }
+.nway-rz.x, .nway-rz.y { background: var(--accent); border-radius: 3px; }
+.nway-rz.xy { right: 1px; bottom: 1px; width: 12px; height: 12px; cursor: nwse-resize; opacity: 0.35; background: linear-gradient(135deg, transparent 0 48%, var(--dim) 48% 58%, transparent 58% 70%, var(--dim) 70% 80%, transparent 80%); }
+.nway-node:hover > .nway-rz.x, .nway-node:hover > .nway-rz.y, .nway-rz.x:hover, .nway-rz.y:hover { opacity: 0.45; }
+.nway-node:hover > .nway-rz.xy, .nway-rz.xy:hover { opacity: 1; }
+/* a card sized by hand shows the whole signature and scrolls what does not fit */
+.nway-node[data-sized] { overflow: auto; }
+.nway-node[data-sized] .entity-name { display: block; -webkit-line-clamp: unset; line-clamp: unset; }
 .nway-node-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 0.72rem; min-width: 0; }
 .nway-pbar { display: inline-block; width: 80px; height: 8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
 .nway-pbar b { display: block; height: 100%; background: var(--rc); }
@@ -3118,6 +3162,9 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-table tr.nway-grow td { padding: 0; background: var(--meta-bg, var(--card-bg)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .nway-table tr.nway-grow.d1 td { background: var(--card-bg); }.nway-gh { all: unset; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; width: 100%; padding: 6px 10px; cursor: pointer; color: var(--text); }
 .nway-merge-diff { appearance: none; flex: none; background: transparent; font-family: inherit; cursor: pointer; }
+.nway-merge-diff.lowc, .nway-schips.lowc .nway-xp { border-color: var(--danger, #dc2626); color: var(--danger, #dc2626); background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent); font-weight: 700; }
+.nway-merge-diff.lowc { font-size: 0.85rem; padding: 1px 8px; }
+.nway-table tr.nway-grow.k-same:has(.lowc) td:first-child { box-shadow: inset 3px 0 0 var(--danger, #dc2626), 1px 0 0 var(--border); }
 .nway-merge-diff:hover { background: var(--hover); }
 .nway-merge-diff:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .nway-gh:hover { background: var(--hover); }
@@ -3125,9 +3172,18 @@ html.light-theme .nway-node.out:hover, html.light-theme .nway-node.out:focus-vis
 .nway-table tr.nway-in td.nway-open { padding-left: calc(10px + var(--gd) * 20px); }
 .nway-gchev { all: unset; width: 12px; color: var(--dim); font-weight: 400; cursor: pointer; }
 .nway-gchev:focus-visible { outline: 2px solid var(--accent); }
-.nway-gt { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 600; }
+.nway-gt { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-weight: 600; flex: 0 1 auto; min-width: 0; }
 .nway-gtag { font-family: 'Consolas', monospace; }
 .nway-gname { font-family: 'Consolas', monospace; }
+.nway-gsig { display: inline-block; min-width: 0; max-width: 520px; font-weight: 400; }
+.nway-gsig .nway-schips { margin-top: 4px; }
+.nway-gmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; font-size: 0.72rem; font-weight: 400; color: var(--subtle); }
+.nway-grow.k-same .nway-gt, .nway-gsig { display: block; width: 100%; max-width: none; }
+/* a merged function and its versions read as one card: a green spine down the left, no rules inside */
+.nway-table tr.nway-grow.k-same { --c: var(--success); }
+.nway-table tr.nway-grow.k-same.gopen td:first-child, .nway-table tr.nway-ver td.nway-open { box-shadow: inset 3px 0 0 var(--success), 1px 0 0 var(--border); }
+.nway-table tr.nway-grow.k-same.gopen td, .nway-table tr.nway-ver td { border-bottom-color: transparent; }
+.nway-table tr.nway-grow.k-same.gopen + tr.nway-ver td, .nway-table tr.nway-ver + tr.nway-ver td { border-top: 0; }
 .nway-gst { color: var(--dim); font: 0.72rem 'Consolas', monospace; }
 .nway-gnote { flex: 1 1 200px; min-width: 0; color: var(--dim); font-size: 0.76rem; }
 /* Presence squares: the file columns of the rows, the column headers and the group headers share them.
@@ -3180,8 +3236,15 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-view > .nway-hero, .nway-panel .nway-note { transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease, padding 0.3s ease; max-height: 400px; opacity: 1; }
 .nway-view > .nway-hero { overflow: visible; position: relative; z-index: 12; }
 .nway-compact > .nway-hero, .nway-compact .nway-panel .nway-note { max-height: 0; opacity: 0; overflow: hidden; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; pointer-events: none; }
-.nway-legend { flex: none; width: 250px; min-width: 160px; max-width: 60vw; resize: horizontal; max-height: calc(100vh - 180px); overflow: auto; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
-#cluster-tab-functions .nway-legend { max-height: none; }
+.nway-legend { flex: none; width: 250px; min-width: 160px; max-width: 60vw; resize: horizontal; height: calc(100vh - 180px); display: flex; flex-direction: column; overflow: hidden; position: sticky; top: 0; border-right: 1px solid var(--border); padding: 4px 6px 8px; font-size: 0.76rem; }
+#cluster-tab-functions .nway-legend { max-height: none; height: auto; }
+/* Two panes (column tree / row grouping + tags), split equally by default; a closed pane shrinks to its title. */
+.nway-lpane { flex: 1 1 0; min-height: 0; overflow: auto; }
+.nway-lpane[style] { flex: 0 0 var(--lsplit, 50%); }
+.nway-legend .nway-lpane:not(:has(details[open])) { flex: none; }
+.nway-legend:has(> .nway-lpane:last-child:not(:has(details[open]))) > .nway-lpane[style] { flex: 1 1 0; }
+.nway-lsplit { flex: none; height: 7px; margin: 2px -6px; cursor: row-resize; border-top: 1px solid var(--border); }
+.nway-lsplit:hover { background: var(--accent); opacity: 0.4; }
 .nway-legend.off { width: auto; }
 .nway-busy-cancel { margin-left: auto; pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; font-weight: 600; font-size: 0.78rem; color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 12%, transparent); border: 1px solid color-mix(in srgb, var(--danger, #ef4444) 55%, transparent); }
 .nway-busy-cancel:hover { background: color-mix(in srgb, var(--danger, #ef4444) 24%, transparent); }
@@ -3202,6 +3265,30 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-tg:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .nway-olb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nway-rg { flex: none; min-width: 2.2em; text-align: right; font-size: 0.64rem; color: var(--dim); }
+/* tag facets, under the column outline */
+.nway-lpane > details + details { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 4px; }
+.nway-legend .home-tip { vertical-align: -1px; margin-left: 2px; }
+/* the sidebar scrolls: open the hint downward, inside it */
+.nway-legend .home-tip::after { top: calc(100% + 6px); bottom: auto; left: 0; transform: none; max-width: 220px; }
+.nway-forder { display: grid; gap: 8px; padding: 2px 4px 6px; }
+.nway-forder-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.nway-forder .nway-gpick { padding: 3px 10px; font-size: 0.76rem; }
+.nway-forder .nway-gpick:not(.on) { color: var(--dim); border-style: dashed; }
+.nway-fswap { padding: 0 3px; border: 0; background: none; color: var(--dim); cursor: pointer; font-size: 0.9rem; line-height: 1; }
+.nway-fswap:hover, .nway-fswap:focus-visible { color: var(--accent); }
+.nway-forder .nway-depth { padding: 0; }
+.nway-fax + .nway-fax { margin-top: 2px; }
+.nway-faxh { font-family: inherit; font-weight: 600; }
+.nway-faxh .nway-olb { cursor: pointer; }
+.nway-fo label.nway-olb { cursor: pointer; }
+.nway-fo input { margin: 0 4px 0 0; vertical-align: -2px; accent-color: var(--accent); }
+.nway-fo.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.nway-fo.part > .nway-olb { color: var(--accent); }
+.nway-legend em.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.nway-fgrp { flex: none; padding: 1px 5px; border: 1px solid transparent; border-radius: 4px; background: none; color: var(--dim); cursor: pointer; font-size: 0.7rem; }
+.nway-fgrp:hover, .nway-fgrp:focus-visible { border-color: var(--border); color: var(--text); }
+.nway-fgrp.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.nway-fmore { display: block; margin: 1px 0 2px calc(var(--dep) * 14px + 26px); font-size: 0.68rem; }
 .nway-vname { writing-mode: vertical-rl; transform: rotate(180deg); max-height: 150px; margin: 6px auto 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; font-size: 0.78rem; font-weight: 500; color: var(--text); }
 .nway-vname .entity-filename { display: inline; max-width: none; }
 .nway-gchip { display: inline-block; font-size: 0.66rem; font-weight: 400; line-height: 1.5; padding: 0 6px; margin-left: 5px; border-radius: 9px; border: 1px solid var(--border); color: var(--dim); }
@@ -3215,7 +3302,14 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 @keyframes nway-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .nway-lname.wait:empty { animation: none; } }
 .nway-lcount { color: var(--dim); font-weight: 400; }
-.nway-lcount b { color: var(--text); font-weight: 600; }
+.nway-peek { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 2px 14px; padding-left: 18px; color: var(--dim); font: 0.72rem 'Consolas', monospace; }
+.nway-peek-a { all: unset; cursor: pointer; color: var(--accent); border-bottom: 1px dotted currentColor; }
+.nway-peek-a span { color: var(--dim); }
+.nway-peek-a b { color: var(--text); font-weight: 600; }
+.nway-peek-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@keyframes nway-hit { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
+/* What a toggle just opened: its rows, or the cells of its new columns. */
+.nway-table tr.nway-hit > td, .nway-table td.nway-hit, .nway-table th.nway-hit { animation: nway-hit 1.6s ease-out; }
 .nway-table tr.nway-grow.k-lane td:first-child { box-shadow: inset 3px 0 0 var(--lane-c), 1px 0 0 var(--border); }
 .nway-ltag { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; padding: 0 6px; border-radius: 9px; border: 1px solid; }
 .nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }
@@ -3236,6 +3330,9 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-tip-flag { font-weight: 400; font-size: 9px; padding: 0 4px; border-radius: 6px; background: var(--accent); color: var(--card-bg); }
 .nway-tip-row { display: grid; grid-template-columns: 110px 1fr 24px; gap: 6px; align-items: center; }
 .nway-tip-v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-tip-sw { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
+.nway-tip-fnbar { display: flex; height: 8px; border-radius: 3px; overflow: hidden; background: var(--border); }
+.nway-tip-fnbar i { display: block; height: 100%; }
 .nway-tip-bar { position: relative; height: 8px; background: var(--border); border-radius: 3px; }
 .nway-tip-bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
 .nway-tip-bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text, #fff); opacity: 0.8; }
@@ -3287,6 +3384,7 @@ body.has-entity-tabs .header-top > div:has(> #view-title) { display: none !impor
 .global-menu > summary img { height: 20px; width: 20px; }
 .global-menu > summary span { color: var(--accent); font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; font-size: 0.85rem; }
 .global-menu > summary i { font-size: 0.65rem; color: var(--subtle); }
+.global-menu > summary .branch-badge { color: #fff; background: hsl(var(--branch-hue) 60% 38%); padding: 1px 7px; border-radius: 4px; letter-spacing: 0; text-transform: none; font-weight: 600; font-size: 0.72rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .global-menu-list { left: 0; right: auto; top: 36px; min-width: 190px; }
 .global-menu-list a { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 4px; font-size: 0.85rem; color: var(--text); text-decoration: none; }
 .global-menu-list a i { width: 18px; text-align: center; color: var(--subtle); }
@@ -3604,6 +3702,18 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-dock-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .nway-dock-files { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; }
 .nway-dock-code { overflow: auto; flex: 1; min-height: 0; font-size: 0.75rem; }
+.nway-dock .bsim-tabbar.nway-dock-tabs { margin: 0; padding: 0 6px; }
+.nway-dock-tabs .bsim-tab { padding: 6px 12px; font-size: 0.8rem; }
+.nway-dock-tabs .bsim-tab .fa-solid { margin-right: 4px; opacity: 0.8; }
+/* Call graph: the scroller sits in a stage so the zoom buttons and the open button float bottom right. */
+.nway-cg-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nway-cg-corner { position: absolute; right: 16px; bottom: 16px; z-index: 5; display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.nway-cg-corner > * { pointer-events: auto; }
+.nway-cg-zoom { display: flex; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,0.3); }
+.nway-cg-zoom button { background: none; border: none; color: var(--text); padding: 7px 11px; cursor: pointer; font-weight: 600; font-size: 0.8rem; min-width: 34px; }
+.nway-cg-zoom button:hover { background: var(--hover); }
+.nway-cg-open { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; border: none; cursor: pointer; font-weight: 700; font-size: 0.9rem; color: #fff; background: var(--accent); box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
+.nway-cg-open:hover { filter: brightness(1.1); }
 .nway-dock-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; }
 .nway-dock-grip:hover { background: var(--accent); opacity: .4; }
 
@@ -3622,3 +3732,132 @@ pre b.del { background: color-mix(in srgb, var(--token-instruction) 14%, var(--c
 .nway-member { cursor: pointer; }
 .nway-member:hover, .nway-member:focus-visible { border-color: var(--accent); outline: none; }
 .nway-edge.lane { stroke-width: 2px; opacity: 0.8; }
+
+.nway-fam-in { box-shadow: inset 0 3px 0 var(--success); }
+.nway-fam-out { opacity: 0.45; }
+.nway-str { font: 0.78rem 'Consolas', monospace; display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.nway-schips { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin-top: 4px; }
+.nway-schip { font: 0.7rem 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; background: var(--card-bg); }
+.nway-schip.fn { border-radius: 3px; }
+.nway-nconf { font: 0.65rem sans-serif; margin-left: 5px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--token-warning); color: var(--token-warning); white-space: nowrap; }
+.nway-nconf.hi { background: var(--token-warning); color: var(--bg, #fff); }
+.nway-var { font: 0.65rem sans-serif; font-style: normal; margin-left: 5px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--subtle, #888); white-space: nowrap; }
+.nway-schip.ext { border-style: dashed; font-style: italic; cursor: default; }
+.nway-siglbl { font-size: 0.7rem; min-width: 74px; }
+.nway-schip b { margin-left: 4px; opacity: 0.7; font-weight: 600; }
+.nway-schip:hover { border-color: var(--success); }
+.nway-sq.s { border-radius: 50%; }
+.nway-xp { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px 0 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text); font-size: 0.7rem; cursor: pointer; }
+.nway-xp i { font-size: 0.6rem; transition: transform 0.12s; }
+.nway-xp:hover { border-color: var(--success); }
+.nway-schips.open .nway-xp i { transform: rotate(90deg); }
+.nway-schips.open .nway-schip, .nway-schips.open .dim { display: none; }
+.nway-table tr.nway-xrow td { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); border-top: 0; padding-top: 3px; padding-bottom: 3px; font-size: 0.8rem; }
+.nway-table tr.nway-xrow td.nway-open { padding-left: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: inset 3px 0 0 var(--border), 1px 0 0 var(--border); cursor: default; }
+.nway-table tr.nway-xrow:hover td { background: var(--hover); }
+.nway-table tr.k-f { --c: var(--success); }
+.nway-table tr.k-s { --c: var(--info, #3b82f6); }
+.nway-table tr.k-in { --c: var(--info, #3b82f6); }
+.nway-table tr.k-out { --c: #8b5cf6; }
+.nway-table tr.k-k { --c: var(--warning, #d97706); }
+.nway-table tr.nway-xrow.k-f td.nway-open, .nway-table tr.nway-xrow.k-s td.nway-open, .nway-table tr.nway-xrow.k-in td.nway-open, .nway-table tr.nway-xrow.k-out td.nway-open, .nway-table tr.nway-xrow.k-k td.nway-open { box-shadow: inset 3px 0 0 var(--c); }
+.nway-table tr.nway-xline td { padding: 2px 10px 2px 28px; }
+.nway-table tr.nway-xline td:first-child { box-shadow: inset 3px 0 0 var(--border), 1px 0 0 var(--border); }
+.nway-table tr.nway-xline:has(.nway-schips.open) td:first-child { box-shadow: inset 3px 0 0 var(--c), 1px 0 0 var(--border); }
+.nway-table tr.nway-xline .nway-schips { margin-top: 0; }
+/* a function row, its lines and the rows they opened read as one card: no rules inside, a spine down the left */
+.nway-table tbody tr:not(.nway-xrow):has(+ tr.nway-xrow):nth-child(n) td:first-child, .nway-table tbody tr.nway-xline.nway-xrow:nth-child(n) td:first-child { background: var(--bg); }
+.nway-table tbody tr.nway-xline.nway-xrow:nth-child(n) td:not(:first-child) { background: transparent; }
+
+.nway-table tbody tr:has(+ tr.nway-xrow) td, .nway-table tbody tr.nway-xrow:has(+ tr.nway-xrow) td { border-bottom-color: transparent; }
+.nway-table tbody tr:not(.nway-xrow):has(+ tr.nway-xrow) td:first-child { box-shadow: inset 3px 0 0 var(--border), 1px 0 0 var(--border); }
+.nway-table tbody tr.nway-xline.nway-xrow:nth-child(n):hover td { background: var(--hover); }
+.nway-table tr.nway-xline td.nway-xlcell { white-space: normal; overflow: visible; }
+.nway-table tr.nway-xrow .nway-sq { width: 13px; height: 13px; }
+.nway-mark { display: inline-block; width: 7px; height: 7px; margin-right: 8px; background: var(--dim); vertical-align: middle; }
+.nway-mark.str { border-radius: 50%; }
+.nway-table tbody tr.nway-xrow:nth-child(n) td:first-child { background: color-mix(in srgb, var(--card-bg) 94%, var(--text) 6%); }
+.nway-table tbody tr.nway-xrow:nth-child(n):hover td:first-child { background: var(--hover); }
+.nway-sq.ring { background: none; border: 2px solid hsl(var(--h, 195) 62% var(--l, 52%) / 0.6); }
+.nway-schip.fn { display: inline-flex; align-items: center; gap: 5px; max-width: 360px; font-family: inherit; font-size: 0.75rem; cursor: default; padding: 1px 6px; }
+.nway-schip.fn .entity-function { width: auto; min-width: 0; }
+.nway-fnq { font-size: 0.65rem; opacity: 0.45; cursor: pointer; flex-shrink: 0; }
+.nway-fnq:hover { opacity: 1; color: var(--success); }
+.nway-subfn { display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 18px); overflow: hidden; vertical-align: middle; cursor: default; }
+.nway-subfn .entity-function { width: auto; min-width: 0; }
+.nway-subfn .entity-name, .nway-schip.fn .entity-name { flex: 0 1 auto !important; }
+.nway-subfn .entity-function, .nway-schip.fn .entity-function { flex: 0 1 auto; }
+
+/* N-way triage roles: one hue per role, from the theme tokens */
+.r-orchestrator { --rc: var(--token-warning); }
+.r-entry { --rc: var(--token-instruction); }
+.r-logic { --rc: var(--accent); }
+.r-compute { --rc: var(--note-accent); }
+.r-leaf { --rc: var(--success); }
+.r-plumbing { --rc: var(--subtle); }
+.r-runtime { --rc: var(--border); }
+.r-library { --rc: var(--info); }
+.nway-rdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--rc); margin-right: 5px; flex: none; }
+.nway-role { vertical-align: middle; }
+.nway-rpill { font-size: 12px; line-height: 18px; color: var(--text); gap: 4px; }
+.nway-rpill:hover { color: var(--accent); }
+.nway-rpill.user .fa-user-pen { color: var(--accent); font-size: 10px; }
+.nway-table td.nway-rcell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nway-rmix { width: 100%; max-width: 100px; }
+.nway-role > .nway-ddl-menu { position: fixed; top: 0; left: 0; min-width: 180px; }
+.nway-role-it { all: unset; cursor: pointer; display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 12px; color: var(--text); }
+.nway-role-it:hover, .nway-role-it:focus-visible, .nway-role-it.on { background: var(--hover); }
+.nway-role-it .fa-solid { width: 12px; margin-right: 5px; color: var(--dim); }
+
+/* N-way lens tabs and layout A headers */
+.nway-panel .bsim-tabbar.nway-lenses { margin: 8px 0 10px; align-items: center; flex-wrap: wrap; }
+.nway-lenses .bsim-tab .fa-solid { margin-right: 4px; opacity: 0.8; }
+.nway-lens-lineage { margin-left: auto; }
+.nway-linback { padding: 8px 12px 0; flex-shrink: 0; animation: nway-linback-in 0.3s ease; }
+.nway-linback a { text-decoration: none; }
+@keyframes nway-linback-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+a.nway-lens-lineage, a.nway-lens-lineage:hover { text-decoration: none; }
+/* The ... menu: Family and Compare, the compare form opening inline in it. */
+.nway-kebab-body { min-width: 240px; }
+.nway-kebab-body .nway-match-body { position: static; box-shadow: none; border: none; padding: 8px 0 0; }
+/* Small function filter next to the search. */
+.nway-ffilter .nway-match-body { left: 0; right: auto; min-width: 240px; gap: 8px; }
+.nway-ffield { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; font-size: 0.78rem; color: var(--dim); }
+.nway-ffield input { width: 90px; }
+.nway-gsum { margin-left: 8px; color: var(--dim); font-style: italic; }
+.nway-gsum .nway-lname:not(:empty)::before { content: "\2014  "; font-style: normal; }
+.nway-table td.nway-gnum { font-size: 12px; color: var(--dim); vertical-align: middle; }
+.nway-gmin { margin-left: 4px; font-size: 10.5px; color: var(--dim); }
+.nway-rmix { display: flex; width: 90px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); }
+.nway-rmix i { display: block; height: 100%; background: var(--rc); }
+/* group header stat cells: the header row's padding: 0 is for its full-width title cell */
+.nway-table tr.nway-grow td.nway-gnum { padding: 6px 8px; }
+/* N-way icons: roles (in their colour) and bands */
+.nway-ricon { color: var(--rc); width: 14px; margin-right: 5px; text-align: center; font-size: 11px; }
+.nway-bicon { color: var(--accent); width: 14px; margin-right: 6px; text-align: center; font-size: 12px; opacity: 0.85; }
+.nway-gsw { width: 12px; height: 12px; margin-right: 6px; }
+/* Lineage tracking (track=): lit rows and headers over their own background, outlined columns */
+.nway-table tr.nway-trk > td { background-image: linear-gradient(color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent) 14%, transparent)); }
+.nway-table .col.nway-tc { box-shadow: inset 1px 0 0 color-mix(in srgb, var(--accent) 55%, transparent), inset -1px 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+.nway-gtrk, .nway-rtrk { all: unset; cursor: pointer; color: var(--dim); padding: 0 4px; border-radius: 4px; font-size: 11px; font-weight: 400; }
+.nway-rtrk { opacity: 0; }
+.nway-table tr:hover .nway-rtrk, .nway-rtrk.on, .nway-rtrk:focus-visible { opacity: 1; }
+.nway-gtrk:hover, .nway-rtrk:hover, .nway-gtrk.on, .nway-rtrk.on { color: var(--accent); }
+.nway-gtrk:focus-visible, .nway-rtrk:focus-visible { outline: 2px solid var(--accent); }
+.nway-trkwrap { display: inline-flex; align-items: center; gap: 6px; }
+.nway-table.nway-only tbody tr:not(.nway-trk):not(.nway-trkin) { display: none; }
+.nway-table tr.nway-pulse > td { animation: nway-pulse 1.5s ease-out; }
+@keyframes nway-pulse { 0% { box-shadow: inset 0 0 0 100px color-mix(in srgb, var(--accent) 45%, transparent); } 100% { box-shadow: inset 0 0 0 100px transparent; } }
+@media (prefers-reduced-motion: reduce) { .nway-table tr.nway-pulse > td { animation: none; outline: 1px solid var(--accent); } }
+.nway-trkchip b { display: inline-block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-weight: 600; }
+/* order=lineage: the tree over the column heads; it scrolls away, the heads below stay sticky */
+.nway-table thead .nway-dendro th { position: static; padding: 0; vertical-align: middle; font-weight: 400; font-size: 0.72rem; }
+.nway-table thead .nway-dendro th:first-child { padding: 0 8px; }
+.nway-dendro svg { display: block; overflow: visible; }
+.nway-dline { fill: none; stroke: var(--dim); stroke-width: 1.4; opacity: 0.7; }
+.nway-dnode { cursor: pointer; outline: none; }
+.nway-dnode circle { fill: hsl(var(--h, 195) 62% var(--l, 52%)); stroke: var(--bg); stroke-width: 1.5; }
+html.light-theme .nway-dnode circle { fill: hsl(var(--h, 195) 62% var(--ll, 44%)); }
+.nway-dnode.on circle, .nway-dnode:hover circle, .nway-dnode:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
+.nway-dbadge { fill: var(--success); font-size: 9px; font-weight: 600; }
+

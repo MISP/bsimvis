@@ -90,6 +90,8 @@ window.Nav = {
             window.parent.Nav.openPath(path, null, options);
             return;
         }
+        // A preview left open by the old page would float over the new one.
+        if (window.hideAllTooltips) window.hideAllTooltips(true);
 
         // Standard logic for Ctrl/Meta + Click: Open in new tab
         const ctrlKey = event && (event.ctrlKey || event.metaKey);

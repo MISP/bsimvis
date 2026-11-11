@@ -16,7 +16,7 @@ import logging
 import time
 import uuid
 
-from ollama import Client
+from bsimvis.app.services.llm_service import Client
 
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.llm_service import llm_service

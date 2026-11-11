@@ -167,6 +167,7 @@ def filters_from_args():
         ("root_md5", "root_md5"),
         # One file by its own md5 only; `md5` also matches its children.
         ("exact_md5", "file_md5"),
+        ("only_md5", "file_md5"),
         ("strings", "strings"),
     ]:
         val = request.args.get(arg)

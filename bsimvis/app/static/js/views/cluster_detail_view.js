@@ -356,7 +356,8 @@ window.ClusterDetailView = {
                         ${this.isBinary ? `<button class="bsim-tab active" id="cluster-tab-btn-overview" onclick="ClusterDetailView.switchTab('overview')" title="What is behind each tab">Overview</button>` : `<button class="bsim-tab active" id="cluster-tab-btn-medoid" onclick="ClusterDetailView.switchTab('medoid')" title="Most central function of this cluster">★ Medoid</button>`}
                         <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
-                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions <span class="exp-badge" title="Experimental: results and layout may change"><i class="fa-solid fa-flask"></i> Experimental</span></button>` : ''}
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-lineage" onclick="ClusterDetailView.openLineage(event)" title="Who inherited what from whom: the lineage of this cluster's files, on its own page"><i class="fa-solid fa-sitemap"></i> Lineage</button>` : ''}
                     </div>
 
                     <div id="cluster-tab-members" style="display:none; flex-direction:column; flex:1; min-height:0;">
@@ -462,7 +463,9 @@ window.ClusterDetailView = {
 
     /** Scrolling a table down folds the hero card to its title row; back at the
      * top it unfolds. Only vertical movement counts (a sideways scroll keeps
-     * scrollTop), and the 40px gap keeps the layout shift from re-triggering. */
+     * scrollTop), and the 40px gap keeps the layout shift from re-triggering.
+     * It folds only if the content still overflows once the hero's height goes
+     * to it: otherwise the browser clamps scrollTop to 0 and the hero unfolds. */
     onDetailScroll(e) {
         const t = e.target;
         if (this.heroManual || !t || t.id === 'cluster-detail' || typeof t.scrollTop !== 'number') return;
@@ -470,7 +473,9 @@ window.ClusterDetailView = {
         const prev = this._lastTop.get(t) || 0;
         this._lastTop.set(t, t.scrollTop);
         if (t.scrollTop === prev) return;
-        if (t.scrollTop > 40 && !this.heroCompact) this.setHero(true);
+        const hero = document.getElementById('cluster-hero');
+        const room = t.scrollHeight - t.clientHeight - (hero ? hero.offsetHeight : 0);
+        if (t.scrollTop > 40 && !this.heroCompact && room > 40) this.setHero(true);
         else if (t.scrollTop === 0 && this.heroCompact) this.setHero(false);
     },
 
@@ -517,6 +522,12 @@ window.ClusterDetailView = {
         return !this.childrenLoaded.has(cid) && !!(c && c.has_children);
     },
 
+    /** Discreet cohesion of the current axis, shown like the member count. */
+    cohesionBadge(c) {
+        if (c.cohesion_score == null) return '';
+        return `<span class="bsim-node-count" style="margin-left:8px;" title="Cohesion (${escapeAttr(this.axis)})">${Number(c.cohesion_score).toFixed(2)}</span>`;
+    },
+
     renderTree() {
         const treeContainer = document.getElementById('cluster-tree');
         if (!treeContainer) return;
@@ -547,9 +558,10 @@ window.ClusterDetailView = {
                 <div class="bsim-node ${isSelected ? 'selected' : ''}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}" style="padding-left: ${12 + depth * 16}px;" onclick="ClusterDetailView.openNode('${c.cluster_uuid}', event)">
                     ${icon}
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); font-size:0.75rem;"></i>
-                    <span class="bsim-node-label" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
+                    <span class="bsim-node-label" data-cluster-name="${escapeAttr(c.cluster_uuid || '')}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
                         ${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}
                     </span>
+                    ${this.cohesionBadge(c)}
                     <span class="bsim-node-count">${Number(c.count || 0).toLocaleString()}</span>
                 </div>
             `;
@@ -584,6 +596,23 @@ window.ClusterDetailView = {
         if (topId !== null) html += buildHtml(topId, 0);
 
         treeContainer.innerHTML = html;
+    },
+
+    // The cluster the page is centred on, renamed through the shared dashboard call.
+    rename() {
+        const self = this.clusterMapByUuid[this.selectedClusterUuid];
+        if (!self) return;
+        const ctx = { uuid: self.cluster_uuid, collection: this.collection, pool: this.params && this.params.pool, algo: this.algo || undefined };
+        if (this.isBinary) Object.assign(ctx, { axis: this.axis, node_type: this.nodeType || 'file' });
+        (this.isBinary ? renameBinCluster : renameCluster)(self.cluster_id, self.cluster_name || '', ctx);
+    },
+
+    // Keep the cached cluster and breadcrumb in step with a rename done anywhere.
+    onRenamed(key, name) {
+        const c = this.clusterMapByUuid[key] || this.clusterMapById[key];
+        if (!c) return;
+        c.cluster_name = name;
+        if (c.cluster_uuid === this.selectedClusterUuid) this.setBreadcrumb(c);
     },
 
     setBreadcrumb(self) {
@@ -824,11 +853,12 @@ window.ClusterDetailView = {
         <div id="cluster-hero" class="cluster-hero${this.heroCompact ? ' compact' : ''}" style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
-                <span style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
+                <span data-cluster-name="${escapeAttr(self.cluster_uuid || '')}" style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
+                <button class="btn-action" title="Rename cluster (empty name resets)" onclick="ClusterDetailView.rename()"><i class="fa-solid fa-pen"></i></button>
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
+                <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderRuleLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
             <div class="hero-fold"><div class="hero-fold-in">
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
@@ -961,16 +991,24 @@ window.ClusterDetailView = {
         });
     },
 
-    /** The Functions tab on its own page (/diff/nway), with the tab's current controls. */
-    openFunctionsFull(event) {
+    /** The Functions tab on its own page (/diff/nway), with the tab's current controls, or `state` when given. */
+    openFunctionsFull(event, state) {
         const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, axis: this.axis });
         if (this.params && this.params.pool) qs.set('pool', this.params.pool);
         else qs.set('collection', this.collection || '');
         const def = window.NwayPanel.DEFAULTS;
-        Object.entries((this._nway && this._nway.state) || {}).forEach(([k, v]) => {
+        Object.entries(state || (this._nway && this._nway.state) || {}).forEach(([k, v]) => {
             if (v != null && String(v) !== String(def[k] ?? '')) qs.set(k, v);
         });
         Nav.openPath(`/diff/nway?${qs}`, event);
+    },
+
+    /** The lineage page of the selected cluster's files (no panel here: it opens on its own page). */
+    openLineage(event) {
+        const qs = new URLSearchParams({ cluster_uuid: this.selectedClusterUuid, axis: this.axis });
+        if (this.params && this.params.pool) qs.set('pool', this.params.pool);
+        else qs.set('collection', this.collection || '');
+        Nav.openPath(`/diff/nway/lineage?${qs}`, event);
     },
 
     /** N-way diff of a function cluster's members (family view): the server resolves the members from the cluster. */
@@ -978,6 +1016,18 @@ window.ClusterDetailView = {
         const uuid = this.selectedClusterUuid;
         const ref = this.params.pool ? `pool:${this.params.pool}:${uuid}` : `cluster:${this.collection}:${uuid}`;
         Nav.openPath(NwayPanel.urlForFunctions([], ref), event, { title: 'N-way diff', type: 'bin_sim' });
+    },
+
+    /** Open the YARA workbench with this file cluster as the Must match set (collections only). */
+    renderRuleLink(self) {
+        if (!this.isBinary || !this.collection || (this.params && this.params.pool) || !window.yaraUrl) return '';
+        return UI.Button.render({
+            className: 'btn-code-action',
+            icon: 'fa-solid fa-shield-halved',
+            label: 'YARA',
+            tooltip: 'Write a YARA rule for the files of this cluster (experimental)',
+            onClick: `Nav.openPath(${jsString(window.yaraUrl(this.collection, [`cluster_uuid=${self.cluster_uuid}&axis=${this.axis || 'overall'}`]))}, event)`,
+        });
     },
 
     renderSimilaritiesLink(self) {
@@ -1136,6 +1186,7 @@ window.ClusterDetailView = {
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); margin:0 6px;"></i>
                     <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>
                     <span class="dim" style="font-size:0.72rem; margin-left:8px;">(${Number(c.count || 0).toLocaleString()} members in subtree)</span>
+                    ${this.cohesionBadge(c)}
                 </td>
             `;
             tbody.appendChild(tr);

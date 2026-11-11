@@ -82,7 +82,8 @@ def spanning_tree(w, root):
         j = int(np.argmax(np.where(seen, -1.0, best)))
         out.append((int(via[j]), j))
         seen[j] = True
-        closer = (w[j] > best) & ~seen
+        # ties go to the newest node: identical builds chain into one lane, not a star
+        closer = ((w[j] > best) | ((w[j] == best) & (best > 0))) & ~seen
         best[closer], via[closer] = w[j][closer], j
     return out
 
@@ -201,15 +202,8 @@ def _components(keys, tedges):
     return list(comps.values())
 
 
-def build(
-    columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree", file=None
-):
-    """Lineage of the files `columns` (dicts with id, file_name, functions) over `rows`.
-
-    `rows` have `cells` {column id: fid}; `edges_by_pair` is the N-way pair edges
-    {(col_a, col_b): PairEdges | tuples}; `name_of(fid)` is the function's real
-    name or None. Returns {order, root, nodes, edges}.
-    """
+def tree(columns, edges_by_pair, min_edge, root=None, order="tree"):
+    """-> (similarity matrix, root index, [(parent index, child index)]) of `build`."""
     if order not in ORDERS:
         raise BadParams(f"order must be one of {', '.join(ORDERS)}")
     ids = [c["id"] for c in columns]
@@ -230,6 +224,110 @@ def build(
         pairs = chain_path(w, r)
     else:
         pairs = [(r, j) for j in range(len(ids)) if j != r]
+    return w, r, pairs
+
+
+def dfs(w, r, pairs, masks):
+    """Node indices in DFS order from `r` and each one's parent index (None for `r`).
+
+    Children go most similar first, then bigger subtree, then more shared rows:
+    the lineage page's sort. `masks` {row presence mask: rows} counts shared rows.
+    """
+    kids = {}
+    for p, c in pairs:
+        kids.setdefault(p, []).append(c)
+    size = [1] * len(w)
+    for p, c in reversed(pairs):  # a parent always comes before its child
+        size[p] += size[c]
+    order, parent, stack = [], {r: None}, [r]
+    while stack:
+        i = stack.pop()
+        order.append(i)
+        both = lambda c: sum(n for m, n in masks.items() if m >> i & 1 and m >> c & 1)
+        ks = sorted(
+            kids.get(i, ()),
+            key=lambda c: (-round(float(w[i, c]), 4), -size[c], -both(c)),
+        )
+        for c in ks:
+            parent[c] = i
+        stack += ks[::-1]
+    return order, parent
+
+
+def _hits(e, min_edge):
+    """Matched functions of one file pair's edge (those at or over `min_edge`)."""
+    s = _packed(e).s
+    return int((s >= min_edge).sum()) if min_edge else len(s)
+
+
+def group_nodes(groups, files, rows, edges_by_pair, children=False, min_edge=None):
+    """Lineage nodes for grouped columns (twins or child clusters): -> (columns, rows, edges_by_pair).
+
+    A node holds a row when any member file does (the group's `on` in the table
+    follows child_presence; the lineage counts every function of its files), with
+    that file's function as its cell.
+    Twins share their rows, so a node's pair edges are its first members' (kept as
+    is). Cluster members differ, so with `children` the edge between two nodes is
+    the strongest one over all their member pairs (most matched functions at
+    `min_edge`), the same PairEdges value, and the node is named by its cluster.
+    """
+    # ponytail: a node's pair edges are its first members', twins share their rows anyway
+    names = {c["id"]: c.get("file_name") for c in files}
+    held = Counter()
+    out = []
+    for row in rows:
+        fc = row.get("files") or row["cells"]
+        cells = {}
+        for g in groups:
+            f = next((fc[m] for m in g["members"] if m in fc), None)
+            if f is not None:
+                cells[g["id"]] = f
+                held[g["id"]] += 1
+        out.append({"cells": cells})
+    cols = [
+        {
+            "id": g["id"],
+            "file_name": (g.get("label") if children else None)
+            or names.get(g["members"][0]),
+            "functions": held[g["id"]],
+            "members": list(g["members"]),
+            "path": g.get("path") or [],
+        }
+        for g in groups
+    ]
+    if not children:
+        rep = {g["members"][0]: g["id"] for g in groups}
+        edges = {
+            (rep[x], rep[y]): e
+            for (x, y), e in edges_by_pair.items()
+            if x in rep and y in rep
+        }
+        return cols, out, edges
+    owner = {m: g["id"] for g in groups for m in g["members"]}
+    win = {}
+    for (x, y), e in edges_by_pair.items():
+        a, b = owner.get(x), owner.get(y)
+        if a is None or b is None or a == b:
+            continue
+        n, pair = _hits(e, min_edge), frozenset((a, b))
+        if pair not in win or n > win[pair][0]:
+            # the edge keeps its own orientation: its fids belong to (x, y)
+            win[pair] = (n, (a, b), e)
+    edges = {key: e for _, key, e in win.values()}
+    return cols, out, edges
+
+
+def build(
+    columns, rows, edges_by_pair, min_edge, name_of, root=None, order="tree", file=None
+):
+    """Lineage of the files `columns` (dicts with id, file_name, functions) over `rows`.
+
+    `rows` have `cells` {column id: fid}; `edges_by_pair` is the N-way pair edges
+    {(col_a, col_b): PairEdges | tuples}; `name_of(fid)` is the function's real
+    name or None. Returns {order, root, nodes, edges}.
+    """
+    ids = [c["id"] for c in columns]
+    w, r, pairs = tree(columns, edges_by_pair, min_edge, root, order)
 
     # one pass over the rows: per edge, shared rows and the lost / gained functions
     adj = {}
@@ -364,6 +462,9 @@ def build(
         {
             "id": c["id"],
             "file_name": c.get("file_name"),
+            "members": c.get("members") or [c["id"]],
+            # the table's column groups: the client colours a node as its column (NwayColors.tree)
+            "path": c.get("path") or [],
             "functions": c["functions"],
             "root": i == r,
             "died_all": died_all.get(c["id"]),
@@ -572,6 +673,65 @@ def synthetic(n, shape="tree", seed=1, base=60):
 
 
 def demo():
+    # three identical builds chain into a lane; the divergent file hangs off the root
+    lane = np.array(
+        [[0, 1, 1, 0.4], [1, 0, 1, 0.3], [1, 1, 0, 0.3], [0.4, 0.3, 0.3, 0]]
+    )
+    assert spanning_tree(lane, 0) == [(0, 1), (1, 2), (0, 3)], spanning_tree(lane, 0)
+    # DFS: the most similar child first, whatever the edge order
+    assert dfs(lane, 0, [(0, 3), (0, 1), (1, 2)], {}) == (
+        [0, 1, 2, 3],
+        {0: None, 3: 0, 1: 0, 2: 1},
+    )
+    # twin columns: a node holds what any member holds, edges come from first members
+    gc, gr, ge = group_nodes(
+        [{"id": "T", "members": ["A", "B"]}, {"id": "C", "members": ["C"]}],
+        [{"id": i, "file_name": i.lower()} for i in "ABC"],
+        [{"files": {"A": "a1", "B": "b1", "C": "c1"}}, {"files": {"B": "b2"}}],
+        {("A", "C"): "e1", ("B", "C"): "e2"},
+    )
+    assert [(c["id"], c["file_name"], c["functions"]) for c in gc] == [
+        ("T", "a", 2),
+        ("C", "c", 1),
+    ]
+    assert gr[1] == {"cells": {"T": "b2"}} and ge == {("T", "C"): "e1"}
+    # child clusters: named by the cluster, `path` kept, and the edge between two nodes is the
+    # strongest one over all their member pairs (most matched functions), the same PairEdges
+    weak, strong, other = (
+        _packed([("A1", "B1", 0.8)]),
+        _packed([("A2", "C1", 0.9), ("A2", "C1", 0.7), ("A2", "C1", 0.6)]),
+        _packed([("C1", "D1", 0.95)]),
+    )
+    path = [{"id": "P", "label": "P"}]
+    cc, cr, ce = group_nodes(
+        [
+            {"id": "X", "label": "cluster X", "members": ["A1", "A2"], "path": path},
+            {"id": "Y", "label": "cluster Y", "members": ["B1", "C1"], "path": path},
+            {"id": "Z", "label": "cluster Z", "members": ["D1"]},
+        ],
+        [{"id": i, "file_name": i.lower()} for i in ("A1", "A2", "B1", "C1", "D1")],
+        [{"files": {"A2": "a", "D1": "d"}}],
+        {("A1", "B1"): weak, ("A2", "C1"): strong, ("C1", "D1"): other},
+        children=True,
+        min_edge=0.5,
+    )
+    assert [(c["file_name"], c["members"], c["path"] == path) for c in cc[:2]] == [
+        ("cluster X", ["A1", "A2"], True),
+        ("cluster Y", ["B1", "C1"], True),
+    ] and cc[2]["path"] == []
+    assert cr == [{"cells": {"X": "a", "Z": "d"}}]
+    # X-Y: the 3-edge pair beats the 1-edge pair; same object, own orientation kept
+    assert ce[("X", "Y")] is strong and ce[("Y", "Z")] is other and len(ce) == 2
+    # at a higher floor the pair with more hits above it still wins
+    _, _, hi = group_nodes(
+        [{"id": "X", "members": ["A1", "A2"]}, {"id": "Y", "members": ["B1", "C1"]}],
+        [{"id": i} for i in ("A1", "A2", "B1", "C1")],
+        [],
+        {("A1", "B1"): weak, ("A2", "C1"): strong},
+        children=True,
+        min_edge=0.75,
+    )
+    assert hi == {("X", "Y"): weak}, hi
     cols = [
         {"id": i, "file_name": i, "functions": n} for i, n in zip("ABCD", (4, 5, 6, 3))
     ]

@@ -188,53 +188,6 @@ def get_home_insights():
     return _cached("insights", INSIGHTS_TTL, build)
 
 
-def get_collection_overview():
-    """One collection's landing cards: top families, recent and rare files (cached)."""
-    from bsimvis.app.routes.search_file import search_files
-    from bsimvis.app.routes.search_file_clusters import search_files_by_cluster
-
-    col = request.args.get("collection")
-    if not col:
-        return {"error": "No collection specified"}, 400
-
-    def build():
-        fams = _call(search_files_by_cluster, collection=col, limit=6, per_cluster=0)
-        recent = _call(
-            search_files,
-            collection=col,
-            limit=8,
-            sort_by="entry_date",
-            sort_order="desc",
-        )
-        rare = _call(search_files_by_cluster, collection=col, unclustered=1, limit=8)
-        return {
-            "has_clusters": fams.get("has_clusters", False),
-            "families": [
-                {
-                    k: c.get(k)
-                    for k in (
-                        "cid",
-                        "cluster_uuid",
-                        "cluster_name",
-                        "cohesion_score",
-                        "matching",
-                        "architecture_distribution",
-                    )
-                }
-                for c in fams.get("clusters", [])
-            ],
-            "families_total": fams.get("roots_total", 0),
-            "unclustered_total": fams.get("unclustered_total", 0),
-            "recent": recent.get("files", []),
-            "rare": rare.get("files", []),
-            "bin_cluster_map": recent.get("bin_cluster_map", {}),
-        }
-
-    if request.args.get("refresh") == "true":
-        _CACHE.pop(f"overview:{col}", None)
-    return _cached(f"overview:{col}", INSIGHTS_TTL, build)
-
-
 # --- Unified search -------------------------------------------------------
 
 

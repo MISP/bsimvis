@@ -281,27 +281,8 @@ window.FileTree = {
             const rows = fields.map(f => `<label class="fb-field"><span>${escapeHtml(f.label)}</span>${f.multi ? multi(f) : input(f)}</label>`).join('');
             return `<section class="fb-sec"><h4>${escapeHtml(g)}</h4>${rows}${g === 'Clusters' ? `<label class="fb-field"><span>Axes</span>${axes()}</label>` : ''}</section>`;
         }).join('');
-        return `${this._familiesHtml(params)}<div class="fb-panel-head"><span><i class="fa-solid fa-sliders"></i> Filters</span>
+        return `<div class="fb-panel-head"><span><i class="fa-solid fa-sliders"></i> Filters</span>
                 <button onclick="clearFilters()" title="Clear every filter">Clear</button></div>${body}`;
-    },
-
-    /** Families rail: top clusters of the collection; one click filters the tree to it, the icon opens its N-way. */
-    _familiesHtml(params) {
-        const fam = this._fam;
-        if (this.mode(params) !== 'cluster' || !fam || fam.col !== (params.get('collection') || this._collection) || !fam.list.length) return '';
-        const on = params.get('bin_cluster_uuid') || '';
-        const items = fam.list.slice(0, 12).map(c => {
-            const nway = `/diff/nway?${new URLSearchParams({ cluster_uuid: c.cluster_uuid, axis: params.get('group_axis') || 'code', collection: fam.col })}`;
-            return `<div class="fb-fam${c.cluster_uuid === on ? ' on' : ''}">
-                <button class="fb-fam-main" onclick="FileTree.setParam('bin_cluster_uuid', ${escapeAttr(jsString(c.cluster_uuid === on ? '' : c.cluster_uuid))})" title="${escapeAttr(c.cluster_name || '')}">
-                    <span class="fb-fam-name">${escapeHtml(c.cluster_name || `Cluster ${c.cid}`)}</span>
-                    <span class="fb-fam-n">${Number(c.matching || 0).toLocaleString()}</span></button>
-                <button class="fb-fam-go" onclick="Nav.openPath(${escapeAttr(jsString(nway))}, event)" title="Functions: N-way diff of this cluster"><i class="fa-solid fa-table-columns"></i></button>
-            </div>`;
-        }).join('');
-        return `<div class="fb-panel-head"><span><i class="fa-solid fa-bullseye"></i> Families</span>
-            ${on ? `<button onclick="FileTree.setParam('bin_cluster_uuid', '')" title="Show every family">All</button>` : ''}</div>
-            <div class="fb-fams">${items}</div>`;
     },
 
     _panelChange(el) {
@@ -464,8 +445,6 @@ window.FileTree = {
         }
         this._cl.roots.push(...(data.clusters || []));
         this._cl.looseTotal = data.unclustered_total || 0;
-        // The Families rail keeps the unfiltered list, so picking one does not empty it.
-        if (!params.get('bin_cluster_uuid') && !append) this._fam = { col: collection, list: [...this._cl.roots] };
         Object.assign(this._clusters, data.bin_cluster_map || {});
         this._params = new URLSearchParams(params);
         this._collection = collection;

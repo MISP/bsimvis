@@ -227,62 +227,8 @@
         return `<div class="cov-card">
             ${title(LOOK.all[0], LOOK.all[1], 'Functions', 'Code functions aligned across the member files. Core: in every file. Partial: in some. Unique: in one file only.', `<span class="cov-big" id="cov-fn-total"></span>`)}
             <div id="cov-fn-body" style="display:flex; flex-direction:column; gap:10px;">${spin(`Aligning functions across ${num(c.count)} files…`)}</div>
-            <div class="cov-foot">${btn(LOOK.all[0], LOOK.all[1], 'Functions', "ClusterOverview.openFunctions({ tab: 'all' })")}${fullBtn()}</div>
+            <div class="cov-foot">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}${fullBtn()}</div>
         </div>`;
-    }
-
-    // ---- Lineage: a small tree of how the member files derive from each other ----
-    function lineageCard() {
-        return `<div class="cov-card">
-            ${title('fa-solid fa-code-branch', 'var(--accent)', 'Lineage', 'Which member file derives from which, by shared functions. Opens the full lineage page.', '')}
-            <div id="cov-lin-body" style="min-height:110px;">${spin('Tracing lineage…')}</div>
-            <div class="cov-foot">${btn('fa-solid fa-code-branch', 'var(--accent)', 'Lineage', 'ClusterOverview.openLineage(event)', 'Open the lineage page')}</div>
-        </div>`;
-    }
-
-    function lineageSvg(doc) {
-        const nodes = doc.nodes || [], kids = {};
-        (doc.edges || []).forEach(e => (kids[e.parent] = kids[e.parent] || []).push(e.child));
-        const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
-        const MAX = 40, pos = {};
-        let row = 0, maxD = 0;
-        const walk = (id, d) => {
-            if (row >= MAX || pos[id]) return;
-            pos[id] = { d, r: row++ };
-            maxD = Math.max(maxD, d);
-            (kids[id] || []).forEach(k => walk(k, d + 1));
-        };
-        walk(doc.root, 0);
-        const W = 260, H = Math.max(60, row * 12 + 16), sx = maxD ? (W - 40) / maxD : 0;
-        const xy = id => [20 + pos[id].d * sx, 10 + pos[id].r * 12];
-        const lines = (doc.edges || []).filter(e => pos[e.parent] && pos[e.child]).map(e => {
-            const [x1, y1] = xy(e.parent), [x2, y2] = xy(e.child);
-            return `<path d="M${x1} ${y1}H${(x1 + x2) / 2}V${y2}H${x2}" fill="none" stroke="var(--border)" stroke-width="1.5"/>`;
-        }).join('');
-        const dots = Object.keys(pos).map(id => {
-            const [x, y] = xy(id);
-            const root = id === doc.root;
-            return `<circle cx="${x}" cy="${y}" r="${root ? 5 : 3.5}" fill="${root ? 'var(--accent)' : 'var(--info, #3b82f6)'}"><title>${escapeHtml((byId[id] || {}).file_name || id)}</title></circle>`;
-        }).join('');
-        const more = nodes.length > row ? `<div class="dim" style="font-size:0.72rem;">Showing ${row} of ${num(nodes.length)} files</div>` : '';
-        return `<div style="overflow:auto; max-height:200px;"><svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px" role="img" aria-label="Lineage tree">${lines}${dots}</svg></div>${more}`;
-    }
-
-    async function loadLineage(el, v, c) {
-        const body = el.querySelector('#cov-lin-body');
-        if (!body) return;
-        const stale = () => !el.isConnected || v.selectedClusterUuid !== c.cluster_uuid;
-        try {
-            const qs = new URLSearchParams({ cluster_uuid: c.cluster_uuid, axis: v.axis, columns: 'files', order: 'tree' });
-            if (v.params && v.params.pool) qs.set('pool', v.params.pool); else qs.set('collection', v.collection || '');
-            const res = await fetch(`/api/bin_sim/nway/lineage?${qs}`);
-            const doc = await res.json();
-            if (stale()) return;
-            if (!res.ok || !(doc.nodes || []).length) throw new Error(doc.message || doc.error || `HTTP ${res.status}`);
-            body.innerHTML = lineageSvg(doc);
-        } catch (e) {
-            if (!stale()) body.innerHTML = `<div class="dim" style="font-size:0.78rem;">No preview for this cluster. Open the lineage page to build it.</div>`;
-        }
     }
 
     const laneName = (names, g) => (names[g.id] && !/^unnamed/i.test(names[g.id])) ? names[g.id] : g.hint ? `${g.hint}…` : `${ones(g.mask)}-file lane`;
@@ -305,7 +251,7 @@
             <span style="color:${LOOK.unique[1]}"><i class="${LOOK.unique[0]}"></i>Only this file</span>${withMiss ? '<span><i class="sw" style="border:1px dashed var(--dim)"></i>Missing</span>' : ''}</div>`;
     }
 
-    const panelActs = m => `<div class="cov-acts">${btn(LOOK.all[0], LOOK.all[1], 'Functions', "ClusterOverview.openFunctions({ tab: 'all' })")}
+    const panelActs = m => `<div class="cov-acts">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}
         ${btn(LOOK.core[0], LOOK.core[1], `Core ${num(m.counts.core)}`, "ClusterOverview.openFunctions({ tab: 'core' })")}
         ${btn(LOOK.unique[0], LOOK.unique[1], `Unique ${num(m.counts.unique)}`, "ClusterOverview.openFunctions({ tab: 'unique' })")}${fullBtn()}</div>`;
 
@@ -470,10 +416,10 @@
             cur = null;
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
-                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) + lineageCard() : ''}</div>
+                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
                 ${fn ? `<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
-            if (fn) { loadLanes(el, v, c); loadLineage(el, v, c); }
+            if (fn) loadLanes(el, v, c);
         },
 
         /** The Functions tab with these N-way controls (`tab` is its All / Core / Partial / Unique). */
@@ -483,13 +429,6 @@
             FOCUS_KEYS.forEach(k => (state[k] == null ? u.searchParams.delete(k) : u.searchParams.set(k, state[k])));
             window.history.replaceState({ path: u.pathname + u.search }, '', u.pathname + u.search);
             window.ClusterDetailView.switchTab('functions');
-        },
-
-        openLineage(event) {
-            const v = window.ClusterDetailView;
-            const qs = new URLSearchParams({ cluster_uuid: v.selectedClusterUuid, axis: v.axis });
-            if (v.params && v.params.pool) qs.set('pool', v.params.pool); else qs.set('collection', v.collection || '');
-            window.Nav.openPath(`/diff/nway/lineage?${qs}`, event, { title: 'Lineage', type: 'bin_sim' });
         },
 
         /** A lane's functions: Focus on its files, all of them required, none of the rest. */

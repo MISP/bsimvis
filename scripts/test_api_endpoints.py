@@ -2119,18 +2119,6 @@ def run_all_tests():
         str(sorted(insights.keys()) if isinstance(insights, dict) else insights),
     )
 
-    ov = test_endpoint(
-        "GET",
-        "/api/index/collection/overview",
-        params={"collection": COLLECTION, "refresh": "true"},
-    )
-    check(
-        "collection overview returns families, recent and rare files",
-        isinstance(ov, dict)
-        and all(k in ov for k in ("families", "recent", "rare", "unclustered_total")),
-        str(sorted(ov.keys()) if isinstance(ov, dict) else ov),
-    )
-
     # ── Unified search ─────────────────────────────────────────────────────
     print(_color("\n  [Unified search]", BOLD))
     # Scope the entity fanout; collection-name matching still searches globally.

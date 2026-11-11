@@ -34,6 +34,9 @@
 .cov-card, .cov-panel { background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:12px; min-width:0; }
 .cov-title { display:flex; align-items:center; gap:9px; min-width:0; flex-wrap:wrap; }
 .cov-title b { font-size:0.95rem; }
+.cov-tlink { all:unset; display:inline-flex; align-items:center; gap:9px; cursor:pointer; border-radius:7px; }
+.cov-tlink:hover b { text-decoration:underline; }
+.cov-tlink:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .cov-ico { width:28px; height:28px; border-radius:7px; display:grid; place-items:center; flex-shrink:0; color:var(--c); background:color-mix(in srgb, var(--c) 16%, transparent); font-size:0.85rem; }
 .cov-info { color:var(--dim); font-size:0.78rem; cursor:help; }
 .cov-info:hover { color:var(--text); }
@@ -44,6 +47,7 @@
 @media (min-width:1500px) { .cov-duo { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .cov-duo > .cov-card { grid-column:2; grid-row:1; position:sticky; top:8px; } .cov-duo > #cov-lanes { grid-column:1; grid-row:1; } .cov-duo .cov-lin { height:480px; } }
 .cov-lin { height:300px; border:1px solid var(--border); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; }
 .cov-lin .lin-root { flex:1; min-height:0; }
+.cov-lin svg, .cov-lin canvas { cursor:pointer; }
 .cov-lin .lin-tb, .cov-lin .lin-glist { display:none; }
 .cov-foot { margin-top:auto; display:flex; gap:6px; flex-wrap:wrap; }
 .cov-btn { display:inline-flex; align-items:center; gap:6px; }
@@ -143,9 +147,13 @@
         return files >= core ? 'core' : files >= common ? 'common' : 'rare';
     }
 
-    const title = (icon, color, name, info, right) => `<div class="cov-title">
-        <span class="cov-ico" style="--c:${color}"><i class="${icon}"></i></span><b>${name}</b>
+    // `js`: the icon and name open the card's tab or page (the same target as its foot button)
+    const title = (icon, color, name, info, right, js) => {
+        const head = `<span class="cov-ico" style="--c:${color}"><i class="${icon}"></i></span><b>${name}</b>`;
+        return `<div class="cov-title">
+        ${js ? `<button type="button" class="cov-tlink" title="Open ${escapeAttr(name)}" ${go(js)}>${head}</button>` : head}
         <i class="fa-solid fa-circle-info cov-info" title="${escapeAttr(info)}"></i>${right || ''}</div>`;
+    };
     const btn = (icon, color, label, js, tip) => `<button class="btn-code-action cov-btn" style="--c:${color}" ${tip ? `title="${escapeAttr(tip)}"` : ''} ${go(js)}><i class="${icon}"></i> ${escapeHtml(label)}</button>`;
     const sbar = parts => `<div class="cov-sbar">${parts.filter(p => p[1] > 0)
         .map(([color, v, label]) => `<span style="flex:${Number(v)}; background:${color}" title="${escapeAttr(`${label}: ${num(v)}`)}"></span>`).join('')}</div>`;
@@ -183,7 +191,7 @@
         }).join('');
         const more = [total > Math.min(MEMBERS, files.length) ? `+${num(total - Math.min(MEMBERS, files.length))} more` : '', kids ? `${num(kids)} sub-cluster${kids > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
         return `<div class="cov-card">
-            ${title('fa-solid fa-users', 'var(--accent)', 'Members', 'Every file of this cluster and its sub-clusters. ★ is the main file, the most central one.', `<span class="cov-big">${num(total)}<small>files</small></span>`)}
+            ${title('fa-solid fa-users', 'var(--accent)', 'Members', 'Every file of this cluster and its sub-clusters. ★ is the main file, the most central one.', `<span class="cov-big">${num(total)}<small>files</small></span>`, "ClusterDetailView.switchTab('members')")}
             <div class="cov-list">${rows || '<div class="dim">No members listed.</div>'}${more ? `<div class="cov-more">${more}</div>` : ''}</div>
             <div class="cov-foot">${btn('fa-solid fa-list', 'var(--accent)', 'All members', "ClusterDetailView.switchTab('members')")}</div>
         </div>`;
@@ -218,7 +226,7 @@
         const fpm = s.min === undefined ? '' : `<div class="cov-fpm"><span title="Functions per member"><i class="fa-solid fa-list-ol"></i> ${[['min', s.min], ['avg', s.avg], ['max', s.max]].map(([l, x]) => `${l} <b>${num(Math.round(x))}</b>`).join(' · ')}</span></div>`;
         const archs = (c.architecture_distribution || []).length;
         return `<div class="cov-card">
-            ${title('fa-solid fa-chart-pie', 'var(--info, #3b82f6)', 'Metadata', 'How the member files split by architecture, format and upload batch, and the tags most of them carry.', archs ? `<span class="cov-big">${num(archs)}<small>arch${archs > 1 ? 's' : ''}</small></span>` : '')}
+            ${title('fa-solid fa-chart-pie', 'var(--info, #3b82f6)', 'Metadata', 'How the member files split by architecture, format and upload batch, and the tags most of them carry.', archs ? `<span class="cov-big">${num(archs)}<small>arch${archs > 1 ? 's' : ''}</small></span>` : '', "ClusterDetailView.switchTab('metadata')")}
             ${rows ? `<div style="display:flex; flex-direction:column; gap:10px;">${rows}</div>` : `<div class="dim" style="font-size:0.78rem;">No distributions stored. A cluster below the configured min_cohesion reports none.</div>`}
             ${fpm}
             ${tags.length ? `<div class="cov-chips">${tags.map((t, i) => `<span class="cov-chip" style="--c:${escapeAttr(metadataColor(t, i, 'tag_id'))}" title="${escapeAttr(t.tag_id)}">${escapeHtml(t.tag_id)} <span class="dim">${metadataPercent(t).toFixed(0)}%</span></span>`).join('')}</div>` : ''}
@@ -229,7 +237,7 @@
     // ---- Functions: N-way counts and the biggest lanes ----
     function functionsCard(c) {
         return `<div class="cov-card">
-            ${title(LOOK.all[0], LOOK.all[1], 'Functions', 'Code functions aligned across the member files. Core: in every file. Partial: in some. Unique: in one file only.', `<span class="cov-big" id="cov-fn-total"></span>`)}
+            ${title(LOOK.all[0], LOOK.all[1], 'Functions', 'Code functions aligned across the member files. Core: in every file. Partial: in some. Unique: in one file only.', `<span class="cov-big" id="cov-fn-total"></span>`, "ClusterOverview.openFunctions({ tab: 'all' })")}
             <div id="cov-fn-body" style="display:flex; flex-direction:column; gap:10px;">${spin(`Aligning functions across ${num(c.count)} files…`)}</div>
             <div class="cov-foot">${btn(LOOK.all[0], LOOK.all[1], 'N-way table', "ClusterOverview.openFunctions({ tab: 'all' })")}</div>
         </div>`;
@@ -237,7 +245,7 @@
 
     function lineageCard() {
         return `<div class="cov-card">
-            ${title('fa-solid fa-sitemap', 'var(--accent)', 'Lineage', 'Who inherited what from whom: a preview of the lineage tree of this cluster\'s files. Drag to pan, scroll to zoom.')}
+            ${title('fa-solid fa-sitemap', 'var(--accent)', 'Lineage', 'Who inherited what from whom: a preview of the lineage tree of this cluster\'s files. Drag to pan, scroll to zoom, click to open the full lineage.', '', 'ClusterDetailView.openLineage(event)')}
             <div id="cov-lin" class="cov-lin">${spin('Building the lineage…')}</div>
             <div class="cov-foot">${btn('fa-solid fa-sitemap', 'var(--accent)', 'Full lineage', 'ClusterDetailView.openLineage(event)')}</div>
         </div>`;
@@ -265,6 +273,14 @@
             const pick = window.NwayRing ? window.NwayRing.chooseView('', mem, doc).view : 'tree';
             linInst = window.NwayLineage.mount(host, { view: pick === 'tracks' || pick === 'ring' ? pick : 'tree', lens: 'lanes', laneNames: false, onNode: () => true });
             linInst.setDoc(doc, 'lanes');
+            // a click in the graph opens the full lineage; a pan or drag (moved > 5 px) and the zoom buttons do not
+            let p0 = null;
+            host.onpointerdown = e => { p0 = [e.clientX, e.clientY]; };
+            host.onclick = e => {
+                if (e.target.closest('.lin-zoom, button, input, select')) return;
+                if (p0 && Math.hypot(e.clientX - p0[0], e.clientY - p0[1]) > 5) return;
+                ClusterDetailView.openLineage(e);
+            };
         } catch (e) {
             if (host.isConnected) host.innerHTML = `<div class="dim" style="font-size:0.78rem; padding:10px;">${escapeHtml(e.message || String(e))}</div>`;
         }
@@ -316,7 +332,7 @@
         h += `<div></div><div></div>` + lanes.map(g => `<div class="lbl" title="${escapeAttr(laneName(names, g))}" data-cov-lname="${escapeAttr(g.id)}" ${laneGo(g)}>${escapeHtml(laneName(names, g))}</div>`).join('') + `<div class="lbl" style="color:${LOOK.unique[1]}">Unique</div>`;
         const info = `Each column is a lane: functions found in exactly the dotted files. Files are in lineage order, most similar next to each other. Click a column, a dot or a label to open that lane's functions in the table; click a red count for the functions only that file has.${m.hidden ? ` The ${MAX_LANES} biggest of ${m.lanes.length + m.hidden} shared lanes are shown.` : ''}`;
         return `<div class="cov-panel">
-            ${title('fa-solid fa-diagram-project', 'var(--success)', 'Shared code', info, panelActs(m))}
+            ${title('fa-solid fa-diagram-project', 'var(--success)', 'Shared code', info, panelActs(m), "ClusterOverview.openFunctions({ tab: 'all' })")}
             ${legend()}
             <div class="cov-scroll"><div class="cov-mx" style="grid-template-columns:minmax(150px, 250px) 84px repeat(${lanes.length}, 28px) 44px;">${h}</div></div>
         </div>`;
@@ -333,7 +349,7 @@
                 : `<span class="miss" style="width:${share(g.rows, total)}" title="${escapeAttr(`Missing: ${laneName(names, g)}`)}" ${laneGo(g)}></span>`).join('')}<span style="width:${share(uniq[i], total)}; background:${LOOK.unique[1]}" title="${escapeAttr(`Only in this file: ${uniq[i]}`)}" ${go(`ClusterOverview.openFile(${i})`)}></span></div>
             <span class="dim" style="text-align:right">${num(m.totals[i])}</span></div>`).join('');
         return `<div class="cov-panel">
-            ${title('fa-solid fa-barcode', LOOK.partial[1], 'Code map', "Each file's lanes in fixed slots, Core, Common, Rare, related lanes side by side; files in lineage order. A hatched slot is a lane the file lacks; red is code only that file has. Click a slot to open its functions.", panelActs(m))}
+            ${title('fa-solid fa-barcode', LOOK.partial[1], 'Code map', "Each file's lanes in fixed slots, Core, Common, Rare, related lanes side by side; files in lineage order. A hatched slot is a lane the file lacks; red is code only that file has. Click a slot to open its functions.", panelActs(m), "ClusterOverview.openFunctions({ tab: 'all' })")}
             ${legend(true)}
             <div class="cov-scroll"><div class="cov-fp">${head}${rows}</div></div>
         </div>`;

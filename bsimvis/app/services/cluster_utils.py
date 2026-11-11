@@ -721,6 +721,10 @@ def clear_tree_links(r, collection, prefix, algo):
     """Delete the tree_links blob and its per-node index."""
     r.delete(_tree_keys(collection, prefix, algo)[0])
     _clear_tree_index(r, collection, prefix, algo)
+    if prefix == "bin_cluster":
+        from bsimvis.app.services.cluster_display import clear_display
+
+        clear_display(r, collection, algo)
 
 
 def _clear_tree_index(r, collection, prefix, algo):

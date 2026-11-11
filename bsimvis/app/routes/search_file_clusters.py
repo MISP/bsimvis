@@ -23,7 +23,12 @@ from bsimvis.app.routes.search_file import (
     query_files_advanced,
     sort_doc_ids,
 )
-from bsimvis.app.services.cluster_display import DEFAULTS, load_display_tree, score
+from bsimvis.app.services.cluster_display import (
+    DEFAULTS,
+    _load,
+    display_assignment,
+    score,
+)
 from bsimvis.app.services.cluster_utils import get_cluster_metas
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
 
@@ -56,6 +61,19 @@ def _display_opts():
         if request.args.get(arg):
             o[key] = cast(request.args[arg])
     return {k: v for k, v in o.items() if k in DEFAULTS}
+
+
+def _assign_stored(r, col, algo, tree, tag, cand):
+    """Same answer as _assign, read from the precomputed hash (default opts)."""
+    where = display_assignment(r, col, algo, tree, tag, only=cand) if tree else {}
+    matching = dict.fromkeys(tree, 0)
+    direct = {}
+    for f, c in where.items():
+        direct.setdefault(c, []).append(f)
+        while c in matching:  # count the file in the cluster and its kept ancestors
+            matching[c] += 1
+            c = tree[c]["parent"]
+    return where, matching, direct
 
 
 def _assign(r, col, algo, tree, cand):
@@ -104,8 +122,12 @@ def search_files_by_cluster():
         per = int(request.args.get("per_cluster", DEFAULT_PER_CLUSTER))
 
         cand = {_s(i) for i in query_files_advanced(r, col, filters_from_args())}
-        tree = load_display_tree(r, col, algo, get_queue_redis(), **_display_opts())
-        where, matching, direct = _assign(r, col, algo, tree, cand)
+        opts = _display_opts()
+        tree, tag = _load(r, col, algo, get_queue_redis(), **opts)
+        if opts:  # custom display params: no precomputed hash, walk the members
+            where, matching, direct = _assign(r, col, algo, tree, cand)
+        else:
+            where, matching, direct = _assign_stored(r, col, algo, tree, tag, cand)
         loose = cand - where.keys()
         out = {
             "collection": col,

@@ -20,6 +20,7 @@ Self-check: uv run python -I bsimvis/app/services/cluster_display.py
 import hashlib
 import json
 import math
+import threading
 
 DEFAULTS = {
     "min_members": 3,
@@ -102,6 +103,10 @@ def _cap_depth(nodes, kept, depth):
 
 
 def load_display_tree(r, collection, algo, cache=None, **opts):
+    return _load(r, collection, algo, cache, **opts)[0]
+
+
+def _load(r, collection, algo, cache=None, **opts):
     """{cid: {"parent", "depth", "n", "coh"}} of the kept clusters of one tree.
 
     `algo` is the final key namespace (axis / engine / node type already in it).
@@ -116,14 +121,14 @@ def load_display_tree(r, collection, algo, cache=None, **opts):
     o = {**DEFAULTS, **opts}
     raw = r.get(f"{collection}:bin_cluster:tree_links:{algo}")
     if not raw:
-        return {}
+        return {}, ""
     tag = hashlib.sha1(raw if isinstance(raw, bytes) else raw.encode())
     tag.update(json.dumps(o, sort_keys=True).encode())
     ck = f"files:clusterdisp:{collection}:{algo}:{tag.hexdigest()[:16]}"
     if cache is not None:
         hit = cache.get(ck)
         if hit:
-            return json.loads(hit)
+            return json.loads(hit), tag.hexdigest()[:16]
 
     links = real_links(json.loads(raw))
     size = {str(l["child"]): int(l.get("size") or 0) for l in links}
@@ -143,7 +148,69 @@ def load_display_tree(r, collection, algo, cache=None, **opts):
     out = {c: {**nodes[c], **v} for c, v in prune(nodes, **o).items()}
     if cache is not None:
         cache.setex(ck, 3600, json.dumps(out))
-    return out
+    return out, tag.hexdigest()[:16]
+
+
+# --- precomputed file -> deepest kept cluster, stored in Kvrocks -------------
+# `{coll}:bin_cluster:display:{algo}` holds the tag of the current hash
+# `...:display:{algo}:{tag}` (file_id -> cid). The tag hashes the tree blob and
+# the display opts, so a recluster makes it stale and the next read rebuilds it.
+_BUILD_LOCKS = {}
+
+
+def _dkey(collection, algo):
+    return f"{collection}:bin_cluster:display:{algo}"
+
+
+def clear_display(r, collection, algo):
+    k = _dkey(collection, algo)
+    tag = r.get(k)
+    if tag:
+        r.delete(f"{k}:{tag.decode() if isinstance(tag, bytes) else tag}")
+    r.delete(k)
+
+
+def display_assignment(r, collection, algo, tree, tag, only=None):
+    """{file_id: deepest kept cid} from the stored hash, built on first use.
+
+    `only` (a set of file ids) limits the answer; absent ids are unclustered.
+    """
+    k = _dkey(collection, algo)
+
+    def current():
+        t = r.get(k)
+        return (t.decode() if isinstance(t, bytes) else t) == tag
+
+    if not current():
+        lock = _BUILD_LOCKS.setdefault((collection, algo), threading.Lock())
+        with lock:  # one build at a time; others wait, then find it ready
+            if not current():
+                _build_display(r, collection, algo, tree, tag)
+    hk = f"{k}:{tag}"
+    dec = lambda v: v.decode() if isinstance(v, bytes) else v
+    if only is not None and len(only) * 4 < r.hlen(hk):
+        ids = list(only)
+        out = {}
+        for i in range(0, len(ids), 5000):
+            chunk = ids[i : i + 5000]
+            for f, c in zip(chunk, r.hmget(hk, chunk)):
+                if c:
+                    out[f] = dec(c)
+        return out
+    allf = {dec(f): dec(c) for f, c in r.hgetall(hk).items()}
+    return allf if only is None else {f: c for f, c in allf.items() if f in only}
+
+
+def _build_display(r, collection, algo, tree, tag):
+    k = _dkey(collection, algo)
+    clear_display(r, collection, algo)
+    hk = f"{k}:{tag}"
+    for c in sorted(tree, key=lambda c: tree[c]["depth"]):  # deeper wins
+        mem = r.smembers(f"{collection}:bin_cluster:{algo}:{c}:members")
+        ids = [m.decode() if isinstance(m, bytes) else str(m) for m in mem]
+        for i in range(0, len(ids), 5000):
+            r.hset(hk, mapping={f: c for f in ids[i : i + 5000]})
+    r.set(k, tag)
 
 
 def demo():

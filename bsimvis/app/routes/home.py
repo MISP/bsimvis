@@ -189,6 +189,37 @@ def get_home_insights():
     return _cached("insights", INSIGHTS_TTL, build)
 
 
+# ponytail: fixed floors, move to bsimvis_config.toml if a collection needs other ones.
+OVERVIEW_MIN_AVG_FUNCS = 10  # packer stubs and tiny droppers hold 2-5 functions
+OVERVIEW_MAX_PACKED = 0.5  # share of members tagged packer:* / runtime-packer:*
+
+
+def _packed_share(meta):
+    """Highest coverage of a packer tag in the cluster's file tag trees."""
+    best = 0.0
+
+    def visit(nodes):
+        nonlocal best
+        for n in nodes or []:
+            tid = str(n.get("tag_id") or "").lower()
+            if tid.startswith(("packer", "runtime-packer")):
+                best = max(best, float(n.get("coverage") or 0))
+            visit(n.get("children"))
+
+    for key in ("file_tag_distribution", "tag_distribution"):
+        for roots in (meta.get(key) or {}).values():
+            visit(roots)
+    return best
+
+
+def is_noise_cluster(meta):
+    """A cluster of packed stubs or near-empty files: not a family worth showing first."""
+    avg = (meta.get("function_count_stats") or {}).get("avg")
+    if avg is not None and avg < OVERVIEW_MIN_AVG_FUNCS:
+        return True
+    return _packed_share(meta) >= OVERVIEW_MAX_PACKED
+
+
 def get_collection_overview():
     """One collection's landing cards: top families, recent and rare files (cached)."""
     from bsimvis.app.routes.search_file import search_files
@@ -199,7 +230,14 @@ def get_collection_overview():
         return {"error": "No collection specified"}, 400
 
     def build():
-        fams = _call(search_files_by_cluster, collection=col, limit=6, per_cluster=0)
+        from bsimvis.app.services.cluster_utils import get_cluster_metas
+
+        fams = _call(search_files_by_cluster, collection=col, limit=40, per_cluster=0)
+        roots = fams.get("clusters", [])
+        metas = get_cluster_metas(
+            get_redis(), col, fams.get("algo"), [c["cid"] for c in roots], "bin_cluster"
+        )
+        kept = [c for c in roots if not is_noise_cluster(metas.get(str(c["cid"]), {}))]
         recent = _call(
             search_files,
             collection=col,
@@ -222,8 +260,9 @@ def get_collection_overview():
                         "architecture_distribution",
                     )
                 }
-                for c in fams.get("clusters", [])
+                for c in kept[:6]
             ],
+            "families_hidden": len(roots) - len(kept),
             "families_total": fams.get("roots_total", 0),
             "unclustered_total": fams.get("unclustered_total", 0),
             "recent": recent.get("files", []),

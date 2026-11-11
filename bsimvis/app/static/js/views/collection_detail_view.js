@@ -216,6 +216,7 @@ window.CollectionDetailView = {
         const famCard = rest.length ? `<div class="cov-card">
             ${this._ovTitle('fa-solid fa-bullseye', 'var(--success)', 'Families', 'File clusters of this collection, largest first. A name opens the cluster; the layers icon opens its N-way diff.', ov.families_total)}
             <div class="cov-list">${rest.map(f => this._ovFamRow(f, max)).join('')}</div>
+            ${ov.families_hidden ? `<div class="dim" style="font-size:0.72rem;">${Number(ov.families_hidden).toLocaleString()} small or packed cluster${ov.families_hidden > 1 ? 's' : ''} not shown</div>` : ''}
             <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', 'var(--success)', 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']))}</div>
         </div>` : '';
         const recentCard = `<div class="cov-card">

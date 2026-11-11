@@ -34,7 +34,7 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'region,role', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '' };
+        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '' };
         // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview)
         const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'];
         const q = new URLSearchParams(window.location.search);
@@ -56,7 +56,7 @@ window.NwayLineageView = {
         const lensOf = g => {
             const first = (g || '').split(',')[0];
             const l = NL.LENSES.find(x => x[2] === g) || NL.LENSES.find(x => x[2].split(',')[0] === first);
-            return l ? l[0] : 'modules';
+            return l ? l[0] : 'lanes';
         };
         let twinsOk = true, childrenOk = true;
         // Merge files: Cluster needs a cluster to open (the table's rule: the page's cluster_uuid or the shared cluster the panel found)

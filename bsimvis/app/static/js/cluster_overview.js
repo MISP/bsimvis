@@ -248,7 +248,9 @@
     async function loadLineage(el, v, c) {
         const host = el.querySelector('#cov-lin');
         const uuid = c.cluster_uuid;
-        const qs = new URLSearchParams({ cluster_uuid: uuid, axis: v.axis, columns: 'files', order: 'tree', scope: 'code', tab: 'all', group: 'region,role' });
+        const qs = new URLSearchParams({ cluster_uuid: uuid, axis: v.axis, columns: 'files', order: 'tree', scope: 'code', tab: 'all', group: 'lane,region' });
+        // the table's group_* tuning (lane tiers, fold, merge), as the lineage page sends it: the Lanes lens matches its tab
+        for (const [k, val] of Object.entries(NwayPanel.DEFAULTS)) if (k.startsWith('group_') && val !== '' && val != null) qs.set(k, String(val));
         if (v.params && v.params.pool) qs.set('pool', v.params.pool);
         else qs.set('collection', v.collection || '');
         try {
@@ -261,8 +263,8 @@
             // same default as the lineage page: the remembered pick, else Ring for a wide enough set (NwayRing.autoView)
             let mem = ''; try { mem = localStorage.getItem('nway.lview') || ''; } catch (e) { /* ignore */ }
             const pick = window.NwayRing ? window.NwayRing.chooseView('', mem, doc).view : 'tree';
-            linInst = window.NwayLineage.mount(host, { view: pick === 'tracks' || pick === 'ring' ? pick : 'tree', lens: 'modules', laneNames: false, onNode: () => true });
-            linInst.setDoc(doc, 'modules');
+            linInst = window.NwayLineage.mount(host, { view: pick === 'tracks' || pick === 'ring' ? pick : 'tree', lens: 'lanes', laneNames: false, onNode: () => true });
+            linInst.setDoc(doc, 'lanes');
         } catch (e) {
             if (host.isConnected) host.innerHTML = `<div class="dim" style="font-size:0.78rem; padding:10px;">${escapeHtml(e.message || String(e))}</div>`;
         }

@@ -317,6 +317,37 @@ def get_collection_overview():
         metas = get_cluster_metas(
             r, col, fams.get("algo"), list(_all_cids(roots)), "bin_cluster"
         )
+        loose_total = fams.get("unclustered_total", 0)
+        rare = None
+        if not fams.get("has_clusters"):
+            # No stored display tree (clusters from an older build): the flat root list
+            # still names them; its rows carry the meta the noise filter reads.
+            from bsimvis.app.routes.bin_cluster import list_bin_clusters
+
+            flat = _call(
+                list_bin_clusters,
+                collection=col,
+                limit=40,
+                sort_by="count",
+                sort_order="desc",
+            ).get("results", [])
+            roots = [
+                {
+                    "cid": c.get("cluster_id"),
+                    "cluster_uuid": c.get("cluster_uuid"),
+                    "cluster_name": c.get("cluster_name"),
+                    "cohesion_score": c.get("cohesion_score"),
+                    "matching": c.get("count", 0),
+                    "children": [],
+                }
+                for c in flat
+            ]
+            metas = {str(c.get("cluster_id")): c for c in flat}
+            if roots:
+                loose_total = max(
+                    0, fams.get("total", 0) - sum(c["matching"] for c in roots)
+                )
+                rare = []  # which files are outside a flat cluster is not indexed
         tree, kept, hidden = pick_families(roots, metas)
         recent = _call(
             search_files,
@@ -325,16 +356,19 @@ def get_collection_overview():
             sort_by="entry_date",
             sort_order="desc",
         )
-        rare = _call(search_files_by_cluster, collection=col, unclustered=1, limit=8)
+        if rare is None:
+            rare = _call(
+                search_files_by_cluster, collection=col, unclustered=1, limit=8
+            ).get("files", [])
         return {
-            "has_clusters": fams.get("has_clusters", False),
+            "has_clusters": bool(roots),
             "families": kept,
             "family_map": tree,
             "families_hidden": hidden,
             "families_total": len(kept),
-            "unclustered_total": fams.get("unclustered_total", 0),
+            "unclustered_total": loose_total,
             "recent": recent.get("files", []),
-            "rare": rare.get("files", []),
+            "rare": rare,
             "uploads": _uploads(r, col),
             "arch": _buckets(r, col, "language_id"),
             "filetype": _buckets(r, col, "filetype", 20),

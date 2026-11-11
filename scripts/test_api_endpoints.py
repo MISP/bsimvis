@@ -2469,7 +2469,20 @@ def run_all_tests():
     check(
         "collection overview returns families, recent and rare files",
         isinstance(ov, dict)
-        and all(k in ov for k in ("families", "recent", "rare", "unclustered_total")),
+        and all(
+            k in ov
+            for k in (
+                "families",
+                "recent",
+                "rare",
+                "unclustered_total",
+                "uploads",
+                "arch",
+                "tags",
+            )
+        )
+        and (ov.get("uploads") or {}).get("counts") is not None
+        and sum(ov["uploads"]["counts"]) >= 1,
         str(sorted(ov.keys()) if isinstance(ov, dict) else ov),
     )
 

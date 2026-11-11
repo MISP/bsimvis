@@ -220,6 +220,40 @@ def is_noise_cluster(meta):
     return _packed_share(meta) >= OVERVIEW_MAX_PACKED
 
 
+def _uploads(r, col, bins=24):
+    """Files added over time: `bins` equal spans between the first and last entry_date."""
+    key = f"{col}:idx:file:entry_date"
+    lo, hi = r.zrange(key, 0, 0, withscores=True), r.zrange(
+        key, -1, -1, withscores=True
+    )
+    if not lo:
+        return None
+    a, b = float(lo[0][1]), float(hi[0][1])
+    step = max((b - a) / bins, 1.0)
+    pipe = r.pipeline(transaction=False)
+    for i in range(bins):
+        left = a + i * step
+        pipe.zcount(key, left if i == 0 else f"({left}", a + (i + 1) * step)
+    return {"start": a, "step": step, "counts": pipe.execute()}
+
+
+def _buckets(r, col, field, limit=8):
+    """Largest values of an indexed file field, by bucket size (registry + SCARD)."""
+    keys = [
+        k.decode() if isinstance(k, bytes) else k
+        for k in r.smembers(f"{col}:reg:file:{field}")
+    ]
+    if not keys or len(keys) > 5000:
+        return []
+    pipe = r.pipeline(transaction=False)
+    for k in keys:
+        pipe.scard(k)
+    prefix = f"{col}:idx:file:{field}:"
+    sized = [(k[len(prefix) :], n) for k, n in zip(keys, pipe.execute()) if n]
+    sized.sort(key=lambda kv: -kv[1])
+    return [{"value": v, "count": n} for v, n in sized[:limit]]
+
+
 def get_collection_overview():
     """One collection's landing cards: top families, recent and rare files (cached)."""
     from bsimvis.app.routes.search_file import search_files
@@ -234,8 +268,9 @@ def get_collection_overview():
 
         fams = _call(search_files_by_cluster, collection=col, limit=40, per_cluster=0)
         roots = fams.get("clusters", [])
+        r = get_redis()
         metas = get_cluster_metas(
-            get_redis(), col, fams.get("algo"), [c["cid"] for c in roots], "bin_cluster"
+            r, col, fams.get("algo"), [c["cid"] for c in roots], "bin_cluster"
         )
         kept = [c for c in roots if not is_noise_cluster(metas.get(str(c["cid"]), {}))]
         recent = _call(
@@ -257,17 +292,19 @@ def get_collection_overview():
                         "cluster_name",
                         "cohesion_score",
                         "matching",
-                        "architecture_distribution",
                     )
                 }
-                for c in kept[:6]
+                for c in kept
             ],
             "families_hidden": len(roots) - len(kept),
             "families_total": fams.get("roots_total", 0),
             "unclustered_total": fams.get("unclustered_total", 0),
             "recent": recent.get("files", []),
             "rare": rare.get("files", []),
-            "bin_cluster_map": recent.get("bin_cluster_map", {}),
+            "uploads": _uploads(r, col),
+            "arch": _buckets(r, col, "language_id"),
+            "filetype": _buckets(r, col, "filetype", 20),
+            "tags": _top_tags([{"name": col}], limit=12)["top"],
         }
 
     if request.args.get("refresh") == "true":

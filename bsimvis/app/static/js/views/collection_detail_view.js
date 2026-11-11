@@ -75,6 +75,8 @@ window.CollectionDetailView = {
                 container.innerHTML = this._renderPage({ ...collection, counts }, associatedPools, collectionActiveJobs, params);
             }
 
+            this._loadOverview(collName, { ...(collection || {}), counts });
+
             if (this.refreshInterval) clearInterval(this.refreshInterval);
             this.refreshInterval = setInterval(async () => {
                 try {
@@ -96,6 +98,151 @@ window.CollectionDetailView = {
         } catch (e) {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
         }
+    },
+
+    /** Landing cards: top families, recent and rare files. One cached call; hidden when the collection is empty. */
+    async _loadOverview(col, coll = {}) {
+        const host = document.getElementById('coll-overview');
+        if (!host) return;
+        try {
+            const res = await fetch(`/api/index/collection/overview?collection=${encodeURIComponent(col)}`);
+            if (!res.ok) return;
+            this._ov = await res.json();
+            this._ovTab = 'recent';
+            this._ovCol = col;
+            this._ovColl = coll;
+            this._spotBody = null;
+            host.innerHTML = this._renderOverview();
+            this._loadSpot();
+        } catch (e) {
+            console.error('Overview failed', e);
+        }
+    },
+
+    /** Same look as the N-way Functions tabs: Core / Common / Rare / Unique. */
+    _OV_TIERS: [
+        ['core', 'Core', 'fa-solid fa-bullseye', 'var(--success)'],
+        ['common', 'Common', 'fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'],
+        ['rare', 'Rare', 'fa-regular fa-circle', 'var(--text-muted, #888)'],
+        ['unique', 'Unique', 'fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'],
+    ],
+
+    /** The top family's function tiers and a small lineage tree, from one lineage call. Quiet when it cannot be built. */
+    async _loadSpot() {
+        const spot = ((this._ov || {}).families || [])[0];
+        const col = this._ovCol;
+        if (!spot) return;
+        const put = html => {
+            this._spotBody = html;
+            const el = document.getElementById('ov-spot-body');
+            if (el && this._ovCol === col) el.innerHTML = html;
+        };
+        try {
+            const qs = new URLSearchParams({ cluster_uuid: spot.cluster_uuid, axis: 'overall', columns: 'files', order: 'tree', collection: col });
+            const res = await fetch(`/api/bin_sim/nway/lineage?${qs}`);
+            const doc = await res.json();
+            if (!res.ok || !(doc.nodes || []).length) throw new Error(doc.error || `HTTP ${res.status}`);
+            put(this._spotHtmlBody(doc, spot));
+        } catch (e) {
+            put('<div class="dim" style="font-size:0.78rem;">Function preview not built for this family. Open Lineage to build it.</div>');
+        }
+    },
+
+    _spotHtmlBody(doc, spot) {
+        const n = k => Number(((doc.counts || {})[k] || {}).code || 0);
+        const parts = this._OV_TIERS.map(([k, label, icon, color]) => ({ k, label, icon, color, v: n(k) })).filter(t => t.v > 0);
+        const total = parts.reduce((a, t) => a + t.v, 0);
+        const bar = total ? `<div style="display:flex; height:8px; border-radius:4px; overflow:hidden; background:var(--hover);">${parts.map(t => `<span style="flex:${t.v}; background:${t.color};" title="${escapeAttr(`${t.label}: ${t.v.toLocaleString()}`)}"></span>`).join('')}</div>
+            <div style="display:flex; gap:14px; flex-wrap:wrap; font-size:0.75rem; margin-top:6px;">${parts.map(t => `<span style="color:${t.color};"><i class="${t.icon}"></i> ${t.label} <b>${t.v.toLocaleString()}</b></span>`).join('')}</div>` : '';
+        return `<div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;">
+            <div style="flex:1; min-width:220px;">${bar}</div>
+            <div style="flex:0 0 240px; max-width:100%;">${this._miniTree(doc)}</div></div>`;
+    },
+
+    _miniTree(doc) {
+        const kids = {};
+        (doc.edges || []).forEach(e => (kids[e.parent] = kids[e.parent] || []).push(e.child));
+        const names = Object.fromEntries((doc.nodes || []).map(x => [x.id, x.file_name]));
+        const MAX = 30, pos = {};
+        let row = 0, maxD = 0;
+        const walk = (id, d) => {
+            if (row >= MAX || pos[id]) return;
+            pos[id] = { d, r: row++ };
+            maxD = Math.max(maxD, d);
+            (kids[id] || []).forEach(k => walk(k, d + 1));
+        };
+        walk(doc.root, 0);
+        const W = 240, H = Math.max(40, row * 11 + 14), sx = maxD ? (W - 30) / maxD : 0;
+        const xy = id => [15 + pos[id].d * sx, 8 + pos[id].r * 11];
+        const lines = (doc.edges || []).filter(e => pos[e.parent] && pos[e.child]).map(e => {
+            const [x1, y1] = xy(e.parent), [x2, y2] = xy(e.child);
+            return `<path d="M${x1} ${y1}H${(x1 + x2) / 2}V${y2}H${x2}" fill="none" stroke="var(--border)" stroke-width="1.5"/>`;
+        }).join('');
+        const dots = Object.keys(pos).map(id => {
+            const [x, y] = xy(id);
+            const root = id === doc.root;
+            return `<circle cx="${x}" cy="${y}" r="${root ? 4.5 : 3}" fill="${root ? 'var(--accent)' : 'var(--info, #3b82f6)'}"><title>${escapeHtml(names[id] || id)}</title></circle>`;
+        }).join('');
+        const more = (doc.nodes || []).length > row ? `<div class="dim" style="font-size:0.7rem;">${row} of ${(doc.nodes || []).length.toLocaleString()} files</div>` : '';
+        return `<div style="max-height:170px; overflow:auto;"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Lineage tree">${lines}${dots}</svg></div>${more}`;
+    },
+
+    _ovBtn(icon, tip, url, label = '') {
+        return UI.Button.render({ className: 'btn-code-action', icon, label, tooltip: tip, onClick: `Nav.openPath(${jsString(url)}, event)` });
+    },
+
+    _ovCard(f) {
+        const uuid = f.cluster_uuid;
+        const col = this._ovCol;
+        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0 }], true);
+        const name = f.cluster_name || `Cluster ${f.cid}`;
+        const filesUrl = `${Nav.buildUIUrl(col, ['files'])}?bin_cluster_uuid=${encodeURIComponent(uuid)}`;
+        const nwayUrl = `/diff/nway?${new URLSearchParams({ cluster_uuid: uuid, axis: 'overall', collection: col })}`;
+        return `<div class="row-flex" style="display:flex; align-items:center; gap:8px; padding:7px 0; border-top:1px solid var(--border);">
+            ${card || ''}
+            <a class="fb-link" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, 'overall')" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
+            <span class="dim" style="font-size:0.75rem;">${Number(f.matching || 0).toLocaleString()} files</span>
+            ${this._ovBtn('fa-solid fa-file-code', 'Files of this cluster', filesUrl)}
+            ${this._ovBtn('fa-solid fa-table-columns', 'Functions: N-way diff of this cluster', nwayUrl)}
+        </div>`;
+    },
+
+    _ovTabSwitch(tab) {
+        this._ovTab = tab;
+        document.getElementById('coll-overview').innerHTML = this._renderOverview();
+    },
+
+    _renderOverview() {
+        const ov = this._ov || {};
+        const col = this._ovCol;
+        const fams = ov.families || [];
+        const rows = (this._ovTab === 'rare' ? ov.rare : ov.recent) || [];
+        if (!rows.length && !fams.length) return '';
+        const title = (icon, text, right = '') => `<div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--dim); margin-bottom:10px; display:flex; align-items:center; gap:7px;"><i class="${icon}"></i> ${text}<span style="margin-left:auto;">${right}</span></div>`;
+        const box = inner => `<div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:14px 16px; min-width:0;">${inner}</div>`;
+        const spot = fams[0];
+        const lq = spot ? new URLSearchParams({ cluster_uuid: spot.cluster_uuid, axis: 'overall', collection: col }) : null;
+        const spotBtns = spot ? this._ovBtn('fa-solid fa-code-branch', 'Lineage of this family', `/diff/nway/lineage?${lq}`) + this._ovBtn('fa-solid fa-circle-nodes', 'Ring view of this family', `/diff/nway/lineage?${lq}&lview=ring`) : '';
+        const spotHtml = spot ? box(title('fa-solid fa-star', 'Top family', spotBtns) + this._ovCard(spot).replace('border-top:1px solid var(--border);', '') +
+            `<div id="ov-spot-body" style="margin-top:10px;">${this._spotBody || '<div class="dim" style="font-size:0.78rem;"><i class="fa-solid fa-spinner fa-spin"></i> Aligning functions…</div>'}</div>`) : '';
+        const c = this._ovColl || {}, cn = c.counts || {};
+        const stat = (icon, label, v) => `<div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:10px 16px; min-width:120px;"><div class="dim" style="font-size:0.65rem; text-transform:uppercase; letter-spacing:1px;"><i class="${icon}"></i> ${label}</div><div style="font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums;">${v === undefined ? '\u2014' : Number(v).toLocaleString()}</div></div>`;
+        const statsHtml = `<div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px;">${stat('fa-solid fa-file-code', 'Files', c.total_files)}${stat('fa-solid fa-bullseye', 'Clusters', cn.file_clusters)}${stat('fa-regular fa-circle', 'No cluster', ov.unclustered_total)}${stat('fa-solid fa-code', 'Functions', c.total_functions)}</div>`;
+        const tab = (k, label, n) => `<button class="bsim-tab${this._ovTab === k ? ' active' : ''}" onclick="CollectionDetailView._ovTabSwitch('${k}')">${label}${n ? ` <span class="dim">${Number(n).toLocaleString()}</span>` : ''}</button>`;
+        const fileRows = rows.map(f => `<tr style="border-top:1px solid var(--border);">
+            <td style="padding:6px 8px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${EntityRenderer.renderFileName(f.file_name, f.file_md5, col)}</td>
+            <td style="padding:6px 8px; text-align:right;" class="dim">${Number(f.function_count || 0).toLocaleString()} fn</td>
+            <td style="padding:6px 8px; text-align:right;" class="dim">${f.entry_date ? escapeHtml(typeof window.formatDate === 'function' ? formatDate(toEpochMs(f.entry_date)) : String(f.entry_date)) : ''}</td></tr>`).join('');
+        const filesUrl = Nav.buildUIUrl(col, ['files']);
+        return `${statsHtml}<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap:20px; align-items:start; margin-bottom:20px;">
+            <div style="display:flex; flex-direction:column; gap:20px; min-width:0;">
+                ${spotHtml}
+                ${box(title('fa-solid fa-file-code', 'Files', this._ovBtn('fa-solid fa-up-right-from-square', 'Open all files, grouped by cluster', filesUrl)) +
+                    `<div class="bsim-tabbar" style="margin-bottom:8px;">${tab('recent', 'Recent')}${tab('rare', 'No cluster', ov.unclustered_total)}</div>
+                    <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:0.82rem;">${fileRows || '<tr><td class="dim" style="padding:10px;">Nothing here.</td></tr>'}</table></div>`)}
+            </div>
+            ${fams.length > 1 ? box(title('fa-solid fa-bullseye', `Families (${fams.length} of ${ov.families_total})`, this._ovBtn('fa-solid fa-up-right-from-square', 'All file clusters', Nav.buildUIUrl(col, ['files', 'clusters']))) + fams.slice(1).map(f => this._ovCard(f)).join('')) : ''}
+        </div>`;
     },
 
     _statusBadge(status) {
@@ -239,6 +386,8 @@ window.CollectionDetailView = {
                     <span style="color:var(--text); font-weight:600;">${updated}</span>
                 </div>
             </div>
+
+            <div id="coll-overview"></div>
 
             <!-- MAIN GRID -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">

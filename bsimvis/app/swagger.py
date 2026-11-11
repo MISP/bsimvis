@@ -438,6 +438,21 @@ class HomeInsights(Resource):
         return get_home_insights()
 
 
+@ns_index.route("/collection/overview")
+class CollectionOverview(Resource):
+    @ns_index.doc(
+        params={
+            "collection": "Collection name (required)",
+            "refresh": "true to bypass the 120s cache",
+        }
+    )
+    def get(self):
+        """Landing cards of one collection: top file families, recent files, rare (unclustered) files (cached 120s)."""
+        from bsimvis.app.routes.home import get_collection_overview
+
+        return get_collection_overview()
+
+
 @ns_index.route("/languages")
 class IndexLanguages(Resource):
     def get(self):

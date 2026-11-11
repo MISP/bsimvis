@@ -412,6 +412,7 @@
     const FOCUS_KEYS = ['focus', 'focus_rule', 'side', 'child_presence'];
 
     window.ClusterOverview = {
+        ensureCss: css, // the cov-* cards, reused by the collection overview
         render(el, v) {
             const c = v.clusterMapByUuid[v.selectedClusterUuid];
             if (!el || !c) return;

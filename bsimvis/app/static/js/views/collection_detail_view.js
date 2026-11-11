@@ -100,7 +100,7 @@ window.CollectionDetailView = {
         }
     },
 
-    /** Landing cards: top families, recent and rare files. One cached call; hidden when the collection is empty. */
+    /** Landing cards (cluster Overview look): top family, families, recent and unclustered files. */
     async _loadOverview(col, coll = {}) {
         const host = document.getElementById('coll-overview');
         if (!host) return;
@@ -108,10 +108,9 @@ window.CollectionDetailView = {
             const res = await fetch(`/api/index/collection/overview?collection=${encodeURIComponent(col)}`);
             if (!res.ok) return;
             this._ov = await res.json();
-            this._ovTab = 'recent';
             this._ovCol = col;
             this._ovColl = coll;
-            this._spotBody = null;
+            if (window.ClusterOverview) ClusterOverview.ensureCss();
             host.innerHTML = this._renderOverview();
             this._loadSpot();
         } catch (e) {
@@ -119,7 +118,7 @@ window.CollectionDetailView = {
         }
     },
 
-    /** Same look as the N-way Functions tabs: Core / Common / Rare / Unique. */
+    // The N-way Functions tabs' tiers: same icons and colours.
     _OV_TIERS: [
         ['core', 'Core', 'fa-solid fa-bullseye', 'var(--success)'],
         ['common', 'Common', 'fa-solid fa-circle-half-stroke', 'var(--warning, #d97706)'],
@@ -127,122 +126,119 @@ window.CollectionDetailView = {
         ['unique', 'Unique', 'fa-solid fa-fingerprint', 'var(--token-instruction, #e11d48)'],
     ],
 
-    /** The top family's function tiers and a small lineage tree, from one lineage call. Quiet when it cannot be built. */
+    _ovNway(uuid, extra = {}) {
+        return `/diff/nway?${new URLSearchParams({ cluster_uuid: uuid, axis: 'overall', collection: this._ovCol, ...extra })}`;
+    },
+
+    _ovBtn(icon, color, label, url, tip = '') {
+        return `<button class="btn-code-action cov-btn" style="--c:${color}" ${tip ? `title="${escapeAttr(tip)}"` : ''} onclick="${escapeAttr(`Nav.openPath(${jsString(url)}, event)`)}"><i class="${icon}"></i> ${escapeHtml(label)}</button>`;
+    },
+
+    _ovTitle(icon, color, name, info, big) {
+        return `<div class="cov-title"><span class="cov-ico" style="--c:${color}"><i class="${icon}"></i></span><b>${name}</b>
+            <i class="fa-solid fa-circle-info cov-info" title="${escapeAttr(info)}"></i>${big === undefined ? '' : `<span class="cov-big">${Number(big || 0).toLocaleString()}</span>`}</div>`;
+    },
+
+    /** The top family's Core / Common / Rare / Unique split: one /nway call, same progress and build gate as the N-way table. */
     async _loadSpot() {
         const spot = ((this._ov || {}).families || [])[0];
-        const col = this._ovCol;
-        if (!spot) return;
-        const put = html => {
-            this._spotBody = html;
-            const el = document.getElementById('ov-spot-body');
-            if (el && this._ovCol === col) el.innerHTML = html;
-        };
+        const host = document.getElementById('cdo-fn');
+        if (!spot || !host || !window.NwayPanel) return;
+        const qs = new URLSearchParams({ cluster_uuid: spot.cluster_uuid, axis: 'overall', columns: 'files', tab: 'all', scope: 'code', limit: '0', collection: this._ovCol });
+        const pid = NwayPanel.progressId();
+        const stop = new AbortController();
+        host.innerHTML = '';
+        const done = NwayPanel.busy(host, pid, { inline: true, onCancel: () => stop.abort() });
+        let res, d;
         try {
-            const qs = new URLSearchParams({ cluster_uuid: spot.cluster_uuid, axis: 'overall', columns: 'files', order: 'tree', collection: col });
-            const res = await fetch(`/api/bin_sim/nway/lineage?${qs}`);
-            const doc = await res.json();
-            if (!res.ok || !(doc.nodes || []).length) throw new Error(doc.error || `HTTP ${res.status}`);
-            put(this._spotHtmlBody(doc, spot));
+            res = await fetch(`/api/bin_sim/nway?${qs}&progress_id=${pid}`, { signal: stop.signal });
+            d = await res.json().catch(() => ({}));
         } catch (e) {
-            put('<div class="dim" style="font-size:0.78rem;">Function preview not built for this family. Open Lineage to build it.</div>');
+            d = { message: stop.signal.aborted ? 'Cancelled.' : String(e) };
         }
+        done();
+        if (!host.isConnected) return;
+        if (res && res.status === 428 && d.error === 'needs_build') return NwayPanel.buildGate(host, d, qs, () => this._loadSpot());
+        if (!res || !res.ok) {
+            host.innerHTML = `<div class="dim" style="font-size:0.78rem;">${escapeHtml(d.message || d.error || 'N-way diff failed.')}</div>`;
+            return;
+        }
+        const k = d.counts || {};
+        const tiers = this._OV_TIERS.map(([t, label, icon, color]) => ({ t, label, icon, color, v: Number((k[t] || {}).code || 0) }));
+        const tile = x => `<button class="cov-tile" style="--c:${x.color}" onclick="${escapeAttr(`Nav.openPath(${jsString(this._ovNway(spot.cluster_uuid, { tab: x.t }))}, event)`)}"><span><i class="${x.icon}"></i> ${x.label}</span><b>${x.v.toLocaleString()}</b></button>`;
+        const bar = tiers.filter(x => x.v > 0).map(x => `<span style="flex:${x.v}; background:${x.color}" title="${escapeAttr(`${x.label}: ${x.v.toLocaleString()}`)}"></span>`).join('');
+        host.innerHTML = `<div class="cov-tiles" style="grid-template-columns:repeat(4, minmax(0,1fr));">${tiers.map(tile).join('')}</div>${bar ? `<div class="cov-sbar">${bar}</div>` : ''}`;
     },
 
-    _spotHtmlBody(doc, spot) {
-        const n = k => Number(((doc.counts || {})[k] || {}).code || 0);
-        const parts = this._OV_TIERS.map(([k, label, icon, color]) => ({ k, label, icon, color, v: n(k) })).filter(t => t.v > 0);
-        const total = parts.reduce((a, t) => a + t.v, 0);
-        const bar = total ? `<div style="display:flex; height:8px; border-radius:4px; overflow:hidden; background:var(--hover);">${parts.map(t => `<span style="flex:${t.v}; background:${t.color};" title="${escapeAttr(`${t.label}: ${t.v.toLocaleString()}`)}"></span>`).join('')}</div>
-            <div style="display:flex; gap:14px; flex-wrap:wrap; font-size:0.75rem; margin-top:6px;">${parts.map(t => `<span style="color:${t.color};"><i class="${t.icon}"></i> ${t.label} <b>${t.v.toLocaleString()}</b></span>`).join('')}</div>` : '';
-        return `<div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;">
-            <div style="flex:1; min-width:220px;">${bar}</div>
-            <div style="flex:0 0 240px; max-width:100%;">${this._miniTree(doc)}</div></div>`;
-    },
-
-    _miniTree(doc) {
-        const kids = {};
-        (doc.edges || []).forEach(e => (kids[e.parent] = kids[e.parent] || []).push(e.child));
-        const names = Object.fromEntries((doc.nodes || []).map(x => [x.id, x.file_name]));
-        const MAX = 30, pos = {};
-        let row = 0, maxD = 0;
-        const walk = (id, d) => {
-            if (row >= MAX || pos[id]) return;
-            pos[id] = { d, r: row++ };
-            maxD = Math.max(maxD, d);
-            (kids[id] || []).forEach(k => walk(k, d + 1));
-        };
-        walk(doc.root, 0);
-        const W = 240, H = Math.max(40, row * 11 + 14), sx = maxD ? (W - 30) / maxD : 0;
-        const xy = id => [15 + pos[id].d * sx, 8 + pos[id].r * 11];
-        const lines = (doc.edges || []).filter(e => pos[e.parent] && pos[e.child]).map(e => {
-            const [x1, y1] = xy(e.parent), [x2, y2] = xy(e.child);
-            return `<path d="M${x1} ${y1}H${(x1 + x2) / 2}V${y2}H${x2}" fill="none" stroke="var(--border)" stroke-width="1.5"/>`;
-        }).join('');
-        const dots = Object.keys(pos).map(id => {
-            const [x, y] = xy(id);
-            const root = id === doc.root;
-            return `<circle cx="${x}" cy="${y}" r="${root ? 4.5 : 3}" fill="${root ? 'var(--accent)' : 'var(--info, #3b82f6)'}"><title>${escapeHtml(names[id] || id)}</title></circle>`;
-        }).join('');
-        const more = (doc.nodes || []).length > row ? `<div class="dim" style="font-size:0.7rem;">${row} of ${(doc.nodes || []).length.toLocaleString()} files</div>` : '';
-        return `<div style="max-height:170px; overflow:auto;"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Lineage tree">${lines}${dots}</svg></div>${more}`;
-    },
-
-    _ovBtn(icon, tip, url, label = '') {
-        return UI.Button.render({ className: 'btn-code-action', icon, label, tooltip: tip, onClick: `Nav.openPath(${jsString(url)}, event)` });
-    },
-
-    _ovCard(f) {
+    _ovFamRow(f, max, mid = '') {
         const uuid = f.cluster_uuid;
-        const col = this._ovCol;
-        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0 }], true);
         const name = f.cluster_name || `Cluster ${f.cid}`;
-        const filesUrl = `${Nav.buildUIUrl(col, ['files'])}?bin_cluster_uuid=${encodeURIComponent(uuid)}`;
-        const nwayUrl = `/diff/nway?${new URLSearchParams({ cluster_uuid: uuid, axis: 'overall', collection: col })}`;
-        return `<div class="row-flex" style="display:flex; align-items:center; gap:8px; padding:7px 0; border-top:1px solid var(--border);">
-            ${card || ''}
-            <a class="fb-link" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, 'overall')" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
-            <span class="dim" style="font-size:0.75rem;">${Number(f.matching || 0).toLocaleString()} files</span>
-            ${this._ovBtn('fa-solid fa-file-code', 'Files of this cluster', filesUrl)}
-            ${this._ovBtn('fa-solid fa-table-columns', 'Functions: N-way diff of this cluster', nwayUrl)}
+        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0 }], true);
+        const w = max ? Math.max(3, (f.matching || 0) / max * 100) : 0;
+        return `<div class="cdo-fam">
+            <span>${card || ''}</span>
+            <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, 'overall')" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
+            ${mid || `<span class="cdo-size"><i style="width:${w.toFixed(1)}%"></i></span>`}
+            <a class="cdo-go" onclick="${escapeAttr(`Nav.openPath(${jsString(this._ovNway(uuid))}, event)`)}" title="Functions: N-way diff of this cluster"><i class="fa-solid fa-layer-group"></i></a>
         </div>`;
     },
 
-    _ovTabSwitch(tab) {
-        this._ovTab = tab;
-        document.getElementById('coll-overview').innerHTML = this._renderOverview();
+    _ovFileRows(files) {
+        const col = this._ovCol;
+        if (!files.length) return '<div class="dim" style="font-size:0.78rem;">None.</div>';
+        return `<div class="cov-list">${files.map(f => {
+            const arch = String(f.language_id || '').split(':')[0];
+            return `<div class="cov-row"><span class="dim"><i class="fa-regular fa-file"></i></span>
+                ${EntityRenderer.renderFileName(f.file_name, f.file_md5, col)}
+                <span>${arch ? `<span class="cov-arch">${escapeHtml(arch)}</span>` : ''}</span>
+                <span class="dim" style="text-align:right" title="Functions">${Number(f.function_count || 0).toLocaleString()}</span></div>`;
+        }).join('')}</div>`;
     },
 
     _renderOverview() {
         const ov = this._ov || {};
         const col = this._ovCol;
         const fams = ov.families || [];
-        const rows = (this._ovTab === 'rare' ? ov.rare : ov.recent) || [];
-        if (!rows.length && !fams.length) return '';
-        const title = (icon, text, right = '') => `<div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; color:var(--dim); margin-bottom:10px; display:flex; align-items:center; gap:7px;"><i class="${icon}"></i> ${text}<span style="margin-left:auto;">${right}</span></div>`;
-        const box = inner => `<div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:14px 16px; min-width:0;">${inner}</div>`;
+        if (!(ov.recent || []).length && !fams.length) return '';
+        const coll = this._ovColl || {};
+        const filesUrl = Nav.buildUIUrl(col, ['files']);
+        const ACC = 'var(--accent)', INFO = 'var(--info, #3b82f6)';
         const spot = fams[0];
         const lq = spot ? new URLSearchParams({ cluster_uuid: spot.cluster_uuid, axis: 'overall', collection: col }) : null;
-        const spotBtns = spot ? this._ovBtn('fa-solid fa-code-branch', 'Lineage of this family', `/diff/nway/lineage?${lq}`) + this._ovBtn('fa-solid fa-circle-nodes', 'Ring view of this family', `/diff/nway/lineage?${lq}&lview=ring`) : '';
-        const spotHtml = spot ? box(title('fa-solid fa-star', 'Top family', spotBtns) + this._ovCard(spot).replace('border-top:1px solid var(--border);', '') +
-            `<div id="ov-spot-body" style="margin-top:10px;">${this._spotBody || '<div class="dim" style="font-size:0.78rem;"><i class="fa-solid fa-spinner fa-spin"></i> Aligning functions…</div>'}</div>`) : '';
-        const c = this._ovColl || {}, cn = c.counts || {};
-        const stat = (icon, label, v) => `<div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:10px 16px; min-width:120px;"><div class="dim" style="font-size:0.65rem; text-transform:uppercase; letter-spacing:1px;"><i class="${icon}"></i> ${label}</div><div style="font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums;">${v === undefined ? '\u2014' : Number(v).toLocaleString()}</div></div>`;
-        const statsHtml = `<div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px;">${stat('fa-solid fa-file-code', 'Files', c.total_files)}${stat('fa-solid fa-bullseye', 'Clusters', cn.file_clusters)}${stat('fa-regular fa-circle', 'No cluster', ov.unclustered_total)}${stat('fa-solid fa-code', 'Functions', c.total_functions)}</div>`;
-        const tab = (k, label, n) => `<button class="bsim-tab${this._ovTab === k ? ' active' : ''}" onclick="CollectionDetailView._ovTabSwitch('${k}')">${label}${n ? ` <span class="dim">${Number(n).toLocaleString()}</span>` : ''}</button>`;
-        const fileRows = rows.map(f => `<tr style="border-top:1px solid var(--border);">
-            <td style="padding:6px 8px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${EntityRenderer.renderFileName(f.file_name, f.file_md5, col)}</td>
-            <td style="padding:6px 8px; text-align:right;" class="dim">${Number(f.function_count || 0).toLocaleString()} fn</td>
-            <td style="padding:6px 8px; text-align:right;" class="dim">${f.entry_date ? escapeHtml(typeof window.formatDate === 'function' ? formatDate(toEpochMs(f.entry_date)) : String(f.entry_date)) : ''}</td></tr>`).join('');
-        const filesUrl = Nav.buildUIUrl(col, ['files']);
-        return `${statsHtml}<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap:20px; align-items:start; margin-bottom:20px;">
-            <div style="display:flex; flex-direction:column; gap:20px; min-width:0;">
-                ${spotHtml}
-                ${box(title('fa-solid fa-file-code', 'Files', this._ovBtn('fa-solid fa-up-right-from-square', 'Open all files, grouped by cluster', filesUrl)) +
-                    `<div class="bsim-tabbar" style="margin-bottom:8px;">${tab('recent', 'Recent')}${tab('rare', 'No cluster', ov.unclustered_total)}</div>
-                    <div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:0.82rem;">${fileRows || '<tr><td class="dim" style="padding:10px;">Nothing here.</td></tr>'}</table></div>`)}
-            </div>
-            ${fams.length > 1 ? box(title('fa-solid fa-bullseye', `Families (${fams.length} of ${ov.families_total})`, this._ovBtn('fa-solid fa-up-right-from-square', 'All file clusters', Nav.buildUIUrl(col, ['files', 'clusters']))) + fams.slice(1).map(f => this._ovCard(f)).join('')) : ''}
+        const spotCard = spot ? `<div class="cov-card">
+            ${this._ovTitle('fa-solid fa-star', ACC, 'Top family', 'The largest file cluster, and how its functions split across its files: Core in nearly all, Common in many, Rare in a few, Unique in one.', spot.matching)}
+            ${this._ovFamRow(spot, 0, `<span class="dim" style="font-size:0.72rem;">coh ${Number(spot.cohesion_score || 0).toFixed(2)}</span>`)}
+            <div id="cdo-fn" style="display:flex; flex-direction:column; gap:10px;"></div>
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-layer-group', INFO, 'Functions', this._ovNway(spot.cluster_uuid), 'N-way diff of this family')}${this._ovBtn('fa-solid fa-code-branch', ACC, 'Lineage', `/diff/nway/lineage?${lq}`, 'Lineage of this family')}${this._ovBtn('fa-solid fa-circle-nodes', ACC, 'Ring', `/diff/nway/lineage?${lq}&lview=ring`, 'Ring view of this family')}</div>
+        </div>` : '';
+        const rest = fams.slice(1);
+        const max = Math.max(1, ...rest.map(f => f.matching || 0));
+        const famCard = rest.length ? `<div class="cov-card">
+            ${this._ovTitle('fa-solid fa-bullseye', 'var(--success)', 'Families', 'File clusters of this collection, largest first. A name opens the cluster; the layers icon opens its N-way diff.', ov.families_total)}
+            <div class="cov-list">${rest.map(f => this._ovFamRow(f, max)).join('')}</div>
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', 'var(--success)', 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']))}</div>
+        </div>` : '';
+        const recentCard = `<div class="cov-card">
+            ${this._ovTitle('fa-solid fa-clock-rotate-left', INFO, 'Recent files', 'Last files added to this collection.', coll.total_files)}
+            ${this._ovFileRows(ov.recent || [])}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', INFO, 'Files', filesUrl, 'All files, grouped by cluster')}</div>
         </div>`;
+        const looseCard = ov.has_clusters ? `<div class="cov-card">
+            ${this._ovTitle('fa-regular fa-circle', 'var(--warning, #d97706)', 'No cluster', 'Files that joined no cluster: the rare ones, worth a look first.', ov.unclustered_total)}
+            ${this._ovFileRows(ov.rare || [])}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', 'var(--warning, #d97706)', 'Files', filesUrl, 'All files; the unclustered ones are the last group')}</div>
+        </div>` : '';
+        return `<style>
+            .cdo-fam { display:grid; grid-template-columns:auto minmax(0,1fr) 64px 22px; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
+            .cdo-fam:hover { background:var(--hover); }
+            .cdo-fam > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+            .cdo-size { height:6px; border-radius:3px; background:var(--hover); overflow:hidden; }
+            .cdo-size i { display:block; height:100%; background:color-mix(in srgb, var(--success) 70%, var(--card-bg)); }
+            .cdo-go { color:var(--dim); cursor:pointer; text-align:center; }
+            .cdo-go:hover { color:var(--accent); }
+            #coll-overview .cov-btn { min-width:0; padding:3px 9px; }
+        </style>
+        <div class="cov-hub" style="margin-bottom:20px;">${spotCard}${famCard}${recentCard}${looseCard}</div>`;
     },
 
     _statusBadge(status) {

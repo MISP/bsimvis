@@ -2497,6 +2497,17 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 }
 .fb-axes button.active { color:var(--ft-axis); border-color:var(--ft-axis); background:color-mix(in srgb, var(--ft-axis) 13%, transparent); }
 
+/* Families rail */
+.fb-fams { padding:0 8px 8px; display:flex; flex-direction:column; gap:2px; }
+.fb-fam { display:flex; align-items:center; border-radius:7px; border:1px solid transparent; }
+.fb-fam:hover { background:var(--hover); }
+.fb-fam.on { background:color-mix(in srgb, var(--accent) 13%, transparent); border-color:var(--accent); }
+.fb-fam-main { flex:1; min-width:0; display:flex; gap:8px; align-items:center; background:none; border:none; color:var(--text); cursor:pointer; padding:5px 6px; font-size:0.76rem; text-align:left; }
+.fb-fam-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fb-fam-n { color:var(--dim); font-variant-numeric:tabular-nums; font-size:0.7rem; }
+.fb-fam-go { background:none; border:none; color:var(--dim); cursor:pointer; padding:5px 7px; font-size:0.72rem; }
+.fb-fam-go:hover { color:var(--accent); }
+
 /* Shared pieces */
 .fb-results { min-width:0; }
 .fb-grow { flex:1; }

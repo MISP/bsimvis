@@ -14,8 +14,12 @@
  *    two requests (root_md5 list, exact_md5 list), so a contained file is the
  *    same document as a search hit. While a filter is active, the files of an
  *    archive that did not match fold into one "N other files" line.
- *  - group=cluster: the loaded files grouped under their best cluster on one
- *    axis (group_axis, default code); group_nodes=container groups archives.
+ *  - cluster (the default; `group=archive` switches to the above): the page is
+ *    made of clusters, from /api/file/search/by_cluster. Each root cluster
+ *    carries its nested clusters and first files; a filter keeps the cluster and
+ *    drops only the files that do not match. "Show N more" and the unclustered
+ *    group load the rest. Axis is group_axis (default code); group_nodes=container
+ *    groups archives. A collection or pool without clusters falls back to archives.
  *
  * `fold_tag` (comma separated, `lib:*` prefix globs) folds files carrying
  * those tags into one line per archive or cluster.
@@ -26,6 +30,8 @@
  */
 window.FileTree = {
     SUBTREE_LIMIT: 2000,
+    CLUSTER_PAGE: 20,        // root clusters per page
+    MORE_FILES: 50,          // files per "show more"
     AXES: ['overall', 'code', 'library', 'content'],
     LAYOUTS: [
         ['cards', 'fa-solid fa-table-cells-large', 'Cards: one card per archive'],
@@ -44,6 +50,8 @@ window.FileTree = {
     _open: new Map(),        // id -> open, for what the user toggled
     _shut: new Set(),        // bands that start closed (nothing inside matched)
     _sel: null,              // md5 shown in the list layout's detail pane
+    _cl: null,               // cluster mode: roots loaded so far and extra files
+    _noClusters: new Set(),  // collections whose search came back without clusters
 
     // --- filter fields ---------------------------------------------------
     // One table drives the query bar chips, the `key:value` syntax and the
@@ -284,6 +292,28 @@ window.FileTree = {
         this.setParam(field.param, v ? this._encode(field, v) : '');
     },
 
+    /** 'cluster' (default) or 'archive'; pools and cluster-less collections are archive. */
+    mode(params) {
+        const pool = window.getRoutingState ? getRoutingState().pool : null;
+        const coll = params.get('collection') || this._collection;
+        if (params.get('group') === 'archive' || pool || this._noClusters.has(coll)) return 'archive';
+        return 'cluster';
+    },
+
+    noClusters(collection) {
+        this._noClusters.add(collection);
+    },
+
+    /** Query for /api/file/search/by_cluster from the page's params. */
+    clusterQuery(params, extra = {}) {
+        const q = new URLSearchParams(params);
+        ['group', 'group_axis', 'group_nodes', 'fold_tag'].forEach(k => q.delete(k));
+        q.set('axis', params.get('group_axis') || 'code');
+        if (params.get('group_nodes') === 'container') q.set('node_type', 'container');
+        Object.entries(extra).forEach(([k, v]) => q.set(k, v));
+        return q;
+    },
+
     // --- toolbar ---------------------------------------------------------
 
     toolbarHtml(params) {
@@ -297,7 +327,7 @@ window.FileTree = {
     },
 
     _toolbarInner(params) {
-        const mode = params.get('group') === 'cluster' ? 'cluster' : 'archive';
+        const mode = this.mode(params);
         const axis = params.get('group_axis') || 'code';
         const nodes = params.get('group_nodes') || 'file';
         const layout = this.layout();
@@ -309,10 +339,10 @@ window.FileTree = {
 
         const layouts = seg(this.LAYOUTS.map(([k, icon, title]) => btn(layout === k, `FileTree.setLayout('${k}')`, icon, '', title)));
         const group = seg([
-            btn(mode === 'archive', "FileTree.setParam('group', '')", 'fa-solid fa-box-archive', 'Archives',
+            btn(mode === 'archive', "FileTree.setParam('group', 'archive')", 'fa-solid fa-box-archive', 'Archives',
                 'Nest every result under the archives and packed binaries it came out of'),
-            btn(mode === 'cluster', "FileTree.setParam('group', 'cluster')", 'fa-solid fa-circle-nodes', 'Clusters',
-                'Group the loaded files by their best cluster'),
+            btn(mode === 'cluster', "FileTree.setParam('group', '')", 'fa-solid fa-circle-nodes', 'Clusters',
+                'Show the most relevant clusters first, with the sub-clusters and files inside'),
         ]);
         let modeControls;
         if (mode === 'cluster') {
@@ -332,7 +362,12 @@ window.FileTree = {
         }
         const sortBy = params.get('sort_by') || 'file_name';
         const order = params.get('sort_order') || 'asc';
-        const sort = `<div class="ft-seg ft-sort" title="Sort">
+        const csort = params.get('cluster_sort') || 'relevance';
+        const sort = mode === 'cluster' ? `<div class="ft-seg ft-sort" title="Order of the clusters">
+            <select onchange="FileTree.setParam('cluster_sort', this.value === 'relevance' ? '' : this.value)">
+                ${[['relevance', 'Relevance'], ['size', 'Size'], ['cohesion', 'Cohesion']].map(([v, l]) =>
+                    `<option value="${v}"${v === csort ? ' selected' : ''}>${l}</option>`).join('')}
+            </select></div>` : `<div class="ft-seg ft-sort" title="Sort">
             <select onchange="FileTree.setParam('sort_by', this.value)">
                 ${[['file_name', 'Name'], ['function_count', 'Functions'], ['entry_date', 'Added']].map(([v, l]) =>
                     `<option value="${v}"${v === sortBy ? ' selected' : ''}>${l}</option>`).join('')}
@@ -397,10 +432,27 @@ window.FileTree = {
             folds: this._values(params, this._field('fold_tag')).map(t => t.toLowerCase()),
             filtered: this._isFiltered(params),
         };
-        const rows = params.get('group') === 'cluster'
-            ? this._byCluster(ctx)
-            : await this._byArchive(ctx, collection, !!pool);
+        const rows = await this._byArchive(ctx, collection, !!pool);
         if (stale && stale()) return;
+        this._finish(rows, params);
+    },
+
+    /** Cluster mode: `data` is one /api/file/search/by_cluster page. */
+    async renderClusters(data, { append, params, collection, stale }) {
+        if (!append || !this._cl) {
+            this._cl = { roots: [], extra: new Map(), loose: [], byCid: new Map() };
+            this._clusters = {};
+        }
+        this._cl.roots.push(...(data.clusters || []));
+        this._cl.looseTotal = data.unclustered_total || 0;
+        Object.assign(this._clusters, data.bin_cluster_map || {});
+        this._params = new URLSearchParams(params);
+        this._collection = collection;
+        if (stale && stale()) return;
+        this._finish(this._clusterRows(), params);
+    },
+
+    _finish(rows, params) {
         this._rows = rows;
         const qbar = document.getElementById('fb-qbar');
         if (qbar) qbar.innerHTML = this._qbarInner(params);
@@ -413,7 +465,7 @@ window.FileTree = {
     // Rows: { t: 'band' | 'file' | 'fold' | 'note' | 'group', depth, anc, ... }
 
     _LAYOUT_PARAMS: new Set(['collection', 'pool', 'limit', 'offset', 'sort_by', 'sort_order', 'view',
-        'group', 'group_axis', 'group_nodes', 'fold_tag', 'min_cohesion', 'bin_cluster_axes', 'algo']),
+        'group', 'group_axis', 'group_nodes', 'fold_tag', 'min_cohesion', 'bin_cluster_axes', 'algo', 'cluster_sort']),
 
     _isFiltered(params) {
         for (const [k, v] of params.entries()) {
@@ -592,54 +644,72 @@ window.FileTree = {
         return out;
     },
 
-    _byCluster(ctx) {
-        const axis = ctx.params.get('group_axis') || 'code';
-        const wantContainers = ctx.params.get('group_nodes') === 'container';
-        const items = this._items.filter(f => !!f.is_container === wantContainers);
-        this._nodes = new Map(this._items.map(f => [f.file_md5, f]));
-
-        const groups = new Map();
-        const none = [];
-        for (const f of items) {
-            const ids = Array.isArray(f.bin_clusters) ? f.bin_clusters : [];
-            const best = ids.map(u => this._clusters[u])
-                .filter(c => c && (c.axis || 'overall') === axis)
-                .sort((a, b) => (b.cohesion_score || 0) - (a.cohesion_score || 0))[0];
-            if (!best) { none.push(f); continue; }
-            if (!groups.has(best.cluster_uuid)) groups.set(best.cluster_uuid, []);
-            groups.get(best.cluster_uuid).push(f);
-        }
-        const order = [...groups.entries()].sort((a, b) =>
-            (b[1].length - a[1].length) || ((this._clusters[b[0]].cohesion_score || 0) - (this._clusters[a[0]].cohesion_score || 0)));
-        if (none.length) order.push([null, none]);
-
+    _clusterRows() {
+        const params = this._params;
+        const axis = params.get('group_axis') || 'code';
+        const folds = this._values(params, this._field('fold_tag')).map(t => t.toLowerCase());
+        const cl = this._cl;
+        this._nodes = new Map();
+        this._shut = new Set(['g:none']);  // the unclustered rest starts closed
         const rows = [];
-        for (const [uuid, files] of order) {
-            const id = `g:${uuid || 'none'}`;
-            const c = uuid ? this._clusters[uuid] : null;
-            const funcs = files.reduce((s, f) => s + (Number(f.function_count) || 0), 0);
-            rows.push({ t: 'group', id, depth: 0, anc: '', cluster: c, uuid, axis, count: files.length, funcs });
+
+        const fileRow = (f, depth, anc) => {
+            this._nodes.set(f.file_md5, f);
+            const p = this._split(f.parent_md5 ? (f.path_in_parent || f.file_name) : f.file_name);
+            return { t: 'file', n: f, depth, anc, prefix: f.parent_md5 ? p.dir : '', base: f.parent_md5 ? p.base : f.file_name,
+                parentName: f.parent_md5 ? (f.parent_file_name || f.parent_md5) : '' };
+        };
+        // The files of one cluster (or of the unclustered rest), then "show more".
+        const fileRows = (files, depth, inner, id, more) => {
             const shown = [], tagged = [];
-            files.forEach(f => (this._folded(f, ctx.folds) ? tagged : shown).push(f));
-            const fileRow = (f, anc) => {
-                const p = this._split(f.parent_md5 ? (f.path_in_parent || f.file_name) : f.file_name);
-                return { t: 'file', n: f, depth: 1, anc, prefix: f.parent_md5 ? p.dir : '', base: f.parent_md5 ? p.base : f.file_name,
-                    parentName: f.parent_md5 ? (f.parent_file_name || f.parent_md5) : '' };
-            };
-            shown.forEach(f => rows.push(fileRow(f, id)));
+            files.forEach(f => (this._folded(f, folds) ? tagged : shown).push(f));
+            shown.forEach(f => rows.push(fileRow(f, depth, inner.join(' '))));
             if (tagged.length) {
                 const fid = `f:${id}:tag`;
-                rows.push({ t: 'fold', id: fid, depth: 1, anc: id, html: this._foldLabel(tagged, ctx.folds) });
-                tagged.forEach(f => rows.push(fileRow(f, `${id} ${fid}`)));
+                rows.push({ t: 'fold', id: fid, depth, anc: inner.join(' '), html: this._foldLabel(tagged, folds) });
+                tagged.forEach(f => rows.push(fileRow(f, depth, [...inner, fid].join(' '))));
             }
-        }
-        if (rows.length) {
-            // ponytail: groups come from the loaded page; a cluster bigger than
-            // a page splits. Page by cluster via the bin-cluster members route
-            // if that gets in the way.
-            rows.push({ t: 'note', depth: 0, anc: '', html: `Grouped from the ${this._items.length.toLocaleString()} result${this._items.length === 1 ? '' : 's'} loaded so far.` });
+            if (more > 0) rows.push({ t: 'more', id: `m:${id}`, cid: id === 'none' ? '' : id, depth, anc: inner.join(' '), remaining: more });
+        };
+        const draw = (c, depth, anc) => {
+            const id = `g:${c.cid}`;
+            const files = [...c.files, ...(cl.extra.get(c.cid) || [])];
+            cl.byCid.set(c.cid, c);
+            rows.push({ t: 'group', id, depth, anc: anc.join(' '), axis, uuid: c.cluster_uuid, count: c.matching, of: c.n,
+                cluster: { cluster_id: c.cluster_id, cluster_uuid: c.cluster_uuid, cluster_name: c.cluster_name,
+                    cohesion_score: c.cohesion_score, member_count: c.n, axis } });
+            const inner = [...anc, id];
+            // Tighter sub-clusters first, then what sits in this cluster alone.
+            c.children.forEach(k => draw(k, depth + 1, inner));
+            fileRows(files, depth + 1, inner, String(c.cid), c.files_total - files.length);
+        };
+        cl.roots.forEach(c => draw(c, 0, []));
+
+        if (cl.looseTotal) {
+            rows.push({ t: 'group', id: 'g:none', depth: 0, anc: '', axis, cluster: null, count: cl.looseTotal, of: null });
+            fileRows(cl.loose, 1, ['g:none'], 'none', cl.looseTotal - cl.loose.length);
         }
         return rows;
+    },
+
+    /** "Show N more" of one cluster (cid) or of the unclustered rest (''). */
+    async more(cid) {
+        const cl = this._cl;
+        if (!cl) return;
+        const node = cid ? cl.byCid.get(cid) : null;
+        const have = cid ? node.files.length + (cl.extra.get(cid) || []).length : cl.loose.length;
+        const q = this.clusterQuery(this._params, cid ? { cluster: cid } : { unclustered: 1 });
+        q.set('offset', have);
+        q.set('limit', this.MORE_FILES);
+        const res = await fetch(`/api/file/search/by_cluster?${q}`).then(r => r.ok ? r.json() : { files: [] }).catch(e => {
+            console.error(e);
+            return { files: [] };
+        });
+        Object.assign(this._clusters, res.bin_cluster_map || {});
+        if (cid) cl.extra.set(cid, [...(cl.extra.get(cid) || []), ...(res.files || [])]);
+        else cl.loose.push(...(res.files || []));
+        this._rows = this._clusterRows();
+        this._paint();
     },
 
     // --- shared cell pieces ----------------------------------------------
@@ -732,11 +802,11 @@ window.FileTree = {
     _groupHead(r) {
         const c = r.cluster;
         if (!c) return `<div class="fb-group-title"><b>No ${escapeHtml(r.axis)} cluster</b></div>
-            <div class="fb-meta"><span>${r.count} on this page</span><i class="fb-dot"></i><span>${r.funcs.toLocaleString()} functions</span></div>`;
+            <div class="fb-meta"><span>${r.count.toLocaleString()} file${r.count === 1 ? '' : 's'}</span></div>`;
         return `<div class="fb-group-title">${renderClusterCards([c], true)}
                 <a class="fb-link" onclick="event.stopPropagation(); openCluster(${escapeAttr(jsString(r.uuid))}, true, event, ${escapeAttr(jsString(r.axis))})">${escapeHtml(c.cluster_name || `Cluster ${c.cluster_id}`)}</a></div>
-            <div class="fb-meta"><span class="fb-meta-strong">${r.count} on this page</span><i class="fb-dot"></i><span>${Number(c.member_count || 0)} members</span>
-                <i class="fb-dot"></i><span>cohesion ${(c.cohesion_score || 0).toFixed(2)}</span><i class="fb-dot"></i><span>${r.funcs.toLocaleString()} functions</span></div>`;
+            <div class="fb-meta"><span class="fb-meta-strong">${r.count === r.of ? `${r.of} files` : `${r.count} of ${r.of} match`}</span>
+                <i class="fb-dot"></i><span>cohesion ${(c.cohesion_score || 0).toFixed(2)}</span></div>`;
     },
 
     // --- painting --------------------------------------------------------
@@ -798,6 +868,11 @@ window.FileTree = {
             <span class="fb-chev" data-ft-toggle="${escapeAttr(r.id)}"><i class="fa-solid fa-chevron-right"></i></span>${r.html}</div>`;
     },
 
+    _moreLine(r, indent) {
+        return `<div class="fb-fold" data-ft-anc="${escapeAttr(r.anc)}" style="--indent:${indent}" onclick="FileTree.more(${escapeAttr(jsString(r.cid))})">
+            <span class="fb-chev"><i class="fa-solid fa-ellipsis"></i></span><b>Show ${Math.min(r.remaining, this.MORE_FILES)} more</b> <span>of ${r.remaining.toLocaleString()} files</span></div>`;
+    },
+
     _noteLine(r) {
         return `<div class="fb-note" data-ft-anc="${escapeAttr(r.anc)}"><i class="fa-solid fa-circle-info"></i> ${r.html}</div>`;
     },
@@ -823,11 +898,14 @@ window.FileTree = {
             const indent = Math.max(0, r.depth - 1);
             if (r.t === 'fold') return this._foldLine(r, indent);
             if (r.t === 'note') return this._noteLine(r);
+            if (r.t === 'more') return this._moreLine(r, indent);
+            if (r.t === 'group') return `<div class="fb-line fb-line-band fb-line-group" data-ft-anc="${escapeAttr(r.anc)}" style="--indent:${indent}">
+                <div class="fb-line-main">${this._chev(r.id)}<div class="fb-card-title">${this._groupHead(r)}</div></div></div>`;
             const n = r.n;
             const head = r.t === 'band';
             return `<div class="fb-line${head ? ' fb-line-band' : ''}" data-ft-anc="${escapeAttr(r.anc)}" style="--indent:${indent}" ${this._entityAttrs(n)}>
                 <div class="fb-line-main">
-                    ${head ? this._chev(r.id) : ''}${this._icon(r)}${this._name(r, { withParent: this._params.get('group') === 'cluster' })}${this._kind(r)}
+                    ${head ? this._chev(r.id) : ''}${this._icon(r)}${this._name(r, { withParent: this.mode(this._params) === 'cluster' })}${this._kind(r)}
                     <span class="fb-grow"></span>
                     <span class="fb-funcs" title="Functions">${this._funcs(n)}</span>
                     <span class="fb-cards">${this._clusterCards(n)}</span>
@@ -963,12 +1041,13 @@ window.FileTree = {
         const head = list
             ? `${th('File', 'file_name')}${th('Funcs', 'function_count', 'fb-th-num')}${th('Clusters', '')}${th('', '')}`
             : `${th('File', 'file_name')}${extra ? th('MD5', '') + th('Batch', '') : ''}${th('Funcs', 'function_count', 'fb-th-num')}${th('Clusters', '')}${th('Tags', '')}${th('', '')}`;
-        const withParent = this._params.get('group') === 'cluster';
+        const withParent = this.mode(this._params) === 'cluster';
 
         const row = (r, card) => {
             const c = `data-fb-card="${card}"`;
             if (r.t === 'fold') return `<tr class="fb-tr-line" ${c} data-ft-anc="${escapeAttr(r.anc)}"><td colspan="${span}">${this._foldLine({ ...r, anc: '' }, r.depth)}</td></tr>`;
-            if (r.t === 'group') return `<tr class="fb-tr-group" ${c}><td colspan="${span}"><div class="fb-tr-grouphead">${this._chev(r.id)}<div>${this._groupHead(r)}</div></div></td></tr>`;
+            if (r.t === 'more') return `<tr class="fb-tr-line" ${c} data-ft-anc="${escapeAttr(r.anc)}"><td colspan="${span}">${this._moreLine({ ...r, anc: '' }, r.depth)}</td></tr>`;
+            if (r.t === 'group') return `<tr class="fb-tr-group" ${c}${r.depth ? ` data-ft-anc="${escapeAttr(r.anc)}"` : ''}><td colspan="${span}"><div class="fb-tr-grouphead" style="--indent:${r.depth}">${this._chev(r.id)}<div>${this._groupHead(r)}</div></div></td></tr>`;
             const n = r.n;
             const file = `<td><div class="fb-td-file" style="--indent:${r.depth}">
                     ${r.t === 'band' ? this._chev(r.id) : '<span class="fb-chev-space"></span>'}${this._icon(r)}

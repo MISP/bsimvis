@@ -2643,7 +2643,7 @@ html.light-theme .fb-field input, html.light-theme .fb-field select { color-sche
 .fb-grid tbody tr.fb-tr-note > td { padding:8px 4px 0; }
 .fb-grid tbody tr.fb-li { cursor:pointer; }
 .fb-grid tbody tr.fb-li.selected { background:color-mix(in srgb, var(--accent) 13%, var(--fb-surface)); box-shadow:inset 3px 0 0 var(--accent); }
-.fb-tr-grouphead { display:flex; align-items:flex-start; gap:8px; }
+.fb-tr-grouphead { display:flex; align-items:flex-start; gap:8px; padding-left:calc(var(--indent, 0) * 18px); }
 .fb-td-file { display:flex; align-items:center; gap:8px; min-width:0; padding-left:calc(var(--indent, 0) * 18px); }
 .fb-li-text { min-width:0; display:flex; flex-direction:column; gap:2px; }
 .fb-li-name { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

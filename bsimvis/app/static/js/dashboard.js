@@ -1062,7 +1062,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     // Standard pagination for all search routes
-    const countLimit = parseInt(params.get('limit')) || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
+    // The files view groups by cluster by default: its page is root clusters.
+    const clusterMode = viewKey === 'files' && !!window.FileTree && FileTree.mode(params) === 'cluster';
+    const countLimit = parseInt(params.get('limit')) || (clusterMode ? FileTree.CLUSTER_PAGE : (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT));
     const paged = window.Paging.mode() === 'page';
     if (isSilent && currentOffset > 0 && !paged) {
         params.set('offset', 0);
@@ -1110,6 +1112,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
+    if (clusterMode) apiUrl = '/api/file/search/by_cluster?' + FileTree.clusterQuery(params);
     // Neighbours of one file, folded into the containers they came from. The
     // faceted pair search this view normally uses is index-backed and cannot
     // group, so grouping is served by the neighbour endpoint instead.
@@ -1135,10 +1138,15 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         }
         const data = await response.json();
         if (myGen !== _refreshGeneration) return;
+        if (clusterMode && data.has_clusters === false) {
+            // Nothing is clustered here: show the archive view instead.
+            FileTree.noClusters(collection);
+            return refreshData(appendArg, force, skipHeader);
+        }
 
         // Extract the list of items based on the API response structure
-        const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || data.strings || (Array.isArray(data) ? data : []);
-        const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
+        const items = data.clusters || data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || data.strings || (Array.isArray(data) ? data : []);
+        const total = clusterMode ? (data.roots_total || 0) : data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
         const totalEl = document.getElementById('view-total');
         const poolIcon = document.getElementById('pool-warn-icon');
@@ -1166,10 +1174,12 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (viewKey === 'files' && window.FileTree) {
             // The file browser (file_tree.js) re-draws everything loaded so
             // far, so a page joins the archives already on screen.
-            await FileTree.render(items, data.bin_cluster_map || {}, {
+            const stale = () => myGen !== _refreshGeneration;
+            if (clusterMode) await FileTree.renderClusters(data, { append, params, collection, stale });
+            else await FileTree.render(items, data.bin_cluster_map || {}, {
                 append, params, collection,
                 pool: window.getRoutingState ? window.getRoutingState().pool : null,
-                stale: () => myGen !== _refreshGeneration,
+                stale,
             });
             if (myGen !== _refreshGeneration) return;
         } else if (items.length === 0 && !append) {

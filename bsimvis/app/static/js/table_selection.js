@@ -500,10 +500,16 @@ class TableSelection {
         let newR = r;
         let newC = c;
 
+        // Step over rows a collapsed card/fold hides (display:none).
+        const vstep = d => {
+            let i = r + d;
+            while (i >= 0 && i < rows && !this.tbody.children[i].getClientRects().length) i += d;
+            return i >= 0 && i < rows ? i : r;
+        };
         if (e.key === 'ArrowUp') {
-            newR = Math.max(0, r - 1);
+            newR = vstep(-1);
         } else if (e.key === 'ArrowDown') {
-            newR = Math.min(rows - 1, r + 1);
+            newR = vstep(1);
         } else if (e.key === 'ArrowLeft') {
             newC = Math.max(0, c - 1);
         } else if (e.key === 'ArrowRight') {

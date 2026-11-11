@@ -274,7 +274,7 @@
             h += `<div class="uq${st}" title="${escapeAttr(`${m.uniq[i]} functions only in ${col.label}. Click to open them.`)}" ${go(`ClusterOverview.openFile(${i})`)}>${m.uniq[i] ? num(m.uniq[i]) : ''}</div>`;
         });
         h += `<div></div><div></div>` + lanes.map(g => `<div class="lbl" title="${escapeAttr(laneName(names, g))}" data-cov-lname="${escapeAttr(g.id)}" ${laneGo(g)}>${escapeHtml(laneName(names, g))}</div>`).join('') + `<div class="lbl" style="color:${LOOK.unique[1]}">Unique</div>`;
-        const info = `Each column is a lane: functions found in exactly the dotted files. Click a column, a dot or a label to open that lane's functions in the table; click a red count for the functions only that file has.${m.hidden ? ` The ${MAX_LANES} biggest of ${m.lanes.length + m.hidden} shared lanes are shown.` : ''}`;
+        const info = `Each column is a lane: functions found in exactly the dotted files. Files are in lineage order, most similar next to each other. Click a column, a dot or a label to open that lane's functions in the table; click a red count for the functions only that file has.${m.hidden ? ` The ${MAX_LANES} biggest of ${m.lanes.length + m.hidden} shared lanes are shown.` : ''}`;
         return `<div class="cov-panel">
             ${title('fa-solid fa-diagram-project', 'var(--success)', 'Shared code', info, panelActs(m))}
             ${legend()}
@@ -293,10 +293,31 @@
                 : `<span class="miss" style="width:${share(g.rows, total)}" title="${escapeAttr(`Missing: ${laneName(names, g)}`)}" ${laneGo(g)}></span>`).join('')}<span style="width:${share(uniq[i], total)}; background:${LOOK.unique[1]}" title="${escapeAttr(`Only in this file: ${uniq[i]}`)}" ${go(`ClusterOverview.openFile(${i})`)}></span></div>
             <span class="dim" style="text-align:right">${num(m.totals[i])}</span></div>`).join('');
         return `<div class="cov-panel">
-            ${title('fa-solid fa-barcode', LOOK.partial[1], 'Code map', "Each file's lanes in fixed slots, widest file coverage first. A hatched slot is a lane the file lacks; red is code only that file has. Click a slot to open its functions.", panelActs(m))}
+            ${title('fa-solid fa-barcode', LOOK.partial[1], 'Code map', "Each file's lanes in fixed slots, Core, Common, Rare, related lanes side by side; files in lineage order. A hatched slot is a lane the file lacks; red is code only that file has. Click a slot to open its functions.", panelActs(m))}
             ${legend(true)}
             <div class="cov-scroll"><div class="cov-fp">${head}${rows}</div></div>
         </div>`;
+    }
+
+    // Core, Common, Rare; inside a tier a greedy chain from its biggest lane, each next lane the one
+    // whose files overlap the last one's most (Jaccard), so related lanes sit side by side.
+    function relatedOrder(lanes) {
+        const jac = (a, b) => {
+            let both = 0, any = 0;
+            for (let i = 0; i < a.length; i++) { both += a[i] === '1' && b[i] === '1'; any += a[i] === '1' || b[i] === '1'; }
+            return any ? both / any : 0;
+        };
+        return ['core', 'common', 'rare'].flatMap(t => {
+            const left = lanes.filter(g => g.tier === t).sort((a, b) => b.rows - a.rows);
+            const out = left.splice(0, 1);
+            while (left.length) {
+                const last = out[out.length - 1].mask;
+                let k = 0, best = -1;
+                left.forEach((g, i) => { const j = jac(last, g.mask); if (j > best) { best = j; k = i; } });
+                out.push(...left.splice(k, 1));
+            }
+            return out;
+        });
     }
 
     // Lanes and per-file sums of one /nway answer.
@@ -310,7 +331,7 @@
         const all = Object.values(d.groups || {}).filter(g => g.kind === 'lane' && g.mask);
         all.forEach(g => { g.tier = tierOf(ones(g.mask), n); });
         const shared = all.filter(g => ones(g.mask) > 1).sort((a, b) => b.rows - a.rows);
-        const lanes = shared.slice(0, MAX_LANES).sort((a, b) => ones(b.mask) - ones(a.mask) || b.rows - a.rows);
+        const lanes = relatedOrder(shared.slice(0, MAX_LANES));
         const uniq = cols.map((_, i) => all.filter(g => ones(g.mask) === 1 && g.mask[i] === '1').reduce((s, g) => s + g.rows, 0));
         const totals = cols.map((_, i) => shared.filter(g => g.mask[i] === '1').reduce((s, g) => s + g.rows, 0) + uniq[i]);
         const k = d.counts || {};
@@ -349,6 +370,8 @@
         const qs = new URLSearchParams({
             cluster_uuid: uuid, axis: v.axis, columns: 'files', tab: 'all', scope: 'code',
             group: 'lane', group_merge: '', group_lane_depth: '1', group_lane_tier: '0', group_lane_fold: '0', limit: '0',
+            // rows in lineage DFS order: most similar files sit next to each other
+            order: 'lineage',
         });
         if (v.params && v.params.pool) qs.set('pool', v.params.pool);
         else qs.set('collection', v.collection || '');

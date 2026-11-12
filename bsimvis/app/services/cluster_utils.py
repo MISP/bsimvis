@@ -974,14 +974,17 @@ def resolve_cluster_id_by_uuid(r, collection, algo, uuid, meta_prefix="cluster")
             return hit
         r.hdel(cache_k, uuid)
 
+    # Only the union-find engine writes uf:uuid, and a later hierarchical build
+    # leaves it behind: a hit must still match the meta, a miss is not final.
     uuid_key = f"{collection}:{meta_prefix}:{algo}:uf:uuid"
-    pairs = r.hgetall(uuid_key) or {}
-    for cid, u in pairs.items():
+    for cid, u in (r.hgetall(uuid_key) or {}).items():
         if _s(u).lower() == uuid:
-            r.hset(cache_k, uuid, _s(cid))
-            return _s(cid)
-    if pairs:
-        return None  # hash exists and was checked; a real miss, not "unwritten"
+            cid = _s(cid)
+            m = get_cluster_metas(r, collection, algo, [cid], meta_prefix).get(cid)
+            if m and str(m.get("cluster_uuid", "")).lower() == uuid:
+                r.hset(cache_k, uuid, cid)
+                return cid
+            break
 
     ns = (collection, algo, meta_prefix)
     if ns in _UUID_MAPS and time.time() - _UUID_MAPS_AT[ns] < 30:

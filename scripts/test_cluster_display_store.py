@@ -35,3 +35,24 @@ assert not r.exists(f"{col}:bin_cluster:display:{algo}:t1")
 clear_display(r, col, algo)
 assert not r.keys("*display*")
 print("cluster display store ok")
+
+# A uf:uuid hash left by an older union-find build must not hide the clusters
+# of a later hierarchical build (it used to answer every lookup "not found").
+import json as _json
+
+from bsimvis.app.services import cluster_utils as _cu
+
+r2 = fakeredis.FakeStrictRedis()
+ns = "jaccard:library"
+r2.hset(f"c:bin_cluster:{ns}:uf:uuid", mapping={"c:file:old": "deadbeef0000"})
+r2.set(f"c:bin_cluster:{ns}:42:meta", _json.dumps({"cluster_uuid": "6a04573e5d6f"}))
+r2.sadd(f"c:bin_cluster:list:{ns}", "42")
+_cu._UUID_MAPS.clear()
+assert (
+    _cu.resolve_cluster_id_by_uuid(r2, "c", ns, "6a04573e5d6f", "bin_cluster") == "42"
+)
+# The stale entry's cid has no matching meta: still a miss, not a wrong cluster.
+assert (
+    _cu.resolve_cluster_id_by_uuid(r2, "c", ns, "deadbeef0000", "bin_cluster") is None
+)
+print("ok stale uf:uuid")

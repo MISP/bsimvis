@@ -443,6 +443,7 @@ class CollectionOverview(Resource):
     @ns_index.doc(
         params={
             "collection": "Collection name (required)",
+            "axis": "Cluster axis: code (default), overall, library or content",
             "refresh": "true to bypass the 120s cache",
         }
     )

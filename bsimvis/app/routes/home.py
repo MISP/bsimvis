@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 from flask import current_app, request
 
+from bsimvis.app.services.cluster_utils import _AXES as BIN_AXES
 from bsimvis.app.services.job_service import JobService
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_service import tag_service
@@ -307,11 +308,16 @@ def get_collection_overview():
     col = request.args.get("collection")
     if not col:
         return {"error": "No collection specified"}, 400
+    axis = request.args.get("axis", "code").strip().lower()
+    if axis not in BIN_AXES:
+        return {"error": f"axis must be one of {', '.join(BIN_AXES)}"}, 400
 
     def build():
         from bsimvis.app.services.cluster_utils import get_cluster_metas
 
-        fams = _call(search_files_by_cluster, collection=col, limit=40, per_cluster=0)
+        fams = _call(
+            search_files_by_cluster, collection=col, axis=axis, limit=40, per_cluster=0
+        )
         roots = fams.get("clusters", [])
         r = get_redis()
         metas = get_cluster_metas(
@@ -327,6 +333,7 @@ def get_collection_overview():
             flat = _call(
                 list_bin_clusters,
                 collection=col,
+                axis=axis,
                 limit=40,
                 sort_by="count",
                 sort_order="desc",
@@ -358,9 +365,14 @@ def get_collection_overview():
         )
         if rare is None:
             rare = _call(
-                search_files_by_cluster, collection=col, unclustered=1, limit=8
+                search_files_by_cluster,
+                collection=col,
+                axis=axis,
+                unclustered=1,
+                limit=8,
             ).get("files", [])
         return {
+            "axis": axis,
             "has_clusters": bool(roots),
             "families": kept,
             "family_map": tree,
@@ -375,9 +387,10 @@ def get_collection_overview():
             "tags": _top_tags([{"name": col}], limit=12)["top"],
         }
 
+    key = f"overview:{col}:{axis}"
     if request.args.get("refresh") == "true":
-        _CACHE.pop(f"overview:{col}", None)
-    return _cached(f"overview:{col}", INSIGHTS_TTL, build)
+        _CACHE.pop(key, None)
+    return _cached(key, INSIGHTS_TTL, build)
 
 
 # --- Unified search -------------------------------------------------------

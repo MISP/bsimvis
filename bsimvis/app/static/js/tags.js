@@ -544,7 +544,7 @@ window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
     
     if (nav) {
         let url = nav.buildUIUrl(collection || '', segs);
-        if (isBinary && axis && axis !== 'overall') {
+        if (isBinary && axis && axis !== (window.BINSIM_DEFAULT_AXIS || 'code')) {
             url += '?axis=' + encodeURIComponent(axis);
         }
         nav.openPath(url, event);
@@ -556,7 +556,7 @@ window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
         ? `/pools/${encodeURIComponent(pool)}`
         : `/collections/${encodeURIComponent(collection || '')}`;
     let href = `${base}/${segs.map(encodeURIComponent).join('/')}`;
-    if (isBinary && axis && axis !== 'overall') {
+    if (isBinary && axis && axis !== (window.BINSIM_DEFAULT_AXIS || 'code')) {
         href += '?axis=' + encodeURIComponent(axis);
     }
     targetWindow.location.href = href;

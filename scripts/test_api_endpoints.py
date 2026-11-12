@@ -2485,6 +2485,29 @@ def run_all_tests():
         and sum(ov["uploads"]["counts"]) >= 1,
         str(sorted(ov.keys()) if isinstance(ov, dict) else ov),
     )
+    check(
+        "collection overview defaults to the code axis",
+        isinstance(ov, dict) and ov.get("axis") == "code",
+        str(ov.get("axis") if isinstance(ov, dict) else ov),
+    )
+    ov_all = test_endpoint(
+        "GET",
+        "/api/index/collection/overview",
+        params={"collection": COLLECTION, "axis": "overall", "refresh": "true"},
+        label="GET /api/index/collection/overview?axis=overall",
+    )
+    check(
+        "collection overview honours axis=overall",
+        isinstance(ov_all, dict) and ov_all.get("axis") == "overall",
+        str(ov_all.get("axis") if isinstance(ov_all, dict) else ov_all),
+    )
+    test_endpoint(
+        "GET",
+        "/api/index/collection/overview",
+        params={"collection": COLLECTION, "axis": "bogus"},
+        expected_status=400,
+        label="GET /api/index/collection/overview?axis=bogus -> 400",
+    )
 
     # ── Unified search ─────────────────────────────────────────────────────
     print(_color("\n  [Unified search]", BOLD))

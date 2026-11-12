@@ -107,7 +107,7 @@ window.CollectionDetailView = {
         this._ovCol = col;
         this._ovColl = coll;
         try {
-            const res = await fetch(`/api/index/collection/overview?collection=${encodeURIComponent(col)}`);
+            const res = await fetch(`/api/index/collection/overview?${new URLSearchParams({ collection: col, axis: this._ovAxis() })}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             this._ov = await res.json();
         } catch (e) {
@@ -117,6 +117,38 @@ window.CollectionDetailView = {
         if (this._ovCol !== col || !host.isConnected) return;
         host.innerHTML = this._renderOverview();
         this._drawFamilyMap();
+    },
+
+    /** Cluster axis the cards read: URL `axis`, else the app default (code). */
+    _ovAxis() {
+        const a = new URLSearchParams(location.search).get('axis');
+        return window.FileTree && FileTree.AXES.includes(a) ? a : (window.BINSIM_DEFAULT_AXIS || 'code');
+    },
+
+    /** `?key=axis` for a link, or nothing when the axis is the default its target starts on. */
+    _ovAxisQs(key = 'axis') {
+        const a = this._ovAxis();
+        return a === (window.BINSIM_DEFAULT_AXIS || 'code') ? '' : `?${key}=${encodeURIComponent(a)}`;
+    },
+
+    _ovSetAxis(a) {
+        const u = new URL(location.href);
+        if (a === (window.BINSIM_DEFAULT_AXIS || 'code')) u.searchParams.delete('axis'); else u.searchParams.set('axis', a);
+        history.replaceState(history.state, '', u);
+        const host = document.getElementById('coll-overview');
+        if (host) host.innerHTML = this._ovSkeleton(this._ovCol, this._ovColl);
+        this._loadOverview(this._ovCol, this._ovColl);
+    },
+
+    /** Same axis buttons as the file tree's cluster grouping (FileTree toolbar). */
+    _ovAxisSeg() {
+        const types = window.BinSimScoreTypes || {}, cur = this._ovAxis();
+        const btns = (window.FileTree ? FileTree.AXES : ['overall', 'code', 'library', 'content']).map(a => {
+            const m = types[a === 'overall' ? 'score' : `score_${a}`] || {};
+            const label = m.label || a;
+            return `<button type="button" class="ft-seg-btn${a === cur ? ' active' : ''}" style="--ft-axis:${m.color || 'var(--accent)'}" aria-pressed="${a === cur}" title="${escapeAttr(`Show ${label} clusters`)}" onclick="CollectionDetailView._ovSetAxis('${a}')"><i class="${m.icon || 'fa-solid fa-layer-group'}"></i> ${escapeHtml(label)}</button>`;
+        }).join('');
+        return `<div class="cdo-bar"><span class="dim">Clusters by</span><div class="ft-seg" role="group" aria-label="Cluster axis">${btns}</div></div>`;
     },
 
     /** The overview's cards at their final size, bodies still loading: nothing moves when the data lands. */
@@ -135,7 +167,7 @@ window.CollectionDetailView = {
     },
 
     _ovNway(uuid) {
-        return `/diff/nway?${new URLSearchParams({ cluster_uuid: uuid, axis: 'overall', collection: this._ovCol })}`;
+        return `/diff/nway?${new URLSearchParams({ cluster_uuid: uuid, axis: this._ovAxis(), collection: this._ovCol })}`;
     },
 
     _ovBtn(icon, color, label, url, tip = '') {
@@ -159,7 +191,7 @@ window.CollectionDetailView = {
         const w = max ? Math.max(3, (f.matching || 0) / max * 100) : 0;
         return `<div class="cdo-fam">
             <span>${card || ''}</span>
-            <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, 'overall')" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
+            <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
             <span class="cdo-size"><i style="width:${w.toFixed(1)}%"></i></span>
             <a class="cdo-go" onclick="${escapeAttr(`Nav.openPath(${jsString(this._ovNway(uuid))}, event)`)}" title="Functions: N-way diff of this cluster"><i class="fa-solid fa-layer-group"></i></a>
         </div>`;
@@ -193,7 +225,7 @@ window.CollectionDetailView = {
         const brief = name => String(name).split('#').pop().split('.').pop() || String(name);
         const short = (name, r) => { const t = brief(name); const k = Math.max(3, Math.floor(r / 3)); return t.length > k ? t.slice(0, k) + '…' : t; };
         const tip = f => escapeHtml(`${f.cluster_name || `Cluster ${f.cid}`}\n${Number(f.matching || 0).toLocaleString()} files · cohesion ${Number(f.cohesion_score || 0).toFixed(2)}${f.family === false ? '\nLoose group: the families inside are tighter' : ''}`);
-        const open = f => `onclick="${escapeAttr(`event.stopPropagation(); openCluster(${jsString(f.cluster_uuid)}, true, event, 'overall')`)}"`;
+        const open = f => `onclick="${escapeAttr(`event.stopPropagation(); openCluster(${jsString(f.cluster_uuid)}, true, event, ${jsString(this._ovAxis())})`)}"`;
         const out = root.descendants().filter(n => n.depth > 0).map(n => {
             const f = n.data, x = n.x.toFixed(1), y = n.y.toFixed(1), r = n.r.toFixed(1);
             const name = f.cluster_name || `Cluster ${f.cid}`;
@@ -241,7 +273,7 @@ window.CollectionDetailView = {
         const fams = ov.families || [];
         const coll = this._ovColl || {};
         const total = Number(coll.total_files || 0);
-        const filesUrl = Nav.buildUIUrl(col, ['files']);
+        const filesUrl = Nav.buildUIUrl(col, ['files']) + this._ovAxisQs('group_axis');
         const OK = 'var(--success)', INFO = 'var(--info, #3b82f6)', WARN = 'var(--warning, #d97706)';
         const sk = (n, h = 14) => `<div class="cov-list">${Array.from({ length: n }, (_, i) => `<span class="cdo-sk" style="height:${h}px; width:${92 - (i * 17) % 40}%"></span>`).join('')}</div>`;
         const none = text => `<div class="dim" style="font-size:0.78rem;">${text}</div>`;
@@ -252,7 +284,7 @@ window.CollectionDetailView = {
         const mapCard = `<div class="cov-card cdo-wide cdo-r1">
             ${this._ovTitle('fa-solid fa-diagram-project', OK, 'Family map', 'File families: circle area is the number of files, colour is cohesion (green = near-identical files). A dashed circle is a loose cluster that groups several families. Click to open a cluster.', big(ov.families_total))}
             <div id="cdo-map" class="cdo-map">${loading ? '<span class="cdo-sk cdo-sk-map"></span>' : fams.length ? '' : noClusters}</div>
-            <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', OK, 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']))}${hidden}</div>
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', OK, 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']) + this._ovAxisQs())}${hidden}</div>
         </div>`;
         const top = fams.slice(0, 7);
         const max = Math.max(1, ...top.map(f => f.matching || 0));
@@ -292,10 +324,11 @@ window.CollectionDetailView = {
             ${this._ovTitle('fa-solid fa-chart-pie', INFO, 'Mix', 'How the files split by architecture and format, and the tags most of them carry.')}
             ${mixBody}
         </div>`;
-        return `<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}</div>`;
+        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}</div>`;
     },
 
     _OV_CSS: `
+.cdo-bar { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:0.78rem; }
 .cdo-fam { display:grid; grid-template-columns:auto minmax(0,1fr) 64px 22px; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
 .cdo-fam:hover { background:var(--hover); }
 .cdo-fam > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }

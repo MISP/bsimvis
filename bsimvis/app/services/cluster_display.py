@@ -11,8 +11,11 @@ kept ancestor:
   * below a kept ancestor it must also be tighter by `jump` and clearly smaller
     (<= `max_ratio` of the ancestor), else it is the same cluster again
 
-Kept chains are cut to `depth` levels: the root, the deepest node and the nodes
-with the biggest cohesion jumps survive.
+Kept chains are cut to `depth` levels: the root, the deepest node and the most
+relevant (`score`) nodes in between survive.
+
+`pinned` nodes (analyst-named clusters) are always kept when they hold 2 files
+or more, and the depth cap never drops one.
 
 Self-check: uv run python -I bsimvis/app/services/cluster_display.py
 """
@@ -32,13 +35,20 @@ DEFAULTS = {
 
 
 def score(n, coh):
-    """Rank for roots and siblings; `n` is the matching member count."""
-    return math.log1p(n) * (0.3 + coh)
+    """Rank for roots and siblings; `n` is the matching member count.
+
+    Cohesion saturates (coh / (coh + 0.2)): past ~0.3 a cluster is coherent
+    enough to be a family and size decides, so a 78-file 0.32 family outranks
+    a 7-file 0.97 sub-cluster. 0.2 was picked on more_mirai_yara against the
+    Mirai family report's clusters; 0.15 to 0.3 give the same families there.
+    """
+    return math.log1p(n) * coh / (coh + 0.2)
 
 
-def prune(nodes, **opts):
+def prune(nodes, pinned=(), **opts):
     """{cid: {"parent": kept ancestor | None, "depth": 0-based}} for kept nodes."""
     o = {**DEFAULTS, **opts}
+    pinned = {c for c in pinned if c in nodes and nodes[c]["n"] >= 2}
     kids = {}
     roots = []
     for cid, v in nodes.items():
@@ -61,15 +71,15 @@ def prune(nodes, **opts):
         if ok and anc is not None:
             a = nodes[anc]
             ok = v["coh"] >= a["coh"] + o["jump"] and v["n"] <= o["max_ratio"] * a["n"]
-        if ok:
+        if ok or cid in pinned:
             kept[cid] = anc
             anc = cid
         stack.extend((c, anc) for c in kids.get(cid, []))
 
-    return _cap_depth(nodes, kept, o["depth"])
+    return _cap_depth(nodes, kept, o["depth"], pinned)
 
 
-def _cap_depth(nodes, kept, depth):
+def _cap_depth(nodes, kept, depth, pinned=frozenset()):
     out = {c: {"parent": p} for c, p in kept.items()}
     sub = {}
     for c, p in kept.items():
@@ -83,14 +93,16 @@ def _cap_depth(nodes, kept, depth):
             c = kept[c]
         return ch[::-1]  # root first
 
-    # Deepest violators first; each drop is the weakest middle node of its chain.
+    # Deepest violators first; each drop is the least relevant middle node of its chain.
     for c in sorted(kept, key=lambda c: -len(chain(c))):
         while c in kept:
             ch = chain(c)
             if len(ch) <= depth:
                 break
-            mid = ch[1:-1]
-            drop = min(mid, key=lambda m: nodes[m]["coh"] - nodes[kept[m]]["coh"])
+            mid = [m for m in ch[1:-1] if m not in pinned]
+            if not mid:  # only pinned nodes in between: the chain stays long
+                break
+            drop = min(mid, key=lambda m: score(nodes[m]["n"], nodes[m]["coh"]))
             up = kept.pop(drop)
             for k in sub.pop(drop, []):
                 kept[k] = up
@@ -114,7 +126,8 @@ def _load(r, collection, algo, cache=None, **opts):
     members only: a small cluster is never kept, and a child is never bigger
     than its parent, so the 30 KB distribution blobs of the long tail are not
     touched. `cache` (a redis client) keeps the result for an hour, keyed by
-    the blob's hash, so a rebuild invalidates it.
+    the blob's hash and the analyst-named (pinned) set, so a rebuild or a
+    rename invalidates it.
     """
     from bsimvis.app.services.cluster_utils import get_cluster_metas, real_links
 
@@ -122,8 +135,14 @@ def _load(r, collection, algo, cache=None, **opts):
     raw = r.get(f"{collection}:bin_cluster:tree_links:{algo}")
     if not raw:
         return {}, ""
+    named = sorted(
+        c.decode() if isinstance(c, bytes) else str(c)
+        for c in r.smembers(f"{collection}:bin_cluster:named:{algo}")
+    )
     tag = hashlib.sha1(raw if isinstance(raw, bytes) else raw.encode())
-    tag.update(json.dumps(o, sort_keys=True).encode() + b"|v2")  # stored-set format
+    tag.update(
+        json.dumps([o, named], sort_keys=True).encode() + b"|v3"
+    )  # stored-set format / drop rule
     ck = f"files:clusterdisp:{collection}:{algo}:{tag.hexdigest()[:16]}"
     if cache is not None:
         hit = cache.get(ck)
@@ -133,7 +152,7 @@ def _load(r, collection, algo, cache=None, **opts):
     links = real_links(json.loads(raw))
     size = {str(l["child"]): int(l.get("size") or 0) for l in links}
     parent = {str(l["child"]): str(l["parent"]) for l in links}
-    cands = [c for c, n in size.items() if n >= o["min_members"]]
+    cands = [c for c, n in size.items() if n >= o["min_members"] or c in named]
     nodes = {}
     for i in range(0, len(cands), 500):
         metas = get_cluster_metas(
@@ -145,7 +164,7 @@ def _load(r, collection, algo, cache=None, **opts):
                 "n": int(m.get("member_count") or size[c]),
                 "coh": float(m.get("cohesion_score") or 0),
             }
-    out = {c: {**nodes[c], **v} for c, v in prune(nodes, **o).items()}
+    out = {c: {**nodes[c], **v} for c, v in prune(nodes, named, **o).items()}
     if cache is not None:
         cache.setex(ck, 3600, json.dumps(out))
     return out, tag.hexdigest()[:16]
@@ -308,6 +327,23 @@ def demo():
     # Larger low-cohesion cluster can outrank a tighter small one.
     assert score(40, 0.10) > score(2, 0.99)
     assert score(10, 0.98) > score(2, 0.99)
+
+    # Pinned (analyst-named) nodes: kept though too small / not tighter, and the
+    # depth cap drops an unpinned middle node instead.
+    t = {
+        "r": N(None, 100, 0.20),
+        "a": N("r", 99, 0.21),  # same cluster again: dropped unless pinned
+        "b": N("a", 60, 0.50),
+        "c": N("b", 40, 0.75),
+        "d": N("c", 10, 0.99),
+        "p": N("d", 2, 0.99),  # under min_members
+        "one": N("d", 1, 1.0),
+    }
+    got = prune(t, pinned={"a", "p", "one"}, jump=0.1)
+    assert "a" in got and "p" in got and "one" not in got, got
+    assert got["p"] == {"parent": "a", "depth": 2}, got  # b, c, d made way
+    got = prune(t, pinned={"a", "b", "c"}, jump=0.1)  # every middle pinned
+    assert {"a", "b", "c"} <= set(got) and got["d"]["depth"] == 4, got
     print("cluster_display demo ok")
 
 

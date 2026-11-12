@@ -5,6 +5,8 @@ bin_sim_service, similarity_service and cluster_service.
 """
 
 import json
+import math
+import re
 import time
 import zlib
 from collections import Counter, defaultdict
@@ -59,51 +61,84 @@ def _names_hash(prefix, kind):
     return f"{prefix}:cluster_names:{kind}"
 
 
-def _name_field(algo, anchors):
-    return f"{algo}|{zlib.crc32(','.join(anchors).encode()):08x}"
+def _name_ns(algo):
+    """Names namespace: hierarchical_uf and hierarchical_snn cluster the same
+    files, so a name survives a switch between the two engines."""
+    return algo.replace(":snn", "")
 
 
-def save_cluster_name(r, prefix, kind, algo, members, name):
-    """Remember an analyst name by a stable sample of its members (survives rebuilds).
+def _same_ns(field, algo):
+    return _name_ns(field.split("|", 1)[0]) == _name_ns(algo)
 
-    kind is "func" or "bin"; prefix is the collection or `global:pool:{id}`.
-    An empty name forgets it. Drops older entries that anchor the same members."""
-    h = _names_hash(prefix, kind)
+
+def _name_field(algo, e):
+    # size too: a parent and a child can share the same anchors
+    crc = zlib.crc32(",".join(e["anchors"]).encode())
+    return f"{_name_ns(algo)}|{crc:08x}:{e['size']}"
+
+
+def _name_entry(name, members, label=None):
     keys = sorted(
         {_member_key(m) for m in members}, key=lambda k: zlib.crc32(k.encode())
     )
-    anchors = keys[:NAME_ANCHORS]
+    e = {"name": name, "size": len(keys), "anchors": keys[:NAME_ANCHORS]}
+    if label is not None:
+        e["label"] = str(label)
+    return e
+
+
+def save_cluster_name(r, prefix, kind, algo, members, name, replaces=None, label=None):
+    """Remember an analyst name by a stable sample of its members (survives rebuilds).
+
+    kind is "func" or "bin"; prefix is the collection or `global:pool:{id}`.
+    An empty name forgets it. `replaces` is the cluster's previous custom name:
+    only entries with that name that anchor some of the same members are dropped,
+    so naming a sub-cluster never erases the name of the family around it.
+    `label` is the cluster id, preferred by an incremental rebuild (stable ids)."""
+    h = _names_hash(prefix, kind)
+    e = _name_entry(name, members, label)
     for f, raw in (r.hgetall(h) or {}).items():
         f = f.decode() if isinstance(f, bytes) else f
-        if f.startswith(f"{algo}|") and set(json.loads(raw)["anchors"]) & set(anchors):
+        old = json.loads(raw)
+        if (
+            replaces
+            and _same_ns(f, algo)
+            and old["name"] == replaces
+            and set(old["anchors"]) & set(e["anchors"])
+        ):
             r.hdel(h, f)
-    if name and anchors:
-        r.hset(
-            h,
-            _name_field(algo, anchors),
-            json.dumps({"name": name, "size": len(keys), "anchors": anchors}),
-        )
+    if name and e["anchors"]:
+        r.hset(h, _name_field(algo, e), json.dumps(e))
 
 
 class ClusterNameKeeper:
     """Analyst names saved by `save_cluster_name`, matched to a fresh build's clusters.
 
-    A cluster takes a saved name when it holds at least half the anchors and its
-    size is the closest to the size the name was saved at (so a parent does not
-    take a child's name). `pick(label, default)` -> (name, is_custom)."""
+    A cluster takes a saved name when it holds at least half the anchors. With
+    `stable_ids` (an incremental hierarchical run: node ids carry over) the
+    cluster with the saved id wins; otherwise the size closest to the saved size
+    (so a parent does not take a child's name). `pick(label, default)` ->
+    (name, is_custom). `reanchor(labels)` moves the kept names onto those
+    clusters' current members, so a name follows its cluster as it grows,
+    shrinks or loses deleted files.
 
-    def __init__(self, r, prefix, kind, algo, cluster_members):
-        self.names = {}
-        raw = r.hgetall(_names_hash(prefix, kind)) or {}
-        entries = []
+    `cluster_members` must hold every cluster the build has (every tree node),
+    not only the written ones, or a name can land on the wrong node."""
+
+    def __init__(self, r, prefix, kind, algo, cluster_members, stable_ids=False):
+        self.names, self.matched = {}, {}
+        self.r, self.h, self.algo = r, _names_hash(prefix, kind), algo
+        self.members = cluster_members
+        raw = r.hgetall(self.h) or {}
+        self.entries = []  # (field, entry)
         for f, v in raw.items():
             f = f.decode() if isinstance(f, bytes) else f
-            if f.startswith(f"{algo}|"):
-                entries.append(json.loads(v))
-        if not entries:
+            if _same_ns(f, algo):
+                self.entries.append((f, json.loads(v)))
+        if not self.entries:
             return
         where = defaultdict(list)  # anchor -> entry indexes
-        for i, e in enumerate(entries):
+        for i, (_, e) in enumerate(self.entries):
             for a in e["anchors"]:
                 where[a].append(i)
         hits = defaultdict(Counter)  # label -> entry -> anchors held
@@ -116,25 +151,42 @@ class ClusterNameKeeper:
         cands = []
         for label, cnt in hits.items():
             for i, n in cnt.items():
-                e = entries[i]
+                e = self.entries[i][1]
                 if n * 2 >= len(e["anchors"]):
+                    same = stable_ids and e.get("label") == str(label)
                     cands.append(
                         (
+                            0 if same else 1,
                             abs(sizes[label] - e["size"]) / max(e["size"], 1),
                             -n,
+                            str(label),
                             label,
                             i,
                         )
                     )
         used = set()
-        for _, _, label, i in sorted(cands):  # closest size first
+        for *_, label, i in sorted(cands):  # same id, then closest size
             if label not in self.names and i not in used:
-                self.names[label] = entries[i]["name"]
+                self.names[label] = self.entries[i][1]["name"]
+                self.matched[label] = i
                 used.add(i)
 
     def pick(self, label, default):
         name = self.names.get(label)
         return (name, True) if name else (default, False)
+
+    def reanchor(self, labels):
+        for label in labels:
+            i = self.matched.get(label)
+            if i is None or not self.members.get(label):
+                continue
+            f, old = self.entries[i]
+            e = _name_entry(old["name"], self.members[label], label)
+            nf = _name_field(self.algo, e)
+            if nf != f:
+                self.r.hdel(self.h, f)
+            self.r.hset(self.h, nf, json.dumps(e))
+            self.entries[i] = (nf, e)
 
 
 def default_bin_cluster_name(
@@ -172,6 +224,707 @@ def default_bin_cluster_name(
             name = name[: MAX_CLUSTER_NAME_LEN - 3] + "..."
         return name
     return fallback
+
+
+# -- automatic file-cluster names --------------------------------------------
+# Name = head [· qualifier [· qualifier]]: the family (AV / family: tags, else an
+# unambiguous YARA family, else the parent's), then what sets the cluster apart
+# from its parent (lift): build stem from file names ("DEMONS", "p*", "*net"),
+# a readable YARA trait, architecture, packer, size. Prototype + evaluation on
+# more_mirai_yara: 14 exact / 5 close / 1 wrong of 20 against analyst names.
+
+_ARCH = {
+    "ARM": "ARM",
+    "AARCH64": "AArch64",
+    "x86:LE:32": "x86",
+    "x86:LE:64": "x86-64",
+    "MIPS:LE": "MIPSel",
+    "MIPS:BE": "MIPS",
+    "PowerPC": "PowerPC",
+    "SuperH4": "SH4",
+    "68000": "m68k",
+    "sparc": "SPARC",
+    "RISCV": "RISC-V",
+    "Loongarch": "LoongArch",
+}
+_NOT_FAMILY = {
+    "unknown", "generic", "threat", "anomaly", "obfuscation", "ok", "trojan",
+    "botnet", "linux", "elf", "backdoor", "exploit", "malware", "virus", "hacktool",
+}  # fmt: skip
+_FAMILY_RULE = re.compile(r"(?:Backdoor|Trojan|HackTool|DDoS)_Linux_([A-Za-z]+)_", re.I)
+_ELASTIC_RULE = re.compile(r"^Linux_(?!Generic)[A-Za-z]+_([A-Za-z]+)_[0-9a-f]{8}$")
+_ELF_FAMILY = re.compile(r"^ELF_([A-Za-z]+)$")
+_HEX = re.compile(r"^[0-9a-f]{32,64}$")
+_ARCH_TOK = re.compile(
+    r"(x86_64|x86|i[3-6]86|amd64|aarch64|arm64|arm\d*|mipsel|mpsl|mips64|mips|"
+    r"powerpc|ppc|sh4|sh2|m68k|sparc|spc|riscv\d*|loongarch\d*|arc|mipseb)"
+)
+_GENERIC_RULE = re.compile(r"^Linux_Botnet_Generic_(\w+)$")
+_HASHY = re.compile(r"_[0-9a-f]{8}$")
+_SKIP_TRAITS = {
+    "XorObfuscatedConfig",
+    "UPX_Protector",
+    "Antivirus",
+    "find",
+    "stack_string",
+}
+_BASIS = {
+    "stem": "files",
+    "trait": "yara",
+    "arch": "arch",
+    "packer": "packer",
+    "size": "size",
+}
+
+
+def _arch_of(m):
+    lid = m.get("language_id") or ""
+    for k, v in _ARCH.items():
+        if lid.startswith(k):
+            return v
+    return lid.split(":")[0] or None
+
+
+def _fam(tok):
+    tok = (tok or "").strip().lower()
+    if not tok or tok in _NOT_FAMILY or tok.startswith("cve") or len(tok) < 3:
+        return None
+    return tok
+
+
+def _rule_of(parts):
+    return parts[2].split("#", 1)[1] if "#" in parts[2] else ":".join(parts[3:])
+
+
+def _families_of(m):
+    """(strong, weak) lowercase families of one file: strong = AV labels and
+    family: tags, weak = from YARA rule names (they often cross-fire)."""
+    av, other = set(), set()
+    for t in m.get("tags") or []:
+        parts = str(t).split(":")
+        if parts[0] == "av" and len(parts) >= 3:
+            f = _fam(parts[2].split("#")[0])
+            if f:
+                av.add(f)
+        elif parts[0] == "family" and len(parts) >= 2:
+            f = _fam(parts[1])
+            if f:
+                av.add(f)
+        elif parts[0] == "yara" and len(parts) >= 3:
+            f = _fam(parts[2].split("#")[0])
+            if f:
+                other.add(f)
+            rule = _rule_of(parts)
+            mr = (
+                _FAMILY_RULE.search(rule)
+                or _ELF_FAMILY.match(rule)
+                or _ELASTIC_RULE.match(rule)
+            )
+            if mr and _fam(mr.group(1)):
+                other.add(_fam(mr.group(1)))
+    return av, other
+
+
+def _name_base(name):
+    """Sample name without path and packing suffix; None for md5 / sha names."""
+    if not name:
+        return None
+    base = name.rsplit("/", 1)[-1]
+    for suf in (".unpacked", ".elf", ".bin", ".zip"):
+        if base.lower().endswith(suf):
+            base = base[: -len(suf)]
+    return None if _HEX.match(base.lower()) else base
+
+
+def _collapse(s):
+    rep = re.match(r"^(.{2,4}?)\1+$", s)  # xnxnxnxn -> xnxn
+    return rep.group(1) * 2 if rep else s
+
+
+def name_tokens(name):
+    """Words of 3+ characters in a sample name: its arch words and the pieces
+    between them ('xnxnxnxnm68kxnxn' -> {'xnxn', 'm68k'}, 'pm68k' -> {'m68k'})."""
+    base = _name_base(name)
+    if not base:
+        return set()
+    low = base.lower()
+    toks = {m.group(0) for m in _ARCH_TOK.finditer(low)}
+    for piece in re.split(r"[^a-z0-9]+", _ARCH_TOK.sub(" ", low)):
+        piece = _collapse(piece)
+        if len(piece) >= 3 and not piece.isdigit():
+            toks.add(piece)
+    return toks
+
+
+def stem_of(name):
+    """Build label of a sample name: 'DEMONS.arm7' -> 'DEMONS',
+    'xnxn..riscv64xnxn' -> 'xnxn'; None for md5 / sha names and for stems under
+    3 characters ('pm68k' -> 'p' says nothing)."""
+    base = _name_base(name)
+    if not base:
+        return None
+    s = _ARCH_TOK.sub(" ", base.lower())
+    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+    if not s:
+        return None
+    s = _collapse(s.split()[0])
+    if s.isdigit() or len(s) < 3:
+        return None
+    m = re.search(re.escape(s), base, re.I)  # keep the name's case ('DEMONS')
+    return base[m.start() : m.end()] if m else s
+
+
+def _traits_of(m):
+    """Readable YARA rule names: 'ELF_Toriilike_persist' -> 'Toriilike persist'."""
+    out = set()
+    for t in m.get("tags") or []:
+        parts = str(t).split(":")
+        if parts[0] != "yara" or len(parts) < 3:
+            continue
+        rule = _rule_of(parts)
+        g = _GENERIC_RULE.match(rule)
+        if g:
+            rule = g.group(1)
+        if (
+            not rule
+            or rule in _SKIP_TRAITS
+            or _HASHY.search(rule)
+            or _FAMILY_RULE.search(rule)
+            or _ELF_FAMILY.match(rule)
+            or rule.startswith(
+                ("SUSP_", "MAL_", "Linux_Trojan", "Linux_Generic", "Linux_Exploit")
+            )
+        ):
+            continue
+        words = rule.replace("ELF_", "").replace("_", " ").split()
+        out.add(" ".join(words[:3])[:24])
+    return out
+
+
+def _file_features(m):
+    """-> (features {(kind, value)}, strong families, weak families) of one file."""
+    av, other = _families_of(m)
+    arch = _arch_of(m)
+    f = {("arch", arch)} if arch else set()
+    names = list(m.get("file_names") or []) + [m.get("file_name")]
+    f |= {("stem", s) for s in map(stem_of, names) if s}
+    f |= {("tok", t) for nm in names for t in name_tokens(nm)}
+    f |= {("trait", t) for t in _traits_of(m)}
+    tags = [str(t) for t in m.get("tags") or []]
+    if any(t.startswith("packer:upx") for t in tags):
+        f.add(("packer", "UPX"))
+    n = m.get("function_count") or 0
+    if isinstance(n, (int, float)) and n:
+        if n < 20:
+            f.add(("size", "stub"))
+        elif n >= 1000:
+            f.add(("size", "large"))
+    botnet = any(t.startswith("yara:botnet:") for t in tags)
+    return f, av, other, botnet
+
+
+def _shares(feats):
+    c = Counter(x for f in feats for x in f)
+    return {k: v / max(1, len(feats)) for k, v in c.items()}
+
+
+def _family_head(fams, weak_ok=True, plurality=False, compat=None):
+    """fams: per member (strong, weak) -> (head, families, basis) or (None, set(), None).
+    `plurality`: 40% and twice the runner-up is enough (a parent's lineage).
+    `compat` (BinClusterNamer._cofire) breaks a tie between YARA families that
+    all fire: Gafgyt rules hit Mirai-labelled files across the collection, Mirai
+    rules do not hit Gafgyt-labelled ones, so Mirai + Gafgyt rules is Mirai."""
+    n = len(fams)
+    strong = Counter(f for st, _ in fams for f in st)
+    top = [(f, c / n) for f, c in strong.most_common(2)]
+    second = top[1][1] if len(top) > 1 else 0
+    if top and (
+        top[0][1] > 0.5 or plurality and top[0][1] >= 0.4 and top[0][1] >= 2 * second
+    ):
+        head, basis = [top[0][0]] + [f for f, sh in top[1:] if sh >= 0.3], "av"
+    elif not weak_ok:
+        return None, set(), None
+    else:
+        # YARA families cross-fire (Gafgyt rules hit Mirai): only an unambiguous one
+        weak = Counter(f for _, wk in fams for f in wk)
+        w = [(f, c / n) for f, c in weak.most_common(2)]
+        if not w or w[0][1] < 0.8:
+            return None, set(), None
+        if len(w) > 1 and w[1][1] >= 0.5:
+            cx = compat or {}
+            wide = [f for f, c in weak.items() if c / n >= 0.5]
+            keep = [
+                f
+                for f in wide
+                if not any(
+                    cx.get((f, g), 0) >= 0.5 and cx.get((g, f), 0) < 0.5
+                    for g in wide
+                    if g != f
+                )
+            ]
+            if len(keep) != 1 or weak[keep[0]] / n < 0.8:
+                return None, set(), None
+            w = [(keep[0], 1.0)]
+        head, basis = [w[0][0]], "yara"
+    pretty = lambda f: f.capitalize() if f.islower() else f
+    return " + ".join(pretty(f) for f in head), set(head), basis
+
+
+def _shared_suffix(stems, min_share=0.5, min_len=3):
+    """'cracknet', 'weednet', 'swatnet' -> '*net' when most stems end the same."""
+    stems = sorted({s.lower() for s in stems if len(s) > min_len})
+    if len(stems) < 3:
+        return None
+    best = None
+    for L in range(min_len, 6):
+        c = Counter(s[-L:] for s in stems if len(s) > L)
+        if not c:
+            break
+        suf, k = c.most_common(1)[0]
+        if k / len(stems) >= min_share:
+            best = suf
+    return f"*{best}" if best else None
+
+
+class BinClusterNamer:
+    """Automatic names for file clusters: `name(members, parent)` -> (name, basis).
+
+    members / parent are lists of file metas (`{coll}:file:{md5}:meta`); parent
+    is the tree parent's members (None for a root). `collection` is every
+    clustered file's meta: the reference of a root, and where a YARA family's
+    cross-firing on a parent family is measured. basis lists what the name was
+    built from: av, yara, files, arch, size, packer, parent.
+
+    Features, shares and root names are memoised per object (the object is held,
+    so its id is never reused): pass the same meta and parent lists each time."""
+
+    def __init__(self, collection=()):
+        self.collection = list(collection)
+        self._memo = {}
+
+    def _cached(self, kind, obj, fn):
+        k = (kind, id(obj))
+        if k not in self._memo:
+            self._memo[k] = (obj, fn(obj))
+        return self._memo[k][1]
+
+    def _feat(self, m):
+        return self._cached("f", m, _file_features)
+
+    def _cofire(self, metas, labelled=False):
+        """{(weak, strong): share of the files with that weak family that carry
+        the strong one}: a YARA family cross-firing on another family's builds.
+        `labelled`: count only files that carry some strong label (unpacked
+        payloads have none, and would dilute the share)."""
+
+        def build(metas):
+            weak_n, both = Counter(), Counter()
+            for m in metas:
+                _, st, wk, _ = self._feat(m)
+                if labelled and not st:
+                    continue
+                for f in wk:
+                    weak_n[f] += 1
+                    for g in st:
+                        both[(f, g)] += 1
+            return {k: v / weak_n[k[0]] for k, v in both.items()}
+
+        return self._cached("cl" if labelled else "c", metas, build)
+
+    def name(self, members, parent=None, _root=False):
+        if not members:
+            return None, []
+        per = [self._feat(m) for m in members]
+        feats = [p[0] for p in per]
+        n = len(members)
+        mine = _shares(feats)
+        own = [(p[1], p[2]) for p in per]
+        head, head_fams, hb = _family_head(own, weak_ok=False)
+        basis = [hb] if hb else []
+        if head is None and parent:
+            # family is a lineage property: unpacked payloads carry no AV label,
+            # so take the parent's when some members show it in a tag
+            ph, pf, _ = _family_head(
+                [self._feat(m)[1:3] for m in parent], weak_ok=False, plurality=True
+            )
+            compat = self._cofire(self.collection or parent)
+            evidence = (
+                sum(
+                    1
+                    for (st, wk), p in zip(own, per)
+                    if any(
+                        f in pf or compat.get((f, g), 0) >= 0.3
+                        for f in st | wk
+                        for g in pf
+                    )
+                    or (not st and not wk and p[3])
+                )
+                / n
+            )
+            if ph and evidence >= 0.3:
+                head, head_fams, basis = ph, pf, ["parent"]
+        if head is None:
+            head, head_fams, hb = _family_head(
+                own,
+                compat=self._cofire(
+                    self.collection or parent or members, labelled=True
+                ),
+            )
+            basis = [hb] if hb else []
+
+        ref = parent or self.collection or members
+        theirs = self._cached(
+            "s", ref, lambda ref: _shares([self._feat(m)[0] for m in ref])
+        )
+        floor = 1 / max(2, len(ref))
+
+        def score(k):
+            lift = mine.get(k, 0) / max(theirs.get(k, 0), floor)
+            return mine.get(k, 0) * math.log(max(lift, 1.0001))
+
+        cands = []  # (score, text, kind)
+        # architecture: one arch >= 80%, or two >= 90% together, else "N archs"
+        archs = Counter(x[1] for f in feats for x in f if x[0] == "arch")
+        if (
+            archs
+            and max(archs.values()) / n < 0.8
+            and archs.get("MIPS")
+            and archs.get("MIPSel")
+        ):
+            archs["MIPS"] += archs.pop("MIPSel")
+        a = archs.most_common(2)
+        arch_txt = None
+        if a and a[0][1] / n >= 0.8:
+            arch_txt = a[0][0]
+            cands.append((score(("arch", a[0][0])) or 0.03, arch_txt, "arch"))
+        elif len(a) == 2 and (a[0][1] + a[1][1]) / n >= 0.9:
+            arch_txt = f"{a[0][0]}/{a[1][0]}"
+            sc = min(score(("arch", a[0][0])), score(("arch", a[1][0])))
+            cands.append((max(sc, 0.03), arch_txt, "arch"))
+        elif len(archs) >= 4:
+            arch_txt = f"{len(archs)} archs"
+            cands.append((0.03, arch_txt, "arch"))
+
+        # build stems from file names: the top one, two when both are common
+        stems = Counter(x[1] for f in feats for x in f if x[0] == "stem")
+        st = [(s, c / n) for s, c in stems.most_common(2) if c / n >= 0.3]
+        pretty = lambda s: f"{s}*" if len(s) <= 2 else s
+        # a word in (nearly) every file name beats build stems that split the
+        # cluster: 'xnxn..m68kxnxn' + 'pm68k' -> 'm68k', not 'p* + xnxn'
+        shared = max(
+            ((c, t) for (k, t), c in mine.items() if k == "tok" and c >= 0.8),
+            default=None,
+        )
+        # files with a word in their name but no stem ('pm68k') are one group
+        bare = sum(
+            1
+            for f in feats
+            if any(x[0] == "tok" for x in f) and not any(x[0] == "stem" for x in f)
+        )
+        top2 = stems.most_common(2)
+        lead = top2[0][1] if top2 else 0
+        runner = max(top2[1][1] if len(top2) > 1 else 0, bare)
+        if shared and not (lead >= 0.4 * n and lead >= 2 * runner):
+            tok = shared[1]
+            if not _ARCH_TOK.fullmatch(tok):
+                cands.append((score(("tok", tok)) * 1.5, tok, "stem"))
+            elif not arch_txt:
+                cands.append((score(("tok", tok)) or 0.03, tok, "arch"))
+        elif (
+            st and st[0][1] >= 0.3
+        ):  # no shared word: a 30% build stem still says something
+            txt = pretty(st[0][0])
+            if len(st) == 2:
+                txt += " + " + pretty(st[1][0])
+            cands.append((score(("stem", st[0][0])) * 1.5, txt, "stem"))
+        else:
+            suf = _shared_suffix(list(stems))
+            if suf:
+                cands.append((0.6, suf, "stem"))
+
+        fc_median = lambda: sorted(m.get("function_count") or 0 for m in members)[
+            n // 2
+        ]
+        for kind in ("trait", "packer", "size"):
+            best = max(
+                ((score(k), k[1]) for k in mine if k[0] == kind and mine[k] >= 0.6),
+                default=None,
+            )
+            if best and best[0] > 0.05 and best[1] != "large":
+                cands.append((best[0], best[1], kind))
+            if kind == "size" and mine.get(("size", "large"), 0) >= 0.6:
+                # intrinsic: a big program stays labelled even under a big parent
+                cands = [c for c in cands if c[2] != "size"]
+                txt = f"{fc_median() / 1000:.1f}k-func"
+                cands.append((max(best[0] if best else 0, 0.1), txt, "size"))
+
+        cands.sort(key=lambda c: -c[0])
+        # qualifiers repeating the family ("Mirai Botnet") add nothing
+        cands = [
+            c for c in cands if not set(re.findall(r"[a-z]+", c[1].lower())) & head_fams
+        ]
+
+        if mine.get(("size", "stub"), 0) >= 0.5:
+            # packer stubs: what they are beats whose payload they carry
+            upx = mine.get(("packer", "UPX"), 0) >= 0.5
+            head = "UPX stubs" if upx else "Stubs"
+            basis = ["size", "packer"] if upx else ["size"]
+            cands = [c for c in cands if c[2] not in ("packer", "size", "trait")]
+        elif head is None:
+            big = [c for c in cands if c[2] == "size"]
+            if big:
+                head, basis = f"{big[0][1]} program", ["size"]
+                cands.remove(big[0])
+            elif mine.get(("size", "large"), 0) >= 0.6:
+                head, basis = f"{fc_median() / 1000:.1f}k-func program", ["size"]
+            elif cands:
+                c = cands.pop(0)
+                head, basis = c[1], [_BASIS[c[2]]]
+            elif a:
+                head, basis = f"{a[0][0]} program", ["arch"]
+            else:
+                return None, []
+
+        parts, used = [head], set()
+        for sc, txt, kind in cands:
+            if len(parts) == 3 or kind in used or sc <= 0.02:
+                continue
+            if kind == "packer" and len(parts) > 1:
+                continue
+            if len(" · ".join(parts + [txt])) > MAX_CLUSTER_NAME_LEN:
+                continue
+            parts.append(txt)
+            used.add(kind)
+        # a bare family says less than its parent: keep the arch it shares
+        if len(parts) == 1 and arch_txt and arch_txt != head:
+            parts.append(arch_txt)
+            cands.append((0, arch_txt, "arch"))
+        # chosen by score, shown in reading order: family · build · trait · arch · size
+        order = {"stem": 0, "trait": 1, "arch": 2, "size": 3, "packer": 4}
+        kind_of = {txt: kind for _, txt, kind in cands}
+        parts = [parts[0]] + sorted(
+            parts[1:], key=lambda t: order.get(kind_of.get(t), 9)
+        )
+        basis += [_BASIS[kind_of[t]] for t in parts[1:] if t in kind_of]
+        name = " · ".join(parts)
+
+        # a child must not read like its parent: add what is left, else "core"
+        if parent and not _root:
+            pname = self._cached("n", parent, lambda p: self.name(p, None, True)[0])
+            if pname == name:
+                if arch_txt and arch_txt not in parts:
+                    name, basis = f"{name} · {arch_txt}", basis + ["arch"]
+                else:  # a strict subset of a same-named parent: its tighter core
+                    name, basis = f"{name} · core", basis + ["parent"]
+        if len(name) > MAX_CLUSTER_NAME_LEN:
+            name = name[: MAX_CLUSTER_NAME_LEN - 1] + "…"
+        return name, list(dict.fromkeys(basis))
+
+
+NAME_SOURCES = ("analyst", "near", "tag", "auto")
+
+
+def bin_cluster_name_fields(namer, members, parent, tag_distribution, fallback):
+    """Name fields of a freshly built file cluster: a user tag on enough members
+    ("tag"), else the namer ("auto"), else `fallback` (the legacy family / YARA /
+    file-name rule, when the metas give the namer nothing). `name_default` is what
+    a reset or a cleared near name goes back to. `parent` (the tree parent's metas,
+    or None) is passed as is: reuse one list per node, the namer memoises by it."""
+    known = [m for m in members if m]
+    auto, basis = (None, [])
+    if known:
+        auto, basis = namer.name(known, parent or None)
+    if not auto:
+        auto, basis = fallback, []
+    tag = _tag_distribution_label(
+        (tag_distribution or {}).get("user"), USER_TAG_NAME_MIN
+    )
+    d = (
+        {"name": tag, "source": "tag", "basis": ["tag"]}
+        if tag
+        else {"name": auto, "source": "auto", "basis": basis}
+    )
+    return {
+        "cluster_name": d["name"],
+        "name_source": d["source"],
+        "name_basis": d["basis"],
+        "auto_name": auto,
+        "name_default": d,
+    }
+
+
+def restore_default_name(meta, fallback):
+    """Back to the build's name (reset, or a near name that no longer applies)."""
+    d = meta.get("name_default") or {
+        "name": meta.get("auto_name") or fallback,
+        "source": "auto",
+        "basis": meta.get("name_basis") or [],
+    }
+    meta.update(
+        cluster_name=d["name"],
+        name_source=d["source"],
+        name_basis=d["basis"],
+        is_custom_name=False,
+    )
+    meta.pop("name_ref", None)
+    return meta
+
+
+def name_fields(meta):
+    """The name contract of a file cluster meta for API rows, legacy metas included."""
+    meta = meta or {}
+    custom = bool(meta.get("is_custom_name"))
+    return {
+        "is_custom_name": custom,
+        "name_source": meta.get("name_source") or ("analyst" if custom else "auto"),
+        "name_basis": meta.get("name_basis") or [],
+        "name_ref": meta.get("name_ref"),
+        "auto_name": meta.get("auto_name"),
+    }
+
+
+# -- near-identical name inheritance -----------------------------------------
+NEAR_SPLIT = 3  # a sibling this big merged in along the path is a real split
+
+
+def near_tol(size):
+    return max(2, int(size * 0.1))
+
+
+def _near_tree(links):
+    size, parent, kids = {}, {}, defaultdict(list)
+    for l in real_links(links):
+        c, p = str(l["child"]), str(l["parent"])
+        size[c], parent[c] = int(l.get("size") or 0), p
+        kids[p].append(c)
+    return size, parent, kids
+
+
+def _near_walk(tree, n, take=lambda c: True):
+    """Nodes in n's chain: up, then down, every step with no sibling of
+    >= NEAR_SPLIT files and a size within near_tol of n's. `take(c)` False
+    stops the walk at c (c excluded)."""
+    size, parent, kids = tree
+    tol = near_tol(size[n])
+
+    def clean(p, c):  # every other child of p is small
+        return all(size[k] < NEAR_SPLIT for k in kids[p] if k != c)
+
+    def close(c):
+        return abs(size[c] - size[n]) <= tol and take(c)
+
+    out, c = [], n
+    while c in parent and parent[c] in size and clean(parent[c], c):
+        c = parent[c]
+        if not close(c):
+            break
+        out.append(c)
+    stack = [n]
+    while stack:
+        p = stack.pop()
+        nxt = [c for c in kids.get(p, ()) if clean(p, c) and close(c)]
+        out += nxt
+        stack += nxt
+    return out
+
+
+def near_names(links, named):
+    """{cid: (named cid, delta)} for unnamed tree nodes in the same chain as an
+    analyst-named node: reached by walking only up or only down from it, every
+    step with no sibling of >= NEAR_SPLIT files, and a size within near_tol of
+    the named node's. The smallest |delta| wins; named nodes never take one.
+    `links` is the tree_links blob (sizes are tree sizes); ids come back as str."""
+    tree = _near_tree(links)
+    size = tree[0]
+    named = {str(c) for c in named} & set(size)
+    best = {}
+    for n in named:
+        for c in _near_walk(tree, n, lambda c: c not in named):
+            d = size[c] - size[n]
+            if c not in best or (abs(d), n) < (abs(best[c][1]), best[c][0]):
+                best[c] = (n, d)
+    return best
+
+
+def near_chain(links, cid):
+    """The chain around `cid` by the near-name rule, named nodes included:
+    {"chain": [cid, ...] largest first, "above": the parent past the top or
+    None, "below": [children >= NEAR_SPLIT files that start a real split or
+    leave the tolerance]}. None when cid is not in the tree."""
+    tree = _near_tree(links)
+    size, parent, kids = tree
+    cid = str(cid)
+    if cid not in size:
+        return None
+    chain = sorted([cid] + _near_walk(tree, cid), key=lambda c: (-size[c], c))
+    inside = set(chain)
+    top = chain[0]
+    above = parent.get(top)
+    below = sorted(
+        {k for c in chain for k in kids.get(c, ()) if k not in inside}
+        - {k for k in size if size[k] < NEAR_SPLIT},
+        key=lambda c: (-size[c], c),
+    )
+    return {"chain": chain, "above": above, "below": below}
+
+
+def _near_keys(collection, algo_ns):
+    base = f"{collection}:bin_cluster"
+    return f"{base}:named:{algo_ns}", f"{base}:near:{algo_ns}"
+
+
+def refresh_near_names(r, collection, algo_ns):
+    """Apply / clear near names after a build or a rename. Reads the tree_links
+    blob, the named set and the near hash, and only the metas of named and
+    (formerly) near nodes. -> {cid: named cid} now applied."""
+    named_k, near_k = _near_keys(collection, algo_ns)
+    named = {_s(c) for c in r.smembers(named_k)}
+    old = {_s(k): _s(v) for k, v in (r.hgetall(near_k) or {}).items()}
+    if not named and not old:
+        return {}
+    raw = r.get(f"{collection}:bin_cluster:tree_links:{algo_ns}")
+    want = near_names(json.loads(raw), named) if raw and named else {}
+    cids = sorted(named | set(want) | set(old))
+    meta_k = lambda c: f"{collection}:bin_cluster:{algo_ns}:{c}:meta"
+    metas = {}
+    for i in range(0, len(cids), 500):
+        chunk = cids[i : i + 500]
+        for c, v in zip(chunk, r.mget([meta_k(c) for c in chunk])):
+            metas[c] = json.loads(v) if v else None
+    applied, pipe = {}, r.pipeline(transaction=False)
+    for c, (n, _) in want.items():
+        src, m = metas.get(n), metas.get(c)
+        if not src or not src.get("is_custom_name") or not m or m.get("is_custom_name"):
+            continue
+        ref = {
+            "cluster_id": src.get("cluster_id"),
+            "cluster_uuid": src.get("cluster_uuid"),
+            "cluster_name": src.get("cluster_name"),
+            "delta": int(m.get("member_count") or 0)
+            - int(src.get("member_count") or 0),
+        }
+        applied[c] = n
+        if m.get("name_source") == "near" and m.get("name_ref") == ref:
+            continue
+        m.update(
+            cluster_name=src["cluster_name"],
+            name_source="near",
+            name_basis=[],
+            name_ref=ref,
+            is_custom_name=False,
+        )
+        pipe.set(meta_k(c), json.dumps(m))
+    for c in set(old) - set(applied):
+        m = metas.get(c)
+        if m and m.get("name_source") == "near":
+            pipe.set(
+                meta_k(c), json.dumps(restore_default_name(m, f"Binary Cluster {c}"))
+            )
+    pipe.delete(near_k)
+    if applied:
+        pipe.hset(near_k, mapping=applied)
+    pipe.execute()
+    return applied
 
 
 def default_func_cluster_name(fids, metas, fallback):
@@ -741,7 +1494,7 @@ def fetch_bin_cluster_meta(
         if isinstance(cm, str):
             cm = json.loads(cm)
         if cm:
-            meta_by_pair[k] = cm
+            meta_by_pair[k] = {**cm, **name_fields(cm)}
 
     meta_by_uuid, per_entry = {}, []
     for cids, ns in norm:
@@ -812,7 +1565,7 @@ def fetch_bin_cluster_meta_all_axes(
         if isinstance(cm, str):
             cm = json.loads(cm)
         if cm:
-            parsed_meta[k_tuple] = cm
+            parsed_meta[k_tuple] = {**cm, **name_fields(cm)}
 
     meta_by_uuid = {}
     # (entry_idx, axis, cid) -> uuid
@@ -1244,11 +1997,69 @@ def demo():
     keeper = ClusterNameKeeper(nr, "C", "bin", "algo", fresh)
     assert keeper.pick("7", "auto") == ("my family", True)
     assert keeper.pick("8", "auto") == ("auto", False)
-    save_cluster_name(nr, "C", "bin", "algo", old_members, "")
+    save_cluster_name(nr, "C", "bin", "algo", old_members, "", replaces="my family")
     assert ClusterNameKeeper(nr, "C", "bin", "algo", fresh).pick("7", "a") == (
         "a",
         False,
     )
+    # Naming a sub-cluster keeps the family's name, and the other way round.
+    nr.h = {}
+    fam = [f"C:file:f{i}" for i in range(78)]
+    save_cluster_name(nr, "C", "bin", "algo", fam, "Mirai")
+    save_cluster_name(nr, "C", "bin", "algo", fam[:9], "SH4")
+    k = ClusterNameKeeper(nr, "C", "bin", "algo", {"P": fam, "S": fam[:9]})
+    assert k.pick("P", "a") == ("Mirai", True) and k.pick("S", "a") == ("SH4", True)
+    # A second rename of the same cluster replaces its name.
+    save_cluster_name(nr, "C", "bin", "algo", fam[:9], "SH4 builds", replaces="SH4")
+    assert sorted(json.loads(v)["name"] for v in nr.h.values()) == [
+        "Mirai",
+        "SH4 builds",
+    ]
+
+    # Hierarchical: renamed node 5 (9 files) grows to 40 in one upload and a
+    # 10-file sub-node 6 now holds most of the original files.
+    nr.h = {}
+    orig = [f"C:file:s{i}" for i in range(9)]
+    save_cluster_name(nr, "C", "bin", "algo", orig, "SH4", label=5)
+    grown = {5: orig + [f"C:file:n{i}" for i in range(31)], 6: orig + ["C:file:n0"]}
+    # incremental run (stable ids): the name stays on node 5
+    k = ClusterNameKeeper(nr, "C", "bin", "algo", grown, stable_ids=True)
+    assert k.pick(5, "a") == ("SH4", True) and k.pick(6, "a") == ("a", False)
+    # after reanchor the entry follows node 5, so a full rebuild (fresh ids,
+    # same tree under labels 50/60) finds it by size too
+    k.reanchor([5, 6])
+    (e,) = [json.loads(v) for v in nr.h.values()]
+    assert e["size"] == 40 and e["label"] == "5", e
+    fresh = {50: grown[5], 60: grown[6]}
+    assert ClusterNameKeeper(nr, "C", "bin", "algo", fresh).pick(50, "a") == (
+        "SH4",
+        True,
+    )
+
+    # A parent and a child with the same 20 anchors keep both names.
+    nr.h = {}
+    child = [f"C:file:c{i}" for i in range(30)]
+    parent = child + ["C:file:zz1"]
+    save_cluster_name(nr, "C", "bin", "algo", parent, "fam")
+    save_cluster_name(nr, "C", "bin", "algo", child, "sub")
+    k = ClusterNameKeeper(nr, "C", "bin", "algo", {"P": parent, "S": child})
+    assert (k.pick("P", "")[0], k.pick("S", "")[0]) == ("fam", "sub"), k.names
+
+    # hierarchical_uf <-> hierarchical_snn: names saved under one engine apply
+    # to the other, legacy fields (no size suffix) included.
+    nr.h = {}
+    save_cluster_name(nr, "C", "bin", "algo:code:snn", orig, "SH4")
+    assert ClusterNameKeeper(nr, "C", "bin", "algo:code", {1: orig}).pick(1, "")[0]
+    nr.h = {
+        "algo:code:snn|0000abcd": json.dumps(
+            {"name": "old", "size": 9, "anchors": [o.split(":file:")[1] for o in orig]}
+        )
+    }
+    assert ClusterNameKeeper(nr, "C", "bin", "algo:code", {1: orig}).pick(1, "") == (
+        "old",
+        True,
+    )
+    assert not ClusterNameKeeper(nr, "C", "bin", "other:code", {1: orig}).names
 
     # A user tag names the cluster only above the coverage floor.
     dist = {
@@ -1352,6 +2163,92 @@ def demo():
     assert (s["first_seen"], s["last_seen"]) == (t0 - 4 * day, t0 - day), s
     assert timeline_summary(None)["new_members"] == 0
     assert timeline_summary({})["first_seen"] is None
+
+    # Automatic file-cluster names: family head, then what sets a child apart.
+    mk = lambda name, lid, tags=(), fc=200: {
+        "file_name": name,
+        "language_id": lid,
+        "tags": list(tags),
+        "function_count": fc,
+    }
+    mir = ["av:clamav:mirai#Unix.Trojan.Mirai-1"]
+    assert stem_of("DEMONS.arm7") == "DEMONS" and stem_of("pm68k") is None
+    assert name_tokens("xnxnxnxnxnxnxnxnm68kxnxn") == {"xnxn", "m68k"}
+    assert name_tokens("pm68k") == {"m68k"}
+    assert (
+        stem_of("px86_i686") is None
+        and stem_of("xnxnxnxnxnxnxnxnriscv64xnxn") == "xnxn"
+    )
+    assert stem_of("0123456789abcdef0123456789abcdef.unpacked") is None
+    sh4 = [mk("boatnet.sh4", "SuperH4:LE:32:default", mir) for _ in range(5)]
+    arm = [mk(f"parm{i}", "ARM:LE:32:v8", mir) for i in range(20)]
+    coll = sh4 + arm
+    namer = BinClusterNamer(coll)
+    name, basis = namer.name(sh4, coll)
+    assert name.startswith("Mirai · ") and "SH4" in name, name
+    assert basis[0] == "av" and "arch" in basis, basis
+    # 20 of a 25-file parent also named "Mirai · ARM": its core
+    assert namer.name(arm, coll)[0] == "Mirai · ARM · core", namer.name(
+        arm, coll
+    )  # "p" is too short
+    # unlabelled payloads inherit the parent's family when a tag hints at it
+    yt = ["yara:botnet:mirai#Mirai_Botnet_Malware"]
+    pay = [mk(f"dropper.arm{i}", "ARM:LE:32:v8", yt) for i in range(4)]
+    assert namer.name(pay, arm + pay) == ("Mirai · dropper", ["parent", "files"])
+    stubs = [mk(f"u{i}", "x86:LE:32:default", ["packer:upx"], 8) for i in range(4)]
+    assert namer.name(stubs)[0].startswith("UPX stubs"), namer.name(stubs)
+    assert namer.name([{}]) == (None, [])
+    # a user tag beats the namer; empty metas fall back to the legacy rule
+    tagged = {"user": [{"tag_id": "user:mine", "coverage": 0.5, "children": []}]}
+    f = bin_cluster_name_fields(namer, sh4, coll, tagged, "fb")
+    assert (f["cluster_name"], f["name_source"], f["name_basis"]) == (
+        "mine",
+        "tag",
+        ["tag"],
+    )
+    assert f["auto_name"].startswith("Mirai") and f["name_default"]["source"] == "tag"
+    f = bin_cluster_name_fields(namer, [{}, {}], None, None, "fb")
+    assert (f["cluster_name"], f["name_source"]) == ("fb", "auto"), f
+    m = {**f, "cluster_name": "X", "is_custom_name": True, "name_source": "analyst"}
+    assert (
+        restore_default_name(m, "z")["cluster_name"] == "fb" and not m["is_custom_name"]
+    )
+    assert name_fields({"is_custom_name": True})["name_source"] == "analyst"
+    assert name_fields({})["name_source"] == "auto"
+
+    # Near names: a chain 10 <- 11 <- 12 <- 13 (singletons merging in) ends at a
+    # real split (a 5-file sibling) at 18; 9 and 8 hang below 10.
+    L = lambda p, c, n: {"parent": p, "child": c, "size": n}
+    links = [
+        L(100, 18, 18),  # 100 is the synthetic root: dropped
+        L(18, 13, 13),
+        L(18, 5, 5),
+        L(13, 12, 12),
+        L(12, 11, 11),
+        L(11, 10, 10),
+        L(10, 9, 9),
+        L(9, 8, 8),
+        L(9, 2, 2),  # a 2-file sibling is not a split
+        L(5, 4, 4),
+    ]
+    got = near_names(links, {10})
+    assert got == {
+        "11": ("10", 1),
+        "12": ("10", 2),
+        "9": ("10", -1),
+        "8": ("10", -2),
+    }, got
+    assert "18" not in got and "13" not in got  # 13 is 3 off; 18 is past the split
+    # two named nodes: each node takes the closer one, a named node takes none
+    got = near_names(links, {10, 13})
+    assert got["12"] == ("13", -1) and got["11"] == ("10", 1) and "10" not in got, got
+    assert near_names(links, {5}) == {"4": ("5", -1)}
+    ch = near_chain(links, 10)
+    assert ch["chain"] == ["12", "11", "10", "9", "8"], ch["chain"]
+    assert ch["above"] == "13" and ch["below"] == [], ch  # 13 is 3 off, 2 is small
+    ch = near_chain(links, 12)  # 13 within 2 of 12; 18 merges the 5-file split
+    assert ch["chain"][0] == "13" and ch["above"] == "18" and ch["below"] == ["9"], ch
+    assert near_chain(links, 5)["chain"] == ["5", "4"] and near_chain(links, 99) is None
 
     print("cluster_utils demo OK")
 

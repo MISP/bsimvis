@@ -2475,7 +2475,7 @@ class BinClusterList(Resource):
             "min_cohesion": "Min cohesion score",
             "min_avg_funcs": "Min average functions per member file",
             "max_avg_funcs": "Max average functions per member file",
-            "min_relevance": "Min relevance, log(1 + member count) * (0.3 + cohesion)",
+            "min_relevance": "Min relevance, log(1 + member count) * cohesion / (cohesion + 0.2)",
             "max_relevance": "Max relevance",
             "active_days": "Window for new_members and sort_by=active, in days (default 30)",
             "min_new": "Min members added (upload date) in the last active_days",
@@ -2548,6 +2548,25 @@ class BinClusterMeta(Resource):
         from bsimvis.app.routes.bin_cluster import update_bin_cluster_meta
 
         return update_bin_cluster_meta()
+
+
+@ns_bin_cluster.route("/chain")
+class BinClusterChain(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "algo": "Algorithm",
+            "axis": "Similarity axis",
+            "node_type": "Node type (file/container)",
+            "cluster_id": "Target cluster ID",
+            "cluster_uuid": "Target cluster UUID (instead of cluster_id)",
+        }
+    )
+    def get(self):
+        """The chain of near-identical clusters around a file cluster, largest first."""
+        from bsimvis.app.routes.bin_cluster import get_bin_cluster_chain
+
+        return get_bin_cluster_chain()
 
 
 @ns_bin_cluster.route("/members")

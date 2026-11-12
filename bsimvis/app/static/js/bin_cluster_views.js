@@ -777,7 +777,7 @@ class BinClusterHierarchy {
             tooltip.innerHTML = `
                 <div class="hier-tooltip-container" style="display:flex; flex-direction:row; min-width:450px; height:320px; background:var(--window-bg);">
                     <div class="hier-left-col" style="flex:1; padding:15px; border-right:1px solid var(--border); display:flex; flex-direction:column;">
-                        <div style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${d.data.name}</div>
+                        <div id="hier-cluster-name" style="color:var(--accent); font-weight:bold; margin-bottom:4px; font-size:0.95rem;">${this._nameHtml(d)}</div>
                         ${_typeBadges}
                         <div style="color:var(--subtle); font-size:0.65rem; margin-bottom:6px; font-family:monospace; overflow:hidden; text-overflow:ellipsis;">${d.data.uuid}</div>
                         <div style="margin-bottom:10px;">${EntityRenderer.renderTag('bin_cluster', d.data.tag_id || d.data.id, [...(d.data.inferred_tags || []), ...(d.data.file_inferred_tags || [])], d.data.user_tags || [])}</div>
@@ -832,6 +832,8 @@ class BinClusterHierarchy {
             // shows up.
             const metaEl = tooltip.querySelector('#hier-cluster-meta');
             if (metaEl) metaEl.innerHTML = renderBinClusterMetaBlock(d.data);
+            const nameEl = tooltip.querySelector('#hier-cluster-name');
+            if (nameEl) nameEl.innerHTML = this._nameHtml(d);
 
             const samplesTitle = tooltip.querySelector('.hier-samples-title');
             if (samplesTitle) {
@@ -866,6 +868,13 @@ class BinClusterHierarchy {
         if (selectedFile) {
             this.updateSnippet(selectedFile);
         }
+    }
+
+    // The name plus where it came from, once the cluster meta is in (a yara display name gets no chip).
+    _nameHtml(d) {
+        const m = d.data.name_meta;
+        const chip = m && m.cluster_name === d.data.name ? clusterNameSource(m, this.params && this.params.axis) : '';
+        return `<span>${escapeHtml(d.data.name)}</span>${chip}`;
     }
 
     updateSnippet(file) {
@@ -964,6 +973,7 @@ async function loadBinClusterMeta(d, params) {
         d.data.function_count_stats = meta.function_count_stats || {};
         d.data.tag_distribution = meta.tag_distribution || {};
         d.data.executable_format_distribution = meta.executable_format_distribution || [];
+        d.data.name_meta = meta;
         return true;
     } catch (e) {
         console.error('Failed to fetch cluster metadata', e);

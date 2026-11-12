@@ -431,7 +431,7 @@ const routes = {
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '8%' },
             { label: 'Name', sort: 'cluster_name', width: '11%' },
-            { label: 'Relevance', sort: 'relevance', width: '6%', title: 'log(1 + files) x (0.3 + cohesion): same rank as the overview Families' },
+            { label: 'Relevance', sort: 'relevance', width: '6%', title: 'log(1 + files) x cohesion / (cohesion + 0.2): same rank as the overview Families' },
             { label: 'Binaries', sort: 'count', width: '7%' },
             { label: 'Avg Funcs', sort: 'functions', width: '6%' },
             { label: 'Stability', sort: 'stability', width: '6%' },
@@ -4199,6 +4199,8 @@ function renderBinClusters(items) {
             const topYara = window.topTagLabel && window.topTagLabel(c.tag_distribution, 'yara');
             if (topYara) displayName = topYara;
         }
+        // Where the name came from; a yara display name is not the cluster's name, so no chip.
+        const nameSrc = displayName === c.cluster_name ? clusterNameSource(c, params.get('axis') || window.BINSIM_DEFAULT_AXIS) : '';
 
         // Clusters built before function_count_stats was stored have none: show a dash.
         const fnStats = c.function_count_stats || {};
@@ -4233,7 +4235,7 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <span id="name-display-bin-${escapeAttr(c.cluster_id)}" style="cursor:pointer; font-weight:bold;">${escapeHtml(displayName)}</span>
+                        <span id="name-display-bin-${escapeAttr(c.cluster_id)}" style="cursor:pointer; font-weight:bold;">${escapeHtml(displayName)}</span>${nameSrc}
                         <button class="btn-action" title="Rename" onclick="renameBinCluster(${escapeAttr(jsString(c.cluster_id))}, ${escapeAttr(jsString(c.cluster_name || ''))})"><i class="fa-solid fa-pen"></i></button>
                     </div>
                     <div class="dim" style="font-size:0.65rem; display:flex; flex-direction:column; gap:2px;">
@@ -4255,7 +4257,7 @@ function renderBinClusters(items) {
                     </div>
                 </div>
             </td>
-            <td class="mono" style="font-size:0.75rem;" title="log(1 + files) x (0.3 + cohesion): same rank as the overview Families">${(c.relevance || 0).toFixed(2)}</td>
+            <td class="mono" style="font-size:0.75rem;" title="log(1 + files) x cohesion / (cohesion + 0.2): same rank as the overview Families">${(c.relevance || 0).toFixed(2)}</td>
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
@@ -4388,24 +4390,29 @@ function updateD3ClusterName(cid, newName) {
 // when the page URL does not: {uuid, collection, pool, algo, axis, node_type}.
 // An empty name resets the cluster to the name its build gave it.
 async function renameAnyCluster(isBin, clusterId, currentName, ctx = {}) {
-    const label = isBin ? 'binary cluster' : 'cluster';
-    const input = prompt(`New name for ${label} ${ctx.uuid || clusterId} (empty = reset):`, currentName);
-    if (input === null) return;
-    const newName = input.trim();
-    if (newName === (currentName || '')) return;
-
     const { collection, params } = getRoutingState();
     const body = {
         collection: ctx.collection || collection,
         pool: ctx.pool || undefined,
-        algo: ctx.algo || params.get('algo') || 'unweighted_cosine',
-        cluster_name: newName
+        algo: ctx.algo || params.get('algo') || 'unweighted_cosine'
     };
-    if (ctx.uuid) body.cluster_uuid = ctx.uuid; else body.cluster_id = clusterId;
     if (isBin) {
         body.node_type = ctx.node_type || params.get('node_type') || 'file';
         body.axis = ctx.axis || params.get('axis') || 'overall';
     }
+    // File clusters: pick the level in the near-identical chain; null = no chain, use the prompt.
+    let pick = isBin && !body.pool ? await pickBinRenameTarget(clusterId, currentName, ctx, body).catch(() => null) : null;
+    if (pick === false) return;
+    if (!pick) {
+        const label = isBin ? 'binary cluster' : 'cluster';
+        const input = prompt(`New name for ${label} ${ctx.uuid || clusterId} (empty = reset):`, currentName);
+        if (input === null) return;
+        pick = { name: input.trim(), id: clusterId, uuid: ctx.uuid || '' };
+        if (pick.name === (currentName || '')) return;
+    }
+    const newName = pick.name;
+    body.cluster_name = newName;
+    if (pick.uuid && !pick.byId) body.cluster_uuid = pick.uuid; else body.cluster_id = pick.id;
     try {
         const res = await fetch(isBin ? '/api/bin_cluster/meta' : '/api/cluster/meta', {
             method: 'POST',
@@ -4415,25 +4422,98 @@ async function renameAnyCluster(isBin, clusterId, currentName, ctx = {}) {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
         const name = data.cluster_name || newName;
-        document.dispatchEvent(new CustomEvent('cluster-renamed', { detail: { isBin, id: String(clusterId), uuid: ctx.uuid || '', name } }));
+        // Where the name now comes from: the server's answer, else a typed name is the analyst's.
+        const src = data.name_source ? { name_source: data.name_source, name_basis: data.name_basis, name_ref: data.name_ref, is_custom_name: data.is_custom_name }
+            : { name_source: newName ? 'analyst' : 'auto', is_custom_name: !!newName };
+        document.dispatchEvent(new CustomEvent('cluster-renamed', { detail: { isBin, id: String(pick.id), uuid: pick.uuid || '', name, src } }));
         if (typeof showToast === 'function') showToast(`Renamed to ${name}`, 'success');
     } catch (err) {
         if (typeof showToast === 'function') showToast(`Rename failed: ${err.message || err}`, 'error');
     }
 }
 
+// Rename dialog of a file cluster: the name plus the chain of near-identical clusters
+// around it (GET /api/bin_cluster/chain), so the analyst names the right level.
+// -> {name, id, uuid, byId} | false (cancelled) | null (no chain: caller falls back to prompt).
+async function pickBinRenameTarget(clusterId, currentName, ctx, body) {
+    const q = new URLSearchParams({ collection: body.collection, axis: body.axis, node_type: body.node_type, algo: body.algo });
+    if (clusterId != null && clusterId !== '') q.set('cluster_id', clusterId); else if (ctx.uuid) q.set('cluster_uuid', ctx.uuid); else return null;
+    const res = await fetch(`/api/bin_cluster/chain?${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error || !(data.chain || []).length) return null;
+    const rows = data.chain;
+    const files = n => `${n} file${n === 1 ? '' : 's'}`;
+    const end = (label, c) => c ? `<div class="bc-end dim">${escapeHtml(label)}: ${escapeHtml(c.cluster_name || `#${c.cluster_id}`)} (${escapeHtml(files(c.member_count))})</div>` : '';
+    const list = rows.map((c, i) => {
+        const d = Number(c.delta) || 0;
+        const coh = c.cohesion_score == null ? '-' : Number(c.cohesion_score).toFixed(2);
+        return `<label class="bc-row${c.clicked ? ' clicked' : ''}">
+            <input type="radio" name="bc-target" value="${i}"${c.clicked ? ' checked' : ''}>
+            <span class="bc-n">${escapeHtml(files(c.member_count))}</span>
+            <span class="bc-d">${c.clicked ? 'this' : escapeHtml((d > 0 ? '+' : '') + d)}</span>
+            <span class="bc-coh" title="Cohesion">${escapeHtml(coh)}</span>
+            <span class="bc-name">${escapeHtml(c.cluster_name || '')}</span>${clusterNameSource(c, body.axis, body.collection)}
+            ${c.shown ? '<i class="fa-solid fa-eye bc-shown" title="Shown in the overview and file search"></i>' : ''}
+        </label>`;
+    }).join('');
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay bc-rename';
+    ov.innerHTML = `<div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="bc-rename-title">
+        <div class="modal-header"><h3 id="bc-rename-title">Rename file cluster</h3><button type="button" class="close-btn" data-act="cancel" aria-label="Close">&times;</button></div>
+        <div class="modal-body">
+            <input type="text" class="bc-input" aria-label="Cluster name" value="${escapeAttr(currentName || '')}" placeholder="Empty = back to the automatic name">
+            <p class="dim bc-help">Pick the level to name. Unnamed clusters of this chain will show the name as inherited (near).</p>
+            ${end('Parent past the chain', data.above)}
+            <div class="bc-chain" role="radiogroup" aria-label="Chain of near-identical clusters">${list}</div>
+            ${(data.below || []).map(c => end('Splits below into', c)).join('')}
+        </div>
+        <div class="modal-footer"><button type="button" class="btn-action" data-act="cancel">Cancel</button><button type="button" class="btn-primary" data-act="ok">Rename</button></div>
+    </div>`;
+    const back = document.activeElement;
+    document.body.appendChild(ov);
+    const input = ov.querySelector('.bc-input');
+    input.focus();
+    input.select();
+    return new Promise(resolve => {
+        const done = v => { ov.remove(); if (back && back.focus) back.focus(); resolve(v); };
+        const submit = () => {
+            const c = rows[Number((ov.querySelector('input[name="bc-target"]:checked') || {}).value) || 0];
+            const name = input.value.trim();
+            const analyst = c.name_source === 'analyst';
+            // Nothing to do: the same analyst name again, or a reset of a name nobody gave.
+            if (analyst ? name === (c.cluster_name || '') : !name) return done(false);
+            done({ name, id: c.cluster_id, uuid: c.cluster_uuid || '', byId: true });
+        };
+        ov.addEventListener('click', e => {
+            const act = e.target.closest('[data-act]');
+            if (e.target === ov || (act && act.dataset.act === 'cancel')) done(false);
+            else if (act && act.dataset.act === 'ok') submit();
+        });
+        // A near chip opens its source cluster (its own onclick stops propagation): close first.
+        ov.addEventListener('click', e => { if (e.target.closest('.cl-src[role="link"]')) done(false); }, true);
+        ov.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+            else if (e.key === 'Enter' && !e.target.closest('button')) { e.preventDefault(); submit(); }
+        });
+    });
+}
+
 // Every copy of the name on screen is tagged data-cluster-name="<uuid or id>".
 document.addEventListener('cluster-renamed', e => {
-    const { isBin, id, uuid, name } = e.detail;
+    const { isBin, id, uuid, name, src } = e.detail;
     document.querySelectorAll('[data-cluster-name]').forEach(el => {
         const k = el.dataset.clusterName;
         if (k === uuid || k === id) el.textContent = name;
+    });
+    if (isBin) document.querySelectorAll('[data-cluster-src]').forEach(el => {
+        const u = el.dataset.clusterSrc, i = el.dataset.clusterSrcId;
+        if ((uuid && u === uuid) || (!uuid && i === id)) el.outerHTML = clusterNameSource({ ...src, cluster_name: name, cluster_uuid: u, cluster_id: i }, el.dataset.srcAxis);
     });
     const el = document.getElementById(isBin ? `name-display-bin-${id}` : `name-display-${id}`);
     if (el) el.innerText = name;
     updateD3ClusterName(id, name);
     if (uuid) updateD3ClusterName(uuid, name);
-    if (window.ClusterDetailView && ClusterDetailView.onRenamed) ClusterDetailView.onRenamed(uuid || id, name);
+    if (window.ClusterDetailView && ClusterDetailView.onRenamed) ClusterDetailView.onRenamed(uuid || id, name, isBin ? src : null);
 });
 
 const renameBinCluster = (clusterId, currentName, ctx) => renameAnyCluster(true, clusterId, currentName, ctx);

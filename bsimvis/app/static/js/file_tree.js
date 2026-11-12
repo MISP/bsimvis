@@ -677,7 +677,8 @@ window.FileTree = {
             cl.byCid.set(c.cid, c);
             rows.push({ t: 'group', id, depth, anc: anc.join(' '), axis, uuid: c.cluster_uuid, count: c.matching, of: c.n,
                 cluster: { cluster_id: c.cluster_id, cluster_uuid: c.cluster_uuid, cluster_name: c.cluster_name,
-                    cohesion_score: c.cohesion_score, member_count: c.n, axis } });
+                    cohesion_score: c.cohesion_score, member_count: c.n, axis,
+                    name_source: c.name_source, name_basis: c.name_basis, name_ref: c.name_ref, is_custom_name: c.is_custom_name } });
             const inner = [...anc, id];
             // Tighter sub-clusters first, then what sits in this cluster alone.
             c.children.forEach(k => draw(k, depth + 1, inner));
@@ -804,7 +805,7 @@ window.FileTree = {
         if (!c) return `<div class="fb-group-title"><b>No ${escapeHtml(r.axis)} cluster</b></div>
             <div class="fb-meta"><span>${r.count.toLocaleString()} file${r.count === 1 ? '' : 's'}</span></div>`;
         return `<div class="fb-group-title">${renderClusterCards([c], true)}
-                <a class="fb-link" onclick="event.stopPropagation(); openCluster(${escapeAttr(jsString(r.uuid))}, true, event, ${escapeAttr(jsString(r.axis))})">${escapeHtml(c.cluster_name || `Cluster ${c.cluster_id}`)}</a></div>
+                <a class="fb-link" onclick="event.stopPropagation(); openCluster(${escapeAttr(jsString(r.uuid))}, true, event, ${escapeAttr(jsString(r.axis))})">${escapeHtml(c.cluster_name || `Cluster ${c.cluster_id}`)}</a>${clusterNameSource(c, r.axis)}</div>
             <div class="fb-meta"><span class="fb-meta-strong">${r.count === r.of ? `${r.of} files` : `${r.count} of ${r.of} match`}</span>
                 <i class="fb-dot"></i><span>cohesion ${(c.cohesion_score || 0).toFixed(2)}</span></div>`;
     },
@@ -1006,7 +1007,7 @@ window.FileTree = {
             <dl class="fb-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
             <h4>Clusters <span>${clusters.length}</span></h4>
             <div class="fb-detail-clusters">${clusters.length ? clusters.map(c => `<div class="fb-detail-cluster">${renderClusterCards([c], true)}
-                <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(c.cluster_uuid))}, true, event, ${escapeAttr(jsString(c.axis || 'overall'))})">${escapeHtml(c.cluster_name || `Cluster ${c.cluster_id}`)}</a>
+                <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(c.cluster_uuid))}, true, event, ${escapeAttr(jsString(c.axis || 'overall'))})">${escapeHtml(c.cluster_name || `Cluster ${c.cluster_id}`)}</a>${clusterNameSource(c, c.axis || 'overall')}
                 <span class="fb-mono">${(c.cohesion_score || 0).toFixed(2)}</span></div>`).join('') : '<p class="fb-muted">No cluster at this cohesion.</p>'}</div>
             <h4>Tags</h4>
             <div class="fb-detail-tags">${n.exists === false ? '' : this._tagEditor(n, 60)}</div>`;

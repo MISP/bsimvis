@@ -14,6 +14,10 @@ from bsimvis.app.services.cluster_utils import (
     set_tag_distribution_score,
     default_bin_cluster_name,
     ClusterNameKeeper,
+    BinClusterNamer,
+    bin_cluster_name_fields,
+    refresh_near_names,
+    _near_keys,
     function_count_stats,
     timeline_stats,
     inferred_tag_values,
@@ -2045,7 +2049,33 @@ class BinClusterService:
         # after this loop, once every touched cluster's gate result is known.
         gated_by_label = {}
 
-        keeper = ClusterNameKeeper(self.r, collection, "bin", algo_ns, cluster_members)
+        keeper = ClusterNameKeeper(
+            self.r,
+            collection,
+            "bin",
+            algo_ns,
+            cluster_members,
+            stable_ids=only_nodes is not None,
+        )
+        # The namer reads a node's parent: the next cluster up any member's chain.
+        # In an incremental run the parent is written too (dirty = root path).
+        parent_of = {}
+        for chain in leaf_to_clusters.values():
+            for c, p in zip(chain, chain[1:]):
+                parent_of.setdefault(c, p)
+        namer = BinClusterNamer(m for m in all_member_meta.values() if m)
+        known_metas = {}
+
+        def metas_of(c):  # same list object per node: the namer memoises by it
+            if c not in known_metas:
+                known_metas[c] = [
+                    all_member_meta[f]
+                    for f in cluster_members.get(c, ())
+                    if all_member_meta.get(f)
+                ]
+            return known_metas[c]
+
+        named_labels = set()
         for idx, label in enumerate(write_nodes):
             members = cluster_members[label]
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
@@ -2054,14 +2084,21 @@ class BinClusterService:
                 collect_member_values(member_metas)
             )
 
-            default_name = default_bin_cluster_name(
-                names_list,
-                avtype_list,
-                yara_list,
-                f"Binary Cluster {label}",
-                tag_distribution=summary.get("tag_distribution"),
+            name_fields = bin_cluster_name_fields(
+                namer,
+                metas_of(label),
+                metas_of(parent_of[label]) if label in parent_of else None,
+                summary.get("tag_distribution"),
+                default_bin_cluster_name(
+                    names_list, avtype_list, yara_list, f"Binary Cluster {label}"
+                ),
             )
-            default_name, is_custom = keeper.pick(label, default_name)
+            default_name, is_custom = keeper.pick(label, name_fields["cluster_name"])
+            if is_custom:
+                named_labels.add(label)
+                name_fields.update(
+                    cluster_name=default_name, name_source="analyst", name_basis=[]
+                )
 
             filename_freq = summary["filename_distribution"]
             md5_freq = summary["md5_distribution"]
@@ -2132,7 +2169,7 @@ class BinClusterService:
                 "node_type": node_type,
                 "snippet": snippet,
                 "cluster_uuid": label_to_uuid[label],
-                "cluster_name": default_name,
+                **name_fields,
                 "is_custom_name": is_custom,
                 "cohesion_score": float(cohesion_score),
                 # Mean over all pairs (unstored = 0): density, kept off the
@@ -2206,6 +2243,16 @@ class BinClusterService:
                 )
 
         pipe.execute()
+        keeper.reanchor(write_nodes)
+        # Analyst-named nodes, then the near-identical nodes that inherit them.
+        named_key = f"{collection}:bin_cluster:named:{algo_ns}"
+        if only_nodes is None:
+            r.delete(named_key)
+        elif write_nodes or retired_nodes:
+            r.srem(named_key, *[str(c) for c in write_nodes | set(retired_nodes)])
+        if named_labels:
+            r.sadd(named_key, *[str(c) for c in named_labels])
+        refresh_near_names(r, collection, algo_ns)
 
         # Decision 4: resolve each touched or orphaned file against the tree
         # it survives into, most-specific passing ancestor wins. Untouched
@@ -2347,6 +2394,7 @@ class BinClusterService:
 
             r.delete(f"{collection}:bin_cluster:tree:{algo_ns}")
             r.delete(f"{collection}:bin_cluster:list:{algo_ns}")
+            r.delete(*_near_keys(collection, algo_ns))
             clear_tree_links(r, collection, "bin_cluster", algo_ns)
             clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo_ns}")
 
@@ -2510,6 +2558,109 @@ def backfill_timeline(r, collection, cursor=0, chunk=200):
     pipe.execute()
     nxt = cursor + chunk
     return (nxt if nxt < len(pairs) else 0), done, len(pairs)
+
+
+def backfill_names(r, collection, namespaces=None):
+    """Rename every stored file cluster with the current namer, in place.
+
+    Analyst names stay (source "analyst"); every other cluster gets the build's
+    name fields. Then the named registry and near names are rebuilt per
+    namespace, and the file `bin_cluster_name` index is rebuilt from the new
+    names (its buckets are shared by every axis, so all namespaces go in one
+    call). -> {namespace: clusters renamed}.
+    ponytail: holds every member file meta of the collection in memory at once;
+    chunk per namespace if a collection outgrows that.
+    """
+    from collections import defaultdict
+    from bsimvis.app.services.cluster_utils import real_links
+    from bsimvis.app.services.index_config import get_native_fields
+
+    dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
+    fmeta, index, out = {}, defaultdict(set), {}
+    for ns in namespaces or _timeline_namespaces(r, collection):
+        key = lambda c: f"{collection}:bin_cluster:{ns}:{c}"
+        cids = sorted(dec(c) for c in r.smembers(f"{collection}:bin_cluster:list:{ns}"))
+        raw = r.get(f"{collection}:bin_cluster:tree_links:{ns}")
+        parent = (
+            {str(l["child"]): str(l["parent"]) for l in real_links(json.loads(raw))}
+            if raw
+            else {}
+        )
+        pipe = r.pipeline(transaction=False)
+        for c in cids:
+            pipe.smembers(f"{key(c)}:members")
+            pipe.get(f"{key(c)}:meta")
+        res = pipe.execute()
+        members = {c: sorted(dec(m) for m in res[2 * i]) for i, c in enumerate(cids)}
+        metas = {c: res[2 * i + 1] for i, c in enumerate(cids)}
+        todo = sorted({f for ms in members.values() for f in ms} - set(fmeta))
+        for i in range(0, len(todo), 1000):
+            part = todo[i : i + 1000]
+            pipe = r.pipeline(transaction=False)
+            for f in part:
+                pipe.get(_file_meta_key(collection, f))
+            for f, m in zip(part, pipe.execute()):
+                fmeta[f] = json.loads(m) if m else {}
+
+        namer = BinClusterNamer(m for m in fmeta.values() if m)
+        known = {}
+
+        def metas_of(c):  # one list per node: the namer memoises by it
+            if c not in known:
+                known[c] = [fmeta[f] for f in members.get(c, ()) if fmeta.get(f)]
+            return known[c]
+
+        named = set()
+        pipe = r.pipeline(transaction=False)
+        for c in cids:
+            if not metas[c]:
+                continue
+            meta = json.loads(metas[c])
+            mm = [fmeta.get(f, {}) for f in members[c]]
+            names_list, _, yara_list, avtype_list, _, _ = collect_member_values(mm)
+            p = parent.get(c)
+            fields = bin_cluster_name_fields(
+                namer,
+                metas_of(c),
+                metas_of(p) if p in members else None,
+                meta.get("tag_distribution"),
+                default_bin_cluster_name(
+                    names_list, avtype_list, yara_list, f"Binary Cluster {c}"
+                ),
+            )
+            if meta.get("is_custom_name"):
+                named.add(c)
+                fields.update(
+                    cluster_name=meta["cluster_name"],
+                    name_source="analyst",
+                    name_basis=[],
+                )
+            meta.pop("name_ref", None)
+            meta.update(fields, is_custom_name=bool(meta.get("is_custom_name")))
+            pipe.set(f"{key(c)}:meta", json.dumps(meta))
+            index[meta["cluster_name"].lower()].update(members[c])
+        pipe.execute()
+        named_k, near_k = _near_keys(collection, ns)
+        r.delete(named_k, near_k)
+        if named:
+            r.sadd(named_k, *named)
+        refresh_near_names(r, collection, ns)
+        out[ns] = len(cids)
+
+    if "bin_cluster_name" in get_native_fields("file", False):
+        reg = f"{collection}:reg:file:bin_cluster_name"
+        pipe = r.pipeline(transaction=False)
+        for b in r.smembers(reg):
+            pipe.delete(dec(b))
+        pipe.delete(reg)
+        for name, ids in index.items():
+            b = f"{collection}:idx:file:bin_cluster_name:{name}"
+            ids = sorted(ids)
+            for i in range(0, len(ids), 5000):
+                pipe.sadd(b, *ids[i : i + 5000])
+            pipe.sadd(reg, b)
+        pipe.execute()
+    return out
 
 
 bin_cluster_service = BinClusterService()

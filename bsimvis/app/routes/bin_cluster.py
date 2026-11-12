@@ -18,6 +18,10 @@ from bsimvis.app.services.cluster_utils import (
     Tree,
     real_links,
     timeline_summary,
+    name_fields,
+    refresh_near_names,
+    restore_default_name,
+    near_chain,
 )
 from bsimvis.app.services.cluster_display import score as display_score
 from bsimvis.app.services.index_service import parse_timestamp
@@ -229,7 +233,7 @@ def _shape_bin_cluster_result(m, parent, child_total):
         "cluster_name": m.get("cluster_name"),
         "tag_id": m.get("tag_id", m.get("cluster_id")),
         "user_tags": m.get("user_tags", []),
-        "is_custom_name": m.get("is_custom_name", False),
+        **name_fields(m),
         "avg_stability": m.get("avg_stability", 0.0),
         "cohesion_score": m.get("cohesion_score", 0),
         "cohesion_axes": m.get("cohesion_axes", {}),
@@ -777,7 +781,7 @@ def list_bin_clusters():
                 "cluster_name": m.get("cluster_name"),
                 "tag_id": m.get("tag_id", m.get("cluster_id")),
                 "user_tags": m.get("user_tags", []),
-                "is_custom_name": m.get("is_custom_name", False),
+                **name_fields(m),
                 "avg_stability": m.get("avg_stability", 0.0),
                 "cohesion_score": m.get("cohesion_score", 0),
                 "cohesion_axes": m.get("cohesion_axes", {}),
@@ -1058,14 +1062,22 @@ def update_bin_cluster_meta():
 
     # Empty name = back to the name the build gave it.
     meta_doc = json.loads(meta_val)
+    prev_custom = (
+        meta_doc.get("cluster_name") if meta_doc.get("is_custom_name") else None
+    )
     if not cluster_name:
-        cluster_name = meta_doc.get("auto_name") or f"Binary Cluster {cluster_id}"
-        meta_doc["is_custom_name"] = False
+        restore_default_name(meta_doc, f"Binary Cluster {cluster_id}")
+        cluster_name = meta_doc["cluster_name"]
     else:
-        if not meta_doc.get("is_custom_name"):
+        if "auto_name" not in meta_doc:  # legacy meta: its name was the build's
             meta_doc["auto_name"] = meta_doc.get("cluster_name")
-        meta_doc["is_custom_name"] = True
-    meta_doc["cluster_name"] = cluster_name
+        meta_doc.pop("name_ref", None)
+        meta_doc.update(
+            cluster_name=cluster_name,
+            is_custom_name=True,
+            name_source="analyst",
+            name_basis=[],
+        )
     r.set(meta_key, json.dumps(meta_doc))
 
     # Propagate name to all member files for filtering
@@ -1085,10 +1097,16 @@ def update_bin_cluster_meta():
         algo,
         [m.decode() if isinstance(m, bytes) else str(m) for m in members],
         cluster_name if meta_doc["is_custom_name"] else "",
+        replaces=prev_custom,
+        label=cluster_id,
     )
 
     old_meta = json.loads(meta_val) if meta_val else {}
     old_name = old_meta.get("cluster_name")
+    if old_meta.get("name_source") == "near":  # never indexed: the build's name is
+        old_name = (old_meta.get("name_default") or {}).get("name") or old_meta.get(
+            "auto_name"
+        )
 
     # Fetch all members' metadata
     mid_list = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
@@ -1111,7 +1129,82 @@ def update_bin_cluster_meta():
         pipe.set(f"{mid_str}:meta", json.dumps(m))
     pipe.execute()
 
-    return {"status": "success", "cluster_name": cluster_name}
+    if not is_pool:  # near-identical neighbours follow the name at once
+        named_key = f"{collection}:bin_cluster:named:{algo}"
+        if meta_doc["is_custom_name"]:
+            r.sadd(named_key, str(cluster_id))
+        else:
+            r.srem(named_key, str(cluster_id))
+        refresh_near_names(r, collection, algo)
+
+    return {"status": "success", "cluster_name": cluster_name, **name_fields(meta_doc)}
+
+
+def get_bin_cluster_chain():
+    """The near-identical chain around a file cluster (the near-name rule, named
+    nodes included), largest first, so a rename can pick the right level."""
+    from bsimvis.app.services.cluster_display import load_display_tree
+    from bsimvis.app.services.cluster_utils import (
+        get_cluster_metas,
+        resolve_cluster_id_by_uuid,
+    )
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "No collection specified"}, 400
+    if get_pool_id(collection):
+        return {"error": "Chains are not available for pools"}, 400
+    axis = request.args.get("axis", "overall").strip().lower()
+    node_type = request.args.get("node_type", "file").strip().lower()
+    algo = bin_cluster_algo(collection, request.args.get("algo"), axis, node_type)
+    r = get_redis()
+    cid = request.args.get("cluster_id")
+    if not cid and request.args.get("cluster_uuid"):
+        cid = resolve_cluster_id_by_uuid(
+            r, collection, algo, request.args["cluster_uuid"], "bin_cluster"
+        )
+    if not cid:
+        return {"error": "cluster_id or cluster_uuid required"}, 400
+
+    raw = r.get(f"{collection}:bin_cluster:tree_links:{algo}")
+    ch = near_chain(json.loads(raw), cid) if raw else None
+    if not ch:
+        return {"error": "Cluster not in the tree"}, 404
+    ends = [c for c in [ch["above"], *ch["below"]] if c]
+    metas = get_cluster_metas(r, collection, algo, ch["chain"] + ends, "bin_cluster")
+    shown = load_display_tree(r, collection, algo, get_queue_redis())
+    base = int((metas.get(str(cid)) or {}).get("member_count") or 0)
+
+    def brief(c):
+        m = metas.get(c) or {}
+        return {
+            "cluster_id": c,
+            "cluster_uuid": m.get("cluster_uuid"),
+            "member_count": int(m.get("member_count") or 0),
+            "cluster_name": m.get("cluster_name"),
+        }
+
+    def row(c):
+        m = metas.get(c) or {}
+        b = brief(c)
+        return {
+            **b,
+            "delta": b["member_count"] - base,
+            "cohesion_score": m.get("cohesion_score"),
+            "name_source": name_fields(m)["name_source"],
+            "name_ref": m.get("name_ref"),
+            "shown": c in shown,
+            "clicked": c == str(cid),
+        }
+
+    return {
+        "cluster_id": str(cid),
+        "algo": algo,
+        "chain": [row(c) for c in ch["chain"]],
+        "above": brief(ch["above"]) if ch["above"] else None,
+        "below": [brief(c) for c in ch["below"]],
+    }
 
 
 def list_bin_cluster_members():

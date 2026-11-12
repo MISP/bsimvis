@@ -1060,6 +1060,9 @@ def update_cluster_meta():
 
     # Empty name = back to the name the build gave it.
     meta_doc = json.loads(meta_val)
+    prev_custom = (
+        meta_doc.get("cluster_name") if meta_doc.get("is_custom_name") else None
+    )
     if not cluster_name:
         cluster_name = meta_doc.get("auto_name") or f"Cluster {cluster_id}"
         meta_doc["is_custom_name"] = False
@@ -1087,6 +1090,8 @@ def update_cluster_meta():
         algo,
         [m.decode() if isinstance(m, bytes) else str(m) for m in members],
         cluster_name if meta_doc["is_custom_name"] else "",
+        replaces=prev_custom,
+        label=cluster_id,
     )
 
     # Get old name to unindex

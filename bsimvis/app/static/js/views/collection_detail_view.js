@@ -195,7 +195,7 @@ window.CollectionDetailView = {
         const w = max ? Math.max(3, (f.matching || 0) / max * 100) : 0;
         return `<div class="cdo-fam">
             <span>${card || ''}</span>
-            <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${clusterNameSource({ ...f, cluster_id: f.cid }, this._ovAxis())}</span>
             <span class="cdo-size"><i style="width:${w.toFixed(1)}%"></i></span>
             <a class="cdo-go" onclick="${escapeAttr(`Nav.openPath(${jsString(this._ovNway(uuid))}, event)`)}" title="Functions: N-way diff of this cluster"><i class="fa-solid fa-layer-group"></i></a>
         </div>`;
@@ -208,7 +208,7 @@ window.CollectionDetailView = {
         const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0, axis: this._ovAxis() }], true);
         return `<div class="cdo-act">
             <span>${card || ''}</span>
-            <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${clusterNameSource({ ...f, cluster_id: f.cid }, this._ovAxis())}</span>
             <span class="mono" title="${escapeAttr(tip)}">${right}</span>
         </div>`;
     },
@@ -240,7 +240,7 @@ window.CollectionDetailView = {
         // Map labels drop the repeated prefix: 'mirai#Unix.Trojan.Mirai-8041698-0' -> 'Mirai-8041698-0'.
         const brief = name => String(name).split('#').pop().split('.').pop() || String(name);
         const short = (name, r) => { const t = brief(name); const k = Math.max(3, Math.floor(r / 3)); return t.length > k ? t.slice(0, k) + '…' : t; };
-        const tip = f => escapeHtml(`${f.cluster_name || `Cluster ${f.cid}`}\n${Number(f.matching || 0).toLocaleString()} files · cohesion ${Number(f.cohesion_score || 0).toFixed(2)}${f.family === false ? '\nLoose group: the families inside are tighter' : ''}`);
+        const tip = f => escapeHtml(`${f.cluster_name || `Cluster ${f.cid}`}${(clusterNameSourceInfo(f) || { text: '' }).text.replace(/^(?=.)/, '\n')}\n${Number(f.matching || 0).toLocaleString()} files · cohesion ${Number(f.cohesion_score || 0).toFixed(2)}${f.family === false ? '\nLoose group: the families inside are tighter' : ''}`);
         const open = f => `onclick="${escapeAttr(`event.stopPropagation(); openCluster(${jsString(f.cluster_uuid)}, true, event, ${jsString(this._ovAxis())})`)}"`;
         const out = root.descendants().filter(n => n.depth > 0).map(n => {
             const f = n.data, x = n.x.toFixed(1), y = n.y.toFixed(1), r = n.r.toFixed(1);
@@ -348,11 +348,11 @@ window.CollectionDetailView = {
             <div id="cdo-map" class="cdo-map">${loading ? '<span class="cdo-sk cdo-sk-map"></span>' : fams.length ? '' : noClusters}</div>
             <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', OK, 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']) + this._ovAxisQs())}${hidden}</div>
         </div>`;
-        const top = fams.slice(0, 7);
+        const top = fams.slice(0, 12);
         const max = Math.max(1, ...top.map(f => f.matching || 0));
         const famCard = `<div class="cov-card cdo-r1">
-            ${this._ovTitle('fa-solid fa-bullseye', OK, 'Families', 'Largest file clusters. A name opens the cluster; the layers icon opens its N-way diff.')}
-            ${loading ? sk(7, 18) : top.length ? `<div class="cov-list">${top.map(f => this._ovFamRow(f, max)).join('')}</div>` : noClusters}
+            ${this._ovTitle('fa-solid fa-bullseye', OK, 'Families', `The ${top.length} most relevant of ${fams.length} families: size first once a cluster is coherent, so a big family outranks a tight pair. All of them are on the map. A name opens the cluster; the layers icon opens its N-way diff.`)}
+            ${loading ? sk(12, 18) : top.length ? `<div class="cov-list">${top.map(f => this._ovFamRow(f, max)).join('')}</div>` : noClusters}
             <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', OK, 'Files by cluster', filesUrl)}</div>
         </div>`;
         const recentCard = `<div class="cov-card cdo-r2">
@@ -412,8 +412,8 @@ window.CollectionDetailView = {
 .cdo-fam:hover { background:var(--hover); }
 .cdo-act { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
 .cdo-act:hover { background:var(--hover); }
-.cdo-act > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
-.cdo-fam > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.cdo-nm { display:flex; align-items:center; min-width:0; }
+.cdo-nm > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
 .cdo-size { height:6px; border-radius:3px; background:var(--hover); overflow:hidden; }
 .cdo-size i { display:block; height:100%; background:color-mix(in srgb, var(--success) 70%, var(--card-bg)); }
 .cdo-go { color:var(--dim); cursor:pointer; text-align:center; }

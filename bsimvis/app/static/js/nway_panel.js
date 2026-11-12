@@ -565,7 +565,7 @@
                     const uuid = c.cluster_uuid || c.uuid || '';
                     const name = escapeHtml(c.cluster_name || c.name || uuid);
                     const link = uuid && this.onOpenCluster ? `<a href="#" class="btn-action" data-open-cluster="${escapeAttr(uuid)}">${name}</a>` : name;
-                    return `<li>${link}${c.member_count ? ` <span class="dim">${Number(c.member_count)} files</span>` : ''}</li>`;
+                    return `<li>${link}${clusterNameSource(c)}${c.member_count ? ` <span class="dim">${Number(c.member_count)} files</span>` : ''}</li>`;
                 }).join('');
                 const cap = e.caps || {}, overFn = e.functions != null && cap.functions != null && Number(e.functions) > Number(cap.functions);
                 const what = overFn ? `Too many functions</b> (${Number(e.functions)}, cap ${Number(cap.functions)} in nway.max_functions)` : `Too many members</b> (${Number(e.members) || '?'}${cap.members != null ? `, cap ${Number(cap.members)} in nway.max_members` : ''})`;
@@ -722,7 +722,7 @@
                 advanced,
             ].join('');
             const sc = d.shared_cluster;
-            const shared = sc && sc.cluster_uuid ? `<a href="#" class="nway-chip" data-open-shared="${escapeAttr(sc.cluster_uuid)}" title="The smallest stored cluster holding all of these files. Open it as an N-way to keep its cluster context."><i class="fa-solid fa-bullseye"></i> Shared cluster <span class="dim">${escapeHtml(sc.cluster_name || sc.cluster_uuid)} &middot; ${Number(sc.member_count)} files</span></a>` : '';
+            const shared = sc && sc.cluster_uuid ? `<a href="#" class="nway-chip" data-open-shared="${escapeAttr(sc.cluster_uuid)}" title="The smallest stored cluster holding all of these files. Open it as an N-way to keep its cluster context."><i class="fa-solid fa-bullseye"></i> Shared cluster <span class="dim">${escapeHtml(sc.cluster_name || sc.cluster_uuid)} &middot; ${Number(sc.member_count)} files</span></a>${clusterNameSource(sc)}` : '';
             const parts = this._groupParts();
             const lv = (s.group || '').split(',').filter(Boolean);
             const moreSum = [`edge ${Number(d.min_edge).toFixed(2)}`, d.mode, lv.length ? lv.join(' > ') : '', d.columns_mode === 'focus' ? 'focus' : ''].filter(Boolean).join(' · ');

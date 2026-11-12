@@ -1924,7 +1924,15 @@ class ClusterService:
                         m = {}
                 all_member_meta[fid] = m
 
-        keeper = ClusterNameKeeper(self.r, collection, "func", algo, cluster_members)
+        # every tree node, not only the cohesion-cut winners: any node can be renamed
+        keeper = ClusterNameKeeper(
+            self.r,
+            collection,
+            "func",
+            algo,
+            node_members,
+            stable_ids=only_nodes is not None,
+        )
         for label in write_nodes:
             members = node_members[label]
             names = [
@@ -1998,6 +2006,7 @@ class ClusterService:
                     pipe.sadd(bucket_key, *primary_members)
                     pipe.sadd(f"{collection}:reg:func:cluster_name", bucket_key)
         pipe.execute()
+        keeper.reanchor(write_nodes)
 
         cluster_list_key = f"{collection}:cluster:list:{algo}"
         pool_cluster_list_key = (

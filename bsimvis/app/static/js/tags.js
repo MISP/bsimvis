@@ -533,9 +533,10 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
  * cluster now goes to the cluster. Filtering a list by a cluster is still on
  * the context menu, where it says what it does.
  */
-window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
+window.openCluster = (uuid, isBinary = false, event = null, axis = null, inCollection = null) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const { collection, pool } = targetWindow.getRoutingState
+    // inCollection: a cluster listed outside its collection's pages (the homepage).
+    const { collection, pool } = inCollection ? { collection: inCollection, pool: null } : targetWindow.getRoutingState
         ? targetWindow.getRoutingState()
         : { collection: '', pool: null };
 
@@ -560,6 +561,39 @@ window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
         href += '?axis=' + encodeURIComponent(axis);
     }
     targetWindow.location.href = href;
+};
+
+// Where a file cluster's name came from: name_source / name_basis / name_ref on the cluster.
+// Legacy objects only carry is_custom_name; with neither field there is nothing to say (null).
+const CLUSTER_NAME_BASIS = { av: 'AV labels', tag: 'tags', yara: 'YARA rules', files: 'file names', arch: 'architecture', size: 'size', packer: 'packer', parent: 'parent cluster' };
+window.clusterNameSourceInfo = c => {
+    if (!c) return null;
+    const src = c.name_source || (c.is_custom_name === undefined ? null : (c.is_custom_name ? 'analyst' : 'auto'));
+    if (src === 'analyst') return { kind: 'user', icon: 'fa-user-pen', text: 'Named by an analyst' };
+    if (src === 'tag') return { kind: 'tag', icon: 'fa-tag', text: 'Name from a user tag' };
+    if (src === 'near') {
+        const r = c.name_ref || {};
+        const d = Number(r.delta || 0);
+        const diff = d ? `${d > 0 ? '+' : ''}${d} file${Math.abs(d) === 1 ? '' : 's'}` : 'same size';
+        return { kind: 'near', icon: 'fa-link', ref: r.cluster_uuid || '', text: `Analyst name of a near-identical cluster (${diff}): ${r.cluster_name || c.cluster_name || ''}` };
+    }
+    if (src !== 'auto') return null;
+    const words = (c.name_basis || []).map(b => CLUSTER_NAME_BASIS[b] || b);
+    return { kind: 'auto', icon: 'fa-wand-magic-sparkles', text: words.length ? `Automatic name from: ${words.join(', ')}` : 'Automatic name' };
+};
+
+// The source as a small icon chip, placed right after the name element (a near name is
+// muted by CSS through that adjacency). A near chip opens the cluster it took its name from,
+// in `collection` when given (a page outside that collection), else in the current one.
+window.clusterNameSource = (c, axis = null, collection = null) => {
+    const s = clusterNameSourceInfo(c);
+    if (!s) return '';
+    const ax = axis || c.axis || '';
+    const key = `data-cluster-src="${escapeAttr(c.cluster_uuid || '')}" data-cluster-src-id="${escapeAttr(c.cluster_id ?? '')}" data-src-axis="${escapeAttr(ax)}"`;
+    const open = s.kind === 'near' && s.ref
+        ? ` role="link" tabindex="0" onclick="${escapeAttr(`event.stopPropagation(); event.preventDefault(); openCluster(${jsString(s.ref)}, true, event, ${jsString(ax)}, ${collection ? jsString(collection) : 'null'})`)}" onkeydown="if (event.key === 'Enter') this.click()"`
+        : '';
+    return `<span class="nway-by cl-src ${s.kind}" ${key} title="${escapeAttr(s.text)}"${open}><i class="fa-solid ${s.icon}"></i></span>`;
 };
 
 window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function', axis = null) {
@@ -688,6 +722,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
             const borderAlpha = options.fullAxisColor ? 50 : Math.round(10 + coh * 40);
             const bgAlpha = options.fullAxisColor ? 20 : Math.round(3 + coh * 17);
             const textOpacity = options.fullAxisColor ? 1 : (0.35 + coh * 0.65).toFixed(2);
+            const srcTip = (clusterNameSourceInfo(c) || {}).text;
             return `
             <span class="${cardClass}"
                   data-filter-value="${escapeAttr(uuid)}"
@@ -697,7 +732,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
                   onmouseleave="hideClusterCardTooltip(event)"
                   onmousemove="moveClusterCardTooltip(event)"
                   onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event, ${isBinary ? escapeAttr(jsString(c.axis)) : 'null'})"
-                  style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})">
+                  style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})${srcTip ? escapeAttr('\n' + srcTip) : ''}">
                 <i class="${escapeHtml(axisIcon)}" style="font-size:0.6rem;"></i>
                 <span style="font-family:monospace; font-size:0.65rem;">${options.showUuid ? escapeHtml(uuid) : Number(c.member_count || 0)}</span>
             </span>`;

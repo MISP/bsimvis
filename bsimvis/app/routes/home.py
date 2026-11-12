@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from flask import current_app, request
 
-from bsimvis.app.services.cluster_utils import _AXES as BIN_AXES
+from bsimvis.app.services.cluster_utils import _AXES as BIN_AXES, name_fields
 from bsimvis.app.services.job_service import JobService
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_service import tag_service
@@ -137,6 +137,7 @@ def _biggest_clusters(cols, limit=10):
                     "cluster_id": cl.get("cluster_id"),
                     "cluster_uuid": cl.get("cluster_uuid"),
                     "cluster_name": cl.get("cluster_name"),
+                    **name_fields(cl),
                     "count": cl.get("count", 0),
                     "cohesion": cl.get("cohesion_score"),
                 }
@@ -221,28 +222,32 @@ def is_noise_cluster(meta):
     return _packed_share(meta) >= OVERVIEW_MAX_PACKED
 
 
-FAMILY_MIN_COH = (
-    0.5  # a looser cluster is an umbrella: its tight children are the families
-)
+FAMILY_MIN_COH = 0.2  # a looser cluster is always an umbrella, whatever its size
 _FAM_KEYS = ("cid", "cluster_uuid", "cluster_name", "cohesion_score", "matching")
+_FAM_KEYS += ("is_custom_name", "name_source", "name_basis", "name_ref", "auto_name")
 
 
 def pick_families(roots, metas, min_coh=FAMILY_MIN_COH):
-    """Families = the first cohesive level of the display tree, ranked like the file search.
+    """Families = the most relevant level of the display tree, ranked like the file search.
 
-    A loose cluster (cohesion < min_coh) is replaced by the families inside it and kept
-    as a group in the map; a loose cluster with none inside stays a family itself.
+    A cluster is a family unless a cluster inside it ranks higher (cluster_display.score)
+    or its cohesion is under min_coh. Then it is replaced by the families inside it and
+    kept as a group in the map; such a cluster with none inside stays a family itself.
     -> (map tree, ranked families, hidden count). Pure: `metas` is {cid: stored meta}.
     """
     from bsimvis.app.services.cluster_display import score
 
     families, hidden = [], 0
+    rank = lambda c: score(c.get("matching") or 0, c.get("cohesion_score") or 0)
+
+    def best(c):
+        return max((max(rank(k), best(k)) for k in c.get("children") or []), default=-1)
 
     def node(c):
         nonlocal hidden
         base = {k: c.get(k) for k in _FAM_KEYS}
         kids = []
-        if (c.get("cohesion_score") or 0) < min_coh:
+        if (c.get("cohesion_score") or 0) < min_coh or best(c) > rank(c):
             kids = [n for n in map(node, c.get("children") or []) if n]
         if kids:
             return {**base, "family": False, "children": kids}
@@ -254,9 +259,7 @@ def pick_families(roots, metas, min_coh=FAMILY_MIN_COH):
         return fam
 
     tree = [n for n in map(node, roots) if n]
-    families.sort(
-        key=lambda f: -score(f.get("matching") or 0, f.get("cohesion_score") or 0)
-    )
+    families.sort(key=rank, reverse=True)
     return tree, families, hidden
 
 
@@ -392,6 +395,7 @@ def get_collection_overview():
                     "cid": c.get("cluster_id"),
                     "cluster_uuid": c.get("cluster_uuid"),
                     "cluster_name": c.get("cluster_name"),
+                    **name_fields(c),
                     "cohesion_score": c.get("cohesion_score"),
                     "matching": c.get("count", 0),
                     "children": [],
@@ -640,6 +644,7 @@ def _search_groups(q, limit, scope):
             "results",
             lambda c: {
                 "title": c.get("cluster_name") or f"cluster {c.get('cluster_id')}",
+                **name_fields(c),
                 "subtitle": f"{c['_collection']} · {c.get('count', 0)} files",
                 "url": (
                     f"/collections/{quote(c['_collection'])}/files/clusters"
@@ -738,16 +743,27 @@ if __name__ == "__main__":
         ),
         leaf("B", 0.85, 35, [leaf("B1", 1, 16)]),
         leaf("C", 0.14, 8),
+        leaf("D", 0.25, 6, [leaf("D1", 1, 5)]),
     ]
-    metas = {k: big for k in ("A", "A1", "A1a", "A2", "A2a", "B", "B1", "C")}
+    metas = {k: big for k in ("A", "A1", "A1a", "A2", "A2a", "B", "B1", "C", "D", "D1")}
     metas["A3"] = {"function_count_stats": {"avg": 2}}
     tree, fams, hidden = pick_families(roots, metas)
-    # loose A becomes a group of its tight children; A2 is loose too, so A2a is the family
-    assert [f["cid"] for f in fams] == ["B", "A1", "A2a", "C"], fams
+    # A is under the cohesion floor: a group of its children. A2 (10 files, 0.3)
+    # outranks its 4-file 0.9 child, so it stays the family; D1 outranks D.
+    assert [f["cid"] for f in fams] == ["B", "A1", "D1", "A2", "C"], fams
+    assert not tree[3]["family"] and tree[3]["children"][0]["cid"] == "D1"
     assert hidden == 1  # A3: 2 functions per file
     assert not tree[0]["family"]
     assert [k["cid"] for k in tree[0]["children"]] == ["A1", "A2"]
     assert tree[2]["family"] and fams[0]["subs"] == 1  # C: loose, nothing inside
     packed = {"packer": [{"tag_id": "packer:upx", "coverage": 0.8, "children": []}]}
     assert is_noise_cluster({"file_tag_distribution": packed})
+    # A pinned (analyst-named) 2-file node inside a loose group is a family, and
+    # family rows carry the name fields (a near name keeps its reference).
+    ref = {"cluster_id": 7, "cluster_name": "FAM", "delta": 1}
+    named = {**leaf("P", 0.9, 2), "name_source": "analyst", "cluster_name": "FAM"}
+    near = {**leaf("N", 0.9, 3), "name_source": "near", "name_ref": ref}
+    tree, fams, _ = pick_families([leaf("G", 0.1, 50, [named, near])], {})
+    assert [f["cid"] for f in fams] == ["N", "P"], fams
+    assert fams[1]["name_source"] == "analyst" and fams[0]["name_ref"] == ref
     print("home self-check OK")

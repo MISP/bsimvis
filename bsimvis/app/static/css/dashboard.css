@@ -3348,6 +3348,12 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 .nway-by.user { color: var(--success, #22c55e); background: color-mix(in srgb, var(--success, #22c55e) 16%, transparent); }
 .nway-by.auto { color: var(--accent, #38bdf8); background: color-mix(in srgb, var(--accent, #38bdf8) 16%, transparent); }
 .nway-by.llm { color: #a78bfa; background: color-mix(in srgb, #a78bfa 18%, transparent); }
+/* File cluster name source (clusterNameSource in tags.js). */
+.cl-src { vertical-align: middle; margin: 0 3px; font-size: 0.75em; }
+.cl-src.auto { opacity: 0.6; }
+.cl-src.tag { color: var(--info, #3b82f6); background: color-mix(in srgb, var(--info, #3b82f6) 16%, transparent); }
+.cl-src.near { color: var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 16%, transparent); cursor: pointer; }
+:has(+ .cl-src.near) { font-style: italic; opacity: 0.75; }
 .nway-rename { font-size: 0.7em; opacity: 0.55; }
 .nway-namerow:hover .nway-rename, .nway-rename:focus-visible { opacity: 1; }
 
@@ -3861,3 +3867,19 @@ html.light-theme .nway-dnode circle { fill: hsl(var(--h, 195) 62% var(--ll, 44%)
 .nway-dnode.on circle, .nway-dnode:hover circle, .nway-dnode:focus-visible circle { stroke: var(--accent); stroke-width: 3; }
 .nway-dbadge { fill: var(--success); font-size: 9px; font-weight: 600; }
 
+
+/* File cluster rename dialog: the name, then the chain of near-identical clusters. */
+.bc-rename .modal-content { width: min(560px, calc(100vw - 32px)); }
+.bc-rename .bc-input { width: 100%; box-sizing: border-box; padding: 6px 8px; }
+.bc-rename .bc-help { margin: 8px 0; font-size: 0.85em; }
+.bc-rename .bc-chain { border: 1px solid var(--border); border-radius: 6px; margin: 4px 0; max-height: 40vh; overflow-y: auto; }
+.bc-rename .bc-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; cursor: pointer; font-size: 0.9em; }
+.bc-rename .bc-row + .bc-row { border-top: 1px solid var(--border); }
+.bc-rename .bc-row:has(input:checked) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bc-rename .bc-row.clicked .bc-n { font-weight: 600; }
+.bc-rename .bc-n { min-width: 4.5em; }
+.bc-rename .bc-d, .bc-rename .bc-coh { min-width: 2.5em; color: var(--dim); font-variant-numeric: tabular-nums; }
+.bc-rename .bc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-rename .bc-shown { color: var(--accent); }
+.bc-rename .bc-end { font-size: 0.8em; padding: 2px 8px; }
+.bc-rename .modal-footer { gap: 8px; }

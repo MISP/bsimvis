@@ -31,7 +31,7 @@ from bsimvis.app.services.cluster_display import (
     display_direct,
     score,
 )
-from bsimvis.app.services.cluster_utils import get_cluster_metas
+from bsimvis.app.services.cluster_utils import get_cluster_metas, name_fields
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
 
 DEFAULT_ROOTS = 20
@@ -214,6 +214,7 @@ def search_files_by_cluster():
 
         def build(c):
             meta = {k: metas.get(c, {}).get(k) for k in _META_FIELDS}
+            meta.update(name_fields(metas.get(c)))
             return {
                 **meta,
                 "cid": c,

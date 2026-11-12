@@ -99,6 +99,7 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=(), restrict=None):
     from bsimvis.app.routes.bin_cluster import _pool_bin_cluster_namespace
     from bsimvis.app.services.cluster_utils import (
         get_cluster_metas,
+        name_fields,
         Tree,
         resolve_cluster_id_by_uuid,
     )
@@ -144,6 +145,7 @@ def _cluster_node(r, pool_id, collection, uuid, open_ids=(), restrict=None):
         {
             "cluster_uuid": metas[c].get("cluster_uuid"),
             "cluster_name": metas[c].get("cluster_name"),
+            **name_fields(metas[c]),
             "member_count": metas[c].get("member_count", 0),
         }
         for c in child_ids
@@ -1287,7 +1289,7 @@ def _shared_cluster(r, members, args):
 
     One collection only (pools keep their clusters in another namespace).
     """
-    from bsimvis.app.services.cluster_utils import get_cluster_metas
+    from bsimvis.app.services.cluster_utils import get_cluster_metas, name_fields
     from bsimvis.app.services.collection_config import resolve_collection_algo
     from bsimvis.app.services.config_service import config_service
 
@@ -1320,6 +1322,7 @@ def _shared_cluster(r, members, args):
     return {
         "cluster_uuid": m.get("cluster_uuid"),
         "cluster_name": m.get("cluster_name"),
+        **name_fields(m),
         "member_count": m.get("member_count", 0),
         "collection": coll,
     }

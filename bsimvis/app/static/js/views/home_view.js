@@ -306,7 +306,7 @@ window.HomeView = (function () {
             const url = `/collections/${encodeURIComponent(c.collection)}/files/clusters`;
             const ent = esc(JSON.stringify({ cluster_id: c.cluster_id, cluster_uuid: c.cluster_uuid, cluster_name: c.cluster_name, collection: c.collection }));
             return `<tr data-entity-data='${ent}' oncontextmenu="EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
-                <td class="ellip"><a href="${url}" data-cluster-name="${esc(c.cluster_uuid || '')}" onclick="Nav.openPath(this.href, event)">${esc(c.cluster_name || ('cluster ' + c.cluster_id))}</a></td>
+                <td class="ellip"><a href="${url}" data-cluster-name="${esc(c.cluster_uuid || '')}" onclick="Nav.openPath(this.href, event)">${esc(c.cluster_name || ('cluster ' + c.cluster_id))}</a>${clusterNameSource(c, null, c.collection)}</td>
                 <td class="ellip" style="color:var(--dim);">${esc(c.collection)}</td>
                 <td class="num">${num(c.count)}</td></tr>`;
         });

@@ -560,7 +560,7 @@ window.ClusterDetailView = {
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); font-size:0.75rem;"></i>
                     <span class="bsim-node-label" data-cluster-name="${escapeAttr(c.cluster_uuid || '')}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
                         ${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}
-                    </span>
+                    </span>${this.isBinary ? clusterNameSource(c, this.axis) : ''}
                     ${this.cohesionBadge(c)}
                     <span class="bsim-node-count">${Number(c.count || 0).toLocaleString()}</span>
                 </div>
@@ -608,10 +608,11 @@ window.ClusterDetailView = {
     },
 
     // Keep the cached cluster and breadcrumb in step with a rename done anywhere.
-    onRenamed(key, name) {
+    onRenamed(key, name, src = null) {
         const c = this.clusterMapByUuid[key] || this.clusterMapById[key];
         if (!c) return;
         c.cluster_name = name;
+        if (src) Object.assign(c, src);
         if (c.cluster_uuid === this.selectedClusterUuid) this.setBreadcrumb(c);
     },
 
@@ -853,7 +854,7 @@ window.ClusterDetailView = {
         <div id="cluster-hero" class="cluster-hero${this.heroCompact ? ' compact' : ''}" style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:16px 20px;">
             <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                 <i class="fa-solid fa-bullseye" style="color:var(--accent);"></i>
-                <span data-cluster-name="${escapeAttr(self.cluster_uuid || '')}" style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>
+                <span data-cluster-name="${escapeAttr(self.cluster_uuid || '')}" style="font-size:1.2rem; font-weight:bold;">${escapeHtml(self.cluster_name || `Cluster #${self.cluster_id}`)}</span>${this.isBinary ? clusterNameSource(self, this.axis) : ''}
                 <button class="btn-action" title="Rename cluster (empty name resets)" onclick="ClusterDetailView.rename()"><i class="fa-solid fa-pen"></i></button>
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
@@ -1184,7 +1185,7 @@ window.ClusterDetailView = {
                     <a href="javascript:void(0)" class="btn-action" style="float:right;" title="Open this cluster" onclick="event.stopPropagation(); ClusterDetailView.openNode('${escapeAttr(uuid)}', event)"><i class="fa-solid fa-arrow-up-right-from-square"></i></a>
                     <i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'} bsim-caret-btn"></i>
                     <i class="fa-solid fa-bullseye" style="color:var(--accent); margin:0 6px;"></i>
-                    <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>
+                    <b>${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}</b>${this.isBinary ? clusterNameSource(c, this.axis) : ''}
                     <span class="dim" style="font-size:0.72rem; margin-left:8px;">(${Number(c.count || 0).toLocaleString()} members in subtree)</span>
                     ${this.cohesionBadge(c)}
                 </td>

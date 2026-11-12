@@ -257,17 +257,22 @@ window.CollectionDetailView = {
 
     /** Uploads card, switchable to the in-the-wild dates (overview `dates`). */
     _ovUpCard(ov, loading) {
-        const LABEL = { entry_date: ['Uploads', 'Files added over time, from their upload date.'], first_seen: ['First seen', 'Files by the date they were first seen in the wild (only files whose upload gave one).'], last_seen: ['Last seen', 'Files by the date they were last seen in the wild (only files whose upload gave one).'] };
         const dates = ov.dates || { entry_date: ov.uploads };
-        const fields = Object.keys(LABEL).filter(f => dates[f]);
-        const field = dates[this._ovDateField] ? this._ovDateField : 'entry_date';
-        const seg = fields.length > 1 ? `<div class="cov-tl-seg" role="group" aria-label="Date">${fields.map(f => `<button type="button" aria-pressed="${f === field}" onclick="CollectionDetailView._ovDates('${f}')">${LABEL[f][0]}</button>`).join('')}</div>` : '';
+        const fields = this._OV_DATES.filter(([f]) => dates[f]);
+        const field = this._ovDateField && dates[this._ovDateField] ? this._ovDateField : 'all';
+        const shown = field === 'all' ? fields : fields.filter(([f]) => f === field);
+        const pills = [['all', 'All'], ...fields.map(([f, l]) => [f, l])];
+        const seg = fields.length > 1 ? `<div class="cov-tl-seg" role="group" aria-label="Date">${pills.map(([f, l]) => `<button type="button" aria-pressed="${f === field}" onclick="CollectionDetailView._ovDates('${f}')">${l}</button>`).join('')}</div>` : '';
+        const title = field === 'all' ? (fields.length > 1 ? 'Files over time' : 'Uploads') : shown[0][1];
         return `<div class="cov-card cdo-wide cdo-r2" id="cdo-up">
-            ${this._ovTitle('fa-solid fa-chart-column', 'var(--info, #3b82f6)', LABEL[field][0], LABEL[field][1])}
+            ${this._ovTitle('fa-solid fa-chart-column', 'var(--info, #3b82f6)', title, 'Files per period by upload date, and by the dates they were first and last seen in the wild (only files whose upload gave them). Same time span and same scale in every view.')}
             ${seg}
-            ${loading ? '<span class="cdo-sk" style="height:126px;"></span>' : this._uploadsChart(dates[field])}
+            ${loading ? '<span class="cdo-sk" style="height:126px;"></span>' : this._uploadsChart(dates, shown, fields)}
         </div>`;
     },
+
+    // [field, label, colour]; in "All" the later series are drawn narrower on top, so equal bars stay visible.
+    _OV_DATES: [['entry_date', 'Uploads', 'var(--info, #3b82f6)'], ['first_seen', 'First seen', 'var(--success)'], ['last_seen', 'Last seen', 'var(--warning, #d97706)']],
 
     _ovDates(field) {
         this._ovDateField = field;
@@ -275,18 +280,26 @@ window.CollectionDetailView = {
         if (el && this._ov) el.outerHTML = this._ovUpCard(this._ov, false);
     },
 
-    /** Files added over time: one bar per span of the entry_date range. */
-    _uploadsChart(u) {
-        if (!u || !(u.counts || []).some(Boolean)) return '<div class="dim" style="font-size:0.78rem;">No upload dates.</div>';
-        const ms = v => (v > 1e12 ? v : v * 1000);
-        const day = v => new Date(ms(v)).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' });
-        const max = Math.max(...u.counts);
-        const bars = u.counts.map((n, i) => {
-            const a = u.start + i * u.step;
-            return `<span title="${escapeAttr(`${day(a)} – ${day(a + u.step)}: ${n.toLocaleString()} files`)}"><i style="height:${n ? Math.max(4, n / max * 100) : 0}%"></i></span>`;
+    /** Files per bin for each shown date field, over the server's shared bins; y-scale is the max over every field. */
+    _uploadsChart(dates, shown, all) {
+        const first = all.length ? dates[all[0][0]] : null;
+        if (!first || !all.some(([f]) => (dates[f].counts || []).some(Boolean))) return '<div class="dim" style="font-size:0.78rem;">No dates.</div>';
+        const day = v => new Date(+v).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' });
+        const max = Math.max(1, ...all.flatMap(([f]) => dates[f].counts));
+        const W = [100, 64, 30];
+        const bars = first.counts.map((_, i) => {
+            const a = first.start + i * first.step;
+            const tip = `${day(a)} – ${day(a + first.step)}\n` + shown.map(([f, l]) => `${l}: ${dates[f].counts[i].toLocaleString()}`).join('\n');
+            const is = shown.map(([f, , c], k) => {
+                const n = dates[f].counts[i];
+                const w = shown.length > 1 ? W[k] : 100;
+                return n ? `<i style="height:${Math.max(4, n / max * 100)}%; width:${w}%; left:${(100 - w) / 2}%; background:color-mix(in srgb, ${c} 75%, var(--card-bg));"></i>` : '';
+            }).join('');
+            return `<span title="${escapeAttr(tip)}">${is}</span>`;
         }).join('');
+        const leg = shown.length > 1 ? `<div class="cov-mleg">${shown.map(([f, l, c]) => `<span><i style="background:${c}"></i>${l} <b>${dates[f].counts.reduce((s, n) => s + n, 0).toLocaleString()}</b></span>`).join('')}</div>` : '';
         return `<div class="cdo-bars">${bars}</div>
-            <div class="cdo-axis"><span>${day(u.start)}</span><span>${day(u.start + u.step * u.counts.length)}</span></div>`;
+            <div class="cdo-axis"><span>${day(first.start)}</span><span>${day(first.start + first.step * first.counts.length)}</span></div>${leg}`;
     },
 
     /** Stacked share bar + legend, the cluster Metadata card's look (cov-sbar / cov-mleg). */
@@ -407,9 +420,9 @@ window.CollectionDetailView = {
 .cdo-map-grp:hover circle { stroke:var(--text); }
 .cdo-map-g { fill:var(--dim); font-size:10px; pointer-events:none; }
 .cdo-bars { display:flex; align-items:flex-end; gap:2px; height:110px; }
-.cdo-bars > span { flex:1; height:100%; display:flex; align-items:flex-end; border-radius:2px; }
+.cdo-bars > span { flex:1; height:100%; position:relative; border-radius:2px; }
 .cdo-bars > span:hover { background:var(--hover); }
-.cdo-bars i { display:block; width:100%; border-radius:2px 2px 0 0; background:color-mix(in srgb, var(--info, #3b82f6) 75%, var(--card-bg)); }
+.cdo-bars i { position:absolute; bottom:0; display:block; border-radius:2px 2px 0 0; }
 .cdo-axis { display:flex; justify-content:space-between; font-size:0.68rem; color:var(--dim); }
 .cdo-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:20px; }
 .cdo-wide { grid-column:span 2; }

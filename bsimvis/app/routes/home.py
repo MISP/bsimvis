@@ -304,22 +304,32 @@ def _all_cids(nodes):
 DATE_FIELDS = ("entry_date", "first_seen", "last_seen")
 
 
-def _uploads(r, col, field="entry_date", bins=24):
-    """Files over time: `bins` equal spans between the first and last `field` date."""
-    key = f"{col}:idx:file:{field}"
-    # ponytail: scores below 1e12 are legacy seconds (pre normalize-time); they
-    # would stretch the span back to 1970, so the chart starts at the first ms one.
-    lo = r.zrangebyscore(key, 1e12, "+inf", start=0, num=1, withscores=True)
-    hi = r.zrange(key, -1, -1, withscores=True)
-    if not lo or not hi:
-        return None
-    a, b = float(lo[0][1]), float(hi[0][1])
-    step = max((b - a) / bins, 1.0)
+def _date_hists(r, col, bins=40):
+    """Files over time per date field, all on one span and the same `bins` bins
+    (first to last date over every field), so the Uploads card compares them."""
+    keys = {f: f"{col}:idx:file:{f}" for f in DATE_FIELDS}
+    ends = {}
+    for f, key in keys.items():
+        # ponytail: scores below 1e12 are legacy seconds (pre normalize-time); they
+        # would stretch the span back to 1970, so the chart starts at the first ms one.
+        lo = r.zrangebyscore(key, 1e12, "+inf", start=0, num=1, withscores=True)
+        hi = r.zrange(key, -1, -1, withscores=True)
+        if lo and hi:
+            ends[f] = (float(lo[0][1]), float(hi[0][1]))
+    if not ends:
+        return {f: None for f in DATE_FIELDS}
+    a = min(lo for lo, _ in ends.values())
+    step = max((max(hi for _, hi in ends.values()) - a) / bins, 1.0)
     pipe = r.pipeline(transaction=False)
-    for i in range(bins):
-        left = a + i * step
-        pipe.zcount(key, left if i == 0 else f"({left}", a + (i + 1) * step)
-    return {"start": a, "step": step, "counts": pipe.execute()}
+    for f in ends:
+        for i in range(bins):
+            left = a + i * step
+            pipe.zcount(keys[f], left if i == 0 else f"({left}", a + (i + 1) * step)
+    counts = pipe.execute()
+    out = {f: None for f in DATE_FIELDS}
+    for n, f in enumerate(ends):
+        out[f] = {"start": a, "step": step, "counts": counts[n * bins : (n + 1) * bins]}
+    return out
 
 
 def _buckets(r, col, field, limit=8):
@@ -407,7 +417,7 @@ def get_collection_overview():
             sort_by="entry_date",
             sort_order="desc",
         )
-        dates = {f: _uploads(r, col, f) for f in DATE_FIELDS}
+        dates = _date_hists(r, col)
         if rare is None:
             rare = _call(
                 search_files_by_cluster,

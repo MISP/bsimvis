@@ -430,8 +430,9 @@ const routes = {
         api: '/api/bin_cluster/list',
         headers: [
             { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
-            { label: 'Name', sort: 'cluster_name', width: '16%' },
-            { label: 'Binaries', sort: 'count', width: '12%' },
+            { label: 'Name', sort: 'cluster_name', width: '13%' },
+            { label: 'Relevance', sort: 'relevance', width: '7%', title: 'log(1 + files) x (0.3 + cohesion): same rank as the overview Families' },
+            { label: 'Binaries', sort: 'count', width: '8%' },
             { label: 'Avg Funcs', sort: 'functions', width: '8%' },
             { label: 'Stability', sort: 'stability', width: '8%' },
             { label: 'Cohesion', sort: 'cohesion', width: '8%' },
@@ -759,6 +760,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     } else if (viewKey === 'bin-clusters') {
         if (!params.has('axis')) {
             params.set('axis', window.BINSIM_DEFAULT_AXIS);
+        }
+        if (!params.has('sort_by')) {
+            params.set('sort_by', 'relevance');
         }
     } else if (viewKey === 'function-similarity') {
         if (!params.has('min_score')) {
@@ -1788,7 +1792,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const effectiveSortKey = (viewKey === 'binary-similarity' && sortKey === 'score')
                     ? (params.get('sort') || 'score') : sortKey;
                 const icon = (currentSort === effectiveSortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-                headHtml += `<th ${style} class="sortable resizable-th" data-label="${escapeAttr(label)}" data-sort="${escapeAttr(sortKey)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
+                const tip = h.title ? ` title="${escapeAttr(h.title)}"` : '';
+                headHtml += `<th ${style}${tip} class="sortable resizable-th" data-label="${escapeAttr(label)}" data-sort="${escapeAttr(sortKey)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
             } else {
                 headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
             }
@@ -2101,6 +2106,7 @@ ${showExtraFileCols() ? `                        <th><input type="text" id="flt-
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-relevance" value="${escapeAttr(p.get('min_relevance') || '')}" step="0.1" min="0" placeholder="Min" title="Min Relevance" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-relevance" value="${escapeAttr(p.get('max_relevance') || '')}" step="0.1" min="0" placeholder="Max" title="Max Relevance" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${escapeAttr(p.get('min_count') || '0')}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${escapeAttr(p.get('max_count') || '')}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-avg-funcs" value="${escapeAttr(p.get('min_avg_funcs') || '')}" min="0" placeholder="Min" title="Min Avg Funcs" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-avg-funcs" value="${escapeAttr(p.get('max_avg_funcs') || '')}" min="0" placeholder="Max" title="Max Avg Funcs" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
@@ -4240,6 +4246,7 @@ function renderBinClusters(items) {
                     </div>
                 </div>
             </td>
+            <td class="mono" style="font-size:0.75rem;" title="log(1 + files) x (0.3 + cohesion): same rank as the overview Families">${(c.relevance || 0).toFixed(2)}</td>
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
@@ -4307,6 +4314,8 @@ function applyBinClusterSearch() {
     const ccohMax = document.getElementById('flt-bin-cluster-max-cohesion')?.value;
     const cafMin = document.getElementById('flt-bin-cluster-min-avg-funcs')?.value;
     const cafMax = document.getElementById('flt-bin-cluster-max-avg-funcs')?.value;
+    const crelMin = document.getElementById('flt-bin-cluster-min-relevance')?.value;
+    const crelMax = document.getElementById('flt-bin-cluster-max-relevance')?.value;
     const fFileName = document.getElementById('flt-bin-cluster-file-name')?.value;
     const fFileMd5 = document.getElementById('flt-bin-cluster-file-md5')?.value;
 
@@ -4320,6 +4329,8 @@ function applyBinClusterSearch() {
     if (ccohMax) params.set('max_cohesion', ccohMax); else params.delete('max_cohesion');
     if (cafMin) params.set('min_avg_funcs', cafMin); else params.delete('min_avg_funcs');
     if (cafMax) params.set('max_avg_funcs', cafMax); else params.delete('max_avg_funcs');
+    if (crelMin) params.set('min_relevance', crelMin); else params.delete('min_relevance');
+    if (crelMax) params.set('max_relevance', crelMax); else params.delete('max_relevance');
     if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
     if (fFileMd5) params.set('file_md5', fFileMd5); else params.delete('file_md5');
 

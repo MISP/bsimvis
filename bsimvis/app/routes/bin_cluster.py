@@ -18,6 +18,7 @@ from bsimvis.app.services.cluster_utils import (
     Tree,
     real_links,
 )
+from bsimvis.app.services.cluster_display import score as display_score
 
 job_service = JobService()
 
@@ -26,6 +27,14 @@ def _avg_function_count(c):
     """Sort key for the Avg Funcs column. Clusters built before the stat was
     stored have no spread, and sort as 0 rather than blocking the sort."""
     return (c.get("function_count_stats") or {}).get("avg") or 0
+
+
+def _relevance(m):
+    """The overview's Families rank (cluster_display.score), over the stored
+    member count. Computed on read: the listing already loads every meta."""
+    return round(
+        display_score(m.get("member_count") or 0, m.get("cohesion_score") or 0), 4
+    )
 
 
 def _pool_bin_cluster_namespace(pool, algo, axis, node_type="file"):
@@ -194,6 +203,7 @@ def _shape_bin_cluster_result(m, parent, child_total):
         "avg_stability": m.get("avg_stability", 0.0),
         "cohesion_score": m.get("cohesion_score", 0),
         "cohesion_axes": m.get("cohesion_axes", {}),
+        "relevance": _relevance(m),
         "count": m.get("member_count"),
         "created_at": m.get("created_at"),
         "parent": parent,
@@ -369,6 +379,8 @@ def list_bin_clusters():
         max_cohesion = float(request.args.get("max_cohesion") or 0)
         min_avg_funcs = float(request.args.get("min_avg_funcs") or 0)
         max_avg_funcs = float(request.args.get("max_avg_funcs") or 0)
+        min_relevance = float(request.args.get("min_relevance") or 0)
+        max_relevance = float(request.args.get("max_relevance") or 0)
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
@@ -376,8 +388,8 @@ def list_bin_clusters():
         return {"error": "Invalid numeric parameter"}, 400
 
     sort_by = request.args.get(
-        "sort_by", "count"
-    )  # count, stability, cohesion, functions
+        "sort_by", "relevance"
+    )  # relevance, count, stability, cohesion, functions
     sort_order = request.args.get("sort_order", "desc").lower()
 
     r = get_redis()
@@ -565,6 +577,12 @@ def list_bin_clusters():
                 continue
             if max_avg_funcs > 0 and avg_funcs > max_avg_funcs:
                 continue
+            if min_relevance > 0 or max_relevance > 0:
+                rel = _relevance(m)
+                if min_relevance > 0 and rel < min_relevance:
+                    continue
+                if max_relevance > 0 and rel > max_relevance:
+                    continue
 
             valid_nodes.add(cid)
 
@@ -657,6 +675,8 @@ def list_bin_clusters():
             )
         elif sort_by == "functions":
             matched_results.sort(key=_avg_function_count, reverse=reverse)
+        elif sort_by == "relevance":
+            matched_results.sort(key=_relevance, reverse=reverse)
         else:
             matched_results.sort(
                 key=lambda x: str(x.get("cluster_id", "")), reverse=reverse
@@ -701,7 +721,7 @@ def list_bin_clusters():
                 "avg_stability": m.get("avg_stability", 0.0),
                 "cohesion_score": m.get("cohesion_score", 0),
                 "cohesion_axes": m.get("cohesion_axes", {}),
-                "cohesion_axes": m.get("cohesion_axes", {}),
+                "relevance": _relevance(m),
                 "count": m.get("member_count"),
                 "created_at": m.get("created_at"),
                 "parent": child_to_parent.get(str(m.get("cluster_id"))),
@@ -738,6 +758,8 @@ def list_bin_clusters():
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
     elif sort_by == "functions":
         results.sort(key=_avg_function_count, reverse=reverse)
+    elif sort_by == "relevance":
+        results.sort(key=lambda x: x.get("relevance", 0), reverse=reverse)
     else:
         results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
 

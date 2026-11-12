@@ -1195,6 +1195,43 @@ def test_cluster_response_contract():
         f"avgs={avgs}",
     )
 
+    # Relevance is the overview's Families rank, and the default sort.
+    rels = {}
+    for label, extra in (
+        ("sort_by=relevance", {"sort_by": "relevance"}),
+        ("default", {}),
+    ):
+        body = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": COLLECTION, "limit": 50, **extra},
+        )
+        rows = (body.get("results") if isinstance(body, dict) else None) or []
+        rels[label] = [r.get("relevance") for r in rows]
+        check(
+            f"/api/bin_cluster/list {label} orders by descending relevance",
+            all(isinstance(v, (int, float)) for v in rels[label])
+            and rels[label] == sorted(rels[label], reverse=True),
+            f"rels={rels[label]}",
+        )
+    vals = rels["sort_by=relevance"]
+    if vals:
+        # Above the lowest row: it must go. One distinct value: above all of them.
+        distinct = sorted(set(vals))
+        floor = distinct[1] if len(distinct) > 1 else distinct[0] + 0.01
+        body = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": COLLECTION, "limit": 50, "min_relevance": floor},
+        )
+        got = [r.get("relevance") for r in (body.get("results") or [])]
+        check(
+            "/api/bin_cluster/list min_relevance drops lower clusters",
+            all(v >= floor for v in got)
+            and len(got) == sum(v >= floor for v in vals) < len(vals),
+            f"floor={floor} got={got}",
+        )
+
 
 def test_cluster_expansion_and_bin_sim_cluster_filter():
     """The cluster detail view and the bin-sim cluster filter, at the API level.

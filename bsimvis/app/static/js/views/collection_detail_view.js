@@ -271,7 +271,7 @@ window.CollectionDetailView = {
         </div>`;
     },
 
-    // [field, label, colour]; in "All" the later series are drawn narrower on top, so equal bars stay visible.
+    // [field, label, colour], drawn in this order: the later curves sit on top.
     _OV_DATES: [['entry_date', 'Uploads', 'var(--info, #3b82f6)'], ['first_seen', 'First seen', 'var(--success)'], ['last_seen', 'Last seen', 'var(--warning, #d97706)']],
 
     _ovDates(field) {
@@ -280,26 +280,37 @@ window.CollectionDetailView = {
         if (el && this._ov) el.outerHTML = this._ovUpCard(this._ov, false);
     },
 
-    /** Files per bin for each shown date field, over the server's shared bins; y-scale is the max over every field. */
+    /** Files per bin for each shown date field, over the server's shared bins: a smooth line over a
+     * translucent body per field. One y-scale (max over every field), so all views compare. */
     _uploadsChart(dates, shown, all) {
         const first = all.length ? dates[all[0][0]] : null;
         if (!first || !all.some(([f]) => (dates[f].counts || []).some(Boolean))) return '<div class="dim" style="font-size:0.78rem;">No dates.</div>';
         const day = v => new Date(+v).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' });
+        const n = first.counts.length, W = 1000, H = 110, TOP = 6;
         const max = Math.max(1, ...all.flatMap(([f]) => dates[f].counts));
-        const W = [100, 64, 30];
-        const bars = first.counts.map((_, i) => {
+        const x = i => (i + 0.5) / n * W, y = v => H - v / max * (H - TOP);
+        // ponytail: d3 is on this page for the family map; without it the curve is straight segments.
+        const shape = (pts, area) => {
+            if (window.d3) {
+                const g = (area ? d3.area().y0(H).y1(p => p[1]) : d3.line().y(p => p[1])).x(p => p[0]).curve(d3.curveMonotoneX);
+                return g(pts);
+            }
+            const l = 'M' + pts.map(p => p.join(',')).join('L');
+            return area ? `${l}L${W},${H}L0,${H}Z` : l;
+        };
+        const series = shown.map(([f, , c]) => {
+            const pts = [[0, y(dates[f].counts[0])], ...dates[f].counts.map((v, i) => [x(i), y(v)]), [W, y(dates[f].counts[n - 1])]];
+            return `<path d="${shape(pts, true)}" style="fill:color-mix(in srgb, ${c} 22%, transparent);"></path>
+                <path d="${shape(pts, false)}" class="cdo-ln" style="stroke:${c};"></path>`;
+        }).join('');
+        const hover = first.counts.map((_, i) => {
             const a = first.start + i * first.step;
             const tip = `${day(a)} – ${day(a + first.step)}\n` + shown.map(([f, l]) => `${l}: ${dates[f].counts[i].toLocaleString()}`).join('\n');
-            const is = shown.map(([f, , c], k) => {
-                const n = dates[f].counts[i];
-                const w = shown.length > 1 ? W[k] : 100;
-                return n ? `<i style="height:${Math.max(4, n / max * 100)}%; width:${w}%; left:${(100 - w) / 2}%; background:color-mix(in srgb, ${c} 75%, var(--card-bg));"></i>` : '';
-            }).join('');
-            return `<span title="${escapeAttr(tip)}">${is}</span>`;
+            return `<rect class="cdo-hv" x="${(i / n * W).toFixed(1)}" y="0" width="${(W / n).toFixed(1)}" height="${H}"><title>${escapeHtml(tip)}</title></rect>`;
         }).join('');
-        const leg = shown.length > 1 ? `<div class="cov-mleg">${shown.map(([f, l, c]) => `<span><i style="background:${c}"></i>${l} <b>${dates[f].counts.reduce((s, n) => s + n, 0).toLocaleString()}</b></span>`).join('')}</div>` : '';
-        return `<div class="cdo-bars">${bars}</div>
-            <div class="cdo-axis"><span>${day(first.start)}</span><span>${day(first.start + first.step * first.counts.length)}</span></div>${leg}`;
+        const leg = shown.length > 1 ? `<div class="cov-mleg">${shown.map(([f, l, c]) => `<span><i style="background:${c}"></i>${l} <b>${dates[f].counts.reduce((s, v) => s + v, 0).toLocaleString()}</b></span>`).join('')}</div>` : '';
+        return `<svg class="cdo-area" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Files over time">${series}${hover}</svg>
+            <div class="cdo-axis"><span>${day(first.start)}</span><span>${day(first.start + first.step * n)}</span></div>${leg}`;
     },
 
     /** Stacked share bar + legend, the cluster Metadata card's look (cov-sbar / cov-mleg). */
@@ -419,10 +430,10 @@ window.CollectionDetailView = {
 .cdo-map-grp circle { fill:color-mix(in srgb, var(--dim) 6%, transparent); stroke:var(--dim); stroke-width:1; stroke-dasharray:4 3; }
 .cdo-map-grp:hover circle { stroke:var(--text); }
 .cdo-map-g { fill:var(--dim); font-size:10px; pointer-events:none; }
-.cdo-bars { display:flex; align-items:flex-end; gap:2px; height:110px; }
-.cdo-bars > span { flex:1; height:100%; position:relative; border-radius:2px; }
-.cdo-bars > span:hover { background:var(--hover); }
-.cdo-bars i { position:absolute; bottom:0; display:block; border-radius:2px 2px 0 0; }
+.cdo-area { display:block; width:100%; height:120px; }
+.cdo-area .cdo-ln { fill:none; stroke-width:2; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
+.cdo-area .cdo-hv { fill:transparent; }
+.cdo-area .cdo-hv:hover { fill:color-mix(in srgb, var(--text) 7%, transparent); }
 .cdo-axis { display:flex; justify-content:space-between; font-size:0.68rem; color:var(--dim); }
 .cdo-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:20px; }
 .cdo-wide { grid-column:span 2; }

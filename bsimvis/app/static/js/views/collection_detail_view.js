@@ -187,7 +187,7 @@ window.CollectionDetailView = {
     _ovFamRow(f, max) {
         const uuid = f.cluster_uuid;
         const name = f.cluster_name || `Cluster ${f.cid}`;
-        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0 }], true);
+        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0, axis: this._ovAxis() }], true);
         const w = max ? Math.max(3, (f.matching || 0) / max * 100) : 0;
         return `<div class="cdo-fam">
             <span>${card || ''}</span>
@@ -274,7 +274,9 @@ window.CollectionDetailView = {
         const coll = this._ovColl || {};
         const total = Number(coll.total_files || 0);
         const filesUrl = Nav.buildUIUrl(col, ['files']) + this._ovAxisQs('group_axis');
-        const OK = 'var(--success)', INFO = 'var(--info, #3b82f6)', WARN = 'var(--warning, #d97706)';
+        const ax = this._ovAxis();
+        // Cluster cards take the axis colour (BinSimScoreTypes), like their badges.
+        const OK = ((window.BinSimScoreTypes || {})[ax === 'overall' ? 'score' : `score_${ax}`] || {}).color || 'var(--success)', INFO = 'var(--info, #3b82f6)', WARN = 'var(--warning, #d97706)';
         const sk = (n, h = 14) => `<div class="cov-list">${Array.from({ length: n }, (_, i) => `<span class="cdo-sk" style="height:${h}px; width:${92 - (i * 17) % 40}%"></span>`).join('')}</div>`;
         const none = text => `<div class="dim" style="font-size:0.78rem;">${text}</div>`;
         const noClusters = none('No file clusters yet. Build them from the Clusters tab.');

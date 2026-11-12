@@ -255,6 +255,26 @@ window.CollectionDetailView = {
         el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Family map">${out}</svg>`;
     },
 
+    /** Uploads card, switchable to the in-the-wild dates (overview `dates`). */
+    _ovUpCard(ov, loading) {
+        const LABEL = { entry_date: ['Uploads', 'Files added over time, from their upload date.'], first_seen: ['First seen', 'Files by the date they were first seen in the wild (only files whose upload gave one).'], last_seen: ['Last seen', 'Files by the date they were last seen in the wild (only files whose upload gave one).'] };
+        const dates = ov.dates || { entry_date: ov.uploads };
+        const fields = Object.keys(LABEL).filter(f => dates[f]);
+        const field = dates[this._ovDateField] ? this._ovDateField : 'entry_date';
+        const seg = fields.length > 1 ? `<div class="cov-tl-seg" role="group" aria-label="Date">${fields.map(f => `<button type="button" aria-pressed="${f === field}" onclick="CollectionDetailView._ovDates('${f}')">${LABEL[f][0]}</button>`).join('')}</div>` : '';
+        return `<div class="cov-card cdo-wide cdo-r2" id="cdo-up">
+            ${this._ovTitle('fa-solid fa-chart-column', 'var(--info, #3b82f6)', LABEL[field][0], LABEL[field][1])}
+            ${seg}
+            ${loading ? '<span class="cdo-sk" style="height:126px;"></span>' : this._uploadsChart(dates[field])}
+        </div>`;
+    },
+
+    _ovDates(field) {
+        this._ovDateField = field;
+        const el = document.getElementById('cdo-up');
+        if (el && this._ov) el.outerHTML = this._ovUpCard(this._ov, false);
+    },
+
     /** Files added over time: one bar per span of the entry_date range. */
     _uploadsChart(u) {
         if (!u || !(u.counts || []).some(Boolean)) return '<div class="dim" style="font-size:0.78rem;">No upload dates.</div>';
@@ -321,21 +341,23 @@ window.CollectionDetailView = {
             ${loading ? sk(8) : ov.has_clusters ? this._ovFileRows(ov.rare || []) : noClusters}
             <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', WARN, 'Files', filesUrl, 'The unclustered files are the last group')}</div>
         </div>`;
-        const upCard = `<div class="cov-card cdo-wide cdo-r2">
-            ${this._ovTitle('fa-solid fa-chart-column', INFO, 'Uploads', 'Files added over time, from their entry date.')}
-            ${loading ? '<span class="cdo-sk" style="height:126px;"></span>' : this._uploadsChart(ov.uploads)}
-        </div>`;
+        const upCard = this._ovUpCard(ov, loading);
         const day = ms => new Date(+ms).toISOString().slice(0, 10);
         const days = ov.active_days || 30;
         const byActivity = sort => this._ovBtn('fa-solid fa-table-list', OK, 'All clusters', `${Nav.buildUIUrl(col, ['files', 'clusters'])}${this._ovAxisQs() || '?'}${this._ovAxisQs() ? '&' : ''}sort_by=${sort}${sort === 'active' && days !== 30 ? `&active_days=${days}` : ''}`, 'The clusters table, sorted the same way');
         const untimed = Number(ov.families_untimed || 0);
         const noDates = untimed ? none(`${untimed.toLocaleString()} famil${untimed > 1 ? 'ies have' : 'y has'} no member dates yet: rebuild the clusters or run <code>bsimvis metadata backfill-timeline -c ${escapeHtml(col)}</code>.`) : '';
-        const activeCard = `<div class="cov-card cdo-wide cdo-r2">
+        const activeCard = `<div class="cov-card cdo-r2">
             ${this._ovTitle('fa-solid fa-fire', OK, `Most active <span class="dim" style="font-weight:400; font-size:0.75rem;">${Number(days)} d</span>`, `Families with the most members uploaded in the last ${days} days.`)}
             ${loading ? sk(7, 18) : (ov.active || []).length ? `<div class="cov-list">${ov.active.map(f => this._ovActRow(f, `<b style="color:var(--success)">+${Number(f.new_members).toLocaleString()}</b> <span class="dim">/ ${Number(f.matching || 0).toLocaleString()}</span>`, `New members in ${days} days / files`)).join('')}</div>` : (noDates || (fams.length ? none(`No family grew in the last ${days} days.`) : noClusters))}
             <div class="cov-foot">${byActivity('active')}</div>
         </div>`;
-        const changedCard = `<div class="cov-card cdo-wide cdo-r2">
+        const seenCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-satellite-dish', OK, 'Active in the wild', 'Families by the last time one of their members was seen in the wild (first_seen / last_seen, when the upload gave them).')}
+            ${loading ? sk(7, 18) : (ov.seen || []).length ? `<div class="cov-list">${ov.seen.map(f => this._ovActRow(f, `<span class="dim">${day(f.last_seen)}</span>`, `Last seen ${day(f.last_seen)}, first seen ${day(f.first_seen)}`)).join('')}</div>` : (noDates || (fams.length ? none('No family member has a first or last seen date.') : noClusters))}
+            <div class="cov-foot">${byActivity('last_seen')}</div>
+        </div>`;
+        const changedCard = `<div class="cov-card cdo-r2">
             ${this._ovTitle('fa-solid fa-clock-rotate-left', OK, 'Recently changed', 'Families by the upload date of their newest member: the last ones to grow.')}
             ${loading ? sk(7, 18) : (ov.changed || []).length ? `<div class="cov-list">${ov.changed.map(f => this._ovActRow(f, `<span class="dim">${day(f.last_added)}</span>`, `Newest member uploaded on ${day(f.last_added)}, oldest on ${day(f.first_added)}`)).join('')}</div>` : (noDates || noClusters)}
             <div class="cov-foot">${byActivity('last_added')}</div>
@@ -357,7 +379,7 @@ window.CollectionDetailView = {
             ${this._ovTitle('fa-solid fa-chart-pie', INFO, 'Mix', 'How the files split by architecture and format, and the tags most of them carry.')}
             ${mixBody}
         </div>`;
-        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}${activeCard}${changedCard}</div>`;
+        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}<div class="cdo-row3">${activeCard}${changedCard}${seenCard}</div></div>`;
     },
 
     _OV_CSS: `
@@ -391,6 +413,7 @@ window.CollectionDetailView = {
 .cdo-axis { display:flex; justify-content:space-between; font-size:0.68rem; color:var(--dim); }
 .cdo-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:20px; }
 .cdo-wide { grid-column:span 2; }
+.cdo-row3 { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:12px; }
 .cdo-r1 { min-height:420px; }
 .cdo-r2 { min-height:300px; }
 .cdo-sk { display:block; border-radius:4px; margin:3px 0; background:linear-gradient(90deg, var(--hover) 25%, color-mix(in srgb, var(--hover) 45%, var(--card-bg)) 50%, var(--hover) 75%); background-size:200% 100%; animation:cdo-sh 1.3s ease-in-out infinite; }

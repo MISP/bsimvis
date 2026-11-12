@@ -268,7 +268,8 @@ ACTIVE_TOP = 7
 def rank_activity(families, metas, now_ms=None, days=ACTIVE_DAYS, top=ACTIVE_TOP):
     """Most active families (members uploaded in the last `days`) and the most
     recently changed ones (latest member upload), from the stored timelines.
-    -> (active, changed, families with no timeline). Pure."""
+    Plus the families seen in the wild most recently (newest member last_seen).
+    -> (active, changed, seen, families with no timeline). Pure."""
     from bsimvis.app.services.cluster_utils import timeline_summary
 
     rows = [
@@ -281,13 +282,16 @@ def rank_activity(families, metas, now_ms=None, days=ACTIVE_DAYS, top=ACTIVE_TOP
         for f in families
     ]
     timed = [f for f in rows if f["last_added"]]
+    seen = sorted(
+        (f for f in rows if f["last_seen"]), key=lambda f: f["last_seen"], reverse=True
+    )
     active = sorted(
         (f for f in timed if f["new_members"]),
         key=lambda f: (f["new_members"], f["last_added"]),
         reverse=True,
     )
     changed = sorted(timed, key=lambda f: f["last_added"], reverse=True)
-    return active[:top], changed[:top], len(rows) - len(timed)
+    return active[:top], changed[:top], seen[:top], len(rows) - len(timed)
 
 
 def _all_cids(nodes):
@@ -296,13 +300,18 @@ def _all_cids(nodes):
         yield from _all_cids(c.get("children") or [])
 
 
-def _uploads(r, col, bins=24):
-    """Files added over time: `bins` equal spans between the first and last entry_date."""
-    key = f"{col}:idx:file:entry_date"
-    lo, hi = r.zrange(key, 0, 0, withscores=True), r.zrange(
-        key, -1, -1, withscores=True
-    )
-    if not lo:
+# Histograms the overview's Uploads card can switch between.
+DATE_FIELDS = ("entry_date", "first_seen", "last_seen")
+
+
+def _uploads(r, col, field="entry_date", bins=24):
+    """Files over time: `bins` equal spans between the first and last `field` date."""
+    key = f"{col}:idx:file:{field}"
+    # ponytail: scores below 1e12 are legacy seconds (pre normalize-time); they
+    # would stretch the span back to 1970, so the chart starts at the first ms one.
+    lo = r.zrangebyscore(key, 1e12, "+inf", start=0, num=1, withscores=True)
+    hi = r.zrange(key, -1, -1, withscores=True)
+    if not lo or not hi:
         return None
     a, b = float(lo[0][1]), float(hi[0][1])
     step = max((b - a) / bins, 1.0)
@@ -388,7 +397,7 @@ def get_collection_overview():
         tree, kept, hidden = pick_families(roots, metas)
         # Widen the window until a family grew in it: an idle collection still ranks.
         for days in ACTIVE_WINDOWS:
-            active, changed, untimed = rank_activity(kept, metas, days=days)
+            active, changed, seen, untimed = rank_activity(kept, metas, days=days)
             if active:
                 break
         recent = _call(
@@ -398,6 +407,7 @@ def get_collection_overview():
             sort_by="entry_date",
             sort_order="desc",
         )
+        dates = {f: _uploads(r, col, f) for f in DATE_FIELDS}
         if rare is None:
             rare = _call(
                 search_files_by_cluster,
@@ -415,12 +425,14 @@ def get_collection_overview():
             "families_total": len(kept),
             "active": active,
             "changed": changed,
+            "seen": seen,
             "active_days": days,
             "families_untimed": untimed,
             "unclustered_total": loose_total,
             "recent": recent.get("files", []),
             "rare": rare,
-            "uploads": _uploads(r, col),
+            "uploads": dates["entry_date"],
+            "dates": dates,
             "arch": _buckets(r, col, "language_id"),
             "filetype": _buckets(r, col, "filetype", 20),
             "tags": _top_tags([{"name": col}], limit=12)["top"],

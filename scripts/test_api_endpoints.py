@@ -1285,6 +1285,12 @@ def test_cluster_timeline():
             and [f.get("cid") for f in ov.get("changed") or []] == ["tl-new", "tl-old"],
             f"active={[f.get('cid') for f in ov.get('active') or []]} changed={[f.get('cid') for f in ov.get('changed') or []]}",
         )
+        check(
+            "overview ranks families by last seen and sends date histograms",
+            [f.get("cid") for f in ov.get("seen") or []] == ["tl-new"]
+            and set(ov.get("dates") or {}) == {"entry_date", "first_seen", "last_seen"},
+            f"seen={[f.get('cid') for f in ov.get('seen') or []]} dates={list(ov.get('dates') or {})}",
+        )
     finally:
         r.delete(*keys)
 

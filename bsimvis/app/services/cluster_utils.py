@@ -259,6 +259,7 @@ _ARCH_TOK = re.compile(
     r"(x86_64|x86|i[3-6]86|amd64|aarch64|arm64|arm\d*|mipsel|mpsl|mips64|mips|"
     r"powerpc|ppc|sh4|sh2|m68k|sparc|spc|riscv\d*|loongarch\d*|arc|mipseb)"
 )
+_BITNESS = {"x64", "x32", "64bit", "32bit"}  # a word size, not a build name
 _GENERIC_RULE = re.compile(r"^Linux_Botnet_Generic_(\w+)$")
 _HASHY = re.compile(r"_[0-9a-f]{8}$")
 _SKIP_TRAITS = {
@@ -352,9 +353,27 @@ def name_tokens(name):
     toks = {m.group(0) for m in _ARCH_TOK.finditer(low)}
     for piece in re.split(r"[^a-z0-9]+", _ARCH_TOK.sub(" ", low)):
         piece = _collapse(piece)
-        if len(piece) >= 3 and not piece.isdigit():
+        if len(piece) >= 3 and not piece.isdigit() and piece not in _BITNESS:
             toks.add(piece)
     return toks
+
+
+def _numbered(stems, n):
+    """'v02', 'v07', 'v10' -> 'v02–v10' when most files carry one numbered stem."""
+    masks = Counter()
+    for st, c in stems.items():
+        if re.search(r"\d", st):
+            masks[re.sub(r"\d+", "#", st.lower())] += c
+    if not masks:
+        return None
+    mask, c = masks.most_common(1)[0]
+    same = sorted(
+        (st for st in stems if re.sub(r"\d+", "#", st.lower()) == mask),
+        key=lambda st: [int(x) for x in re.findall(r"\d+", st)],
+    )
+    if c < 0.6 * n or len(same) < 2:
+        return None
+    return f"{same[0]}–{same[-1]}"
 
 
 def stem_of(name):
@@ -611,7 +630,7 @@ class BinClusterNamer:
             arch_txt = f"{a[0][0]}/{a[1][0]}"
             sc = min(score(("arch", a[0][0])), score(("arch", a[1][0])))
             cands.append((max(sc, 0.03), arch_txt, "arch"))
-        elif len(archs) >= 4:
+        elif len(archs) >= 3:
             arch_txt = f"{len(archs)} archs"
             cands.append((0.03, arch_txt, "arch"))
 
@@ -648,7 +667,7 @@ class BinClusterNamer:
                 txt += " + " + pretty(st[1][0])
             cands.append((score(("stem", st[0][0])) * 1.5, txt, "stem"))
         else:
-            suf = _shared_suffix(list(stems))
+            suf = _numbered(stems, n) or _shared_suffix(list(stems))
             if suf:
                 cands.append((0.6, suf, "stem"))
 
@@ -2196,6 +2215,9 @@ def demo():
     assert stem_of("DEMONS.arm7") == "DEMONS" and stem_of("pm68k") is None
     assert name_tokens("xnxnxnxnxnxnxnxnm68kxnxn") == {"xnxn", "m68k"}
     assert name_tokens("pm68k") == {"m68k"}
+    assert name_tokens("v02_ppc_x64") == {"ppc", "v02"}
+    assert _numbered(Counter({"v02": 1, "v10": 1, "v07": 2}), 4) == "v02–v10"
+    assert _numbered(Counter({"DEMONS": 3, "v02": 1}), 4) is None
     assert (
         stem_of("px86_i686") is None
         and stem_of("xnxnxnxnxnxnxnxnriscv64xnxn") == "xnxn"

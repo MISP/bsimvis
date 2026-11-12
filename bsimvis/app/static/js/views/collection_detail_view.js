@@ -18,6 +18,7 @@ window.CollectionDetailView = {
         if (!container) return;
 
         const collName = params.collection;
+        this._ovForce = !!params.force;
         if (!collName) {
             container.innerHTML = '<div style="padding:30px; color:#f87171;">Error: No collection name provided.</div>';
             return;
@@ -107,7 +108,10 @@ window.CollectionDetailView = {
         this._ovCol = col;
         this._ovColl = coll;
         try {
-            const res = await fetch(`/api/index/collection/overview?${new URLSearchParams({ collection: col, axis: this._ovAxis() })}`);
+            const qs = new URLSearchParams({ collection: col, axis: this._ovAxis() });
+            if (this._ovForce) qs.set('refresh', 'true'); // Refresh button: skip the server's 120 s cache
+            this._ovForce = false;
+            const res = await fetch(`/api/index/collection/overview?${qs}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             this._ov = await res.json();
         } catch (e) {

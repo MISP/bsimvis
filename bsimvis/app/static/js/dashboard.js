@@ -690,6 +690,8 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         stateParams.collection = collection;
         stateParams.pool = pool;
         stateParams.view = viewKey;
+        // The Refresh button: views with a server-cached call (collection overview) bypass it.
+        if (force) stateParams.force = true;
         if (window.Breadcrumbs) {
             const segments = window.Breadcrumbs.generate({ viewKey, collection, pool, params }, null);
             window.Breadcrumbs.render(segments);

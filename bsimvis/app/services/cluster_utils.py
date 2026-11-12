@@ -271,6 +271,7 @@ _SKIP_TRAITS = {
 _BASIS = {
     "stem": "files",
     "trait": "yara",
+    "type": "tag",
     "arch": "arch",
     "packer": "packer",
     "size": "size",
@@ -410,6 +411,11 @@ def _file_features(m):
     f |= {("stem", s) for s in map(stem_of, names) if s}
     f |= {("tok", t) for nm in names for t in name_tokens(nm)}
     f |= {("trait", t) for t in _traits_of(m)}
+    f |= {
+        ("type", str(t).rsplit(":", 1)[1])
+        for t in m.get("tags") or []
+        if ":malware-type:" in str(t)
+    }
     tags = [str(t) for t in m.get("tags") or []]
     if any(t.startswith("packer:upx") for t in tags):
         f.add(("packer", "UPX"))
@@ -462,7 +468,11 @@ def _family_head(fams, weak_ok=True, plurality=False, compat=None):
                     if g != f
                 )
             ]
-            if len(keep) != 1 or weak[keep[0]] / n < 0.8:
+            keep.sort(key=lambda f: -weak[f])
+            # no labels to tell cross-firing apart: a clear lead still names it
+            if len(keep) > 1 and weak[keep[0]] < 1.25 * weak[keep[1]]:
+                return None, set(), None
+            if not keep or weak[keep[0]] / n < 0.8:
                 return None, set(), None
             w = [(keep[0], 1.0)]
         head, basis = [w[0][0]], "yara"
@@ -658,6 +668,17 @@ class BinClusterNamer:
                 txt = f"{fc_median() / 1000:.1f}k-func"
                 cands.append((max(best[0] if best else 0, 0.1), txt, "size"))
 
+        # nothing sets it apart from its parent: still say what it is, by coverage
+        if not any(c[0] > 0.02 and c[2] in ("stem", "trait") for c in cands):
+            for kind in ("trait", "type", "packer"):
+                best = max(
+                    ((mine[k], k[1]) for k in mine if k[0] == kind and mine[k] >= 0.5),
+                    default=None,
+                )
+                if best and not any(c[2] == kind and c[0] > 0.02 for c in cands):
+                    rank = {"trait": 0.024, "packer": 0.022, "type": 0.021}[kind]
+                    cands.append((rank + best[0] / 1000, best[1], kind))
+
         cands.sort(key=lambda c: -c[0])
         # qualifiers repeating the family ("Mirai Botnet") add nothing
         cands = [
@@ -700,7 +721,7 @@ class BinClusterNamer:
             parts.append(arch_txt)
             cands.append((0, arch_txt, "arch"))
         # chosen by score, shown in reading order: family · build · trait · arch · size
-        order = {"stem": 0, "trait": 1, "arch": 2, "size": 3, "packer": 4}
+        order = {"stem": 0, "trait": 1, "type": 2, "arch": 3, "size": 4, "packer": 5}
         kind_of = {txt: kind for _, txt, kind in cands}
         parts = [parts[0]] + sorted(
             parts[1:], key=lambda t: order.get(kind_of.get(t), 9)

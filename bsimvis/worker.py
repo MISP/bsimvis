@@ -1073,6 +1073,28 @@ class Worker:
                 self.job_service.enqueue_job(next_job_id, is_continuation=True)
             return True
 
+        elif jtype == JobType.BACKFILL_CLUSTER_TIMELINE.value:
+            from bsimvis.app.services.bin_cluster_service import backfill_timeline
+
+            cursor = int(payload.get("cursor") or 0)
+            next_cursor, done, total = backfill_timeline(
+                self.r_data, collection, cursor=cursor
+            )
+            if job_id:
+                self.job_service.update_progress(
+                    job_id,
+                    100 if not next_cursor else int(next_cursor * 100 / max(1, total)),
+                    f"Cluster timelines: {done} updated ({cursor}-{cursor + done} of {total})",
+                )
+            if next_cursor:
+                next_job_id = self.job_service.create_job(
+                    JobType.BACKFILL_CLUSTER_TIMELINE,
+                    {"collection": collection, "cursor": next_cursor},
+                    enqueue=False,
+                )
+                self.job_service.enqueue_job(next_job_id, is_continuation=True)
+            return True
+
         elif jtype == JobType.YARA_RULE_RUN.value:
             from bsimvis.app.services.yara_edit_service import run_chunk
 

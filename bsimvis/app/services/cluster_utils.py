@@ -10,6 +10,7 @@ import zlib
 from collections import Counter, defaultdict
 
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_policy, tag_prefixes
+from bsimvis.app.services.index_service import normalize_timestamp
 
 MAX_CLUSTER_NAME_LEN = 40
 # Plan D5b: yara/avtype/ccip retired from cluster meta -- av:/yara:/ip: tags
@@ -603,6 +604,53 @@ def function_count_stats(metas):
         "avg": round(sum(counts) / len(counts), 1),
         "max": max(counts),
         "files": len(counts),
+    }
+
+
+DAY_MS = 86_400_000
+# Member date fields a cluster timeline covers, and how a multi-valued one reduces.
+TIMELINE_FIELDS = {"entry_date": None, "first_seen": min, "last_seen": max}
+
+
+def timeline_stats(metas):
+    """Member dates per field: {field: {first, last, n, days: [[day_ms, count], ...]}}.
+
+    `days` is the per-UTC-day member count, so a reader rebuilds the cumulative
+    member curve and "new in the last N days" without loading a member. A field
+    no member carries is left out (first_seen / last_seen are optional).
+    """
+    out = {}
+    for field, reduce in TIMELINE_FIELDS.items():
+        ts = [normalize_timestamp((m or {}).get(field), reduce) for m in metas]
+        ts = [t for t in ts if t]
+        if not ts:
+            continue
+        days = Counter(t - t % DAY_MS for t in ts)
+        out[field] = {
+            "first": min(ts),
+            "last": max(ts),
+            "n": len(ts),
+            "days": [[d, n] for d, n in sorted(days.items())],
+        }
+    return out
+
+
+def timeline_summary(timeline, now_ms=None, window_days=30):
+    """Read-side activity of a stored timeline: upload span, members added in
+    the last `window_days` days, and the seen-in-the-wild span (first_seen and
+    last_seen together: a member only seen once still counts on both ends)."""
+    tl = timeline or {}
+    up = tl.get("entry_date") or {}
+    now_ms = now_ms or int(time.time() * 1000)
+    since = now_ms - window_days * DAY_MS
+    since -= since % DAY_MS
+    seen = [tl[f] for f in ("first_seen", "last_seen") if tl.get(f)]
+    return {
+        "first_added": up.get("first"),
+        "last_added": up.get("last"),
+        "new_members": sum(n for d, n in up.get("days") or [] if d >= since),
+        "first_seen": min(s["first"] for s in seen) if seen else None,
+        "last_seen": max(s["last"] for s in seen) if seen else None,
     }
 
 
@@ -1282,6 +1330,28 @@ def demo():
     assert tiny["inferred_tags"] == [] and tiny["file_inferred_tags"] == [], tiny
     low = function_cluster_stats(funcs, files, 0.2, 0.5, 0.5)
     assert low["inferred_tags"] == [] and low["file_inferred_tags"] == [], low
+
+    day, t0 = DAY_MS, 20_000 * DAY_MS  # t0: 2024-10-04, ms
+    tl = timeline_stats(
+        [
+            {"entry_date": t0 + 5},
+            {"entry_date": t0 + 9, "first_seen": [t0 - 3 * day, t0 - 4 * day]},
+            {"entry_date": (t0 + 10 * day) // 1000, "last_seen": "2024-10-03"},
+            {},
+        ]
+    )
+    assert tl["entry_date"] == {
+        "first": t0 + 5,
+        "last": t0 + 10 * day,
+        "n": 3,
+        "days": [[t0, 2], [t0 + 10 * day, 1]],
+    }, tl
+    assert tl["first_seen"]["first"] == t0 - 4 * day and "file_date" not in tl, tl
+    s = timeline_summary(tl, now_ms=t0 + 10 * day + 7, window_days=5)
+    assert s["new_members"] == 1 and s["last_added"] == t0 + 10 * day, s
+    assert (s["first_seen"], s["last_seen"]) == (t0 - 4 * day, t0 - day), s
+    assert timeline_summary(None)["new_members"] == 0
+    assert timeline_summary({})["first_seen"] is None
 
     print("cluster_utils demo OK")
 

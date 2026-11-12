@@ -285,6 +285,20 @@ Constants are all in `RING`: `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120 file
 clusters and family ribbons only; the mode is shown in the canvas note). The redraw loop
 stops after 240 frames or 4 s.
 
+## Cluster timeline
+
+A binary cluster's meta carries `timeline` (`cluster_utils.timeline_stats`): per member date
+field (`entry_date` = upload, `first_seen` / `last_seen` = in the wild, both optional) the
+first / last date, the dated member count and per-UTC-day member counts. Written by both
+build paths and by metadata propagation; `BACKFILL_CLUSTER_TIMELINE` (`POST
+/api/bin_cluster/timeline/backfill`, `bsimvis metadata backfill-timeline`) fills older
+clusters without a rebuild. Everything relative to now (`new_members` in `active_days`,
+`last_added`, ...) is `timeline_summary` on read, so `/api/bin_cluster/list` sorts
+(`active`, `last_added`, `first_added`, `first_seen`, `last_seen`) and filters on it like
+relevance. The collection overview ranks its Families by it (`home.rank_activity`). It is
+rebuilt from today's members: merges and splits leave no history. An upload takes
+`first_seen` / `last_seen` params; a re-ingest keeps the earliest / latest.
+
 ## Homepage and unified search
 
 `routes/home.py` backs the instance-wide homepage (`/`, view key `home`,

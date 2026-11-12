@@ -736,6 +736,14 @@ def main():
         "-c", "--collection", required=True, help="Target collection name"
     )
 
+    metadata_backfill_timeline = metadata_actions.add_parser(
+        "backfill-timeline",
+        help="Store the member timeline (upload / first / last seen) on clusters built before it",
+    )
+    metadata_backfill_timeline.add_argument(
+        "-c", "--collection", required=True, help="Target collection name"
+    )
+
     rulezet_parser = subparsers.add_parser(
         "rulezet", help="Mirror YARA rules from rulezet.org"
     )

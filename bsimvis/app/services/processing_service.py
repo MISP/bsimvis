@@ -1,5 +1,9 @@
 import logging
-from bsimvis.app.services.index_service import now_ms, normalize_timestamp_fields
+from bsimvis.app.services.index_service import (
+    now_ms,
+    normalize_timestamp,
+    normalize_timestamp_fields,
+)
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
@@ -141,8 +145,22 @@ class ProcessingService:
         existing_raw = self.r.get(file_meta_key)
         if existing_raw:
             try:
-                existing_status = json.loads(existing_raw).get("status")
-            except (ValueError, TypeError):
+                existing = json.loads(existing_raw)
+                existing_status = existing.get("status")
+                # A re-upload (or a re-analysis without the CSV) keeps the
+                # earliest first_seen and the latest last_seen it ever had.
+                for field, pick in (("first_seen", min), ("last_seen", max)):
+                    seen = [
+                        v
+                        for v in (
+                            normalize_timestamp(existing.get(field), pick),
+                            normalize_timestamp(coll_file_meta.get(field), pick),
+                        )
+                        if v
+                    ]
+                    if seen:
+                        coll_file_meta[field] = pick(seen)
+            except (ValueError, TypeError, AttributeError):
                 pass
 
         if coll_file_meta.get("is_container"):

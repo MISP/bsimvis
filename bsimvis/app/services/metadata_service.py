@@ -29,6 +29,7 @@ from bsimvis.app.services.cluster_utils import (
     bin_cluster_ns,
     cluster_summary,
     function_count_stats,
+    timeline_stats,
 )
 from bsimvis.app.services import tag_taxonomy
 
@@ -446,6 +447,8 @@ class MetadataService:
                 fc_stats = function_count_stats(decoded_metas)
                 if fc_stats:
                     new_cm["function_count_stats"] = fc_stats
+                # first_seen / last_seen arrive through this path (API uploads).
+                new_cm["timeline"] = timeline_stats(decoded_metas)
 
                 is_custom = old_cm.get("is_custom_name", False)
                 old_name = old_cm.get("cluster_name")

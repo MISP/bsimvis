@@ -429,16 +429,19 @@ const routes = {
         title: 'Binary Clusters',
         api: '/api/bin_cluster/list',
         headers: [
-            { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
-            { label: 'Name', sort: 'cluster_name', width: '13%' },
-            { label: 'Relevance', sort: 'relevance', width: '7%', title: 'log(1 + files) x (0.3 + cohesion): same rank as the overview Families' },
-            { label: 'Binaries', sort: 'count', width: '8%' },
-            { label: 'Avg Funcs', sort: 'functions', width: '8%' },
-            { label: 'Stability', sort: 'stability', width: '8%' },
-            { label: 'Cohesion', sort: 'cohesion', width: '8%' },
-            { label: 'Created', width: '11%' },
-            { label: 'Tags', width: '14%' },
-            { label: 'Sample Binaries', width: '13%' }
+            { label: 'UUID', sort: 'cluster_uuid', width: '8%' },
+            { label: 'Name', sort: 'cluster_name', width: '11%' },
+            { label: 'Relevance', sort: 'relevance', width: '6%', title: 'log(1 + files) x (0.3 + cohesion): same rank as the overview Families' },
+            { label: 'Binaries', sort: 'count', width: '7%' },
+            { label: 'Avg Funcs', sort: 'functions', width: '6%' },
+            { label: 'Stability', sort: 'stability', width: '6%' },
+            { label: 'Cohesion', sort: 'cohesion', width: '7%' },
+            { label: 'First added', sort: 'first_added', width: '7%', title: 'Upload date of the oldest member: when the cluster first appeared' },
+            { label: 'Last added', sort: 'last_added', width: '7%', title: 'Upload date of the newest member: when the cluster last grew' },
+            { label: 'New', sort: 'active', width: '5%', title: 'Members uploaded in the last 30 days, or active_days from the URL (sort: most active first)' },
+            { label: 'Seen', sort: 'last_seen', width: '8%', title: 'First and last time a member was seen in the wild (first_seen / last_seen, when the upload gave them)' },
+            { label: 'Tags', width: '11%' },
+            { label: 'Sample Binaries', width: '11%' }
         ],
         renderer: renderBinClusters
     },
@@ -2111,7 +2114,10 @@ ${showExtraFileCols() ? `                        <th><input type="text" id="flt-
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-avg-funcs" value="${escapeAttr(p.get('min_avg_funcs') || '')}" min="0" placeholder="Min" title="Min Avg Funcs" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-avg-funcs" value="${escapeAttr(p.get('max_avg_funcs') || '')}" min="0" placeholder="Max" title="Max Avg Funcs" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
-                    <th></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="date" id="flt-bin-cluster-min-first-added" value="${escapeAttr(p.get('min_first_added') || '')}" title="First added on or after" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="date" id="flt-bin-cluster-max-first-added" value="${escapeAttr(p.get('max_first_added') || '')}" title="First added on or before" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="date" id="flt-bin-cluster-min-last-added" value="${escapeAttr(p.get('min_last_added') || '')}" title="Last added on or after (grew since)" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="date" id="flt-bin-cluster-max-last-added" value="${escapeAttr(p.get('max_last_added') || '')}" title="Last added on or before (quiet since)" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
+                    <th><input type="number" id="flt-bin-cluster-min-new" value="${escapeAttr(p.get('min_new') || '')}" min="0" placeholder="Min" title="Min members uploaded in the last 30 days" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="date" id="flt-bin-cluster-min-last-seen" value="${escapeAttr(p.get('min_last_seen') || '')}" title="Seen in the wild on or after" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="date" id="flt-bin-cluster-max-first-seen" value="${escapeAttr(p.get('max_first_seen') || '')}" title="First seen in the wild on or before" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
                     <th><div class="tag-filter-container" id="tag-container-bin-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"><input type="text" class="tag-filter-add" placeholder="+ Inferred" title="Filter on tags inferred from the cluster members" onkeydown="handleTagAdd(event, 'bin-cluster', 'inferred_tag')"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
@@ -2257,6 +2263,7 @@ ${showExtraFileCols() ? `                        <th><input type="text" id="flt-
             syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type', 'file');
             syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion'); syncInput('flt-bin-cluster-min-avg-funcs', 'min_avg_funcs'); syncInput('flt-bin-cluster-max-avg-funcs', 'max_avg_funcs');
             syncInput('flt-bin-cluster-file-name', 'file_name'); syncInput('flt-bin-cluster-file-md5', 'file_md5');
+            BIN_CLUSTER_TIME_FILTERS.forEach(k => syncInput(`flt-bin-cluster-${k.replace(/_/g, '-')}`, k));
         } else if (path === 'collections') {
             const syncDate = (id, paramName) => { const el = document.getElementById(id); if (el) { const ms = p.get(paramName); el.value = ms ? new Date(+ms).toISOString().slice(0, 10) : ''; } };
             syncInput('flt-coll-name', 'name');
@@ -4274,7 +4281,10 @@ function renderBinClusters(items) {
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
                 </div>
             </td>
-            <td class="dim">${formatDate(c.created_at)}</td>
+            <td class="dim mono" style="font-size:0.7rem;">${binClusterDay(c.first_added)}</td>
+            <td class="dim mono" style="font-size:0.7rem;">${binClusterDay(c.last_added)}</td>
+            <td class="mono" style="font-size:0.75rem;${c.new_members ? ' color:var(--success); font-weight:bold;' : ''}" title="Members uploaded in the last ${escapeAttr(getRoutingState().params.get('active_days') || '30')} days">${c.new_members ? `+${Number(c.new_members).toLocaleString()}` : '<span class="dim">0</span>'}</td>
+            <td class="dim mono" style="font-size:0.68rem;" title="First / last seen in the wild">${c.first_seen ? `${binClusterDay(c.first_seen)}<br>${binClusterDay(c.last_seen)}` : '&mdash;'}</td>
             <td>${EntityRenderer.renderTag('bin_cluster', c.tag_id || c.cluster_id, [...(c.inferred_tags || []), ...(c.file_inferred_tags || [])], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 250px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
@@ -4284,6 +4294,13 @@ function renderBinClusters(items) {
         </tr>
         `;
     }).join('');
+}
+
+// Date and activity filters of the clusters table: input id = `flt-bin-cluster-` + param with dashes.
+const BIN_CLUSTER_TIME_FILTERS = ['min_first_added', 'max_first_added', 'min_last_added', 'max_last_added', 'min_new', 'min_last_seen', 'max_first_seen'];
+
+function binClusterDay(ms) {
+    return ms ? new Date(+ms).toISOString().slice(0, 10) : '&mdash;';
 }
 
 function applyBinClusterSearch() {
@@ -4333,6 +4350,10 @@ function applyBinClusterSearch() {
     if (crelMax) params.set('max_relevance', crelMax); else params.delete('max_relevance');
     if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
     if (fFileMd5) params.set('file_md5', fFileMd5); else params.delete('file_md5');
+    BIN_CLUSTER_TIME_FILTERS.forEach(k => {
+        const v = document.getElementById(`flt-bin-cluster-${k.replace(/_/g, '-')}`)?.value;
+        if (v) params.set(k, v); else params.delete(k);
+    });
 
     params.delete("cluster_tag");
     params.delete("exclude_cluster_tag");

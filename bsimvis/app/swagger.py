@@ -1036,6 +1036,9 @@ class RawFileUpload(Resource):
             "parent_md5": "md5 of the container this file was extracted from",
             "parent_file_name": "File name of the declared parent_md5 container",
             "path_in_parent": "Path of this file inside the declared parent container",
+            "first_seen": "Optional: when the sample was first seen in the wild (ISO date or epoch). A re-upload keeps the earliest",
+            "last_seen": "Optional: when the sample was last seen in the wild (ISO date or epoch). A re-upload keeps the latest",
+            "file_metadata_extra": "Optional JSON object merged into the file metadata",
         }
     )
     def post(self):
@@ -2418,6 +2421,17 @@ class BinClusterBuild(Resource):
         return build_bin_cluster()
 
 
+@ns_bin_cluster.route("/timeline/backfill")
+class BinClusterTimelineBackfill(Resource):
+    @ns_bin_cluster.expect(backfill_import_tags_model)
+    def post(self):
+        """Recomputes the member timeline (upload, first/last seen dates) on every
+        stored binary cluster of a collection, without a rebuild. Chunked job."""
+        from bsimvis.app.routes.bin_cluster import backfill_bin_cluster_timeline
+
+        return backfill_bin_cluster_timeline()
+
+
 @ns_bin_cluster.route("/rebuild")
 class BinClusterRebuild(Resource):
     @ns_bin_cluster.expect(api.models["BinClusterBuild"])
@@ -2463,7 +2477,17 @@ class BinClusterList(Resource):
             "max_avg_funcs": "Max average functions per member file",
             "min_relevance": "Min relevance, log(1 + member count) * (0.3 + cohesion)",
             "max_relevance": "Max relevance",
-            "sort_by": "Sort field (relevance (default), count, stability, cohesion, functions)",
+            "active_days": "Window for new_members and sort_by=active, in days (default 30)",
+            "min_new": "Min members added (upload date) in the last active_days",
+            "min_first_added": "Earliest member upload on or after (ISO date or epoch)",
+            "max_first_added": "Earliest member upload on or before",
+            "min_last_added": "Latest member upload on or after",
+            "max_last_added": "Latest member upload on or before",
+            "min_first_seen": "Earliest member first_seen / last_seen on or after",
+            "max_first_seen": "Earliest member first_seen / last_seen on or before",
+            "min_last_seen": "Latest member first_seen / last_seen on or after",
+            "max_last_seen": "Latest member first_seen / last_seen on or before",
+            "sort_by": "Sort field (relevance (default), count, stability, cohesion, functions, active, last_added, first_added, first_seen, last_seen). Clusters with no such date sort last",
             "sort_order": "Sort order (asc/desc)",
             "format": "Output format (json/csv)",
             "q": "Search query across IDs and names",

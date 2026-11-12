@@ -121,6 +121,16 @@
 .cov-lanehdr { display:flex; gap:2px; }
 .cov-lanehdr > span { min-width:4px; border-top:3px solid; border-radius:2px; }
 .cov-wait { color:var(--dim); font-size:0.78rem; padding:6px 0; }
+.cov-tl svg { display:block; width:100%; height:120px; }
+.cov-tl .ln { fill:none; stroke:var(--info, #3b82f6); stroke-width:2; vector-effect:non-scaling-stroke; }
+.cov-tl .ar { fill:color-mix(in srgb, var(--info, #3b82f6) 14%, transparent); }
+.cov-tl .br { fill:color-mix(in srgb, var(--success) 70%, transparent); }
+.cov-tl .br:hover { fill:var(--success); }
+.cov-tl .ax { display:flex; justify-content:space-between; font-size:0.68rem; color:var(--dim); }
+.cov-tl-facts { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); }
+.cov-tl-seg { display:flex; gap:4px; flex-wrap:wrap; }
+.cov-tl-seg button { font:inherit; font-size:0.7rem; padding:2px 8px; border-radius:10px; border:1px solid var(--border); background:none; color:var(--dim); cursor:pointer; }
+.cov-tl-seg button[aria-pressed="true"] { color:var(--text); border-color:var(--info, #3b82f6); background:color-mix(in srgb, var(--info, #3b82f6) 12%, transparent); }
 .cov .nway-busy.inline { width:auto; }
 `;
 
@@ -231,6 +241,56 @@
             ${fpm}
             ${tags.length ? `<div class="cov-chips">${tags.map((t, i) => `<span class="cov-chip" style="--c:${escapeAttr(metadataColor(t, i, 'tag_id'))}" title="${escapeAttr(t.tag_id)}">${escapeHtml(t.tag_id)} <span class="dim">${metadataPercent(t).toFixed(0)}%</span></span>`).join('')}</div>` : ''}
             <div class="cov-foot">${btn('fa-solid fa-chart-pie', 'var(--info, #3b82f6)', 'All distributions', "ClusterDetailView.switchTab('metadata')")}</div>
+        </div>`;
+    }
+
+    // ---- Timeline: cumulative members over time, from the cluster's stored day counts ----
+    const DAY = 86400000;
+    const TL = { entry_date: 'Uploaded', first_seen: 'First seen', last_seen: 'Last seen' };
+    const day = ms => new Date(+ms).toISOString().slice(0, 10);
+    let tlCluster = null;
+
+    // Step curve of the running member count, plus one bar per day sized by that day's new members.
+    function timelineChart(t) {
+        const days = t.days || [];
+        if (!days.length) return '<div class="dim" style="font-size:0.78rem;">No dates.</div>';
+        const a = days[0][0] - DAY, b = Math.max(days[days.length - 1][0], Date.now()) + DAY;
+        const W = 1000, H = 100, x = d => ((d - a) / (b - a) * W).toFixed(1);
+        const total = days.reduce((s, d) => s + d[1], 0), peak = Math.max(...days.map(d => d[1]));
+        let cum = 0, path = `M${x(a)},${H}`;
+        const bars = days.map(([d, n]) => {
+            path += ` H${x(d)} V${(H - (cum + n) / total * H * 0.95).toFixed(1)}`;
+            cum += n;
+            const h = Math.max(2, n / peak * H * 0.3);
+            return `<rect class="br" x="${x(d)}" y="${(H - h).toFixed(1)}" width="${Math.max(3, W / 250)}" height="${h.toFixed(1)}"><title>${day(d)}: +${n} (${cum} total)</title></rect>`;
+        }).join('');
+        path += ` H${W}`;
+        return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Members over time">
+            <path class="ar" d="${path} V${H} Z"></path><path class="ln" d="${path}"></path>${bars}</svg>
+            <div class="ax"><span>${day(a + DAY)}</span><span>${num(total)} members dated</span><span>today</span></div>`;
+    }
+
+    function timelineBody(c, field) {
+        const tl = c.timeline || {};
+        const fields = Object.keys(TL).filter(f => tl[f]);
+        const t = tl[field] || {};
+        const seg = fields.length > 1 ? `<div class="cov-tl-seg" role="group" aria-label="Date">${fields.map(f => `<button type="button" aria-pressed="${f === field}" ${go(`ClusterOverview.timeline('${f}')`)}>${TL[f]}</button>`).join('')}</div>` : '';
+        const facts = [
+            ['First added', c.first_added], ['Last added', c.last_added], ['First seen', c.first_seen], ['Last seen', c.last_seen],
+        ].filter(([, v]) => v).map(([l, v]) => `<span>${l} <b>${day(v)}</b></span>`).join('');
+        return `${seg}<div class="cov-tl">${timelineChart(t)}</div>${facts ? `<div class="cov-fpm cov-tl-facts">${facts}</div>` : ''}`;
+    }
+
+    function timelineCard(v, c) {
+        tlCluster = c;
+        const tl = c.timeline || {};
+        const field = Object.keys(TL).find(f => tl[f]);
+        const fresh = Number(c.new_members || 0);
+        const body = field ? timelineBody(c, field)
+            : `<div class="dim" style="font-size:0.78rem;">No member dates stored on this cluster. Rebuild its clusters, or run <code>bsimvis metadata backfill-timeline -c ${escapeHtml(v.collection || '<collection>')}</code>.</div>`;
+        return `<div class="cov-card">
+            ${title('fa-solid fa-chart-line', 'var(--info, #3b82f6)', 'Timeline', 'Members over time: the line is the running count, a bar is one day\'s new members. Uploaded is the upload date; First and Last seen are the in-the-wild dates an upload can carry.', field ? `<span class="cov-big" title="Members uploaded in the last 30 days">+${num(fresh)}<small>30 d</small></span>` : '')}
+            <div id="cov-tl-body" style="display:flex; flex-direction:column; gap:8px;">${body}</div>
         </div>`;
     }
 
@@ -498,12 +558,18 @@
             cur = null;
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
-                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${fn ? functionsCard(c) : ''}</div>
+                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${timelineCard(v, c)}${fn ? functionsCard(c) : ''}</div>
                 ${fn ? `<div class="cov-duo">${lineageCard()}<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px; min-width:0;"></div></div>
                 <div id="cov-map" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
             if (linInst) { linInst.destroy(); linInst = null; }
             if (fn) loadLanes(el, v, c).then(() => loadLineage(el, v, c)); // after lanes: same /nway build, so it hits the cache instead of racing it
+        },
+
+        /** Redraw the Timeline card on another date field. */
+        timeline(field) {
+            const el = document.getElementById('cov-tl-body');
+            if (el && tlCluster) el.innerHTML = timelineBody(tlCluster, field);
         },
 
         /** The N-way table on its own page with these controls (`tab` is its All / Core / Partial / Unique). */

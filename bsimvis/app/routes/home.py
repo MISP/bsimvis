@@ -260,6 +260,36 @@ def pick_families(roots, metas, min_coh=FAMILY_MIN_COH):
     return tree, families, hidden
 
 
+ACTIVE_DAYS = 30
+ACTIVE_WINDOWS = (ACTIVE_DAYS, 90, 365)
+ACTIVE_TOP = 7
+
+
+def rank_activity(families, metas, now_ms=None, days=ACTIVE_DAYS, top=ACTIVE_TOP):
+    """Most active families (members uploaded in the last `days`) and the most
+    recently changed ones (latest member upload), from the stored timelines.
+    -> (active, changed, families with no timeline). Pure."""
+    from bsimvis.app.services.cluster_utils import timeline_summary
+
+    rows = [
+        {
+            **f,
+            **timeline_summary(
+                (metas.get(str(f.get("cid"))) or {}).get("timeline"), now_ms, days
+            ),
+        }
+        for f in families
+    ]
+    timed = [f for f in rows if f["last_added"]]
+    active = sorted(
+        (f for f in timed if f["new_members"]),
+        key=lambda f: (f["new_members"], f["last_added"]),
+        reverse=True,
+    )
+    changed = sorted(timed, key=lambda f: f["last_added"], reverse=True)
+    return active[:top], changed[:top], len(rows) - len(timed)
+
+
 def _all_cids(nodes):
     for c in nodes:
         yield c["cid"]
@@ -356,6 +386,11 @@ def get_collection_overview():
                 )
                 rare = []  # which files are outside a flat cluster is not indexed
         tree, kept, hidden = pick_families(roots, metas)
+        # Widen the window until a family grew in it: an idle collection still ranks.
+        for days in ACTIVE_WINDOWS:
+            active, changed, untimed = rank_activity(kept, metas, days=days)
+            if active:
+                break
         recent = _call(
             search_files,
             collection=col,
@@ -378,6 +413,10 @@ def get_collection_overview():
             "family_map": tree,
             "families_hidden": hidden,
             "families_total": len(kept),
+            "active": active,
+            "changed": changed,
+            "active_days": days,
+            "families_untimed": untimed,
             "unclustered_total": loose_total,
             "recent": recent.get("files", []),
             "rare": rare,

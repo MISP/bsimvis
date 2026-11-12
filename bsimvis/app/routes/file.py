@@ -790,6 +790,11 @@ def _ingest_raw_binary(
             # name and they become indistinguishable.
             extra_meta.pop("file_name", None)
 
+    # When the sample was seen in the wild (ISO date or epoch), optional.
+    for field in ("first_seen", "last_seen"):
+        if request.args.get(field):
+            extra_meta[field] = request.args.get(field)
+
     # This blob's own CSV row, if the batch staged one. Unpacking happens here,
     # so a member's md5 is only knowable now -- an exact match beats whatever
     # was inherited from the container, name included, because it was matched

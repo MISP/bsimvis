@@ -15,6 +15,7 @@ from bsimvis.app.services.cluster_utils import (
     default_bin_cluster_name,
     ClusterNameKeeper,
     function_count_stats,
+    timeline_stats,
     inferred_tag_values,
     resolve_hierarchical_inferred_tags,
 )
@@ -703,6 +704,7 @@ class BinClusterService:
                 ],
                 "batch_uuid_distribution": summary["batch_uuid_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
+                "timeline": timeline_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
 
@@ -2157,6 +2159,7 @@ class BinClusterService:
                 ],
                 "batch_uuid_distribution": summary["batch_uuid_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
+                "timeline": timeline_stats(member_metas),
                 "inferred_tags": gated_inferred_tags,
                 "created_at": int(time.time() * 1000),
             }
@@ -2433,6 +2436,80 @@ class BinClusterService:
                 pipe.delete(b)
             pipe.execute()
         r.delete(reg_key)
+
+
+def _timeline_namespaces(r, collection):
+    """Every binary-cluster namespace this collection has a list for."""
+    from bsimvis.similarity import registry
+    from bsimvis.app.services.scan_service import BIN_AXES
+
+    names = [
+        BinClusterService._hierarchical_algo_ns(algo, axis, node, snn)
+        for algo in registry.names(buildable=True)
+        for axis in BIN_AXES
+        for node in ("file", "container")
+        for snn in (False, True)
+    ]
+    pipe = r.pipeline(transaction=False)
+    for ns in names:
+        pipe.exists(f"{collection}:bin_cluster:list:{ns}")
+    return [ns for ns, ok in zip(names, pipe.execute()) if ok]
+
+
+def backfill_timeline(r, collection, cursor=0, chunk=200):
+    """Recompute `timeline` on `chunk` stored cluster metas, from their members.
+
+    For clusters built before the timeline existed, or after first_seen /
+    last_seen were set outside the metadata route. -> (next_cursor, done
+    in this chunk, total); next_cursor 0 = finished.
+    """
+    pairs = []
+    for ns in _timeline_namespaces(r, collection):
+        cids = r.smembers(f"{collection}:bin_cluster:list:{ns}")
+        pairs += sorted(
+            (ns, c.decode() if isinstance(c, bytes) else str(c)) for c in cids
+        )
+    batch = pairs[cursor : cursor + chunk]
+    if not batch:
+        return 0, 0, len(pairs)
+
+    pipe = r.pipeline(transaction=False)
+    for ns, cid in batch:
+        pipe.smembers(f"{collection}:bin_cluster:{ns}:{cid}:members")
+    members = [
+        [m.decode() if isinstance(m, bytes) else str(m) for m in ms]
+        for ms in pipe.execute()
+    ]
+    # Nested clusters share members: read each file's dates once per chunk.
+    fids = list({f for ms in members for f in ms})
+    dates = {}
+    for i in range(0, len(fids), 1000):
+        part = fids[i : i + 1000]
+        pipe = r.pipeline(transaction=False)
+        for f in part:
+            pipe.get(_file_meta_key(collection, f))
+        for f, raw in zip(part, pipe.execute()):
+            m = json.loads(raw) if raw else {}
+            dates[f] = {k: m.get(k) for k in ("entry_date", "first_seen", "last_seen")}
+
+    pipe = r.pipeline(transaction=False)
+    for ns, cid in batch:
+        pipe.get(f"{collection}:bin_cluster:{ns}:{cid}:meta")
+    metas = pipe.execute()
+    # ponytail: read-modify-write without a lock; a build landing in between
+    # loses nothing it cares about, it rewrites the timeline itself.
+    pipe = r.pipeline(transaction=False)
+    done = 0
+    for (ns, cid), ms, raw in zip(batch, members, metas):
+        if not raw:
+            continue
+        meta = json.loads(raw)
+        meta["timeline"] = timeline_stats([dates.get(f, {}) for f in ms])
+        pipe.set(f"{collection}:bin_cluster:{ns}:{cid}:meta", json.dumps(meta))
+        done += 1
+    pipe.execute()
+    nxt = cursor + chunk
+    return (nxt if nxt < len(pairs) else 0), done, len(pairs)
 
 
 bin_cluster_service = BinClusterService()

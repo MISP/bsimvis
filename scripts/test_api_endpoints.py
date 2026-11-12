@@ -248,6 +248,8 @@ def upload_and_start():
         # Checked by the [File-scope tags] block in STEP 4: an upload tag is a
         # fact about the file and must not be copied onto its functions.
         "tags": [UPLOAD_TAG],
+        # Checked by test_cluster_timeline: stored as epoch ms on the file.
+        "first_seen": UPLOAD_FIRST_SEEN,
     }
 
     body = test_endpoint(
@@ -1134,6 +1136,157 @@ def test_function_live_discovery():
         and r.zcard(f"global:pool:{pool_id}:sim:score") == 1,
         str(psaved)[:200],
     )
+
+
+UPLOAD_FIRST_SEEN = "2024-03-05T10:00:00Z"
+
+
+def test_cluster_timeline():
+    """Member dates on cluster meta: backfill, activity sorts, date filters, overview.
+
+    The fixture forms no reliable cluster, so this writes two synthetic clusters
+    (and their member file metas) into a collection of their own.
+    """
+    from redis import Redis
+    from bsimvis.app.routes.bin_cluster import bin_cluster_algo
+    from bsimvis.app.services.index_service import parse_timestamp
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" Cluster timeline", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = Redis(
+        host=os.getenv("KVROCKS_HOST", "localhost"),
+        port=int(os.getenv("KVROCKS_PORT", "6666")),
+        decode_responses=True,
+    )
+    if file_md5:
+        stored = json.loads(r.get(f"{COLLECTION}:file:{file_md5}:meta") or "{}")
+        check(
+            "upload first_seen param is stored as epoch ms",
+            stored.get("first_seen") == parse_timestamp(UPLOAD_FIRST_SEEN),
+            str(stored.get("first_seen")),
+        )
+
+    coll = f"{COLLECTION}_timeline"
+    algo = bin_cluster_algo(coll, None, "overall", "file")
+    day = 86_400_000
+    now = int(time.time() * 1000)
+    files = {
+        "a" * 32: {"entry_date": now - 2 * day, "first_seen": "2020-01-05"},
+        "b" * 32: {"entry_date": now - 100 * day, "last_seen": "2021-03-01"},
+        "c" * 32: {"entry_date": now - 200 * day},
+    }
+    clusters = {"tl-new": ["a" * 32, "b" * 32], "tl-old": ["c" * 32]}
+    keys = [f"{coll}:bin_cluster:list:{algo}"]
+    for md5, meta in files.items():
+        keys.append(f"{coll}:file:{md5}:meta")
+        r.set(keys[-1], json.dumps({"file_md5": md5, **meta}))
+    for cid, md5s in clusters.items():
+        base = f"{coll}:bin_cluster:{algo}:{cid}"
+        keys += [f"{base}:meta", f"{base}:members"]
+        r.set(
+            f"{base}:meta",
+            json.dumps(
+                {
+                    "cluster_id": cid,
+                    "cluster_uuid": f"uuid-{cid}",
+                    "cluster_name": cid,
+                    "member_count": len(md5s),
+                    "cohesion_score": 0.9,
+                }
+            ),
+        )
+        r.sadd(f"{base}:members", *[f"{coll}:file:{m}" for m in md5s])
+        r.sadd(keys[0], cid)
+
+    def rows(**params):
+        body = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": coll, "limit": 10, **params},
+            label=f"GET /api/bin_cluster/list (timeline {params})",
+        )
+        return (body or {}).get("results") or []
+
+    try:
+        before = rows(sort_by="active")
+        check(
+            "a cluster built before the timeline lists without dates",
+            len(before) == 2 and all(x.get("last_added") is None for x in before),
+            str([(x.get("cluster_id"), x.get("last_added")) for x in before]),
+        )
+        res = test_endpoint(
+            "POST",
+            "/api/bin_cluster/timeline/backfill",
+            data={"collection": coll},
+            label="POST /api/bin_cluster/timeline/backfill",
+        )
+        wait_for_pipeline(
+            (res or {}).get("job_id"), banner=" Wait for timeline backfill"
+        )
+
+        got = rows(sort_by="active")
+        new = next((x for x in got if x.get("cluster_id") == "tl-new"), {})
+        tl = new.get("timeline") or {}
+        check(
+            "backfill stores the member timeline",
+            (tl.get("entry_date") or {}).get("n") == 2
+            and new.get("first_added") == now - 100 * day
+            and new.get("last_added") == now - 2 * day,
+            json.dumps(new.get("timeline")),
+        )
+        check(
+            "first/last seen span both seen fields",
+            new.get("first_seen") == parse_timestamp("2020-01-05")
+            and new.get("last_seen") == parse_timestamp("2021-03-01"),
+            f"{new.get('first_seen')} {new.get('last_seen')}",
+        )
+        check(
+            "sort_by=active puts the cluster with new members first",
+            [x.get("cluster_id") for x in got] == ["tl-new", "tl-old"]
+            and new.get("new_members") == 1,
+            str([(x.get("cluster_id"), x.get("new_members")) for x in got]),
+        )
+        asc = rows(sort_by="last_added", sort_order="asc")
+        check(
+            "sort_by=last_added asc puts the quiet cluster first",
+            [x.get("cluster_id") for x in asc] == ["tl-old", "tl-new"],
+            str([x.get("cluster_id") for x in asc]),
+        )
+        since = time.strftime("%Y-%m-%d", time.gmtime((now - 50 * day) / 1000))
+        for label, params, want in (
+            ("min_last_added", {"min_last_added": since}, ["tl-new"]),
+            ("max_last_added", {"max_last_added": since}, ["tl-old"]),
+            ("max_first_added", {"max_first_added": since}, ["tl-new", "tl-old"]),
+            ("min_new", {"min_new": 1}, ["tl-new"]),
+            ("min_last_seen", {"min_last_seen": "2021-01-01"}, ["tl-new"]),
+            ("max_first_seen", {"max_first_seen": "2019-12-31"}, []),
+        ):
+            ids = sorted(x.get("cluster_id") for x in rows(**params))
+            check(f"bin_cluster/list {label} filter", ids == want, str(ids))
+        test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": coll, "min_last_added": "not-a-date"},
+            expected_status=400,
+            label="GET /api/bin_cluster/list bad date -> 400",
+        )
+        ov = test_endpoint(
+            "GET",
+            "/api/index/collection/overview",
+            params={"collection": coll, "axis": "overall", "refresh": "true"},
+            label="GET /api/index/collection/overview (timeline)",
+        )
+        ov = ov if isinstance(ov, dict) else {}
+        check(
+            "overview ranks most active and recently changed families",
+            [f.get("cid") for f in ov.get("active") or []] == ["tl-new"]
+            and [f.get("cid") for f in ov.get("changed") or []] == ["tl-new", "tl-old"],
+            f"active={[f.get('cid') for f in ov.get('active') or []]} changed={[f.get('cid') for f in ov.get('changed') or []]}",
+        )
+    finally:
+        r.delete(*keys)
 
 
 def test_cluster_response_contract():
@@ -12004,6 +12157,7 @@ if __name__ == "__main__":
         test_function_search_unindexed_cluster,
         test_function_live_discovery,
         test_cluster_response_contract,
+        test_cluster_timeline,
         test_pool_annotation_propagation,
         test_search_filters_and_sorting,
         test_cluster_expansion_and_bin_sim_cluster_filter,

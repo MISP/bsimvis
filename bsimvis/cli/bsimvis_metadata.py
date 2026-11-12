@@ -74,6 +74,20 @@ def run_backfill_tags(host, port, args):
         sys.exit(1)
 
 
+def run_backfill_timeline(host, port, args):
+    """Enqueues the cluster timeline backfill (member dates on stored clusters)."""
+    api_url = f"http://{host}:{port}/api/bin_cluster/timeline/backfill"
+    try:
+        resp = requests.post(api_url, json={"collection": args.collection})
+        resp.raise_for_status()
+        print(
+            f"[+] Cluster timeline backfill enqueued. Job ID: {resp.json().get('job_id')}"
+        )
+    except Exception as e:
+        print(f"[!] Failed to enqueue cluster timeline backfill: {e}")
+        sys.exit(1)
+
+
 def run_metadata(host, port, args):
     """
     Submits metadata updates via API for propagation.
@@ -82,6 +96,8 @@ def run_metadata(host, port, args):
         return run_normalize_time(args)
     if args.action == "backfill-tags":
         return run_backfill_tags(host, port, args)
+    if args.action == "backfill-timeline":
+        return run_backfill_timeline(host, port, args)
 
     updates = parse_metadata_file(args.metadata)
     if updates is None:

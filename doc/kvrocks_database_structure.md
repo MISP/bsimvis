@@ -102,7 +102,7 @@ File-level (binary-to-binary) similarity, derived from shared function clusters.
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
 | `{coll}:bin_cluster:list:{algo}` | **Set** | All binary cluster IDs for the algorithm. |
-| `{coll}:bin_cluster:{algo}:{cid}:meta` | **JSON** | Metadata for a binary cluster. |
+| `{coll}:bin_cluster:{algo}:{cid}:meta` | **JSON** | Metadata for a binary cluster. Its `timeline` holds, per member date field (`entry_date`, `first_seen`, `last_seen`), `first`, `last`, `n` and `days` (`[[utc_day_ms, members], ...]`); activity (`new_members`, `last_added`, ...) is derived on read. Older clusters: `POST /api/bin_cluster/timeline/backfill`. |
 | `{coll}:bin_cluster:{algo}:{cid}:members` | **Set** | Member file IDs (full subtree). |
 | `{coll}:bin_cluster:{algo}:{cid}:direct_members` | **Set** | Direct member file IDs. |
 | `{coll}:bin_cluster:tree:{algo}` | **String** | Serialized binary dendrogram tree. |

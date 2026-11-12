@@ -17,8 +17,10 @@ from bsimvis.app.services.cluster_utils import (
     get_tree_links,
     Tree,
     real_links,
+    timeline_summary,
 )
 from bsimvis.app.services.cluster_display import score as display_score
+from bsimvis.app.services.index_service import parse_timestamp
 
 job_service = JobService()
 
@@ -35,6 +37,34 @@ def _relevance(m):
     return round(
         display_score(m.get("member_count") or 0, m.get("cohesion_score") or 0), 4
     )
+
+
+# Sorts over the timeline summary (cluster_utils.timeline_summary), on read.
+# `active`: members added in the last `active_days`, then the latest addition.
+_TIME_SORTS = {
+    "active": lambda x: (
+        (x.get("new_members") or 0, x.get("last_added"))
+        if x.get("last_added")
+        else None
+    ),
+    "last_added": lambda x: x.get("last_added"),
+    "first_added": lambda x: x.get("first_added"),
+    "first_seen": lambda x: x.get("first_seen"),
+    "last_seen": lambda x: x.get("last_seen"),
+}
+# min_/max_ date filters: param suffix -> summary field.
+_TIME_FILTERS = ("first_added", "last_added", "first_seen", "last_seen")
+
+
+def _sort_rows(rows, sort_by, reverse):
+    """Sort in place; a time sort puts clusters with no such date last, either order."""
+    key = _TIME_SORTS.get(sort_by)
+    if key is None:
+        return False
+    have = [x for x in rows if key(x) is not None]
+    have.sort(key=key, reverse=reverse)
+    rows[:] = have + [x for x in rows if key(x) is None]
+    return True
 
 
 def _pool_bin_cluster_namespace(pool, algo, axis, node_type="file"):
@@ -221,6 +251,8 @@ def _shape_bin_cluster_result(m, parent, child_total):
         "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
         "inferred_tags": m.get("inferred_tags", []),
         "function_count_stats": m.get("function_count_stats", {}),
+        "timeline": m.get("timeline") or {},
+        **timeline_summary(m.get("timeline")),
         "has_children": bool(child_total),
         "child_total": child_total,
         "medoid": m.get("medoid"),
@@ -381,6 +413,21 @@ def list_bin_clusters():
         max_avg_funcs = float(request.args.get("max_avg_funcs") or 0)
         min_relevance = float(request.args.get("min_relevance") or 0)
         max_relevance = float(request.args.get("max_relevance") or 0)
+        active_days = float(request.args.get("active_days") or 30)
+        min_new = int(request.args.get("min_new") or 0)
+        # ISO date or epoch; a bare day as max_ covers that whole day.
+        time_bounds = []
+        for field in _TIME_FILTERS:
+            for side in ("min", "max"):
+                raw = request.args.get(f"{side}_{field}")
+                if not raw:
+                    continue
+                t = parse_timestamp(raw)
+                if not t:
+                    raise ValueError(raw)
+                if side == "max" and len(raw.strip()) == 10 and "-" in raw:
+                    t += 86_400_000 - 1
+                time_bounds.append((field, side, t))
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
@@ -389,7 +436,7 @@ def list_bin_clusters():
 
     sort_by = request.args.get(
         "sort_by", "relevance"
-    )  # relevance, count, stability, cohesion, functions
+    )  # relevance, count, stability, cohesion, functions, active, last_added, ...
     sort_order = request.args.get("sort_order", "desc").lower()
 
     r = get_redis()
@@ -496,7 +543,10 @@ def list_bin_clusters():
             meta_map[cid] = m
 
         valid_nodes = set()
+        now_ms = int(time.time() * 1000)
         for cid, m in meta_map.items():
+            # Every meta, filtered or not: expanded parents/children show it too.
+            m.update(timeline_summary(m.get("timeline"), now_ms, active_days))
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
             user_tags = [str(tag).lower() for tag in m.get("user_tags", [])]
@@ -583,6 +633,14 @@ def list_bin_clusters():
                     continue
                 if max_relevance > 0 and rel > max_relevance:
                     continue
+            if min_new > 0 and m["new_members"] < min_new:
+                continue
+            if any(
+                m.get(field) is None
+                or (m[field] < t if side == "min" else m[field] > t)
+                for field, side, t in time_bounds
+            ):
+                continue
 
             valid_nodes.add(cid)
 
@@ -661,7 +719,9 @@ def list_bin_clusters():
             matched_results.append(m)
 
         reverse = sort_order == "desc"
-        if sort_by == "stability":
+        if _sort_rows(matched_results, sort_by, reverse):
+            pass
+        elif sort_by == "stability":
             matched_results.sort(
                 key=lambda x: x.get("avg_stability", 0.0), reverse=reverse
             )
@@ -741,6 +801,8 @@ def list_bin_clusters():
                 "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
                 "inferred_tags": m.get("inferred_tags", []),
                 "function_count_stats": m.get("function_count_stats", {}),
+                "timeline": m.get("timeline") or {},
+                **{k: m.get(k) for k in ("new_members",) + _TIME_FILTERS},
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
                 # null until the cluster is rebuilt with centrality
                 "medoid": m.get("medoid"),
@@ -750,7 +812,9 @@ def list_bin_clusters():
 
     # Sorting expanded results
     reverse = sort_order == "desc"
-    if sort_by == "stability":
+    if _sort_rows(results, sort_by, reverse):
+        pass
+    elif sort_by == "stability":
         results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
     elif sort_by == "count":
         results.sort(key=lambda x: x.get("count") or 0, reverse=reverse)
@@ -1262,3 +1326,15 @@ def get_bin_cluster_files():
         "collection": collection,
         "cluster_uuid": cluster_uuid,
     }
+
+
+def backfill_bin_cluster_timeline():
+    """Enqueues the chunked timeline backfill over a collection's stored clusters."""
+    data = request.json or {}
+    collection = data.get("collection") or request.args.get("collection")
+    if not collection:
+        return {"error": "No collection specified"}, 400
+    job_id = job_service.create_job(
+        JobType.BACKFILL_CLUSTER_TIMELINE, {"collection": collection}
+    )
+    return {"status": "processing", "job_id": job_id}

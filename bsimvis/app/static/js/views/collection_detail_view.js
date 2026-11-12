@@ -197,6 +197,18 @@ window.CollectionDetailView = {
         </div>`;
     },
 
+    /** A family row with an activity figure on the right (Most active / Recently changed). */
+    _ovActRow(f, right, tip) {
+        const uuid = f.cluster_uuid;
+        const name = f.cluster_name || `Cluster ${f.cid}`;
+        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0, axis: this._ovAxis() }], true);
+        return `<div class="cdo-act">
+            <span>${card || ''}</span>
+            <a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>
+            <span class="mono" title="${escapeAttr(tip)}">${right}</span>
+        </div>`;
+    },
+
     _ovFileRows(files) {
         const col = this._ovCol;
         if (!files.length) return '<div class="dim" style="font-size:0.78rem;">None.</div>';
@@ -309,6 +321,21 @@ window.CollectionDetailView = {
             ${this._ovTitle('fa-solid fa-chart-column', INFO, 'Uploads', 'Files added over time, from their entry date.')}
             ${loading ? '<span class="cdo-sk" style="height:126px;"></span>' : this._uploadsChart(ov.uploads)}
         </div>`;
+        const day = ms => new Date(+ms).toISOString().slice(0, 10);
+        const days = ov.active_days || 30;
+        const byActivity = sort => this._ovBtn('fa-solid fa-table-list', OK, 'All clusters', `${Nav.buildUIUrl(col, ['files', 'clusters'])}${this._ovAxisQs() || '?'}${this._ovAxisQs() ? '&' : ''}sort_by=${sort}${sort === 'active' && days !== 30 ? `&active_days=${days}` : ''}`, 'The clusters table, sorted the same way');
+        const untimed = Number(ov.families_untimed || 0);
+        const noDates = untimed ? none(`${untimed.toLocaleString()} famil${untimed > 1 ? 'ies have' : 'y has'} no member dates yet: rebuild the clusters or run <code>bsimvis metadata backfill-timeline -c ${escapeHtml(col)}</code>.`) : '';
+        const activeCard = `<div class="cov-card cdo-wide cdo-r2">
+            ${this._ovTitle('fa-solid fa-fire', OK, `Most active <span class="dim" style="font-weight:400; font-size:0.75rem;">${Number(days)} d</span>`, `Families with the most members uploaded in the last ${days} days.`)}
+            ${loading ? sk(7, 18) : (ov.active || []).length ? `<div class="cov-list">${ov.active.map(f => this._ovActRow(f, `<b style="color:var(--success)">+${Number(f.new_members).toLocaleString()}</b> <span class="dim">/ ${Number(f.matching || 0).toLocaleString()}</span>`, `New members in ${days} days / files`)).join('')}</div>` : (noDates || (fams.length ? none(`No family grew in the last ${days} days.`) : noClusters))}
+            <div class="cov-foot">${byActivity('active')}</div>
+        </div>`;
+        const changedCard = `<div class="cov-card cdo-wide cdo-r2">
+            ${this._ovTitle('fa-solid fa-clock-rotate-left', OK, 'Recently changed', 'Families by the upload date of their newest member: the last ones to grow.')}
+            ${loading ? sk(7, 18) : (ov.changed || []).length ? `<div class="cov-list">${ov.changed.map(f => this._ovActRow(f, `<span class="dim">${day(f.last_added)}</span>`, `Newest member uploaded on ${day(f.last_added)}, oldest on ${day(f.first_added)}`)).join('')}</div>` : (noDates || noClusters)}
+            <div class="cov-foot">${byActivity('last_added')}</div>
+        </div>`;
         // filetype strings can be long ("ELF 32-bit LSB executable, ARM, ..."): group on the format word.
         const fmt = {};
         (ov.filetype || []).forEach(x => { const k = String(x.value).split(/[\s,]/)[0] || 'unknown'; fmt[k] = (fmt[k] || 0) + x.count; });
@@ -326,13 +353,16 @@ window.CollectionDetailView = {
             ${this._ovTitle('fa-solid fa-chart-pie', INFO, 'Mix', 'How the files split by architecture and format, and the tags most of them carry.')}
             ${mixBody}
         </div>`;
-        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}</div>`;
+        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}${activeCard}${changedCard}</div>`;
     },
 
     _OV_CSS: `
 .cdo-bar { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:0.78rem; }
 .cdo-fam { display:grid; grid-template-columns:auto minmax(0,1fr) 64px 22px; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
 .cdo-fam:hover { background:var(--hover); }
+.cdo-act { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
+.cdo-act:hover { background:var(--hover); }
+.cdo-act > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
 .cdo-fam > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
 .cdo-size { height:6px; border-radius:3px; background:var(--hover); overflow:hidden; }
 .cdo-size i { display:block; height:100%; background:color-mix(in srgb, var(--success) 70%, var(--card-bg)); }

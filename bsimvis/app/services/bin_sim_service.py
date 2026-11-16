@@ -1587,7 +1587,17 @@ class BinSimService:
             for sid, doc in docs:
                 diff = doc.get("diff") or {}
                 doc_unweighted = bool(doc.get("unweighted_match"))
-                split = AxisSplit(fid_tags, tag_meta)
+                doc_fids = {
+                    m.get(k)
+                    for m in diff.get("matched") or []
+                    for k in ("func_a", "func_b")
+                }
+                doc_fids.update(
+                    u.get("func_id")
+                    for u in (diff.get("unique_to_a") or [])
+                    + (diff.get("unique_to_b") or [])
+                )
+                split = AxisSplit(fid_tags, tag_meta, fids=doc_fids)
                 total_a = total_b = 0.0
                 for m in diff.get("matched") or []:
                     fa, fb = m.get("func_a"), m.get("func_b")

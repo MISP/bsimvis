@@ -1155,7 +1155,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         }
 
         // Extract the list of items based on the API response structure
-        const items = data.clusters || data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || data.strings || (Array.isArray(data) ? data : []);
+        const items = (Array.isArray(data.clusters) && data.clusters) || data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || data.strings || (Array.isArray(data) ? data : []);
         const total = clusterMode ? (data.roots_total || 0) : data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
         const totalEl = document.getElementById('view-total');

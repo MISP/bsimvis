@@ -1118,6 +1118,24 @@ class FileLineage(Resource):
         return get_file_lineage(file_md5)
 
 
+@ns_file.route("/<string:file_md5>/download")
+class FileDownload(Resource):
+    @ns_file.doc(
+        params={"collection": "Collection name (default: main)"},
+        produces=["application/zip"],
+        description=(
+            "Downloads the stored sample as a zip encrypted with the password "
+            "`infected`. A sample that already is a zip protected by `infected` "
+            "is sent as-is. 404 for containers, which keep no bytes."
+        ),
+    )
+    def get(self, file_md5):
+        """Downloads a file as an infected-password zip."""
+        from bsimvis.app.routes.file import download_file
+
+        return download_file(file_md5)
+
+
 @ns_file.route("/<string:file_md5>/metadata")
 class FileMetadata(Resource):
     @ns_file.doc(description="Updates metadata fields for a file and propagates them")

@@ -1846,6 +1846,85 @@ def _analyze_payload(job):
     return {}
 
 
+def test_file_download():
+    """Download wraps a sample in an "infected" AES zip, except one already so."""
+    import hashlib
+    import io
+    import pyzipper
+
+    def _get(md5, coll):
+        return requests.get(
+            f"{BASE_URL}/api/file/{md5}/download",
+            params={"collection": coll},
+            timeout=60,
+        )
+
+    # The fixture binary has a file document, so the zip carries its name.
+    name = os.path.basename(TEST_BINARY)
+    with open(TEST_BINARY, "rb") as f:
+        sample = f.read()
+    r = _get(file_md5, COLLECTION)
+    members = []
+    try:
+        with pyzipper.AESZipFile(io.BytesIO(r.content)) as zf:
+            zf.setpassword(b"infected")
+            members = [(i.filename, i.flag_bits & 1, zf.read(i)) for i in zf.infolist()]
+    except Exception as e:
+        members = [str(e)]
+    check(
+        "download is an encrypted 'infected' zip of the sample",
+        r.status_code == 200 and members == [(name, 1, sample)],
+        f"{r.status_code} {[m[:2] for m in members]!r}"[:200],
+    )
+    check(
+        "download is named after the sample",
+        f"{name}.zip" in r.headers.get("Content-Disposition", ""),
+        r.headers.get("Content-Disposition", ""),
+    )
+
+    # Already an "infected" zip (unpack=false keeps it whole): sent untouched.
+    # enqueue=false registers no file document, so the name falls back to md5.
+    coll = f"{COLLECTION}_download"
+    buf = io.BytesIO()
+    with pyzipper.AESZipFile(buf, "w", encryption=pyzipper.WZ_AES) as zf:
+        zf.setpassword(b"infected")
+        zf.writestr("inner.bin", sample[:64])
+    protected = buf.getvalue()
+    protected_md5 = hashlib.md5(protected).hexdigest()
+    test_endpoint(
+        "POST",
+        "/api/file/upload",
+        params={
+            "collection": coll,
+            "file_name": "pre.zip",
+            "skip_sim": "true",
+            "enqueue": "false",
+            "unpack": "false",
+        },
+        raw_body=protected,
+        label="POST /api/file/upload (infected zip, unpack=false)",
+    )
+    r = _get(protected_md5, coll)
+    check(
+        "an infected zip is downloaded as-is",
+        r.status_code == 200 and r.content == protected,
+        f"{r.status_code} {len(r.content)} vs {len(protected)}",
+    )
+    check(
+        "a file with no document is named by its md5",
+        f"{protected_md5}.zip" in r.headers.get("Content-Disposition", ""),
+        r.headers.get("Content-Disposition", ""),
+    )
+    test_endpoint(
+        "GET",
+        f"/api/file/{'0' * 32}/download",
+        params={"collection": coll},
+        expected_ok=False,
+        expected_status=404,
+        label="GET /api/file/<md5>/download (no bytes: 404)",
+    )
+
+
 def test_archive_upload():
     """Uploads a zip of two binaries and checks both members get a pipeline."""
     import hashlib
@@ -12187,6 +12266,7 @@ if __name__ == "__main__":
         test_diff_injection_score,
         test_retained_call_graph,
         test_archive_upload,
+        test_file_download,
         test_unpack_upload,
         test_lineage,
         test_container_similarity,

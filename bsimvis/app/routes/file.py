@@ -1389,3 +1389,30 @@ def backfill_import_tags():
     except Exception as e:
         logging.error(f"Failed to enqueue import-tag backfill: {e}")
         return {"error": str(e)}, 500
+
+
+def download_file(file_md5):
+    """Sends a stored sample as a zip encrypted with "infected"."""
+    import io
+    import os
+    from flask import send_file
+    from bsimvis.app.services.redis_client import get_raw_redis
+
+    collection = request.args.get("collection", "main")
+    data = get_raw_redis().get(f"{collection}:file:{file_md5}:raw")
+    if data is None:
+        # containers keep no bytes of their own (see _ingest_container)
+        return {"error": "No stored bytes for this file"}, 404
+
+    raw_meta = get_redis().get(f"{collection}:file:{file_md5}:meta")
+    meta = json.loads(raw_meta) if raw_meta else {}
+    name = os.path.basename(meta.get("file_name") or "") or file_md5
+    zipped = archive_service.protected_zip(data, name)
+    return send_file(
+        io.BytesIO(zipped),
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=(
+            name if zipped is data and name.endswith(".zip") else name + ".zip"
+        ),
+    )

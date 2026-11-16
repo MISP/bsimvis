@@ -447,7 +447,9 @@ window.FileView = {
             const entryLink = entryUrl
                 ? { html: `<a href="${escapeAttr(entryUrl)}" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)" style="color:#a6e22e;">${escapeHtml(file.entry_point)}</a>` } : '';
             const fileScope = `scope: 'file', collection: ${jsString(collection)}, fileMd5: ${jsString(file.file_md5)}`;
-            document.getElementById('file-actions-container').innerHTML = UI.MoreMenu.render([
+            const downloadUrl = `/api/file/${encodeURIComponent(file.file_md5)}/download?collection=${encodeURIComponent(collection)}`;
+            const downloadBtn = file.is_container ? '' : `<a class="top-action-btn" href="${escapeAttr(downloadUrl)}" download title="Download the sample as a zip encrypted with the password 'infected'" style="text-decoration:none;"><i class="fa-solid fa-download"></i> Download</a>`;
+            document.getElementById('file-actions-container').innerHTML = downloadBtn + UI.MoreMenu.render([
                 { label: 'Analyze file with AI', icon: 'fa-solid fa-robot', tooltip: 'Analyze every candidate function of this file with AI', onClick: `openAnalyzeModal({ ${fileScope} })` },
                 { label: 'AI search', icon: 'fa-solid fa-magnifying-glass', tooltip: 'Ask AI which functions of this file match a description', onClick: `openSearchModal({ ${fileScope} })` },
                 '-',

@@ -379,6 +379,9 @@ def _zadd_score_split(pipe, base, algo, sid, scores):
         pipe.zrem(f"{base}:score_content:{algo}", sid)
 
 
+CLEAR_CHUNK = 200  # bin_sim docs read per round trip when clearing
+
+
 def _decode_doc(raw):
     if not raw:
         return {}
@@ -1228,14 +1231,13 @@ class BinSimService:
                 s.decode() if isinstance(s, bytes) else str(s)
                 for s in (r.smembers(involves_key) or ())
             ]
-            if sids:
-                # Read the docs before deleting them: the secondary indexes are
-                # keyed by the fields they denormalise, so a sid dropped without
-                # its doc stays in every index bucket it was ever filed under.
-                reader = r.pipeline(transaction=False)
-                for sid in sids:
-                    reader.get(sid)
-                raw_docs = reader.execute()
+            # Read the docs before deleting them: the secondary indexes are
+            # keyed by the fields they denormalise, so a sid dropped without
+            # its doc stays in every index bucket it was ever filed under.
+            # Chunked: the docs carry their diff rows (MBs each).
+            for i in range(0, len(sids), CLEAR_CHUNK):
+                chunk = sids[i : i + CLEAR_CHUNK]
+                raw_docs = r.mget(chunk)
 
                 docs = []
                 md5s = set()
@@ -1258,7 +1260,7 @@ class BinSimService:
                         meta_cache[value] = {}
 
                 pipe = r.pipeline(transaction=False)
-                for sid, doc in zip(sids, docs):
+                for sid, doc in zip(chunk, docs):
                     pipe.delete(sid)
                     pipe.zrem(f"{collection}:bin_sim:score:{algo}", sid)
                     pipe.zrem(f"{collection}:bin_sim:score_code:{algo}", sid)
@@ -1284,53 +1286,64 @@ class BinSimService:
                             meta_cache.get(m_b, {}),
                         )
 
-                pipe.delete(involves_key)
                 pipe.execute()
+            r.delete(involves_key)
         else:
             prefix = f"{collection}:bin_sim:{algo}:"
             sids = list(r.scan_iter(match=f"{prefix}*"))
-            raw_docs = r.mget(sids) if sids else []
-            docs = []
-            md5s = set()
-            for raw in raw_docs:
-                try:
-                    doc = json.loads(raw) if raw else {}
-                except (ValueError, TypeError):
-                    doc = {}
-                docs.append(doc)
-                md5s.update(m for m in (doc.get("md5_a"), doc.get("md5_b")) if m)
-
-            meta_pipe = r.pipeline(transaction=False)
-            for value in sorted(md5s):
-                meta_pipe.get(f"{collection}:file:{value}:meta")
             file_meta = {}
-            for value, raw in zip(sorted(md5s), meta_pipe.execute()):
-                try:
-                    file_meta[value] = json.loads(raw) if raw else {}
-                except (ValueError, TypeError):
-                    file_meta[value] = {}
-
-            pipe = r.pipeline(transaction=False)
-            for sid, doc in zip(sids, docs):
-                if not doc:
-                    continue
-                pipe.delete(sid)
-                for axis in ("", "_code", "_library", "_content"):
-                    pipe.zrem(f"{collection}:bin_sim:score{axis}:{algo}", sid)
-                pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
-                for md5 in (doc.get("md5_a"), doc.get("md5_b")):
-                    if md5:
-                        pipe.srem(f"{collection}:bin_sim:involves:{md5}", sid)
-                _unindex_bin_sim_pair(
-                    pipe,
-                    collection,
-                    sid,
-                    doc,
-                    file_meta.get(doc.get("md5_a"), {}),
-                    file_meta.get(doc.get("md5_b"), {}),
+            # Docs carry their diff rows (MBs each): reading every one at once
+            # OOM-killed the worker at 10 GB on AndroZooComAndroidSystem.
+            for i in range(0, len(sids), CLEAR_CHUNK):
+                chunk = sids[i : i + CLEAR_CHUNK]
+                docs = []
+                for raw in r.mget(chunk):
+                    try:
+                        doc = json.loads(raw) if raw else {}
+                    except (ValueError, TypeError):
+                        doc = {}
+                    docs.append(doc)
+                new_md5s = sorted(
+                    {m for d in docs for m in (d.get("md5_a"), d.get("md5_b")) if m}
+                    - file_meta.keys()
                 )
-            pipe.delete(f"{collection}:bin_sim:built:{algo}")
-            pipe.execute()
+                if new_md5s:
+                    meta_pipe = r.pipeline(transaction=False)
+                    for value in new_md5s:
+                        meta_pipe.get(f"{collection}:file:{value}:meta")
+                    for value, raw in zip(new_md5s, meta_pipe.execute()):
+                        try:
+                            file_meta[value] = json.loads(raw) if raw else {}
+                        except (ValueError, TypeError):
+                            file_meta[value] = {}
+
+                pipe = r.pipeline(transaction=False)
+                for sid, doc in zip(chunk, docs):
+                    if not doc:
+                        continue
+                    pipe.delete(sid)
+                    for axis in ("", "_code", "_library", "_content"):
+                        pipe.zrem(f"{collection}:bin_sim:score{axis}:{algo}", sid)
+                    pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
+                    for md5 in (doc.get("md5_a"), doc.get("md5_b")):
+                        if md5:
+                            pipe.srem(f"{collection}:bin_sim:involves:{md5}", sid)
+                    _unindex_bin_sim_pair(
+                        pipe,
+                        collection,
+                        sid,
+                        doc,
+                        file_meta.get(doc.get("md5_a"), {}),
+                        file_meta.get(doc.get("md5_b"), {}),
+                    )
+                pipe.execute()
+                if job_service and job_id and (i // CLEAR_CHUNK) % 50 == 0:
+                    job_service.update_progress(
+                        job_id,
+                        int((i + len(chunk)) / len(sids) * 99),
+                        f"Cleared {i + len(chunk)}/{len(sids)} pairs",
+                    )
+            r.delete(f"{collection}:bin_sim:built:{algo}")
 
             # Drop empty tag buckets for this pair type; registries may also
             # point at buckets still used by another algorithm, so retain those.

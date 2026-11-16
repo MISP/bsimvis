@@ -433,6 +433,23 @@ def _read_scores(collection, algo, sids, r):
     return out
 
 
+def _get_chunked(r, keys, size=200):
+    """(key, value) for each key, a few hundred GETs at a time.
+
+    Child pair docs carry their diff rows (up to MBs each); one pipeline over
+    every matched child held 17 GB on MiraiFullFunctionID and the worker was
+    OOM-killed.
+    """
+    # ponytail: still reads whole docs for 4 numbers; store them beside the
+    # scoreboard if this phase gets slow.
+    for i in range(0, len(keys), size):
+        chunk = keys[i : i + size]
+        pipe = r.pipeline(transaction=False)
+        for k in chunk:
+            pipe.get(k)
+        yield from zip(chunk, pipe.execute())
+
+
 def _read_child_docs(collection, algo, sids, r):
     """(coverage, child_scores) for the child pairs that won their match.
 
@@ -444,11 +461,8 @@ def _read_child_docs(collection, algo, sids, r):
     sids = [s for s in sids if s]
     if not sids:
         return {}, {}
-    pipe = r.pipeline(transaction=False)
-    for sid in sids:
-        pipe.get(sid)
     coverage, child_scores = {}, {}
-    for sid, raw in zip(sids, pipe.execute()):
+    for sid, raw in _get_chunked(r, sids):
         if not raw:
             continue
         try:

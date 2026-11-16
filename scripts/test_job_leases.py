@@ -617,6 +617,51 @@ def test_retry_resets_the_lease_attempt_counter():
     assert int(svc.r.hget("job:burnt", "attempts")) == 0
 
 
+def test_retry_resumes_a_pipeline_at_its_failed_step():
+    # Retrying a pipeline whose build_bin_sim died must not re-run the Ghidra
+    # analyses before it. A group that finished with a failed member is still
+    # "completed", so it must be retried too.
+    import json
+    import bsimvis.app.routes.jobs as jobs_routes
+
+    svc = make_service()
+    done, failed, cancelled = (
+        JobStatus.COMPLETED.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    )
+    for jid, status in [
+        ("ok_group", done),
+        ("ga1", done),
+        ("mixed_group", done),
+        ("ga2", done),
+        ("ga3", failed),
+        ("bin", failed),
+        ("cluster", cancelled),
+    ]:
+        svc.r.hset(f"job:{jid}", mapping={"status": status})
+    svc.r.hset("job:ok_group", "task_ids", json.dumps(["ga1"]))
+    svc.r.hset("job:mixed_group", "task_ids", json.dumps(["ga2", "ga3"]))
+    tids = ["ok_group", "mixed_group", "bin", "cluster"]
+    svc.r.hset("job:pipe", mapping={"status": failed, "task_ids": json.dumps(tids)})
+
+    real = jobs_routes.job_service
+    jobs_routes.job_service = svc
+    try:
+        jobs_routes._reset_job_recursive("pipe")
+    finally:
+        jobs_routes.job_service = real
+
+    status = {
+        j: svc.r.hget(f"job:{j}", "status")
+        for j in tids + ["ga1", "ga2", "ga3", "pipe"]
+    }
+    for kept in ("ok_group", "ga1", "ga2"):
+        assert status[kept] == done, (kept, status)
+    for reset in ("mixed_group", "ga3", "bin", "cluster", "pipe"):
+        assert status[reset] == JobStatus.PENDING.value, (reset, status)
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

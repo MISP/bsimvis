@@ -917,14 +917,37 @@ window.ClusterDetailView = {
         });
         const cards = dists.map(([title, icon, dist, isTags]) => (isTags ? window.renderTagDist(title, icon, dist) : window.renderDist(title, icon, dist))).join('');
 
+        const q = this.metaQuery || '';
+        const tools = cards ? `<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <div class="search-input-wrapper" style="flex:1; min-width:200px;"><i class="fa-solid fa-magnifying-glass"></i><input type="search" id="cluster-meta-q" placeholder="Search metadata and tags..." value="${escapeAttr(q)}" oninput="ClusterDetailView.filterMetadata(this.value)"></div>
+                <span id="cluster-meta-count" class="dim" style="font-size:0.75rem;"></span>
+                ${UI.Button.render({ className: 'btn-code-action', icon: 'fa-solid fa-angles-down', label: 'Expand all', onClick: 'ClusterDetailView.toggleMetadataCards(true)' })}
+                ${UI.Button.render({ className: 'btn-code-action', icon: 'fa-solid fa-angles-up', label: 'Collapse all', onClick: 'ClusterDetailView.toggleMetadataCards(false)' })}
+            </div>` : '';
         panel.innerHTML = `
             <div style="display:flex; flex-direction:column; gap:14px;">
                 ${this.renderFunctionCountCard(c)}
+                ${tools}
                 ${cards
                     ? `<div class="metadata-axis-list">${cards}</div>`
                     : `<div class="dim" style="padding:20px; text-align:center;">No metadata distributions for this cluster.${this.isBinary ? ' A cluster below the configured min_cohesion reports none.' : ''}</div>`}
             </div>`;
         if (window.initMetadataTables) window.initMetadataTables(panel);
+        if (q) this.filterMetadata(q);
+    },
+
+    filterMetadata(q) {
+        this.metaQuery = q;
+        const panel = document.getElementById('cluster-tab-metadata');
+        const shown = window.filterMetadataAxes(panel, q);
+        const count = document.getElementById('cluster-meta-count');
+        if (count) count.textContent = q.trim() ? `${shown} of ${panel.querySelectorAll('details.metadata-axis').length} match` : '';
+    },
+
+    toggleMetadataCards(open) {
+        document.querySelectorAll('#cluster-tab-metadata details.metadata-axis').forEach(card => {
+            if (card.style.display !== 'none') card.open = open;
+        });
     },
 
     renderFunctionCountCard(c) {

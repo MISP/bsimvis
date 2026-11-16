@@ -668,7 +668,7 @@ function renderTagDist(title, icon, dist) {
     dist.forEach(item => walk(item, 0, null));
     const body = rows.map(({item, id, depth, parentId, color, hasChildren}) => {
         const coverage = metadataPercent(item);
-        return `<tr data-tag-parent="${parentId || ''}" data-tag-id="${escapeAttr(item.tag_id)}" data-tag-coverage="${coverage}" data-tag-color="${escapeAttr(color)}" style="${depth ? 'display:none;' : ''}">
+        return `<tr data-tag-row="${id}" data-tag-parent="${parentId || ''}" data-tag-id="${escapeAttr(item.tag_id)}" data-tag-coverage="${coverage}" data-tag-color="${escapeAttr(color)}" style="${depth ? 'display:none;' : ''}">
             <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono metadata-value-cell">${escapeHtml(item.tag_id)}</span></td>
             <td class="mono">${Number(item.count || 0).toLocaleString()}</td><td class="mono"><div class="metadata-bar"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div>${coverage.toFixed(0)}%</td><td><button class="btn-copy" title="Copy tag" onclick="copyToClipboard(${escapeAttr(jsString(item.tag_id))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
         </tr>`;
@@ -686,6 +686,54 @@ window.initMetadataTables = function (root) {
 };
 
 window.renderTagDist = renderTagDist;
+
+function setTagTreeOpen(row, open) {
+    const button = row.querySelector('button[aria-expanded]');
+    if (!button || button.style.visibility === 'hidden') return;
+    button.setAttribute('aria-expanded', String(open));
+    button.innerHTML = `<i class="fa-solid fa-chevron-${open ? 'down' : 'right'}"></i>`;
+}
+
+// Full-text filter over the metadata cards under `root`: a card whose title matches
+// shows whole; otherwise only its matching rows show, tag rows with their ancestors
+// expanded, and the card opens. An empty query puts every row back as rendered.
+window.filterMetadataAxes = function (root, query) {
+    if (!root) return 0;
+    const q = String(query || '').trim().toLowerCase();
+    let shown = 0;
+    root.querySelectorAll('details.metadata-axis').forEach(card => {
+        const rows = Array.from(card.querySelectorAll('tbody tr'));
+        const isTree = rows.some(row => row.dataset.tagRow);
+        const titleHit = !q || card.querySelector('summary').textContent.toLowerCase().includes(q);
+        let hits = 0;
+        if (titleHit) {
+            rows.forEach(row => {
+                row.style.display = isTree && row.dataset.tagParent ? 'none' : '';
+                if (isTree) setTagTreeOpen(row, false);
+            });
+        } else {
+            const byId = new Map(rows.map(row => [row.dataset.tagRow, row]));
+            const keep = new Set();
+            rows.forEach(row => {
+                const text = (row.dataset.tagId ?? row.querySelector('.metadata-value-cell')?.textContent ?? '').toLowerCase();
+                if (!text.includes(q)) return;
+                hits++;
+                keep.add(row);
+                for (let p = byId.get(row.dataset.tagParent); p; p = byId.get(p.dataset.tagParent)) keep.add(p);
+            });
+            rows.forEach(row => {
+                row.style.display = keep.has(row) ? '' : 'none';
+                if (isTree) setTagTreeOpen(row, rows.some(r => keep.has(r) && r.dataset.tagParent === row.dataset.tagRow));
+            });
+        }
+        const visible = titleHit || hits > 0;
+        card.style.display = visible ? '' : 'none';
+        if (q && hits) card.open = true;
+        if (visible) shown++;
+        if (isTree) updateTagChart(card.id);
+    });
+    return shown;
+};
 
 window.renderDist = renderDist;
 

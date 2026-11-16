@@ -87,6 +87,31 @@ def capa_path():
     return which("capa")
 
 
+def capa_limits():
+    """`preexec_fn` capping capa's address space, or None when uncapped.
+
+    capa runs inside the worker's cgroup beside the Ghidra JVM. Its vivisect
+    pass on a 14.8 MB x86-64 ELF (imp_amd64) took the whole worker past its
+    10 GB MemoryMax. Capped, capa dies of MemoryError and the file is
+    analysed without capa tags instead of the worker being killed.
+    """
+    from bsimvis.app.services.config_service import config_service
+
+    mb = int(config_service.get("capa.max_mem_mb", CAPA_MAX_MEM_MB) or 0)
+    if mb <= 0:
+        return None
+
+    def apply():
+        import resource
+
+        resource.setrlimit(resource.RLIMIT_AS, (mb << 20, mb << 20))
+
+    return apply
+
+
+CAPA_MAX_MEM_MB = 4096
+
+
 # capa's exit codes for the two refusals a mixed-architecture corpus hits
 # constantly (capa.main.E_INVALID_FILE_ARCH / E_INVALID_FILE_OS). Anything else
 # is a real error and is reported with whatever capa put on stderr.
@@ -143,6 +168,8 @@ def capa_failure_reason(err_path, returncode):
             lines = f.readlines()
     except OSError:
         return f"exit {returncode}"
+    if any("MemoryError" in line for line in lines):
+        return "ran out of memory (capa.max_mem_mb)"
     for line in lines:
         # Every capa log line is "LEVEL capa: <body>  <source>.py:<line>", and
         # the banner rules around a message are runs of dashes saying nothing.

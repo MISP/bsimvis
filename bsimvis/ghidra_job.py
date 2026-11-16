@@ -495,6 +495,7 @@ class GhidraAnalyzer:
                 CAPA_E_INVALID_FILE_OS,
                 capa_failure_reason,
                 capa_fallback_os,
+                capa_limits,
                 capa_path,
             )
 
@@ -530,6 +531,7 @@ class GhidraAnalyzer:
                     [capa, "-j", temp_path],
                     stdout=capa_out,
                     stderr=capa_err,
+                    preexec_fn=capa_limits(),
                 )
 
             # 3. Analyze and index in this crash-isolated child process.
@@ -691,6 +693,7 @@ class GhidraAnalyzer:
                                         [capa, "-j", "--os", fallback_os, temp_path],
                                         stdout=out,
                                         stderr=err,
+                                        preexec_fn=capa_limits(),
                                     )
 
                             if returncode:

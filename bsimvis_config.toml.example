@@ -196,6 +196,14 @@ pair_random = 4
         "-XX:MaxHeapFreeRatio=30",
     ]
 
+[capa]
+    # Address-space cap (RLIMIT_AS) for the capa subprocess, which runs inside
+    # the worker's cgroup next to the Ghidra JVM. vivisect on a large x86-64
+    # binary grew past 8 GB (imp_amd64, vr) and got the whole worker OOM-killed.
+    # Over the cap capa dies of MemoryError and the file is analysed without
+    # capa tags. 0 = no cap. Raise together with WORKER_MEMORY_MAX.
+    max_mem_mb = 4096
+
 [rulezet]
 # Mirror of rulezet.org's YARA rules, built by `bsimvis rulezet sync`.
 # Everything under data/ is gitignored, so the mirror is a build artifact.

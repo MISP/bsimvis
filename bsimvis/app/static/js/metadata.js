@@ -666,10 +666,11 @@ function renderTagDist(title, icon, dist) {
         children.forEach(child => walk(child, depth + 1, id));
     };
     dist.forEach(item => walk(item, 0, null));
+    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
     const body = rows.map(({item, id, depth, parentId, color, hasChildren}) => {
         const coverage = metadataPercent(item);
         return `<tr data-tag-row="${id}" data-tag-parent="${parentId || ''}" data-tag-id="${escapeAttr(item.tag_id)}" data-tag-coverage="${coverage}" data-tag-color="${escapeAttr(color)}" style="${depth ? 'display:none;' : ''}">
-            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono metadata-value-cell">${escapeHtml(item.tag_id)}</span></td>
+            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono metadata-value-cell" style="cursor:help;" onmouseenter="showTooltip(event, ${escapeAttr(jsString(item.tag_id))}, ${escapeAttr(jsString(coll))})" onmouseleave="hideTooltip()" oncontextmenu="handleTagContextMenu(event, ${escapeAttr(jsString(item.tag_id))})">${escapeHtml(item.tag_id)}</span></td>
             <td class="mono">${Number(item.count || 0).toLocaleString()}</td><td class="mono"><div class="metadata-bar"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div>${coverage.toFixed(0)}%</td><td><button class="btn-copy" title="Copy tag" onclick="copyToClipboard(${escapeAttr(jsString(item.tag_id))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
         </tr>`;
     }).join('');

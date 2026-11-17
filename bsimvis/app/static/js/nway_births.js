@@ -217,7 +217,7 @@
                             // a lane says its tier (badge, its files, the cuts); the folded Rare layer its tier only
                             const dot = tt ? tt.badge : cat && cat.tier ? { glyph: T.TIERS[cat.tier][0], tag: T.TIERS[cat.tier][1], color: T.TIERS[cat.tier][2] } : cat ? cat.color : paint(s.key);
                             ctx.showTip(ev, titleOf(s.key), dot, [['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
-                                ['Click', !fc ? 'select this birth' : cat && cat.folded ? 'open the Rare lanes' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']], tt && tt.html);
+                                ['Click', !fc ? 'select this birth' : cat && cat.folded ? 'open the Rare lanes' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']], (tt ? tt.html : '') + (cat && !cat.folded ? ctx.catMeta(cat) : ''));
                         })
                         .on('mouseleave', ctx.hideTip)
                         .on('click', (ev, s) => {
@@ -261,7 +261,7 @@
                 const ln = laneOf(v), isBirth = !!fc && fc.nodes.includes(v.idx), par = L.fileOf.get(L.parentOf.get(v.id));
                 g.append('circle').attr('cx', X(v)).attr('cy', ln.bot + 7).attr('r', isBirth ? 4.5 : 3).style('fill', isBirth ? 'var(--lin-born)' : 'var(--lin-grey)').style('cursor', 'pointer')
                     .on('mousemove', ev => ctx.showTip(ev, ctx.name(v.id), 'var(--lin-grey)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Parent', par ? ctx.name(par.id) : 'none (a root)'], ['Functions', fmt(tot(v))], ['Born here', fmt(M.bornIn[v.idx].length)],
-                        ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late']] : []), ['Click', 'select what was born here']]))
+                        ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late']] : []), ['Click', 'select what was born here']], ctx.meta([v.idx], 'this node')))
                     .on('mouseleave', ctx.hideTip)
                     .on('click', () => { ctx.hideTip(); const c = M.byKey.get(M.keyOf[v.idx]); if (c && c.rows.length) select(c); });
                 if (v.time_inversion) g.append('text').attr('x', X(v) + 6).attr('y', ln.bot + 11).attr('font-size', 11).style('fill', 'var(--lin-died)').text('⚠');

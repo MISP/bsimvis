@@ -1141,10 +1141,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
         ctx.controls2.replaceChildren(arcSeg, nestSeg, bundleSeg, tierSeg, listSeg);
         
         // ---- tooltips
-        // the metadata distributions of the files that hold a module (architecture, format, size, batch, collection, tags)
-        const SIZES = n => { n = Number(n); return !n ? null : n < 16384 ? '<16 KB' : n < 65536 ? '16-64 KB' : n < 262144 ? '64-256 KB' : n < 1048576 ? '256 KB-1 MB' : n < 4194304 ? '1-4 MB' : '>4 MB'; };
-        const DIMS = [['Architecture', m => m.language_id], ['Format', m => m.format], ['Size', m => SIZES(m.file_size)], ['Batch', m => m.batch_name], ['Collection', m => m.collection], ['Tags', m => m.tags, true]];
-        const countBy = (metas, get, multi) => { const c = new Map(); for (const m of metas) for (const v of [].concat(multi ? get(m) || [] : [get(m)])) if (v !== null && v !== undefined && v !== '') c.set(String(v), (c.get(String(v)) || 0) + 1); return c; };
+        // the metadata distributions of the files that hold a module (architecture, format, size, batch, collection, tags): NwayLineage.fileMetaHtml
         const filesOf = idx => { const out = []; for (const i of idx) { const n = M.doc.nodes[i]; for (const id of n.members && n.members.length ? n.members : [n.id]) out.push(id); } return out; };
         // the lane tooltip's coverage bars (the table's: bar = share of the module's files, tick = share of all files), as HTML for the tooltip
         // how widely the module's functions are held (the table's Core / Common / Rare function tiers), over the functions the page shows
@@ -1161,21 +1158,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             const txt = ['core', 'common', 'rare'].filter(k => t[k]).map(k => `<span class="nway-tip-sw"><i class="${ico[k]}" style="color:${col[k]}"></i>${TIER[k][1]} ${ctx.fmt(t[k])}</span>`).join('');
             return `<div class="nway-tip-h">Its functions</div><div class="nway-tip-fnbar">${bar}</div><div class="nway-tip-legend">${txt}</div>${ctx.rowTier && ctx.rowTier() ? '<div class="dim nway-tip-legend">the current tab shows only these</div>' : ''}`;
         };
-        const metaHtml = b => {
-            const fm = M.doc.file_meta;
-            if (!fm) return '';
-            const here = filesOf(b.mem).map(id => fm[id]).filter(Boolean), all = M.allMeta || (M.allMeta = Object.values(fm));
-            if (!here.length) return '';
-            let out = '<div class="dim nway-tip-legend">bar: share of the module\'s files · tick: share of all files</div>';
-            for (const [title, get, multi] of DIMS) {
-                const h = countBy(here, get, multi), a = countBy(all, get, multi);
-                if (!h.size || (h.size === 1 && a.size === 1)) continue; // the same for the whole set: no information
-                const top = [...h].sort((x, y) => y[1] - x[1]).slice(0, 4), uniform = h.size === 1 && a.size > 1 && top[0][1] === here.length;
-                out += `<div class="nway-tip-h">${escapeHtml(title)}${uniform ? ' <span class="nway-tip-flag" title="Every file of this module shares it, the other files do not all">only this</span>' : ''}${h.size > top.length ? ` <span class="dim">+${h.size - top.length} more</span>` : ''}</div>`;
-                for (const [v, n] of top) out += `<div class="nway-tip-row" title="${escapeAttr(v)}"><span class="nway-tip-v">${escapeHtml(v)}</span><span class="nway-tip-bar"><i style="width:${((100 * n) / here.length).toFixed(0)}%"></i><b style="left:${((100 * (a.get(v) || 0)) / all.length).toFixed(0)}%"></b></span><span class="dim">${n}</span></div>`;
-            }
-            return out;
-        };
+        const metaHtml = b => window.NwayLineage.fileMetaHtml(M.doc, filesOf(b.mem), "the module's files");
         // a module's place in the clusters: Core / Common / Rare of a cluster, or unique to it
         // the badge: Core / Common / Rare in the hovered cluster (or in the whole set), Unique when no file outside it holds the module
         const badgeOf = (b, lc) => { const u = ['\u25c6', 'Unique']; if (lc && lc.t > 1) return lc.n === b.mem.length ? u : TIER[covTier(lc.n, lc.t)]; return b.fam != null ? u : TIER[covTier(b.mem.length, M.N)]; };
@@ -1211,7 +1194,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             let leaf = M.roots[M.famOf[i]];
             for (let k = leaf.kids.find(x => x.files.includes(i)); k; k = leaf.kids.find(x => x.files.includes(i))) leaf = k;
             const lset = new Set(leaf.files), glyph = b => (leaf.files.length > 1 ? `${tierText(b.mem.filter(j => lset.has(j)).length, leaf.files.length)}  ` : '');
-            ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, `${glyph(b)}${ctx.fmt(b.size)}`]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])]);
+            ctx.showTip(ev, ctx.name(n.id), M.nodeColor(i), [['Functions', ctx.fmt(n.functions)], ...(M.doc.columns_mode === 'children' && n.members && n.members.length > 1 ? [['Files', `${n.members.length} files (cluster)`]] : []), ['Cluster', M.roots[M.famOf[i]].label], ...held.slice(0, 6).map(b => [b.label, `${glyph(b)}${ctx.fmt(b.size)}`]), ...(held.length > 6 ? [['', `+${held.length - 6} more modules`]] : [])], metaHtml({ mem: [i] }));
         };
 
         // ---- hover / pin: a module's chain lights, the rest fades. The lists are made once per layout, so a hover touches only its own elements.
@@ -1252,7 +1235,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 node.addEventListener('mouseenter', ev => {
                     if (S.sim.drag) return;
                     const c = e.cl;
-                    ctx.showTip(ev, c.label || 'Files', c.col, [['Files', String(c.files.length)], ...(e.tog ? [['', e.tog === 'plus' ? 'click to expand' : 'click to collapse']] : e.tag === 'circle' ? [['', 'click to focus']] : [])]);
+                    ctx.showTip(ev, c.label || 'Files', c.col, [['Files', String(c.files.length)], ...(e.tog ? [['', e.tog === 'plus' ? 'click to expand' : 'click to collapse']] : e.tag === 'circle' ? [['', 'click to focus']] : [])], window.NwayLineage.fileMetaHtml(M.doc, filesOf(c.files), 'this cluster\'s files'));
                 });
                 node.addEventListener('mousemove', ctx.moveTip);
                 node.addEventListener('mouseleave', ctx.hideTip);

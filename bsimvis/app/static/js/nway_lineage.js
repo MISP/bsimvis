@@ -81,6 +81,36 @@
     const tierCss = (color, tier) => (!tier || tier === 'core' ? color : `repeating-linear-gradient(45deg, ${color} 0 ${6 * TIERS[tier][3]}px, color-mix(in oklab, ${color} 28%, transparent) ${6 * TIERS[tier][3]}px 6px)`);
     // a hex row mask as one '0'/'1' per column (bit i = column i, as the server's lane masks)
     const hexBits = (m, n) => Array.from({ length: n }, (_, i) => ((parseInt(m[m.length - 1 - (i >> 2)] || '0', 16) >> (i & 3)) & 1 ? '1' : '0')).join('');
+    // What a set of files is made of (the Ring's module tooltip, shared): per metadata field its commonest values,
+    // bar = share of these files, tick = share of every file of the doc. Escaped html, '' without doc.file_meta.
+    const SIZES = n => { n = Number(n); return !n ? null : n < 16384 ? '<16 KB' : n < 65536 ? '16-64 KB' : n < 262144 ? '64-256 KB' : n < 1048576 ? '256 KB-1 MB' : n < 4194304 ? '1-4 MB' : '>4 MB'; };
+    const META_DIMS = [['Architecture', m => m.language_id], ['Format', m => m.format], ['Size', m => SIZES(m.file_size)], ['Batch', m => m.batch_name], ['Collection', m => m.collection], ['Tags', m => m.tags, true]];
+    const countBy = (metas, get, multi) => { const c = new Map(); for (const m of metas) for (const v of [].concat(multi ? get(m) || [] : [get(m)])) if (v !== null && v !== undefined && v !== '') c.set(String(v), (c.get(String(v)) || 0) + 1); return c; };
+    // node indexes -> their file ids (a twin or cluster node holds several)
+    const filesOfNodes = (doc, idx) => { const out = []; for (const i of idx) { const n = doc.nodes[i]; if (n) for (const f of n.members && n.members.length ? n.members : [n.id]) out.push(f); } return out; };
+    function fileMetaHtml(doc, ids, what = 'these files') {
+        const fm = doc && doc.file_meta;
+        if (!fm || !ids || !ids.length) return '';
+        const here = ids.map(id => fm[id]).filter(Boolean), all = doc._allMeta || (doc._allMeta = Object.values(fm));
+        if (!here.length) return '';
+        let out = `<div class="dim nway-tip-legend">${here.length} file${here.length === 1 ? '' : 's'} \u00b7 bar: share of ${escapeHtml(what)} \u00b7 tick: share of all ${all.length} files</div>`;
+        for (const [title, get, multi] of META_DIMS) {
+            const h = countBy(here, get, multi), a = countBy(all, get, multi);
+            if (!h.size || (h.size === 1 && a.size === 1)) continue; // the same for the whole set: no information
+            const top = [...h].sort((x, y) => y[1] - x[1]).slice(0, 4), uniform = h.size === 1 && a.size > 1 && top[0][1] === here.length;
+            out += `<div class="nway-tip-h">${escapeHtml(title)}${uniform ? ' <span class="nway-tip-flag" title="Every one of these files shares it, the other files do not all">only this</span>' : ''}${h.size > top.length ? ` <span class="dim">+${h.size - top.length} more</span>` : ''}</div>`;
+            for (const [v, n] of top) out += `<div class="nway-tip-row" title="${escapeAttr(v)}"><span class="nway-tip-v">${escapeHtml(v)}</span><span class="nway-tip-bar"><i style="width:${((100 * n) / here.length).toFixed(0)}%"></i><b style="left:${((100 * (a.get(v) || 0)) / all.length).toFixed(0)}%"></b></span><span class="dim">${n}</span></div>`;
+        }
+        return out;
+    }
+    // the node indexes a lens group sits in: its lane mask, else every node holding one of its rows
+    const catNodes = (doc, R, C, cat) => cat._nodes || (cat._nodes = nodesOfCat(doc, R, C, cat));
+    const nodesOfCat = (doc, R, C, cat) => {
+        if (cat.mask) return [...cat.mask].map((c, i) => (c === '1' ? i : -1)).filter(i => i >= 0);
+        const out = new Set();
+        for (let r = 0; r < R.n; r++) if (R.match(r) && C.of(r) === cat.key) for (let i = 0; i < doc.nodes.length; i++) if (R.has(r, i)) out.add(i);
+        return [...out];
+    };
     // the tier part of a lane's tooltip: a badge for showTip, the files holding the lane and where it sits between the cuts (html, escaped)
     function tierTip(cat, doc) {
         if (!cat || !cat.tier) return null;
@@ -1746,17 +1776,20 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
         // one card for a lane/module, on a node row or a link: the group's name, then what is local to
         // the spot hovered, then the group's own numbers (functions, files, span, features, role mix)
+        // what the files holding a lens group are made of
+        const catMeta = cat => (st.R ? fileMetaHtml(st.doc, filesOfNodes(st.doc, catNodes(st.doc, st.R, cats(st.lens), cat)), 'the files holding it') : '');
         function lensTip(ev, cat, local) {
             focusHover(cat.tk);
             const g = cat.g, nm = g && NG.shownName(st.S.names[g.id]), tt = tierTip(cat, st.doc);
-            showTip(ev, nm || cat.label, tt ? tt.badge : cat.color, [...local, ...(g ? gTip(g) : [])], tt && tt.html);
+            showTip(ev, nm || cat.label, tt ? tt.badge : cat.color, [...local, ...(g ? gTip(g) : [])], (tt ? tt.html : '') + catMeta(cat));
         }
         function hoverLens(ev, l) {
             st.last = { edge: l.edge };
             if (l.members) {
                 // a tier bundle: the lanes it carries
                 const t = TIERS[l.cat.tier], top = [...new Set(l.members)].slice(0, 5);
-                showTip(ev, l.cat.label, t ? { glyph: t[0], tag: t[1], color: t[2] } : l.cat.color, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ['Lanes', fmt(new Set(l.members).size)], ...top.map(c => ['', c.g ? NG.shownName(st.S.names[c.g.id]) || c.label : c.label])]);
+                const idx = new Set(); for (const c of new Set(l.members)) for (const i of catNodes(st.doc, st.R, cats(st.lens), c)) idx.add(i);
+                showTip(ev, l.cat.label, t ? { glyph: t[0], tag: t[1], color: t[2] } : l.cat.color, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ['Lanes', fmt(new Set(l.members).size)], ...top.map(c => ['', c.g ? NG.shownName(st.S.names[c.g.id]) || c.label : c.label])], fileMetaHtml(st.doc, filesOfNodes(st.doc, [...idx]), 'the files holding these lanes'));
                 return;
             }
             lensTip(ev, l.cat, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ...(l.edge ? [['Similarity', l.edge.similarity]] : [])]);
@@ -1790,11 +1823,14 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const when = by.length && by[0].t != null ? [['First in', `${name(by[0].id)} (${isoDay(by[0].t)})`], ...(by[by.length - 1].t != null ? [['Spread over', span(by[by.length - 1].t - by[0].t)]] : [])] : [];
             showTip(ev, 'Code outside the tree path', V.reuse, [['Files', names(r.files)], ['Functions', fmt(r.count)], ...when, ['Level', r.same_level ? 'same level' : `across depth (span ${r.depth_span})`], ['Tree pieces', r.components.length], ['Note', CAVEAT]]);
         }
+        // a drawn node's files: its own (twins / cluster members), or every file of a grouped subtree
+        const nodeFiles = F => filesOfNodes(st.doc, F.agg ? F.members.map(m => st.M.byId.get(m).idx) : [F.idx]);
         async function hoverFile(ev, F) {
             const tok = ++st.hover;
             st.last = F.agg ? null : { node: F };
+            const meta = fileMetaHtml(st.doc, nodeFiles(F), F.agg || twinsOf(F) ? 'this node\'s files' : 'this file');
             if (F.agg) {
-                showTip(ev, F.file_name, V.slate, [['Functions (summed)', fmt(F.functions)], ['Born inside', fmt(F.born)], ['Kept by no child', fmt(F.died_all)], ['In reuse', fmt(F.reuse_in)], ['', 'click to expand']]);
+                showTip(ev, F.file_name, V.slate, [['Functions (summed)', fmt(F.functions)], ['Born inside', fmt(F.born)], ['Kept by no child', fmt(F.died_all)], ['In reuse', fmt(F.reuse_in)], ['', 'click to expand']], meta);
                 return;
             }
             const tw = twinsOf(F);
@@ -1802,14 +1838,14 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (st.P) {
                 const sp = st.P.segs.get(F.id);
                 ribs.style('opacity', l => (l.source === F || l.target === F ? 1 : 0.1));
-                showTip(ev, name(F.id), nodeColor(st.doc, F.idx), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])]);
+                showTip(ev, name(F.id), nodeColor(st.doc, F.idx), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])], meta);
                 return;
             }
             // the reuse arcs that touch this file light up at once; the per-file overlay follows
             arcSel.style('opacity', A => A.r.files.includes(F.id) ? 1 : 0.12);
             strSel.style('opacity', d => d.c.r.files.includes(F.id) ? 1 : 0.25);
             ribs.style('opacity', 0.1);
-            showTip(ev, name(F.id), V.slate, rows);
+            showTip(ev, name(F.id), V.slate, rows, meta);
             const bfDoc = await bfFor(F.id);
             if (tok !== st.hover || !bfDoc) return;
             const L = st.L, ni = F.idx;
@@ -1890,6 +1926,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
                     tiers: { TIERS, KEYS: TIER_KEYS, rank: tierRank, fill: tierFill, css: tierCss, tip: c => tierTip(c, st.doc) },
+                    // what a set of files is made of: of node indexes, of a lens group
+                    meta: (idx, what) => fileMetaHtml(st.doc, filesOfNodes(st.doc, idx), what), catMeta: c => catMeta(c),
                 });
             }
             st.births.draw();
@@ -2101,5 +2139,5 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         return q;
     }
 
-    window.NwayLineage = { mount, ensureCss, LENSES, tableQs, _bar: { moreToggle, segSwitch }, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
+    window.NwayLineage = { mount, ensureCss, LENSES, tableQs, fileMetaHtml, filesOfNodes, _bar: { moreToggle, segSwitch }, _layout: { buildModel, layout, autoCollapse, rowModel, lensCats, attachRows, lensPaint, trackRows, trackInfo } }; // _layout: for the layout check
 })();

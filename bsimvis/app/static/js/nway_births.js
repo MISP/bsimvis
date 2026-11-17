@@ -8,11 +8,11 @@
  * is drawn as a stream: its height is the file's matching functions, its layers are the cohorts those
  * functions were born in, oldest at the bottom. A strip under the lanes counts the rows born in each
  * file. Selecting a cohort greys the others (born before / after) and splits it by the lens's groups;
- * the side pane says where it was born, how much of it later files keep, per lane, and its functions.
+ * the details are on the canvas (+N marks, tooltips) and the page's state bar; the left pane stays the lens selector.
  *
  * NwayBirths.model(doc, R, bucket) and share(M, c) are DOM-free (checked in scripts/test_nway_lineage.js).
- * NwayBirths.mount(ctx) -> { draw(), panel(), box(), destroy() }; ctx is what nway_lineage.js hands over
- * (g, side, controls, getDoc, getR, getL, getCats, getTrack, setTrack, showTip, hideTip, rowEl, el,
+ * NwayBirths.mount(ctx) -> { draw(), box(), dotAt(i), state(), clear(k), destroy() }; ctx is what nway_lineage.js hands over
+ * (g, controls, getDoc, getR, getL, getCats, getTrack, setTrack, showTip, hideTip, rowEl, el,
  * segSwitch, fmt, name, width, fit, opts {bucket, axis, sel}, onOpt). Every sample value is set with
  * textContent or d3 .text(), never innerHTML.
  */
@@ -24,7 +24,7 @@
     const pct = v => `${Math.round(v * 100)}%`;
     const short = (s, n = 22) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
     // ponytail: fixed geometry; TARGET_H is the lanes' height at k=1 before the KY clamps
-    const B = { TOP: 58, PAD: 16, LABEL_W: 170, MR: 70, STEP_MIN: 26, CAL_PX: 18, LANE_GAP: 30, TARGET_H: 640, KY_MAX: 1.2, KY_MIN: 0.03, STRIP_H: 70, ROWS: 30, SURV_LANES: 6 };
+    const B = { TOP: 58, PAD: 16, LABEL_W: 170, MR: 70, STEP_MIN: 26, CAL_PX: 18, LANE_GAP: 30, TARGET_H: 640, KY_MAX: 1.2, KY_MIN: 0.03, STRIP_H: 70 };
     const BUCKETS = ['file', 'week', 'month'];
 
     // ---------------------------------------------------------------- model (no DOM)
@@ -98,7 +98,7 @@
             emit(); draw();
         });
         const axB = ctx.segSwitch('X axis', 'Files evenly spaced in date order, or on a calendar', [['rank', 'File order'], ['cal', 'Calendar']], () => o.axis, v => { o.axis = v; emit(); draw(); ctx.fit(); });
-        const pick = el('select', { 'aria-label': 'Selected birth', title: 'The birth shown in the side pane' });
+        const pick = el('select', { 'aria-label': 'Selected birth', title: 'The birth drawn on its own, split by the lens groups' });
         const stepBtn = (txt, lab, d) => {
             const b = el('button', { type: 'button', class: 'lin-btn', 'aria-label': lab, title: lab }, txt);
             b.addEventListener('click', () => { const c = current(), i = c ? c.idx + d : d > 0 ? 0 : M.list.length - 1; if (M.list[i]) select(M.list[i]); });
@@ -128,7 +128,6 @@
                 M = null;
                 g.append('text').attr('x', 20).attr('y', 40).style('fill', 'var(--text)').text('Births needs the dated lineage (order=time) and its row list.');
                 frame = { x0: 0, y0: 0, x1: 520, y1: 80 };
-                panel();
                 return;
             }
             getModel();
@@ -326,98 +325,11 @@
             g.append('line').attr('x1', x0 - 8).attr('x2', xEnd + 8).attr('y1', sBase).attr('y2', sBase).style('stroke', 'var(--lin-grey)').attr('vector-effect', 'non-scaling-stroke');
             frame = { x0: 0, y0: 0, x1: xEnd + B.MR, y1: sBase + 30, vis, X };
             syncControls();
-            panel();
         }
 
-        // ---- side pane: the biggest births, or the selected one ----
-        function panel() {
-            const side = ctx.side;
-            side.replaceChildren();
-            if (!M) { side.append(el('div', { class: 'lin-dim' }, 'Births needs dated files and the row list.')); return; }
-            const C = ctx.getCats(), fc = current(), doc = M.doc, R = M.R;
-            const head = (txt, color) => { const h = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }); sw.style.background = color; h.append(sw, el('span', {}, txt)); return h; };
-            if (!fc) {
-                side.append(el('div', { class: 'lin-gh' }, 'Biggest births'), el('div', { class: 'lin-dim', style: 'margin-bottom:8px' }, 'Pick one to see what it was and where it went, or click a layer, a file dot or a bar.'));
-                for (const c of [...M.list].sort((a, b) => b.rows.length - a.rows.length).slice(0, 10)) {
-                    const b = el('button', { type: 'button', class: 'lin-gi' }), t = el('span', { class: 't' }), sw = el('span', { class: 'lin-sw' });
-                    sw.style.background = cohortColor(c);
-                    t.append(sw, el('b', {}, c.label), el('span', { class: 'lin-dim' }, fmt(c.rows.length)));
-                    b.append(t, el('span', { class: 'lin-dim' }, modulesOf(c, C).slice(0, 3).map(m => m.cat.label).join(', ')));
-                    b.addEventListener('click', () => select(c));
-                    side.append(b);
-                }
-                return;
-            }
-            const sh = share(M, fc), vis = frame.vis, birthNodes = new Set(fc.nodes), first = M.pos[fc.nodes[0]];
-            const later = vis.filter(v => M.pos[v.idx] > first && !birthNodes.has(v.idx)), dated = vis.filter(v => v.t != null);
-            const newest = dated[dated.length - 1], seen = dated.filter(v => sh[v.idx] > 0);
-            const reached = lanes.filter(ln => ln.vs.some(v => sh[v.idx] > 0));
-            const card = el('section', { class: 'lin-card', 'aria-label': 'Selected birth' });
-            card.append(head(fc.long, 'var(--lin-born)'));
-            const where = fc.nodes.slice(0, 4).map(i => { const nd = doc.nodes[i]; return `${ctx.name(nd.id)} (${nd.t == null ? 'undated' : iso(nd.t)}, +${fmt(M.bornIn[i].length)})`; }).join(', ');
-            card.append(el('div', { class: 'lin-dim' }, `${fmt(fc.rows.length)} functions first seen in ${fc.nodes.length === 1 ? 'one file' : `${fc.nodes.length} files`}: ${where}${fc.nodes.length > 4 ? ` +${fc.nodes.length - 4} more` : ''}.`));
-            if (fc.nodes.some(i => doc.nodes[i].time_inversion)) card.append(el('div', { style: 'color:var(--lin-died)' }, '⚠ A birth file has a likely late date: some of this code may be older.'));
-            const kv = el('div', { class: 'lin-kv' });
-            for (const [k, v] of [['Born', fmt(fc.rows.length)], ['Later files holding it', `${fmt(later.filter(v => sh[v.idx] > 0).length)} of ${fmt(later.length)}`],
-                ...(newest ? [['In the newest file', `${pct(sh[newest.idx])} (${short(ctx.name(newest.id), 18)})`]] : []), ...(seen.length ? [['Last seen', iso(seen[seen.length - 1].t)]] : []), ['Lanes reached', `${reached.length} of ${lanes.length}`]]) kv.append(el('span', { class: 'k' }, k), el('span', {}, v));
-            card.append(kv);
-
-            // what was born: the lens's groups; a click tracks one (the Tree and the table see it too)
-            card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'What was born'));
-            const chips = el('div', { class: 'lin-names' });
-            for (const m of modulesOf(fc, C)) {
-                const on = !!m.cat.tk && ctx.getTrack() === m.cat.tk;
-                const b = el('button', { type: 'button', class: `lin-chip${on ? ' on' : ''}`, 'aria-pressed': String(on), title: m.cat.tk ? 'Track this group' : '' }), sw = el('span', { class: 'lin-sw' });
-                sw.style.background = T.css(m.cat.color, m.cat.tier);
-                b.append(sw, ...(m.cat.tier ? [el('span', { title: T.TIERS[m.cat.tier][1] }, T.TIERS[m.cat.tier][0])] : []), el('span', { class: 'lin-gn' }, m.cat.label), el('span', { class: 'lin-dim' }, fmt(m.n)));
-                if (m.cat.tk) b.addEventListener('click', () => ctx.setTrack(on ? '' : m.cat.tk));
-                chips.append(b);
-            }
-            card.append(chips);
-            const nRare = modulesOf(fc, C).filter(m => m.cat.tier === 'rare').length;
-            if (nRare > 1) {
-                const fb = el('button', { type: 'button', class: 'lin-btn', style: 'margin-top:4px' }, rareOpen ? `Fold the ${nRare} Rare lanes into one layer` : `Open the ${nRare} Rare lanes`);
-                fb.addEventListener('click', () => { rareOpen = !rareOpen; draw(); });
-                card.append(fb);
-            }
-
-            // where it went: the share each lane's files keep, over time
-            card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'Where it went: share held, per lane'));
-            const t0 = Math.min(...fc.nodes.map(i => doc.nodes[i].t ?? Infinity));
-            const top = reached.map(ln => ({ ln, pts: ln.vs.filter(v => v.t != null && v.t >= t0).map(v => ({ v, s: sh[v.idx] })) })).filter(x => x.pts.length)
-                .sort((a, b) => d3.max(b.pts, p => p.s) - d3.max(a.pts, p => p.s)).slice(0, B.SURV_LANES);
-            if (top.length && Number.isFinite(t0) && newest) {
-                const W = Math.max(220, side.clientWidth - 40), H = 110, ml = 34, mr = 8, mt = 8, mb = 20;
-                const x = d3.scaleUtc().domain([t0, Math.max(t0 + DAY, newest.t)]).range([ml, W - mr]), yy = d3.scaleLinear().domain([0, 1]).range([H - mb, mt]);
-                const svg = d3.create('svg').attr('width', W).attr('height', H).attr('role', 'img').attr('aria-label', 'Share of this birth each lane keeps over time');
-                for (const v of [0, 0.5, 1]) {
-                    svg.append('line').attr('x1', ml).attr('x2', W - mr).attr('y1', yy(v)).attr('y2', yy(v)).style('stroke', 'var(--lin-line)');
-                    svg.append('text').attr('x', ml - 4).attr('y', yy(v) + 4).attr('text-anchor', 'end').attr('font-size', 10.5).style('fill', 'var(--text)').style('opacity', 0.7).text(pct(v));
-                }
-                for (const t of x.ticks(3)) svg.append('text').attr('x', x(t)).attr('y', H - 5).attr('text-anchor', 'middle').attr('font-size', 10.5).style('fill', 'var(--text)').style('opacity', 0.7).text(d3.utcFormat('%b %Y')(t));
-                for (const { pts } of top) {
-                    const home = pts.some(p => birthNodes.has(p.v.idx));
-                    svg.append('path').attr('d', d3.line().curve(d3.curveStepAfter).x(p => x(p.v.t)).y(p => yy(p.s))(pts)).attr('fill', 'none').style('stroke', 'var(--text)').attr('stroke-width', home ? 1.8 : 1.2).attr('stroke-opacity', home ? 0.9 : 0.45);
-                    for (const p of pts) svg.append('circle').attr('cx', x(p.v.t)).attr('cy', yy(p.s)).attr('r', 2.2).style('fill', birthNodes.has(p.v.idx) ? 'var(--lin-born)' : 'var(--text)').attr('fill-opacity', home ? 0.9 : 0.5);
-                }
-                card.append(svg.node());
-                const lk = el('div', { class: 'lin-kv' });
-                for (const { ln, pts } of top) { const e = pts[pts.length - 1]; lk.append(el('span', { class: 'k' }, short(ctx.name(ln.vs[0].id), 20)), el('span', {}, `${pct(e.s)} in ${short(ctx.name(e.v.id), 16)}`)); }
-                if (reached.length > top.length) lk.append(el('span', { class: 'k' }, `+${reached.length - top.length} more lanes`), el('span', {}, ''));
-                card.append(lk);
-            }
-
-            // its functions, most widely held first; a click tracks one
-            const rows = [...fc.rows].sort((a, b) => R.pop[b] - R.pop[a]);
-            card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'Functions, most widely held first'));
-            for (const r of rows.slice(0, B.ROWS)) card.append(ctx.rowEl(r));
-            if (rows.length > B.ROWS) card.append(el('div', { class: 'lin-dim' }, `+${fmt(rows.length - B.ROWS)} more: the lens groups above list them all in the navigator`));
-            side.append(card);
-        }
 
         return {
             draw,
-            panel,
             box: () => frame,
             dotAt: i => dotPos.get(i) || null,
             // for the page's state bar: the selected birth and the opened Rare lanes, and closing either

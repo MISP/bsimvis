@@ -52,7 +52,7 @@
     const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];
     // nway_region_service.SPECIAL
     const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
-    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, NAV_ROWS = 50, NAV_SEC = 12;
+    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, NAV_ROWS = 50;
     const hueOf = i => window.NwayColors.hue(i);
     // --lin-hl is the table's top-level lightness: 52%, 44% on the light theme (.nway-sq.on)
     const hsl = (h, l = 52) => `hsl(${h} 62% calc(var(--lin-hl) + ${l - 52}%))`;
@@ -235,19 +235,17 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-nsh .lin-chev{font-size:10px;opacity:.7;transition:transform .12s}.lin-nsh[aria-expanded="false"] .lin-chev{transform:rotate(-90deg)}
 .lin-nsl{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .lin-nsb{height:5px;border-radius:3px;background:var(--lin-line);overflow:hidden;min-width:24px}.lin-nsb i{display:block;height:100%}
-.lin-nr{display:grid;grid-template-columns:12px minmax(0,1fr) auto 40px;gap:8px;align-items:center;width:100%;border:0;border-left:3px solid transparent;background:none;color:inherit;font:inherit;padding:5px 10px;cursor:pointer;text-align:left}
+.lin-nr{display:grid;grid-template-columns:16px 12px minmax(0,1fr) auto 40px;gap:7px;align-items:center;width:100%;border:0;border-left:3px solid transparent;background:none;color:inherit;font:inherit;padding:5px 10px;cursor:pointer;text-align:left}
 .lin-nr:hover{background:var(--hover,#2d2d2d)}.lin-nr.on{border-left-color:var(--accent,#66d9ef);background:color-mix(in oklab,var(--accent,#66d9ef) 12%,transparent)}
 .lin-nt{min-width:0;display:grid}.lin-nn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.lin-ns{font-size:11px;opacity:.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lin-nc{font-size:12px;opacity:.7;text-align:right;font-variant-numeric:tabular-nums}
+.lin-nk{border:0;background:none;color:inherit;padding:0;width:16px;height:16px;cursor:pointer;opacity:.6;font-size:10px}.lin-nk:disabled{visibility:hidden}.lin-nk:hover{opacity:1}
 .lin-nmore{display:block;padding:4px 10px 6px 31px}
-.lin-crumb{display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:12px}
-.lin-ncard{padding:10px;display:grid;gap:7px;border-bottom:1px solid var(--lin-line)}
 .lin-ntier{display:grid;gap:2px}.lin-tchip{justify-self:start;border:1px solid currentColor;border-radius:999px;padding:0 7px;font-size:11.5px;font-weight:700}
 .lin-nmeta summary{cursor:pointer;font-size:12px;opacity:.8}.lin-nmeta>div{margin-top:4px;font-size:11px}
 .lin-ntabs{display:flex;gap:2px;border-bottom:2px solid var(--lin-line);padding:0 10px;position:sticky;top:0;background:var(--lin-card);z-index:1}
 .lin-ntabs button{border:0;background:none;color:inherit;opacity:.7;border-bottom:3px solid transparent;margin-bottom:-2px;padding:7px 9px;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600}
 .lin-ntabs button[aria-selected="true"]{opacity:1;color:var(--accent,#66d9ef);border-bottom-color:var(--accent,#66d9ef)}
-.lin-ntools{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;align-items:center}.lin-ntools .lin-nq{flex:1 1 140px;width:auto}
 .lin-ft{width:100%;border-collapse:collapse;font-size:12.5px}
 .lin-ft th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;opacity:.7;font-weight:600;padding:4px 6px;border-bottom:1px solid var(--lin-line)}
 .lin-ft th button{border:0;background:none;padding:0;color:inherit;font:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit}
@@ -256,7 +254,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-fn{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace;font-size:12px}
 .lin-num{text-align:right;font-variant-numeric:tabular-nums;opacity:.75}
 .lin-kebab{border:0;background:none;color:inherit;opacity:.6;cursor:pointer;padding:0 6px;border-radius:4px;font-weight:700}.lin-kebab:hover{opacity:1;background:var(--lin-line)}
-.lin-bside:empty{display:none}.lin-bside{padding:8px 10px;border-bottom:1px solid var(--lin-line)}
+
 @media (prefers-reduced-motion:reduce){.lin-nsh .lin-chev{transition:none}}
 .lin-glist .lin-seg{margin:2px 0 8px}
 .lin-gi{display:flex;flex-direction:column;gap:4px;width:100%;margin-bottom:2px;text-align:left;background:none;border:1px solid transparent;border-radius:6px;color:inherit;padding:5px 7px;cursor:pointer;font:inherit}
@@ -987,7 +985,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const birthBox = el('span', { style: 'display:none' });
         tb.append(trackBox, legendBox, ringBox, birthBox, more.btn, more.row);
         // Tree keeps Reuse layer in view; Tracks and Split have it behind More; the Ring has no reuse arcs
-        const placeBar = () => { (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' || st.view === 'births' ? 'none' : ''; };
+        const multiSeg = segSwitch('Show', 'One group on the tree, or the six biggest groups as small trees', [[false, 'One group'], [true, 'Small multiples']], () => st.multi, v => { st.multi = v; multiples(); syncBar(); });
+        tb.append(multiSeg.el);
+        const placeBar = () => {
+            multiSeg.el.style.display = st.view === 'tracks' ? 'inline-flex' : 'none'; multiSeg.paint(); (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' || st.view === 'births' ? 'none' : ''; };
         placeBar();
         const deepAll = () => {
             const out = new Set();
@@ -1021,7 +1022,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const openDrawer = pick => {
             drawer.classList.add('open');
             setTimeout(syncBar, 0);
-            if (pick.fn != null && st.R) inspectFnDraw(pick.fn);
+            if (pick.group && st.R) inspGroup(pick.group);
+            else if (pick.fn != null && st.R) inspectFnDraw(pick.fn);
             else if (pick.node && st.R) dock(pick.node);
             else if (pick.node) { const { body } = inspHead('File', name(pick.node.id), nodeColor(st.doc, pick.node.idx)); kvBox(body, [['Functions', fmt(pick.node.functions)]]); metaBox(body, nodeFiles(pick.node), 'this file'); }
             else inspOther(pick);
@@ -1250,33 +1252,40 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (let r = 0; r < st.R.n; r++) if (st.R.match(r)) by.get(C.of(r)).push(r);
             return C.cats.filter(c => by.get(c.key).length).map(c => ({ c, rows: by.get(c.key), tk: c.tk, leaf: true }));
         }
-        // ---- the left pane: the lens navigator, in every view ----
-        // Sections (Core / Common / Rare for a tiered lens, else the first-level groups), one row per group. A click focuses
-        // the group: its own page (card, pivots, its functions and files) until "All ..." or the state bar closes it.
-        // Births keeps its own card (bside) under the header.
-        const bside = el('div', { class: 'lin-bside' });
-        const NAV = { q: '', tier: null, open: new Map(), tab: 'functions', fq: '', role: null, sort: 'weight', shown: NAV_ROWS, focus: null };
+        // ---- the left pane: a selector of the lens's groups (lanes and their sub-lanes), the same in every view ----
+        // Sections (Core / Common / Rare for a tiered lens, else one list), one row per group, sub-groups under a chevron.
+        // A click selects the group (it is the track, lit in every view) and opens it in the Inspector; a second click
+        // or Esc unselects. Details live in the Inspector and the table, never here.
+        const NAV = { q: '', open: new Map(), focus: null };
         st.nav = NAV;
         const fparts = fid => { const i = String(fid).indexOf(':func:'), [md5, addr] = String(fid).slice(i + 6).split(':'); return { coll: String(fid).slice(0, i), md5, addr }; };
         // the visible nodes that hold any of these rows
         const holdersOf = rows => st.L.vis.filter(v => rows.some(r => v.has(r)));
+        const itemOf = (x, rows, kids, parent) => {
+            const hold = holdersOf(rows);
+            return { x, tk: x.tk, label: x.g ? gText(x.g) : x.label, color: x.color === GREY && kids.length ? kids[0].color : x.color, tier: x.tier, rows, kids, parent, hold,
+                sub: `in ${hold.length} of ${st.L.vis.length} · ${hold.slice(0, 3).map(v => name(v.id)).join(', ')}${hold.length > 3 ? ` +${hold.length - 3}` : ''}` };
+        };
         function navItems() {
-            const C = cats(st.lens), R = st.R, out = [];
-            const own = new Map();
+            const C = cats(st.lens), R = st.R, out = [], own = new Map();
             for (let r = 0; r < R.n; r++) if (R.match(r)) { const k = C.of(r); (own.get(k) || own.set(k, []).get(k)).push(r); }
             if (C.groups) {
-                for (const x of C.groups.filter(y => y.depth === 0)) {
+                const kidsOf = x => C.groups.filter(y => y.depth === x.depth + 1 && (y.g.path || []).includes(x.g.id));
+                const build = (x, parent) => {
                     const rows = C.members[x.i].filter(R.match);
-                    if (!rows.length) continue;
-                    const kids = C.groups.filter(y => y.depth === 1 && (y.g.path || []).includes(x.g.id) && C.members[y.i].some(R.match));
-                    // a lane split by region has no rows of its own, so no colour: take its first sub-group's
-                    out.push({ x, tk: x.tk, label: gText(x.g), color: x.color === GREY && kids.length ? kids[0].color : x.color, tier: x.tier, rows, kids });
-                }
-                for (const c of C.cats) if (!c.g && own.has(c.key)) out.push({ x: c, tk: c.tk, label: c.label, color: c.color, tier: c.tier, rows: own.get(c.key), kids: [] });
-            } else for (const c of C.cats) if (own.has(c.key)) out.push({ x: c, tk: c.tk, label: c.label, color: c.color, tier: c.tier, rows: own.get(c.key), kids: [] });
-            for (const it of out) { it.hold = holdersOf(it.rows); it.sub = `in ${it.hold.length} of ${st.L.vis.length} · ${it.hold.slice(0, 3).map(v => name(v.id)).join(', ')}${it.hold.length > 3 ? ` +${it.hold.length - 3}` : ''}`; }
+                    if (!rows.length) return null;
+                    const it = itemOf(x, rows, [], parent);
+                    it.kids = kidsOf(x).map(y => build(y, it)).filter(Boolean);
+                    if (it.color === GREY && it.kids.length) it.color = it.kids[0].color;
+                    return it;
+                };
+                for (const x of C.groups.filter(y => y.depth === 0)) { const it = build(x, null); if (it) out.push(it); }
+                for (const c of C.cats) if (!c.g && own.has(c.key)) out.push(itemOf(c, own.get(c.key), [], null));
+            } else for (const c of C.cats) if (own.has(c.key)) out.push(itemOf(c, own.get(c.key), [], null));
             return out;
         }
+        const allItems = items => items.flatMap(it => [it, ...allItems(it.kids)]);
+        const findItem = tk => (tk && st.R ? allItems(navItems()).find(it => it.tk === tk) || null : null);
         // squares, one per visible node, filled by the share of the rows it holds
         function presSquares(rows) {
             const pres = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
@@ -1293,118 +1302,79 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const rows = it.x.g ? gTip(it.x.g) : [['Functions', fmt(it.rows.length)], ['Files', `${it.hold.length} of ${st.L.vis.length}`]];
             showTip(ev, it.label, tt ? tt.badge : it.color, rows, (tt ? tt.html : '') + fileMetaHtml(st.doc, it.hold.flatMap(v => nodeFiles(v)), 'the files holding it'));
         }
-        const navHover = it => { if (st.P && nodeBase) focusHover(it ? it.tk : null); if (st.ring && st.view === 'ring' && st.ring.hoverTrack) st.ring.hoverTrack(it ? it.tk : null); };
+        const navHover = it => { if (st.P && nodeBase) focusHover(it ? it.tk : null); };
         function navRow(it, depth = 0) {
-            const on = NAV.focus === it.tk;
-            const b = el('button', { type: 'button', class: `lin-nr${on ? ' on' : ''}`, 'aria-pressed': String(on), title: 'Focus this group: its functions and files' });
-            if (depth) b.style.paddingLeft = `${10 + depth * 14}px`;
+            const on = NAV.focus === it.tk, kk = `k:${it.tk}`, open = !!it.kids.length && (NAV.q ? true : NAV.open.get(kk) === true);
+            const row = el('div', { class: `lin-nr${on ? ' on' : ''}`, role: 'button', tabindex: 0, 'aria-pressed': String(on), title: on ? 'Selected: click again to unselect' : 'Select this group: lit in the view, details in the Inspector' });
+            row.style.paddingLeft = `${6 + depth * 14}px`;
+            const chev = el('button', { type: 'button', class: 'lin-nk', 'aria-label': open ? 'Hide its sub-groups' : 'Show its sub-groups', 'aria-expanded': String(open) });
+            if (it.kids.length) chev.append(el('i', { class: `fa-solid fa-chevron-${open ? 'down' : 'right'}` })); else chev.disabled = true;
             const sw = el('span', { class: 'lin-sw' }), t = el('span', { class: 'lin-nt' }), nm = el('span', { class: 'lin-nn' });
             sw.style.background = tierCss(it.color, it.tier);
             if (it.x.g) nm.innerHTML = gHtml(it.x.g); else nm.textContent = it.label;
             t.append(nm, el('span', { class: 'lin-ns' }, it.sub));
-            b.append(sw, t, presSquares(it.rows), el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
-            b.addEventListener('mouseenter', ev => { navHover(it); navTip(ev, it); });
-            b.addEventListener('mousemove', moveTip);
-            b.addEventListener('mouseleave', () => { navHover(null); hideTip(); });
-            b.addEventListener('click', () => { hideTip(); navFocus(it.tk); });
-            return b;
+            row.append(chev, sw, t, presSquares(it.rows), el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
+            chev.addEventListener('click', ev => { ev.stopPropagation(); NAV.open.set(kk, !open); groupList(); });
+            row.addEventListener('mouseenter', ev => { navHover(it); navTip(ev, it); });
+            row.addEventListener('mousemove', moveTip);
+            row.addEventListener('mouseleave', () => { navHover(null); hideTip(); });
+            const go = () => { hideTip(); navFocus(on ? null : it.tk); };
+            row.addEventListener('click', go);
+            row.addEventListener('keydown', ev => { if (ev.target === row && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); go(); } });
+            const box = el('div');
+            box.append(row);
+            if (open) for (const k of it.kids) box.append(navRow(k, depth + 1));
+            return box;
         }
+        // select a group (null: none): the track, and the Inspector shows it
         function navFocus(tk) {
             NAV.focus = tk || null;
-            NAV.fq = ''; NAV.role = null; NAV.shown = NAV_ROWS; NAV.tab = 'functions';
             st.multi = false;
             setTrack(tk || '');
+            if (tk) pick({ group: tk });
+            else if (st.sel && st.sel.group) closeDock();
         }
         function groupList() {
             side.hidden = false;
             side.replaceChildren();
             if (!st.R) { side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'This server sends no row list: the groups need it.')); return false; }
             const items = navItems();
-            const focused = NAV.focus && (items.find(it => it.tk === NAV.focus) || items.flatMap(it => it.kids.map(k => kidItem(k, it))).find(it => it.tk === NAV.focus));
-            if (NAV.focus && !focused) NAV.focus = null;
-            if (focused) navPage(focused, items);
-            else navList(items);
-            if (st.view === 'births') { side.prepend(bside); if (st.births) st.births.panel(); }
-            syncBar();
-            return false;
-        }
-        const kidItem = (k, parent) => { const C = cats(st.lens), rows = C.members[k.i].filter(st.R.match), hold = holdersOf(rows); return { x: k, tk: k.tk, label: gText(k.g), color: k.color, tier: k.tier, rows, kids: [], parent, hold, sub: `in ${hold.length} of ${st.L.vis.length}` }; };
-        function navList(items) {
-            const lens = LENSES.find(l => l[0] === st.lens), tiered = items.some(it => it.tier);
+            if (NAV.focus && !findItem(NAV.focus)) NAV.focus = null;
+            const lens = LENSES.find(l => l[0] === st.lens), tiered = items.some(it => it.tier), q = NAV.q.toLowerCase();
+            const match = it => !q || `${it.label} ${it.sub}`.toLowerCase().includes(q) || it.kids.some(match);
+            const vis = items.filter(match);
+            const secs = tiered ? [...TIER_KEYS, ''].map(t => ({ key: `t:${t}`, label: t ? `${TIERS[t][0]} ${TIERS[t][1]}` : 'Other', color: t ? TIERS[t][2] : '', items: vis.filter(it => (it.tier || '') === t), dflt: t !== 'rare' }))
+                : [{ key: 'all', label: '', items: vis, dflt: true }];
+            const isOpen = s => (q || !s.label ? true : NAV.open.has(s.key) ? NAV.open.get(s.key) : s.dflt);
             const head = el('div', { class: 'lin-nh' }), top = el('div', { class: 'lin-nrow' });
-            const q = NAV.q.toLowerCase();
-            const vis = items.filter(it => (!NAV.tier || it.tier === NAV.tier) && (!q || `${it.label} ${it.sub}`.toLowerCase().includes(q)));
-            // sections: tiers, else the first-level groups with their sub-groups, else one list
-            const secs = tiered ? [...TIER_KEYS, ''].map(t => ({ key: `t:${t}`, label: t ? `${TIERS[t][0]} ${TIERS[t][1]}` : 'Other', color: t ? TIERS[t][2] : 'var(--text)', items: vis.filter(it => (it.tier || '') === t), dflt: t !== 'rare' }))
-                : vis.some(it => it.kids.length) ? vis.map((it, i) => ({ key: `g:${it.tk}`, head: it, label: it.label, items: it.kids.map(k => kidItem(k, it)), dflt: i < 3 }))
-                    : [{ key: 'all', label: lens ? lens[1] : 'Groups', items: vis, dflt: true }];
-            const isOpen = s => (q ? true : NAV.open.has(s.key) ? NAV.open.get(s.key) : s.dflt);
-            const openAll = v => { for (const s of secs) NAV.open.set(s.key, v); groupList(); };
-            const exA = btn('Expand all', 'Open every section', () => openAll(true), 'lin-link'), coA = btn('Collapse all', 'Close every section', () => openAll(false), 'lin-link');
-            exA.disabled = secs.every(isOpen); coA.disabled = !secs.some(isOpen);
-            top.append(el('b', {}, lens ? lens[1] : 'Groups'), el('span', { class: 'lin-dim' }, `${fmt(vis.length)} of ${fmt(items.length)}`), el('span', { style: 'flex:1' }), exA, el('span', { class: 'lin-dim' }, '·'), coA);
-            const qi = el('input', { type: 'search', class: 'lin-nq', placeholder: 'Find a group, a file or a function', 'aria-label': 'Find a group' });
+            const anyOpen = secs.some(s => s.label && s.items.length && isOpen(s));
+            const tog = btn(anyOpen ? 'Collapse all' : 'Expand all', '', () => { for (const s of secs) NAV.open.set(s.key, !anyOpen); for (const it of allItems(items)) NAV.open.delete(`k:${it.tk}`); groupList(); }, 'lin-link');
+            top.append(el('b', {}, lens ? lens[1] : 'Groups'), el('span', { class: 'lin-dim' }, `${fmt(vis.length)} of ${fmt(items.length)}`), el('span', { style: 'flex:1' }), ...(tiered ? [tog] : []));
+            const qi = el('input', { type: 'search', class: 'lin-nq', placeholder: 'Find a group or a file', 'aria-label': 'Find a group' });
             qi.value = NAV.q;
             qi.addEventListener('input', () => { NAV.q = qi.value; const p = qi.selectionStart; groupList(); const n = side.querySelector('.lin-nq'); n.focus(); n.setSelectionRange(p, p); });
             head.append(top, qi);
-            if (tiered) {
-                const f = el('div', { class: 'lin-nrow', role: 'group', 'aria-label': 'Tier filter' });
-                for (const t of TIER_KEYS) {
-                    const n = items.filter(it => it.tier === t).length;
-                    if (!n) continue;
-                    const b = el('button', { type: 'button', class: 'lin-chip', 'aria-pressed': String(NAV.tier === t), style: `color:${TIERS[t][2]}` }, `${TIERS[t][0]} ${TIERS[t][1]} `);
-                    b.append(el('span', { class: 'lin-dim' }, fmt(n)));
-                    b.addEventListener('click', () => { NAV.tier = NAV.tier === t ? null : t; groupList(); });
-                    f.append(b);
-                }
-                head.append(f);
-            }
-            if (st.view === 'tracks') {
-                const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Group view' });
-                for (const [v, t] of [[false, 'One group'], [true, 'Small multiples']]) {
-                    const b = el('button', { type: 'button', 'aria-pressed': String(st.multi === v) }, t);
-                    b.addEventListener('click', () => { st.multi = v; groupList(); multiples(); });
-                    seg.append(b);
-                }
-                head.append(seg);
-            }
             side.append(head);
-            const total = st.R.match ? items.reduce((a, it) => a + it.rows.length, 0) : 0;
+            const total = items.reduce((a, it) => a + it.rows.length, 0);
             for (const s of secs) {
-                if (!s.items.length && !s.head) continue;
-                const open = isOpen(s), n = s.head ? s.head.rows.length : s.items.reduce((a, it) => a + it.rows.length, 0);
-                const sec = el('section', { class: 'lin-nsec' }), h = el('button', { type: 'button', class: 'lin-nsh', 'aria-expanded': String(open) });
-                const lab = el('span', { class: 'lin-nsl', style: s.color ? `color:${s.color}` : '' });
-                if (s.head && s.head.x.g) lab.innerHTML = gHtml(s.head.x.g); else lab.textContent = s.label;
-                const bar = el('span', { class: 'lin-nsb', title: `${Math.round((100 * n) / Math.max(1, total))}% of the functions` }), fill = el('i');
-                fill.style.width = `${((100 * n) / Math.max(1, total)).toFixed(1)}%`; fill.style.background = s.color || (s.head ? s.head.color : 'var(--accent)');
-                bar.append(fill);
-                h.append(el('i', { class: 'fa-solid fa-chevron-down lin-chev' }), lab, bar, el('span', { class: 'lin-dim' }, `${s.head ? `${s.items.length} groups` : `${s.items.length} group${s.items.length === 1 ? '' : 's'}`} · ${fmt(n)} fn`));
-                h.addEventListener('click', () => { NAV.open.set(s.key, !open); groupList(); });
-                if (s.head) { h.addEventListener('mouseenter', ev => { navHover(s.head); navTip(ev, s.head); }); h.addEventListener('mousemove', moveTip); h.addEventListener('mouseleave', () => { navHover(null); hideTip(); }); }
-                sec.append(h);
-                if (open) {
-                    if (s.head) sec.append(navRow(s.head));
-                    const lim = NAV.open.get(`${s.key}:all`) ? Infinity : NAV_SEC;
-                    for (const it of s.items.slice(0, lim)) sec.append(navRow(it, s.head ? 1 : 0));
-                    if (s.items.length > lim) { const m = btn(`Show all ${fmt(s.items.length)}`, '', () => { NAV.open.set(`${s.key}:all`, true); groupList(); }, 'lin-link lin-nmore'); sec.append(m); }
+                if (!s.items.length) continue;
+                const sec = el('section', { class: 'lin-nsec' });
+                if (s.label) {
+                    const open = isOpen(s), n = s.items.reduce((a, it) => a + it.rows.length, 0), h = el('button', { type: 'button', class: 'lin-nsh', 'aria-expanded': String(open) });
+                    const bar = el('span', { class: 'lin-nsb', title: `${Math.round((100 * n) / Math.max(1, total))}% of the functions` }), fill = el('i');
+                    fill.style.width = `${((100 * n) / Math.max(1, total)).toFixed(1)}%`; fill.style.background = s.color;
+                    bar.append(fill);
+                    h.append(el('i', { class: 'fa-solid fa-chevron-down lin-chev' }), el('span', { class: 'lin-nsl', style: `color:${s.color}` }, s.label), bar, el('span', { class: 'lin-dim' }, `${s.items.length} · ${fmt(n)} fn`));
+                    h.addEventListener('click', () => { NAV.open.set(s.key, !open); groupList(); });
+                    sec.append(h);
+                    if (!open) { side.append(sec); continue; }
                 }
+                for (const it of s.items) sec.append(navRow(it));
                 side.append(sec);
             }
-            // functions whose name matches the search: a click focuses its group and selects it
-            if (q) {
-                const C = cats(st.lens), hits = [];
-                for (let r = 0; r < st.R.n && hits.length < 8; r++) if (st.R.match(r) && String(st.R.name[r] || '').toLowerCase().includes(q)) hits.push(r);
-                if (hits.length) {
-                    const sec = el('section', { class: 'lin-nsec' });
-                    sec.append(el('div', { class: 'lin-nsh', style: 'cursor:default' }, `Functions matching “${NAV.q}”`));
-                    const tb2 = el('table', { class: 'lin-ft' }), body = el('tbody');
-                    for (const r of hits) body.append(fnTr(r, () => { const it = items.find(x => x.rows.includes(r)); if (it) navFocus(it.tk); pickFn(r); }));
-                    tb2.append(body); sec.append(tb2); side.append(sec);
-                    void C;
-                }
-            }
-            if (!vis.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No group matches. Clear the search or the tier filter.'));
+            if (!vis.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No group matches the search.'));
+            syncBar();
+            return false;
         }
         // a function as a table row: name (the app's code preview on hover), role, files, features, the app's context menu
         function fnTr(r, onClick) {
@@ -1434,103 +1404,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (r == null || !st.L) return;
             for (const n of st.L.vis) if (n.has(r)) gHov.append('rect').attr('x', n.x0 - 5).attr('y', n.y0 - 5).attr('width', NODE_W + 10).attr('height', n.h + 10).attr('rx', 8).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 3).attr('vector-effect', 'non-scaling-stroke');
         }
-        // a focused group's page
-        function navPage(it, items) {
-            const lens = LENSES.find(l => l[0] === st.lens), g = it.x.g;
-            const head = el('div', { class: 'lin-nh' }), crumb = el('nav', { class: 'lin-crumb', 'aria-label': 'Where you are' });
-            const back = btn(`← All ${lens ? lens[1].toLowerCase() : 'groups'}`, 'Back to every group (Esc)', () => navFocus(null), 'lin-link');
-            crumb.append(back);
-            if (it.tier) crumb.append(el('span', { class: 'lin-dim' }, '/'), el('span', { style: `color:${TIERS[it.tier][2]}` }, `${TIERS[it.tier][0]} ${TIERS[it.tier][1]}`));
-            if (it.parent) { const pb = btn(it.parent.label, 'Focus the parent group', () => navFocus(it.parent.tk), 'lin-link'); crumb.append(el('span', { class: 'lin-dim' }, '/'), pb); }
-            head.append(crumb);
-            side.append(head);
-            const card = el('section', { class: 'lin-ncard' }), h = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), nm = el('span', { class: 'lin-gn' });
-            sw.style.background = tierCss(it.color, it.tier);
-            if (g) nm.innerHTML = gHtml(g); else nm.textContent = it.label;
-            h.append(sw, nm);
-            card.append(h);
-            const tt = tierTip(it.x, st.doc);
-            if (tt) { const b = el('div', { class: 'lin-ntier' }); b.innerHTML = `<span class="lin-tchip" style="color:${tt.badge.color}">${tt.badge.glyph} ${tt.badge.tag}</span>${tt.html}`; card.append(b); }
-            if (g) {
-                const ev = el('div', { class: 'lin-gev' }), sts = el('div', { class: 'lin-gst' });
-                ev.innerHTML = NG.laneEv(g, st.S, false) + (g.kind === 'lane' ? NG.parentChip(g, groupMap(), st.S) : '');
-                sts.innerHTML = gStats(g);
-                card.append(ev, sts);
-            } else card.append(el('div', { class: 'lin-dim' }, `${fmt(it.rows.length)} functions in ${it.hold.length} of ${st.L.vis.length} nodes`));
-            const meta = fileMetaHtml(st.doc, it.hold.flatMap(v => nodeFiles(v)), 'the files holding it');
-            if (meta) { const d = el('details', { class: 'lin-nmeta' }), m = el('div'); m.innerHTML = meta; d.append(el('summary', {}, 'What its files are made of'), m); card.append(d); }
-            const acts = el('div', { class: 'lin-acts' });
-            const act = (icon, txt, tip, f) => { const b = el('button', { type: 'button', class: 'lin-btn', title: tip }); b.append(el('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${txt}`)); b.addEventListener('click', f); acts.append(b); };
-            if (it.tk) {
-                act('fa-table', 'In table', 'The N-way table with this group tracked and scrolled into view', e => groupPivot('table', it, e));
-                act('fa-diagram-project', 'Call graph', "The group's call graph in the N-way table", e => groupPivot('graph', it, e));
-            }
-            if (window.NwayPanel && window.NwayPanel.urlForFunctions) act('fa-layer-group', 'Functions', 'Every function of the group side by side in the N-way function view', e => { const url = window.NwayPanel.urlForFunctions(it.rows.slice(0, 200).map(r => st.R.fid[r])); if (window.Nav) window.Nav.openPath(url, e, { title: 'N-way diff', type: 'bin_sim' }); else location.href = url; });
-            card.append(acts);
-            side.append(card);
-            // tabs: its functions, its files, its sub-groups
-            const tabs = el('div', { class: 'lin-ntabs', role: 'tablist' });
-            const T = [['functions', `Functions ${fmt(it.rows.length)}`], ['files', `Files ${it.hold.length}`], ...(it.kids.length ? [['groups', `Groups ${it.kids.length}`]] : [])];
-            if (!T.some(x => x[0] === NAV.tab)) NAV.tab = 'functions';
-            for (const [k, t] of T) { const b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(NAV.tab === k) }, t); b.addEventListener('click', () => { NAV.tab = k; groupList(); }); tabs.append(b); }
-            side.append(tabs);
-            const R = st.R;
-            if (NAV.tab === 'functions') {
-                const roles = ROLES.map(x => [x, it.rows.filter(r => R.role[r] === x[0]).length]).filter(x => x[1]);
-                const tools = el('div', { class: 'lin-ntools' }), fq = el('input', { type: 'search', class: 'lin-nq', placeholder: `Filter ${fmt(it.rows.length)} functions`, 'aria-label': 'Filter functions' });
-                fq.value = NAV.fq;
-                fq.addEventListener('input', () => { NAV.fq = fq.value; NAV.shown = NAV_ROWS; const p = fq.selectionStart; groupList(); const n = side.querySelector('.lin-ntools .lin-nq'); n.focus(); n.setSelectionRange(p, p); });
-                tools.append(fq);
-                for (const [x, n] of roles) {
-                    const b = el('button', { type: 'button', class: 'lin-chip', 'aria-pressed': String(NAV.role === x[0]) }, `${x[1]} `);
-                    b.append(el('span', { class: 'lin-dim' }, fmt(n)));
-                    b.addEventListener('click', () => { NAV.role = NAV.role === x[0] ? null : x[0]; NAV.shown = NAV_ROWS; groupList(); });
-                    tools.append(b);
-                }
-                side.append(tools);
-                const f = NAV.fq.toLowerCase();
-                const rows = it.rows.filter(r => (!NAV.role || R.role[r] === NAV.role) && (!f || String(R.name[r] || R.fid[r]).toLowerCase().includes(f)));
-                rows.sort(NAV.sort === 'name' ? (a, b) => String(R.name[a] || '').localeCompare(String(R.name[b] || '')) : (a, b) => (R.weight[b] || 0) - (R.weight[a] || 0));
-                const t = el('table', { class: 'lin-ft' }), th = el('thead'), hr = el('tr'), body = el('tbody');
-                const sortTh = (k, txt, cls) => { const c = el('th', { class: cls || '', 'aria-sort': NAV.sort === k ? (k === 'name' ? 'ascending' : 'descending') : 'none' }), b = el('button', { type: 'button' }, `${txt}${NAV.sort === k ? (k === 'name' ? ' ▴' : ' ▾') : ''}`); b.addEventListener('click', () => { NAV.sort = k; groupList(); }); c.append(b); return c; };
-                hr.append(sortTh('name', 'Function'), el('th', {}, 'Role'), el('th', {}, 'Files'), sortTh('weight', 'Feat', 'lin-num'), el('th', { 'aria-label': 'Actions' }));
-                th.append(hr);
-                for (const r of rows.slice(0, NAV.shown)) body.append(fnTr(r));
-                t.append(th, body);
-                side.append(t);
-                if (rows.length > NAV.shown) side.append(btn(`Show ${fmt(Math.min(NAV_ROWS, rows.length - NAV.shown))} more · ${fmt(rows.length - NAV.shown)} left`, '', () => { NAV.shown += NAV_ROWS; groupList(); }, 'lin-link lin-nmore'));
-                if (!rows.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No function matches the filter.'));
-            } else if (NAV.tab === 'files') {
-                const t = el('table', { class: 'lin-ft' }), body = el('tbody');
-                for (const v of it.hold) {
-                    const k = it.rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), tr = el('tr', { class: 'lin-fr', tabindex: 0 });
-                    const td = el('td'), sw2 = el('span', { class: 'lin-sw', style: 'display:inline-block;vertical-align:middle;margin-right:6px' });
-                    sw2.style.background = nodeColor(st.doc, v.idx);
-                    td.append(sw2, document.createTextNode(name(v.id)));
-                    const kb = el('button', { type: 'button', class: 'lin-kebab', 'aria-label': `${name(v.id)}: open in…` }, '⋯'), tdk = el('td');
-                    tdk.append(kb);
-                    tr.append(td, el('td', { class: 'lin-dim' }, v.t != null ? isoDay(v.t) : ''), el('td', { class: 'lin-num' }, `${fmt(k)} / ${fmt(v.rows.length)}`), tdk);
-                    tr.addEventListener('mouseenter', ev => { hoverRowIdxNode(v); showTip(ev, name(v.id), nodeColor(st.doc, v.idx), [['Here', `${fmt(k)} of the group's ${fmt(it.rows.length)}`], ['Functions', fmt(v.functions)], ...timeRows(v)], fileMetaHtml(st.doc, nodeFiles(v), twinsOf(v) ? "this node's files" : 'this file')); });
-                    tr.addEventListener('mousemove', moveTip);
-                    tr.addEventListener('mouseleave', () => { hoverRowIdxNode(null); hideTip(); });
-                    tr.addEventListener('click', ev => { if (!ev.target.closest('.lin-kebab')) pickNode(v); });
-                    kb.addEventListener('click', ev => { ev.stopPropagation(); fileMenu(ev, v); });
-                    body.append(tr);
-                }
-                t.append(body);
-                side.append(t);
-            } else {
-                for (const k of it.kids) side.append(navRow(kidItem(k, it), 0));
-            }
-        }
         function hoverRowIdxNode(v) {
             gHov.selectAll('*').remove();
             if (v) gHov.append('rect').attr('x', v.x0 - 5).attr('y', v.y0 - 5).attr('width', NODE_W + 10).attr('height', v.h + 10).attr('rx', 8).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 3).attr('vector-effect', 'non-scaling-stroke');
-        }
-        // the app's file context menu on a node's (first) file
-        function fileMenu(ev, v) {
-            const fid = (v.members && v.members[0]) || v.id, i = String(fid).lastIndexOf(':');
-            if (window.showGraphContextMenu) window.showGraphContextMenu(ev, 'file', { id: fid, md5: String(fid).slice(i + 1), collection: String(fid).slice(0, i), file_name: name(v.id) });
         }
         // a picked function: selected in the lists, its holders outlined; the inspector shows it
         function pickFn(r) {
@@ -1811,6 +1687,36 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     fnTable(body, list, `${n.id}:${key}`);
                 }
             } else fnTable(body, shown, `${n.id}:all`);
+        }
+        // a selected group: what it is, where it is, what its files are made of, its functions, where to open it
+        function inspGroup(tk) {
+            const it = findItem(tk);
+            if (!it) { drawer.classList.remove('open'); return; }
+            const lens = LENSES.find(l => l[0] === st.lens), g = it.x.g;
+            const { body, act } = inspHead(it.parent ? 'Sub-group' : lens ? lens[1] : 'Group', it.label, tierCss(it.color, it.tier));
+            act('fa-table', 'In table', 'The N-way table with this group tracked and scrolled into view', e => groupPivot('table', it, e));
+            act('fa-diagram-project', 'Call graph', "The group's call graph in the N-way table", e => groupPivot('graph', it, e));
+            if (window.NwayPanel && window.NwayPanel.urlForFunctions) act('fa-layer-group', 'Functions', 'Every function of the group side by side in the N-way function view', e => openUrl(window.NwayPanel.urlForFunctions(it.rows.slice(0, 200).map(r => st.R.fid[r])), e, 'N-way diff', 'bin_sim'));
+            const tt = tierTip(it.x, st.doc);
+            if (tt) { const b = el('div', { class: 'lin-ntier' }); b.innerHTML = `<span class="lin-tchip" style="color:${tt.badge.color}">${tt.badge.glyph} ${tt.badge.tag}</span>${tt.html}`; body.append(b); }
+            kvBox(body, g ? gTip(g) : [['Functions', fmt(it.rows.length)], ['Files', `${it.hold.length} of ${st.L.vis.length}`]]);
+            metaBox(body, it.hold.flatMap(v => nodeFiles(v)), 'the files holding it', false);
+            const fd = el('details', { class: 'lin-nmeta' }), ft = el('table', { class: 'lin-ft' }), fb = el('tbody');
+            fd.append(el('summary', {}, `Files (${it.hold.length})`));
+            for (const v of it.hold) {
+                const k = it.rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), tr = el('tr', { class: 'lin-fr', tabindex: 0 }), td = el('td'), sw = el('span', { class: 'lin-sw', style: 'display:inline-block;vertical-align:middle;margin-right:6px' });
+                sw.style.background = nodeColor(st.doc, v.idx);
+                td.append(sw, document.createTextNode(name(v.id)));
+                tr.append(td, el('td', { class: 'lin-num' }, `${fmt(k)} / ${fmt(v.rows.length)}`));
+                tr.addEventListener('mouseenter', ev => { hoverRowIdxNode(v); showTip(ev, name(v.id), nodeColor(st.doc, v.idx), [['Here', `${fmt(k)} of the group's ${fmt(it.rows.length)}`], ['Functions', fmt(v.functions)], ...timeRows(v)], fileMetaHtml(st.doc, nodeFiles(v), twinsOf(v) ? "this node's files" : 'this file')); });
+                tr.addEventListener('mousemove', moveTip);
+                tr.addEventListener('mouseleave', () => { hoverRowIdxNode(null); hideTip(); });
+                tr.addEventListener('click', () => { hideTip(); pickNode(v); });
+                fb.append(tr);
+            }
+            ft.append(fb); fd.append(ft); body.append(fd);
+            body.append(el('div', { class: 'lin-gh', style: 'margin-top:4px' }, `Functions (${fmt(it.rows.length)})`));
+            fnTable(body, it.rows, `g:${tk}`);
         }
         // a picked function: what it is, its code, where it is, and where to open it
         function inspectFnDraw(r) {
@@ -2185,7 +2091,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (st.collapsed.size) { st.collapsed = new Set(); rebuild(); return; }
             if (!st.births) {
                 st.births = window.NwayBirths.mount({
-                    g: gBirthG.node(), side: bside, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
+                    g: gBirthG.node(), controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); syncBar(); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
                     tiers: { TIERS, KEYS: TIER_KEYS, rank: tierRank, fill: tierFill, css: tierCss, tip: c => tierTip(c, st.doc) },
@@ -2262,18 +2168,17 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // ---- state bar: every non-default state of the page is a chip with x; Back undoes, Reset view starts over, Esc closes the newest ----
         const hist = [];
         let lastSnap = null, restoring = false;
-        const selKey = p => (!p ? null : p.fn != null ? `f:${p.fn}` : p.node ? `n:${p.node.id}` : p.edge ? `e:${p.edge.parent}>${p.edge.child}` : p.reuse ? `r:${p.reuse.files.join(',')}` : '?');
-        const snap = () => ({ focus: NAV.focus, tier: NAV.tier, q: NAV.q, open: [...NAV.open], track: st.track, collapsed: [...st.collapsed], multi: st.multi, reuseOn: st.reuseOn, tierBundle: st.tierBundle, sel: st.sel, fnSel: st.fnSel });
+        const selKey = p => (!p ? null : p.group ? `g:${p.group}` : p.fn != null ? `f:${p.fn}` : p.node ? `n:${p.node.id}` : p.edge ? `e:${p.edge.parent}>${p.edge.child}` : p.reuse ? `r:${p.reuse.files.join(',')}` : '?');
+        const snap = () => ({ focus: NAV.focus, q: NAV.q, open: [...NAV.open], track: st.track, collapsed: [...st.collapsed], multi: st.multi, reuseOn: st.reuseOn, tierBundle: st.tierBundle, sel: st.sel, fnSel: st.fnSel });
         const sigOf = x => JSON.stringify({ ...x, sel: selKey(x.sel) });
-        const selLabel = p => (p.fn != null ? st.R.name[p.fn] || st.R.fid[p.fn] : p.node ? name(p.node.id) : p.edge ? `${name(p.edge.parent)} → ${name(p.edge.child)}` : p.reuse ? `reuse of ${p.reuse.files.length} files` : 'selection');
+        const selLabel = p => (p.group ? (findItem(p.group) || { label: p.group }).label : p.fn != null ? st.R.name[p.fn] || st.R.fid[p.fn] : p.node ? name(p.node.id) : p.edge ? `${name(p.edge.parent)} → ${name(p.edge.child)}` : p.reuse ? `reuse of ${p.reuse.files.length} files` : 'selection');
         function chips() {
             const c = [], add = (k, v, close) => c.push([k, v, close]);
             if (NAV.focus) add('Group', st.track === NAV.focus ? trackLabel() : NAV.focus, () => navFocus(null));
             if (st.track && st.track.startsWith('fn:')) add('Tracking', trackLabel(), () => setTrack(NAV.focus || ''));
-            if (st.sel) add('Inspector', selLabel(st.sel), closeDock);
-            if (NAV.tier) add('Only', TIERS[NAV.tier][1], () => { NAV.tier = null; groupList(); });
+            if (st.sel && !st.sel.group) add('Inspector', selLabel(st.sel), closeDock);
             if (NAV.q) add('Search', `“${NAV.q}”`, () => { NAV.q = ''; groupList(); });
-            if (NAV.open.size) add('Sections', 'opened or closed by hand', () => { NAV.open = new Map(); groupList(); });
+            if (NAV.open.size) add('Lanes pane', 'sections opened or closed by hand', () => { NAV.open = new Map(); groupList(); });
             if ([...st.collapsed].sort().join() !== [...(st.collapsed0 || [])].sort().join()) add('Grouped', st.collapsed.size ? `${st.collapsed.size} subtree${st.collapsed.size === 1 ? '' : 's'}` : 'every file shown', () => { st.collapsed = new Set(st.collapsed0 || []); rebuild(); });
             if (st.multi) add('Tracks', 'small multiples', () => { st.multi = false; groupList(); multiples(); });
             if (st.reuseOn) add('Reuse layer', 'on', () => { st.reuseOn = false; applyReuse(); reuse.paint(); });
@@ -2311,7 +2216,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             sbar.append(el('span', { style: 'flex:1' }), b, r, el('span', { class: 'lin-kbd', title: 'Esc closes the newest thing: inspector, tracked function, focus, group' }, 'Esc'));
         }
         function restore(x) {
-            NAV.focus = x.focus; NAV.tier = x.tier; NAV.q = x.q; NAV.open = new Map(x.open);
+            NAV.focus = x.focus; NAV.q = x.q; NAV.open = new Map(x.open);
             st.multi = x.multi;
             const rb = x.collapsed.join() !== [...st.collapsed].join() || x.tierBundle !== st.tierBundle;
             st.collapsed = new Set(x.collapsed); st.tierBundle = x.tierBundle; tierRib.paint();
@@ -2333,7 +2238,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             hist.push(snap());
             restoring = true;
             try {
-                Object.assign(NAV, { focus: null, tier: null, q: '', open: new Map(), tab: 'functions', fq: '', role: null, shown: NAV_ROWS });
+                Object.assign(NAV, { focus: null, q: '', open: new Map() });
                 st.multi = false; st.tierBundle = true; tierRib.paint();
                 if (st.reuseOn) { st.reuseOn = false; applyReuse(); reuse.paint(); }
                 st.collapsed = new Set(st.collapsed0 || []);
@@ -2402,6 +2307,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             // the canvas changes size with the view (group list, split pane): show the whole tree again
             setView(v) {
                 st.view = v;
+                placeBar();
                 gMark.selectAll('*').remove();
                 if (!st.L) return;
                 // the Ring's Deltas cats are the server's lanes, the trees' are born-in cats: repaint on the way in and out

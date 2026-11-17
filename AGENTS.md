@@ -205,22 +205,22 @@ a birth is the rows born in one file, week or month (`bgrp`). Each Timeline lane
 stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom; a chain grows
 from its parent's date. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
 the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
-`+N from X` (violet) where it shows up off its parent, and fills the pane: where it was born, later files holding it, its
-share per lane over time, its functions (`rowEl`, a click is the usual `fn:` track). A lens chip or layer tracks that group.
+`+N from X` (violet) where it shows up off its parent; the selection is a chip in the state bar, the left pane stays the
+group selector. A layer click tracks that group.
 `bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
 stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
 
-**Panes (every view).** Left: the lens navigator (`groupList` / `navList` / `navPage` in `nway_lineage.js`): sections
-(Core / Common / Rare for a tiered lens, else the first-level groups) with chevrons, counts and a share bar, Expand all /
-Collapse all, a search over groups, files and function names, tier chips. A row click focuses the group (`NAV.focus`,
-also the track): its page has a crumb back, the tier card, evidence, "What its files are made of", In table / Call graph /
-Functions pivots, and tabs Functions (one table, `fnTr`: the app's `showCodePreview` on hover and `showGraphContextMenu`
-on the kebab or right click, `NAV_ROWS` at a time), Files and Groups. Births puts its own card on top. The toolbar's lens
-chips are gone (only the Ring's Module list still draws them). Right: the Inspector (`inspHead`, docked in `.lin-body`,
-never over the canvas): File / Cluster / Same-code files (`dock`), Function (`inspectFnDraw`: code, every copy with its
+**Panes (every view).** Left: a selector of the lens's groups, nothing else (`groupList` / `navRow` in
+`nway_lineage.js`): a search, Core / Common / Rare sections (tiered lens) with Collapse / Expand all, one row per group
+(swatch, name, holders, presence squares, count) and its sub-groups under a chevron. A click selects the group (`NAV.focus`,
+also the track) and opens it in the Inspector; a second click or Esc unselects. No cards, tabs or function lists here: a
+view never adds its own card (Births has none; Tracks' One group / Small multiples is a toolbar switch). Right: the Inspector (`inspHead`, docked in `.lin-body`,
+never over the canvas): the selected group (`inspGroup`: tier, numbers, what its files are made of, its files, its
+functions as one table, `fnTr`: the app's `showCodePreview` on hover and `showGraphContextMenu` on the kebab or right
+click, `NAV_ROWS` at a time; In table / Call graph / Functions pivots), File / Cluster / Same-code files (`dock`), Function (`inspectFnDraw`: code, every copy with its
 address), Edge and Reuse (`inspOther`), each with pivots; an edge has a file diff (`buildFileDiffUrl`). Closing it clears
 the outline. Under the toolbar the state bar (`syncBar`) shows every non-default state as a chip with x (focus, tracked
-function, inspector, filters, sections, grouped subtrees, small multiples, reuse layer, per-lane ribbons, Ring focus /
+function, inspector, search, sections, grouped subtrees, small multiples, reuse layer, per-lane ribbons, Ring focus /
 opened / closed clusters via `ring.state` / `clear`, the selected birth and Rare lanes via `births.state` / `clear`, the
 table via `opts.chips`), Back (a snapshot stack of the page's own state) and Reset view (as the page opened). One page Esc
 (`onEsc`, never inside a field) closes the newest: inspector, tracked function, Ring focus, group, birth. Every tooltip

@@ -176,8 +176,8 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.strictEqual(col('delta:span-1-2'), bornColor(1), 'span-A-B takes the colour of node A');
     assert.strictEqual(col('delta:kept'), 'var(--lin-grey-d)', 'no single origin: grey');
     assert.ok(/!\(st\.view === 'tree'/.test('') || !/st\.sel = \{ group: true \}/.test(src), 'the group card is not opened a second time in the drawer');
-    // the navigator's group page lists every function of the group as a table, NAV_ROWS at a time; names go in with textContent
-    assert.ok(/NAV_ROWS = 50/.test(src) && /function fnTr\(r, onClick\)/.test(src) && /for \(const r of rows\.slice\(0, NAV\.shown\)\) body\.append\(fnTr\(r\)\)/.test(src) && /NAV\.shown \+= NAV_ROWS/.test(src), 'group functions: a table, paged');
+    // the left pane is a selector only; a selected group's functions are a table in the Inspector, NAV_ROWS at a time
+    assert.ok(/NAV_ROWS = 50/.test(src) && /function fnTr\(r, onClick\)/.test(src) && /fnTable\(body, it\.rows, `g:\$\{tk\}`\)/.test(src) && /st\.inspShown\.set\(key, lim \+ NAV_ROWS\)/.test(src) && !/function navPage/.test(src), 'group functions: a table in the Inspector, paged');
     const ft = src.slice(src.indexOf('function fnTr('), src.indexOf('function hoverRowIdx('));
     assert.ok(/document\.createTextNode\(` \$\{R\.name\[r\] \|\| fid\}`\)/.test(ft) && !/innerHTML/.test(ft), 'function rows: no innerHTML');
 }

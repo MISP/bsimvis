@@ -196,6 +196,18 @@ metas in the route (`_lineage_times`, the cached doc has no dates; a node takes 
 draws the date where the day changes, a dashed `+N` mark for gaps of `GAP_DAYS` (30) or more and an "undated" mark. Never
 auto-collapsed, never auto-chosen; `tfield` is stripped from table links.
 
+**Births (`lview=births`).** `static/js/nway_births.js` (`window.NwayBirths`) over the same `order=time` doc, in the
+lineage canvas like the Ring (own `g`, own toolbar box, the left pane is its panel). A row is born in its holder with the
+lowest date rank (`model()`, not the tree's `bornIn`; undated nodes rank last; rows failing `rows.match` are left out);
+a birth is the rows born in one file, week or month (`bgrp`). Each Timeline lane (`n.lane`, split into its chains) is a
+stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom; a chain grows
+from its parent's date. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
+the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
+`+N from X` (violet) where it shows up off its parent, and fills the pane: where it was born, later files holding it, its
+share per lane over time, its functions (`rowEl`, a click is the usual `fn:` track). A lens chip or layer tracks that group.
+`bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
+stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
+
 **Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
 `lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the
 file they start in (`added-N`, `dropped-N`, `span-N-M` take node N's Tree colour; kept / scattered / rewritten are grey).

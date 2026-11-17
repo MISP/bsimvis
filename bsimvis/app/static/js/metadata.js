@@ -713,18 +713,23 @@ window.filterMetadataAxes = function (root, query) {
                 if (isTree) setTagTreeOpen(row, false);
             });
         } else {
-            const byId = new Map(rows.map(row => [row.dataset.tagRow, row]));
+            // Only tag tree rows have ids; a plain table must not walk (undefined -> itself forever).
+            const byId = new Map(isTree ? rows.map(row => [row.dataset.tagRow, row]) : []);
             const keep = new Set();
+            const open = new Set();
             rows.forEach(row => {
                 const text = (row.dataset.tagId ?? row.querySelector('.metadata-value-cell')?.textContent ?? '').toLowerCase();
                 if (!text.includes(q)) return;
                 hits++;
                 keep.add(row);
-                for (let p = byId.get(row.dataset.tagParent); p; p = byId.get(p.dataset.tagParent)) keep.add(p);
+                for (let p = byId.get(row.dataset.tagParent); p && !open.has(p); p = byId.get(p.dataset.tagParent)) {
+                    keep.add(p);
+                    open.add(p);
+                }
             });
             rows.forEach(row => {
                 row.style.display = keep.has(row) ? '' : 'none';
-                if (isTree) setTagTreeOpen(row, rows.some(r => keep.has(r) && r.dataset.tagParent === row.dataset.tagRow));
+                if (isTree) setTagTreeOpen(row, open.has(row));
             });
         }
         const visible = titleHit || hits > 0;

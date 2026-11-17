@@ -172,7 +172,9 @@ picked column is outlined on the Tree and ringed on the Ring's and Births' file 
 `lview=split` link opens the Tree with the table. With the table's `group` (the lens preset) the route
 also sends the first-level `groups` that `/nway` builds over the same filtered rows (same
 `group_rows` call, so same ids, meta and LLM names) and `rows.group` (each matching row's
-deepest one); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
+deepest one; a tier or fold is a header only, never a row's group: what it holds outside its lanes keeps the
+module / "Other functions" group the table put it in, `CONTAINER_KINDS` in `routes/nway.py`, so no view paints
+"Core" beside its own lanes); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
 keys, and one lane-name cache keyed by content, so a lane is never named twice).
 **Merge files** on the lineage page: `columns=files`, `twins` (Same code) or `children` (Cluster, needs
 a `cluster_uuid` or a shared cluster; the same availability rule as the table's menu). `children` and
@@ -188,13 +190,15 @@ bsimvis/app/services/nway_lineage_service.py`.
 
 **Timeline (`lview=timeline`).** The Tree renderer over `order=time`: the server makes each node's parent the
 most similar node dated before it (`nway_lineage_service.time_order` / `time_parents`, ties: the latest, equal dates
-allowed), and a node under `TIME_FLOOR` (0.05) to every earlier one starts its own root, so the doc can be a forest
+allowed), scored on the N-way rows the two share (`row_similarity`, Jaccard), not on pair-edge counts: pair edges are
+many-to-many candidates and scored files sharing a handful of rows near 1, and a node under `TIME_FLOOR` (0.05) to every earlier one starts its own root, so the doc can be a forest
 (`buildModel` walks every root). `tfield` = `first_seen` (default), `last_seen` or `entry_date`, read off the live file
 metas in the route (`_lineage_times`, the cached doc has no dates; a node takes its earliest file, latest for
 `last_seen`); undated nodes rank last. Nodes get `t`, `rank` and `time_inversion` (a later file is more than
 `INVERSION_GAP` closer than the parent: the date is probably late; drawn as a warning). In `layout()`, `doc.order ===
 'time'` sets `n.d` to the date rank (one column per node, `T_GAP` apart), so reuse arcs, slots and anchors are the tree's;
-`timeLanes` puts a parent's first child in its lane and every other child or root in the free lane nearest it; `timeTicks`
+`timeLanes` puts a parent's first child in its lane when they share at least `LANE_KEEP` (0.5) of the bigger file
+(else it starts a lane of its own) and every other child or root in the free lane nearest it; `timeTicks`
 draws the date where the day changes, a dashed `+N` mark for gaps of `GAP_DAYS` (30) or more and an "undated" mark. Never
 auto-collapsed, never auto-chosen; `tfield` is stripped from table links.
 
@@ -202,15 +206,20 @@ auto-collapsed, never auto-chosen; `tfield` is stripped from table links.
 lineage canvas like the Ring (own `g`, own toolbar box, the left pane is its panel). A row is born in its holder with the
 lowest date rank (`model()`, not the tree's `bornIn`; undated nodes rank last; rows failing `rows.match` are left out);
 a birth is the rows born in one file, week or month (`bgrp`). Each Timeline lane (`n.lane`, split into its chains) is a
-stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom; a chain grows
-from its parent's date. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
+stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom. A chain that forks
+off another lane is fed by fork ribbons (`bl-fork`, always drawn): each layer its first file shares with its parent flows
+from the parent's band into the fork's, so inherited code (the big core lanes) visibly carries across forks. `bcol=lens` (default) splits every birth by the lens's groups and paints them in the group colour, so
+all groups show at every date with no selection (no lens chips in the toolbar, as the Ring; a tracked group keeps its layers lit, the rest fade);
+`bcol=birth` paints one layer per birth on an old-to-new ramp. Hovering a layer lights the same group (or birth)
+in every lane. Reuse ribbons (`reuse()`, dashed violet) join a file to its nearest earlier holder in another chain for
+code it holds that its parent lacks and that was not born in it (reuse, independent birth or matcher miss); at most
+`RIB_MAX` (400), biggest first, with a note on how many are left out. The lineage's Reuse layer switch (in view, as in
+Tree) shows or hides them (`g.bl-ribs`, `applyReuse`). A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
 the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
-`+N from X` (violet) where it shows up off its parent; the selection is a chip in the state bar, the left pane stays the
-group selector. A layer click tracks that group. **Layers** (toolbar, not in the URL, default Lanes): with no birth
-selected the streams are layered by the lens groups (tier order, zebra, tier guides), so a lane hovers, selects and
-fades (`fadeBy`, the selected group stays lit) with no birth picked; Births colours them by birth as before (a chip
-in the state bar while on).
-`bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
+`+N from X` (violet) where it shows up off its parent; the selection is a chip in the state bar, and the left pane stays the
+group selector (Births has no card of its own). A layer click tracks that group; a pane hover lights the group's layers,
+forks and ribbons (`births.hoverTrack`), a layer hover lights its lane in the pane (`ctx.onHover`).
+`bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` / `bcol` are
 stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
 
 **Panes (every view).** Left: a selector of the lens's groups, nothing else (`groupList` / `navRow` in

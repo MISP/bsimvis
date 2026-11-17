@@ -5,7 +5,7 @@
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
  * ring {nest, arc, min, list, tier, bundle}, onRing(state) | 'births': nway_births.js draws what is born when over the Timeline's lanes,
- * births {bucket, axis, sel}, onBirths(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
+ * births {bucket, axis, sel, color}, onBirths(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -40,6 +40,8 @@
     const DETAIL_K = 0.3, LABEL_K = 0.55, HATCH_K = 1.5;
     // timeline (doc.order 'time'): the gap between rank columns, a gap marker past GAP_DAYS, the date field's label
     const T_GAP = 160, T_TOP = 76, GAP_DAYS = 30, DAY = 864e5;
+    // a child continues its parent's timeline lane only when they share at least this share of the bigger file
+    const LANE_KEEP = 0.5;
     const TFIELDS = { first_seen: 'First seen', last_seen: 'Last seen', entry_date: 'Uploaded' };
     const isoDay = t => new Date(t).toISOString().slice(0, 10);
     const span = ms => { const d = Math.round(ms / DAY); return d < 60 ? `${d} d` : d < 730 ? `${Math.round(d / 30.4)} mo` : `${(d / 365).toFixed(1)} y`; };
@@ -614,12 +616,13 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     }
 
     // Timeline: the column is the node's date rank among the visible nodes (n.d), the lane a chain of files
-    // sharing code (n.lane): a parent's first child continues its lane, every other child (and every root)
-    // takes the free lane nearest its parent's, free over [column after the parent, end of its chain].
-    function timeLanes(vis, parentOf, fileOf) {
+    // sharing code (n.lane): a parent's first child that keeps most of the code (keeps(n)) continues its lane,
+    // every other child (and every root) takes the free lane nearest its parent's, free over [column after the
+    // parent, end of its chain].
+    function timeLanes(vis, parentOf, fileOf, keeps = () => true) {
         [...vis].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).forEach((n, i) => { n.d = i; });
         const first = new Map(), lanes = [];
-        for (const n of vis) { const p = parentOf.get(n.id); if (p && !first.has(p)) first.set(p, n); }
+        for (const n of vis) { const p = parentOf.get(n.id); if (p && !first.has(p) && keeps(n)) first.set(p, n); }
         const end = n => { while (first.has(n.id)) n = first.get(n.id); return n.d; };
         for (const n of vis) { // DFS order: a parent comes before its children
             const p = fileOf.get(parentOf.get(n.id));
@@ -655,7 +658,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const parentOf = new Map();
         for (const n of vis) { const e = inE.get(n.agg ? n.top : n.id); if (e) parentOf.set(n.id, rep.get(e.parent)); }
         const time = doc.order === 'time', G = time ? T_GAP : GAP, T0 = time ? T_TOP : 46;
-        const nLanes = time ? timeLanes(vis, parentOf, fileOf) : 0;
+        // the shared rows over the bigger of the two files: a lane holds files that keep most of each other's code
+        const keeps = n => { const e = inE.get(n.agg ? n.top : n.id), p = fileOf.get(parentOf.get(n.id)); return !!e && !!p && e.shared / Math.max(1, p.functions, n.functions) >= LANE_KEEP; };
+        const nLanes = time ? timeLanes(vis, parentOf, fileOf, keeps) : 0;
         const maxd = Math.max(...vis.map(n => n.d));
         // tree: a column's files stack; timeline: the lanes stack, each as tall as its biggest file
         const colSum = new Map();
@@ -973,7 +978,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         zbtn('+', 'Zoom in', () => s.transition().duration(200).call(zoom.scaleBy, 1.5));
         zbtn('Fit', 'Fit the whole chart', () => fit(true));
         // visible: the view picker (the page's), search, zoom (floating) and what the view needs most; the rest is behind "More"
-        const reuse = segSwitch('Reuse layer', 'Show or hide the reuse arcs', [[false, 'Off'], [true, 'On']], () => st.reuseOn, v => { st.reuseOn = v; applyReuse(); });
+        const reuse = segSwitch('Reuse layer', 'Show or hide the reuse arcs (Births: the reuse ribbons between lanes)', [[false, 'Off'], [true, 'On']], () => st.reuseOn, v => { st.reuseOn = v; applyReuse(); });
         const more = moreToggle(!!opts.moreOpen);
         // Lanes lens on the trees: a ribbon per lane, or one per tier and edge (Core, Common, Rare)
         const tierRib = segSwitch('Lane ribbons', 'Draw the groups as the left pane shows them (a closed tier is one band, an opened lane its sub-lanes), or every sub-group', [[true, 'As the pane'], [false, 'Every group']], () => st.tierBundle, v => { st.tierBundle = v; rebuild(); });
@@ -998,7 +1003,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const multiSeg = segSwitch('Show', 'One group on the tree, or the six biggest groups as small trees', [[false, 'One group'], [true, 'Small multiples']], () => st.multi, v => { st.multi = v; multiples(); syncBar(); });
         tb.append(multiSeg.el);
         const placeBar = () => {
-            multiSeg.el.style.display = st.view === 'tracks' ? 'inline-flex' : 'none'; multiSeg.paint(); (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' || st.view === 'births' ? 'none' : ''; };
+            multiSeg.el.style.display = st.view === 'tracks' ? 'inline-flex' : 'none'; multiSeg.paint(); (st.view === 'tree' || st.view === 'births' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' ? 'none' : ''; };
         placeBar();
         const deepAll = () => {
             const out = new Set();
@@ -1407,7 +1412,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (!it) return;
             let top = it;
             for (let p = it.parent; p; p = p.parent) { NAV.open.set(`k:${p.tk}`, true); top = p; }
-            if (top.tier !== undefined) NAV.open.set(`t:${top.tier || ''}`, true);
+            // a section open by default stays out of NAV.open (the state bar shows only what was changed)
+            if (top.tier && !secOpen(top.tier)) NAV.open.set(`t:${top.tier}`, true);
         }
         function navFocus(tk) {
             if (tk) revealItem(tk);
@@ -1685,6 +1691,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function applyReuse() {
             const d = st.reuseOn ? null : 'none';
             gArc.style('display', d); gStr.style('display', d);
+            gBirthG.selectAll('g.bl-ribs').style('display', d);
         }
         function applySel() {
             const sel = st.sel;
@@ -2189,7 +2196,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.births = window.NwayBirths.mount({
                     g: gBirthG.node(), controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); syncBar(); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
-                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
+                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, reuseOn: () => st.reuseOn, width: () => size().w, fit: () => fit(true),
                     tiers: { TIERS, KEYS: TIER_KEYS, rank: tierRank, fill: tierFill, css: tierCss, tip: c => tierTip(c, st.doc) },
                     onHover: c => graphHover(c), under: (c, t) => catUnder(c, t),
                     // what a set of files is made of: of node indexes, of a lens group
@@ -2290,8 +2297,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (st.births && st.view === 'births') {
                 const b = st.births.state();
                 if (b.sel) add('Birth', b.sel, () => st.births.clear('sel'));
-                if (b.rare) add('Rare lanes', 'open', () => st.births.clear('rare'));
-                if (b.layers === 'births') add('Births', 'coloured by birth', () => st.births.clear('layers'));
+                if (b.color === 'birth') add('Births', 'coloured by birth', () => st.births.clear('color'));
             }
             return c;
         }
@@ -2342,7 +2348,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.collapsed = new Set(st.collapsed0 || []);
                 closeDock();
                 if (st.ring) { if (st.ring.state.fc) st.ring.exitFocus(); st.ring.state.open.clear(); st.ring.state.shut.clear(); st.ring.state.sim.reset(); }
-                if (st.births) { const b = st.births.state(); if (b.rare) st.births.clear('rare'); if (b.sel) st.births.clear('sel'); }
+                if (st.births) { const b = st.births.state(); if (b.color === 'birth') st.births.clear('color'); if (b.sel) st.births.clear('sel'); }
                 rebuild();
                 setTrack('');
                 if (opts.onReset) opts.onReset();
@@ -2459,7 +2465,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table'); q.delete('bcol');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

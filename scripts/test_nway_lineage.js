@@ -135,6 +135,10 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.deepStrictEqual(TL.ticks.filter(k => k.gap).map(k => k.gap), ['+39 d', 'undated'], 'a gap mark past 30 days and before the undated files');
     assert.deepStrictEqual(TL.ticks.filter(k => k.label).map(k => k.label), ['2024-01-01', '2024-01-02', '2024-02-10', '2024-02-20']);
     assert.strictEqual(layout(doc(null), buildModel(doc(null), new Set())).ticks.length, 0, 'no marks on a tree');
+    // a child keeps its parent's lane only when they share at least half of the bigger file: C keeps 1 of 4, B 2 of 4
+    const td2 = { ...td, edges: [{ ...edge('A', 'C', 0.9), shared: 1 }, edge('A', 'B', 0.5), edge('C', 'D', 0.8)] };
+    const KL = layout(td2, buildModel(td2, new Set())), at2 = id => KL.fileOf.get(id);
+    assert.ok(at2('B').lane === at2('A').lane && at2('C').lane !== at2('A').lane, 'C forks off; B, which keeps most, continues the lane');
 }
 
 // --- births (lview=births): a row is born in its earliest dated holder, grouped by file, week or month ---
@@ -154,8 +158,17 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.deepStrictEqual(window.NwayBirths.share(BM, BM.list[0]), [0.75, 0.5, 0.75, 0.25], 'share of a birth each node holds');
     const BF = births([true, false, true, true, true, true], 'month');
     assert.deepStrictEqual([BF.birth[1], BF.list[0].rows], [-1, [0, 3, 4]], 'a row the filters drop is born nowhere');
-    const tqb = window.NwayLineage.tableQs('md5s=a&bgrp=week&baxis=cal&bsel=2024-01').toString();
-    assert.ok(!/b(grp|axis|sel)=/.test(tqb), 'table links drop the births keys');
+    // reuse: d holds a row its parent b lacks and was not born in; its nearest earlier holder c is in another chain
+    {
+        const d = dated(null);
+        d.rows.mask[3] = 'c';
+        const M2 = window.NwayBirths.model(d, rowModel(d, buildModel(d, new Set())), 'month'), par = [-1, 0, 0, 1];
+        assert.deepStrictEqual(window.NwayBirths.reuse(M2, i => par[i], i => (i === 2 ? 1 : 0)), [{ src: 2, dst: 3, rows: [3] }], 'from the nearest earlier holder, across chains');
+        assert.deepStrictEqual(window.NwayBirths.reuse(M2, i => par[i], () => 0), [], 'nothing inside one chain');
+        assert.deepStrictEqual(M2.holders[3], [2, 3], 'holders by date rank');
+    }
+    const tqb = window.NwayLineage.tableQs('md5s=a&bgrp=week&baxis=cal&bsel=2024-01&bcol=birth').toString();
+    assert.ok(!/b(grp|axis|sel|col)=/.test(tqb), 'table links drop the births keys');
 }
 
 // --- the Ring's Deltas lens: the server's delta lanes, coloured by their origin node; the trees keep the born-in cats ----
@@ -938,7 +951,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(/st\.layout !== 'tree' \|\| !!st\.root \|\| st\.rnest === '0' \|\| st\.rarc !== R\.ARC_DEFAULT \|\| st\.rlist === '1' \|\| st\.rtier === 'hide' \|\| st\.rbundle === '0'/.test(vv), 'a non-default advanced key opens More');
             assert.ok(/tb\.append\(trackBox, legendBox, ringBox, birthBox, more\.btn, more\.row\)/.test(lin) && /more\.row\.append\(\.\.\.\(opts\.more \|\| \[\]\),[\s\S]*'Collapse deep'[\s\S]*'Expand all'[\s\S]*'100%'[\s\S]*'Selection'/.test(lin), 'Collapse deep, Expand all, 100% and Selection stay reachable behind More');
             assert.ok(/zbtn\('−'/.test(lin) && /zbtn\('\+'/.test(lin) && /zbtn\('Fit'/.test(lin) && !/zbtn\('100%'/.test(lin), 'zoom in view: − + Fit');
-            assert.ok(/\(st\.view === 'tree' \? reuseSlot : more\.row\)\.append\(reuse\.el\)/.test(lin), 'Reuse layer: in view for Tree, behind More for Tracks and Split');
+            assert.ok(/\(st\.view === 'tree' \|\| st\.view === 'births' \? reuseSlot : more\.row\)\.append\(reuse\.el\)/.test(lin), 'Reuse layer: in view for Tree and Births, behind More for Tracks and Split');
             const lst = segs.find(e => e.attrs['aria-label'] === 'Module list');
             lst.children[1].ls.click[0]();
             assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');

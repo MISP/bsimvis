@@ -428,7 +428,7 @@ window.ClusterDetailView = {
             document.getElementById('cluster-detail').addEventListener('scroll', e => this.onDetailScroll(e), true);
 
             this.renderTree();
-            await this.selectNode(this.selectedClusterUuid);
+            await this.selectNode(this.selectedClusterUuid, true);
 
             if (window.TableSelection) new window.TableSelection('cluster-members-table');
             const urlTab = urlParams.get('tab');
@@ -635,7 +635,7 @@ window.ClusterDetailView = {
         nav.openPath(nav.buildUIUrl(window.getRoutingState().collection || '', segs) + (qs ? '?' + qs : ''), event);
     },
 
-    async selectNode(uuid) {
+    async selectNode(uuid, replace = false) {
         // Re-center the tree window on the newly selected node -- unless the
         // caller (init) already loaded a slice centered here.
         if (this._sliceCenteredOn !== uuid) {
@@ -649,12 +649,17 @@ window.ClusterDetailView = {
         this.renderTree();
         this.setBreadcrumb(c);
 
-        // Update URL to reflect selected cluster without reloading
+        // The uuid lives in the path (`.../clusters/<uuid>`), the one the router reads on
+        // reload / Back. Switching cluster in place pushes, so Back returns to the previous one.
         const urlParams = new URLSearchParams(window.location.search);
-        urlParams.set(this.isBinary ? 'bin_cluster_uuid' : 'cluster_uuid', uuid);
+        urlParams.delete('cluster_uuid');
+        urlParams.delete('bin_cluster_uuid');
         if (this.isBinary) urlParams.set('axis', this.axis);
-        const newUrl = window.location.pathname + '?' + urlParams.toString();
-        window.history.replaceState({path: newUrl}, '', newUrl);
+        const parts = window.location.pathname.replace(/\/+$/, '').split('/');
+        const moved = decodeURIComponent(parts[parts.length - 1]) !== uuid;
+        parts[parts.length - 1] = encodeURIComponent(uuid);
+        const newUrl = parts.join('/') + '?' + urlParams.toString();
+        window.history[moved && !replace ? 'pushState' : 'replaceState']({ path: newUrl }, '', newUrl);
 
         // Render header immediately
         document.getElementById('cluster-header').innerHTML = this.renderHeader(c);

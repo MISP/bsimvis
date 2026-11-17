@@ -76,6 +76,26 @@ def similarity_matrix(columns, edges_by_pair, min_edge):
     return w
 
 
+def row_similarity(columns, rows):
+    """File-pair similarity from the N-way rows: rows both hold / rows either holds.
+
+    The time order picks parents with it: the rows are what the lineage draws
+    (one function per file per row), while pair edges hold many-to-many
+    candidates, so two files sharing a handful of rows could score near 1.
+    """
+    pos = {c["id"]: i for i, c in enumerate(columns)}
+    masks = Counter()
+    for row in rows:
+        masks[tuple(sorted(pos[f] for f in row["cells"] if f in pos))] += 1
+    S = np.zeros((len(columns), len(columns)))
+    for idx, k in masks.items():
+        if idx:
+            S[np.ix_(idx, idx)] += k
+    d = np.diag(S)
+    U = d[:, None] + d[None, :] - S
+    return np.where(U > 0, S / np.where(U > 0, U, 1), 0.0)
+
+
 def spanning_tree(w, root):
     """Maximum spanning tree (Prim) rooted at index `root`: [(parent, child)]."""
     n = len(w)
@@ -233,8 +253,11 @@ def _components(keys, tedges):
     return list(comps.values())
 
 
-def tree(columns, edges_by_pair, min_edge, root=None, order="tree"):
-    """-> (similarity matrix, root index, [(parent index, child index)]) of `build`."""
+def tree(columns, edges_by_pair, min_edge, root=None, order="tree", rows=None):
+    """-> (similarity matrix, root index, [(parent index, child index)]) of `build`.
+
+    order=time with `rows` scores pairs by the rows they share (row_similarity).
+    """
     if order not in ORDERS:
         raise BadParams(f"order must be one of {', '.join(ORDERS)}")
     ids = [c["id"] for c in columns]
@@ -244,7 +267,10 @@ def tree(columns, edges_by_pair, min_edge, root=None, order="tree"):
         raise BadParams("need at least two files")
     if order == "chain" and len(ids) > CHAIN_MAX:
         raise BadParams(f"order=chain handles at most {CHAIN_MAX} files")
-    w = similarity_matrix(columns, edges_by_pair, min_edge)
+    if order == "time" and rows is not None:
+        w = row_similarity(columns, rows)
+    else:
+        w = similarity_matrix(columns, edges_by_pair, min_edge)
     if order == "time":  # the earliest file is the root; `root` does not apply
         rank = time_order(columns)
         return w, rank[0], time_parents(w, rank)
@@ -361,7 +387,7 @@ def build(
     name or None. Returns {order, root, nodes, edges}.
     """
     ids = [c["id"] for c in columns]
-    w, r, pairs = tree(columns, edges_by_pair, min_edge, root, order)
+    w, r, pairs = tree(columns, edges_by_pair, min_edge, root, order, rows)
 
     # one pass over the rows: per edge, shared rows and the lost / gained functions
     adj = {}
@@ -847,10 +873,49 @@ def demo():
     assert {(x["parent"], x["child"]) for x in tm["edges"]} == {
         ("A", "C"),
         ("A", "B"),
-        ("C", "D"),
+        (
+            "A",
+            "D",
+        ),  # by the rows A holds 2 of D's 3 (0.40), C only 2 of its union 7 (0.29)
     }, tm["edges"]
     assert all(tn[x["parent"]]["rank"] < tn[x["child"]]["rank"] for x in tm["edges"])
-    assert [tn[i]["time_inversion"] for i in "ABCD"] == [False, False, True, False]
+    assert not any(tn[i]["time_inversion"] for i in "ABCD")
+    # time parents come from the rows, not pair-edge counts: P-R has many-to-many candidates
+    # (every R function against every P one, so the edge score saturates) but shares one row,
+    # Q-R share 8: R hangs off Q
+    pq = [
+        {"id": i, "file_name": i, "functions": 10, "t": t}
+        for i, t in (("P", 1), ("Q", 2), ("R", 3))
+    ]
+    prow = (
+        [{"cells": {"P": "p0", "R": "r0"}}, {"cells": {"P": "p1", "Q": "qq"}}]
+        + [{"cells": {"Q": f"q{k}", "R": f"r{k + 1}"}} for k in range(8)]
+        + [{"cells": {"P": f"p{k}"}} for k in range(2, 10)]
+        + [{"cells": {"Q": "q8"}}, {"cells": {"R": "r9"}}]
+    )
+    pe = {
+        ("P", "R"): [(f"p{i}", f"r{j}", 0.9) for i in range(10) for j in range(10)],
+        ("Q", "R"): [(f"q{k}", f"r{k + 1}", 0.9) for k in range(8)],
+        ("P", "Q"): [("p1", "qq", 0.9)],
+    }
+    old = similarity_matrix(pq, pe, 0.5)
+    assert old[0, 2] > old[1, 2]  # the edge count would have picked P
+    pt = build(pq, prow, pe, 0.5, names.get, order="time")
+    assert {(x["parent"], x["child"]) for x in pt["edges"]} == {("P", "Q"), ("Q", "R")}
+    check_invariants(pt)
+    # Z is far closer to the later Y than to its only earlier file X: its date is likely late
+    xz = [
+        {"id": i, "file_name": i, "functions": 6, "t": t}
+        for i, t in (("X", 1), ("Z", 2), ("Y", 3))
+    ]
+    xr = (
+        [{"cells": {"X": "x0", "Z": "z0"}}]
+        + [{"cells": {"Z": f"z{k}", "Y": f"y{k}"}} for k in range(1, 6)]
+        + [{"cells": {"X": f"x{k}"}} for k in range(1, 6)]
+        + [{"cells": {"Y": "y6"}}]
+    )
+    xt = {x["id"]: x for x in build(xz, xr, {}, 0.5, names.get, order="time")["nodes"]}
+    assert [xt[i]["time_inversion"] for i in "XZY"] == [False, True, False]
     assert (tn["E"]["rank"], tn["E"]["depth"], tn["E"]["t"]) == (4, 0, None)
     check_invariants(tm)
     # C keeps 2 functions in B and D, 1 in B only, and 3 in no child

@@ -331,11 +331,9 @@
                 const ln = laneOf(v), isBirth = !!fc && fc.nodes.includes(v.idx), par = L.fileOf.get(L.parentOf.get(v.id));
                 g.append('circle').attr('cx', X(v)).attr('cy', ln.bot + 7).attr('r', isBirth ? 4.5 : 3).style('fill', isBirth ? 'var(--lin-born)' : 'var(--lin-grey)').style('cursor', 'pointer')
                     .on('mousemove', ev => ctx.showTip(ev, ctx.name(v.id), 'var(--lin-grey)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Parent', par ? ctx.name(par.id) : 'none (a root)'], ['Functions', fmt(tot(v))], ['Born here', fmt(M.bornIn[v.idx].length)],
-                        ...(v.t_swapped ? [['⇄ Swapped', `date of ${ctx.name(v.t_swapped)}, in this view only`]] : []), ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late. Click the ⚠ to swap it with the closer file']] : []), ['Click', 'select what was born here']]))
+                        ...(v.t_swapped ? [['⇄ Swapped', `date of ${ctx.name(v.t_swapped)}, in this view only`]] : []), ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late (the ⚠ ⇄ button under the dot swaps it with the closer file)']] : []), ['Click', 'select what was born here']]))
                     .on('mouseleave', ctx.hideTip)
                     .on('click', () => { ctx.hideTip(); const c = M.byKey.get(M.keyOf[v.idx]); if (c && c.rows.length) select(c); });
-                if (v.time_inversion) g.append('text').attr('x', X(v) + 6).attr('y', ln.bot + 11).attr('font-size', 11).style('fill', 'var(--lin-died)').style('cursor', 'pointer').text('⚠')
-                    .on('click', ev => { ev.stopPropagation(); ctx.hideTip(); if (ctx.inspect) ctx.inspect(v); });
             }
 
             // the selection: "+N" where it is born, "+N from X" where it shows up off its parent (reuse, independent birth or matcher miss)
@@ -392,6 +390,10 @@
                 if (inF || (k >= 5 && k >= cap * 0.25)) bg.append('text').attr('class', 'lin-halo').attr('x', x).attr('y', sBase - hOf(k) - 4).attr('text-anchor', 'middle').attr('font-size', 11).attr('font-weight', inF ? 650 : 400).style('fill', 'var(--text)').text(fmt(k));
             });
             g.append('line').attr('x1', x0 - 8).attr('x2', xEnd + 8).attr('y1', sBase).attr('y2', sBase).style('stroke', 'var(--lin-grey)').attr('vector-effect', 'non-scaling-stroke');
+            // the timeline-break buttons last, over every ribbon and mark
+            const gBtn = g.append('g').node();
+            if (ctx.swapBtn) for (const v of vis) ctx.swapBtn(gBtn, v, X(v) - 17, laneOf(v).bot + 12);
+            if (ctx.swapArrows) ctx.swapArrows(gBtn, id => { const v = vis.find(x => x.id === id); return v ? [X(v), laneOf(v).bot + 4] : null; });
             frame = { x0: 0, y0: 0, x1: xEnd + B.MR, y1: sBase + 30, vis, X };
             syncControls();
         }

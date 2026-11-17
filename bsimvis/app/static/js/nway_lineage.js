@@ -187,6 +187,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-scale b{position:absolute;top:-4px;width:2px;height:14px;background:var(--text,#f8f8f2);transform:translateX(-1px)}.lin-scale-l{display:grid;grid-template-columns:50% 40% 10%;font-size:10.5px;opacity:.72;white-space:nowrap}
 .lin-canvas svg text{font-family:inherit}
 .lin-halo{paint-order:stroke;stroke:var(--lin-halo);stroke-width:3.5px;stroke-linejoin:round}
+.lin-swapb{cursor:pointer;outline:none}.lin-swapb rect{fill:var(--lin-card);stroke:var(--lin-died);stroke-width:1.5px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}.lin-swapb text{fill:var(--lin-died);font-weight:650;pointer-events:none}.lin-swapb:hover rect,.lin-swapb:focus-visible rect{fill:var(--lin-died)}.lin-swapb:hover text,.lin-swapb:focus-visible text{fill:var(--lin-card)}.lin-swapb:focus-visible rect{stroke:var(--text,#f8f8f2)}
 .lin-canvas ::-webkit-scrollbar{width:10px;height:10px}
 .lin-drawer{scrollbar-width:thin;scrollbar-color:var(--lin-grey-d) transparent}
 .lin-root{display:flex;flex-direction:column;height:100%;min-height:0}
@@ -932,7 +933,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
         const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none'), gBirthG = world.append('g').style('display', 'none');
-        const gAx = gTree.append('g').style('pointer-events', 'none'), gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
+        const gAx = gTree.append('g').style('pointer-events', 'none'), gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none'), gBtn = gTree.append('g');
         // a table row clicked: its holders outlined (Tree) or ringed (Ring, Births) until another one; null clears
         let gPick = null;
         function markRowFiles(row) {
@@ -1602,7 +1603,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function drawStatic() {
             const L = st.L;
             // a relayout starts from an empty scene: joins would keep the old boxes and arcs
-            for (const g of [defs, gAx, gRib, gArc, gNode, gStr, gLib, gDet, gOv, gLab, gHov]) g.selectAll('*').remove();
+            for (const g of [defs, gAx, gRib, gArc, gNode, gStr, gLib, gDet, gOv, gLab, gHov, gBtn]) g.selectAll('*').remove();
             st.zc = new Map();
             syncFocus();
             // timeline marks: dates, gaps (dashed, full height) and a warning where a later file is closer than the parent
@@ -1612,7 +1613,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     gAx.append('text').attr('class', 'lin-halo').attr('x', k.x).attr('y', 16).attr('text-anchor', 'middle').attr('font-size', 11.5).style('fill', 'var(--lin-grey)').text(k.gap);
                 } else gAx.append('text').attr('class', 'lin-halo').attr('x', k.x).attr('y', 36).attr('font-size', 11.5).style('fill', 'var(--text)').style('opacity', 0.8).text(k.label);
             }
-            for (const n of L.ticks.length ? L.vis : []) if (n.time_inversion) gAx.append('text').attr('x', n.x1 + 4).attr('y', n.y0 + 11).attr('font-size', 12).style('fill', V.died).text('⚠');
+            for (const n of L.ticks.length ? L.vis : []) swapBtn(gBtn, n, n.x1 + 4, n.y0);
+            if (L.ticks.length) swapArrows(gBtn, id => { const n = L.vis.find(x => x.id === id); return n ? [(n.x0 + n.x1) / 2, n.y0 - 2] : null; });
             for (const [k, c] of [['born', V.born]]) {
                 const p = defs.append('pattern').attr('id', `hatch-${k}-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
                 p.append('rect').attr('width', 6).attr('height', 6).style('fill', c).attr('fill-opacity', 0.22);
@@ -2042,6 +2044,36 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const timeRows = n => (st.doc.order !== 'time' ? [] : [[TFIELDS[st.doc.tfield] || 'Date', n.t == null ? 'undated' : isoDay(n.t)],
             ...(n.t_swapped ? [['⇄ Swapped', `date of ${name(n.t_swapped)}, in this view only`]] : []),
             ...(n.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date may be late'], ...(n.time_closer ? [['Closer, later', name(n.time_closer)]] : [])] : [])]);
+        // the timeline-break button: swaps the node's date with the closer later node's (view only); a swapped node gets Undo
+        function swapBtn(parent, n, x, y) {
+            const other = n.t_swapped || (n.time_inversion && n.time_closer);
+            if (!other) return;
+            if (!opts.onSwapDates) { parent.append('text').attr('x', x).attr('y', y + 11).attr('font-size', 12).style('fill', V.died).text('⚠'); return; }
+            // compact: it fits the 40 px between Timeline columns; the tooltip and aria-label say it in full
+            const undo = !!n.t_swapped, label = undo ? '↺ ⇄' : '⚠ ⇄', w = 34;
+            const b = parent.append('g').attr('class', 'lin-swapb').attr('transform', `translate(${x},${y})`).attr('role', 'button').attr('tabindex', 0)
+                .attr('aria-label', undo ? `Undo the date swap of ${name(n.id)} and ${name(other)}` : `Swap the dates of ${name(n.id)} and ${name(other)}`);
+            b.append('rect').attr('width', w).attr('height', 18).attr('rx', 9);
+            b.append('text').attr('x', w / 2).attr('y', 12.5).attr('text-anchor', 'middle').attr('font-size', 11).text(label);
+            const go = ev => { ev.stopPropagation(); hideTip(); opts.onSwapDates(n.id, other); };
+            b.on('click', go).on('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(ev); } })
+                .on('mousemove', ev => showTip(ev, undo ? 'Undo the date swap' : 'Timeline break', V.died, undo
+                    ? [['Swapped with', name(other)], ['Click', 'give both files their own dates back']]
+                    : [['⚠ Date', 'a later file is closer than its parent: this date may be late'], ['Closer, later', name(other)], ['Click', "swap the two dates in this view (stored dates are not changed)"]]))
+                .on('mouseleave', hideTip);
+        }
+        // the swapped pairs (doc.tswap): a dashed arc with a head at each end between the two, `at(id)` = [x, y] or null
+        function swapArrows(parent, at) {
+            for (const [a, b] of (st.doc && st.doc.tswap) || []) {
+                const p = at(a), q = at(b);
+                if (!p || !q) continue;
+                const [x1, y1] = p[0] <= q[0] ? p : q, [x2, y2] = p[0] <= q[0] ? q : p, h = Math.min(90, 24 + Math.abs(x2 - x1) * 0.25), top = Math.min(y1, y2) - h;
+                const gA = parent.append('g').style('pointer-events', 'none');
+                gA.append('path').attr('d', `M${x1},${y1 - 6}C${x1},${top} ${x2},${top} ${x2},${y2 - 6}`).attr('fill', 'none').style('stroke', V.died).attr('stroke-width', 1.8).attr('stroke-dasharray', '6 3').attr('vector-effect', 'non-scaling-stroke');
+                for (const [x, y] of [[x1, y1], [x2, y2]]) gA.append('path').attr('d', `M${x - 4.5},${y - 8}L${x + 4.5},${y - 8}L${x},${y}Z`).style('fill', V.died);
+                gA.append('text').attr('class', 'lin-halo').attr('x', (x1 + x2) / 2).attr('y', top + h * 0.25 - 4).attr('text-anchor', 'middle').attr('font-size', 11).attr('font-weight', 650).style('fill', V.died).text('dates swapped');
+            }
+        }
         const edgeTime = e => { const p = st.M.byId.get(e.parent), c = st.M.byId.get(e.child); return st.doc.order === 'time' && p && c && p.t != null && c.t != null ? [['After the parent', span(c.t - p.t)]] : []; };
         const edgeRows = e => [['Born', fmt(e.gained)], ['Died', fmt(e.lost)], ['Shared', fmt(e.shared)], ['Recall suspect', fmt(e.recall_suspect)], ...edgeTime(e)];
         function hoverRib(ev, l) {
@@ -2207,7 +2239,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     onHover: c => graphHover(c), under: (c, t) => catUnder(c, t),
                     // what a set of files is made of: of node indexes, of a lens group
                     meta: (idx, what) => fileMetaHtml(st.doc, filesOfNodes(st.doc, idx), what), catMeta: c => catMeta(c),
-                    inspect: v => pick({ node: v }),
+                    swapBtn: (parent, v, x, y) => swapBtn(d3.select(parent), v, x, y), swapArrows: (parent, at) => swapArrows(d3.select(parent), at),
                 });
             }
             st.births.draw();

@@ -128,6 +128,11 @@
 [similarity]
     top_k = 1000
     min_score = 0.9
+    # A batch build_sim with at least shard_min_functions unbuilt functions splits
+    # into build_shards parallel jobs (same result, ~8x faster on idle workers).
+    # 0 or 1 = always one serial job.
+    build_shards = 8
+    shard_min_functions = 5000
     # min_features: BSim floor. Functions below it match by exact FunctionID hash
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10

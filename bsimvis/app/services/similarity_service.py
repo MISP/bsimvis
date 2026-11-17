@@ -32,6 +32,19 @@ def assert_buildable_algo(algo):
     )
 
 
+def in_shard(fid, shard, shards):
+    """Whether `fid` belongs to slice `shard` of `shards`.
+
+    A stable hash, not a list position: shards computed from lists taken a few
+    seconds apart (the built set moves meanwhile) must still cover every id
+    exactly once. Slicing by position skipped ~29% of a 49k batch.
+    """
+    import zlib
+
+    fid = fid.decode() if isinstance(fid, bytes) else fid
+    return zlib.crc32(fid.encode()) % shards == shard
+
+
 class SimilarityService:
     def __init__(self, r=None):
         if r:
@@ -147,9 +160,13 @@ class SimilarityService:
         skip_write=False,
         force=False,
         _generation_retry=True,
+        shard=None,
+        shards=None,
     ):
         """
         Builds similarities for all functions in a batch or for a specific file.
+        `shard`/`shards` restrict a batch build to one slice (`in_shard`), so a
+        big batch can run as parallel jobs (see the worker's BUILD_SIM planner).
         Uses chunked pipelining for O(N/100) performance and throttling.
         """
         self._reset_read_caches()
@@ -208,6 +225,9 @@ class SimilarityService:
             # function's candidates (idempotent for already-correct pairs).
             r.delete(f"{collection}:built:functions:{algo}")
             function_ids = list(r.smembers(f"{collection}:indexed:functions"))
+
+        if shards:
+            function_ids = [f for f in function_ids if in_shard(f, shard, shards)]
 
         if force and function_ids:
             unmark_targets(function_ids)
@@ -329,6 +349,8 @@ class SimilarityService:
                     skip_write=skip_write,
                     force=True,
                     _generation_retry=False,
+                    shard=shard,
+                    shards=shards,
                 )
             return False
 

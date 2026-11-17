@@ -1345,6 +1345,16 @@ class JobService:
     # Task splicing
     # ------------------------------------------------------------------
 
+    def splice_group(self, parent_id, after_id, tasks):
+        """Inserts a parallel group of `tasks` into a pipeline after `after_id`.
+
+        The group starts when the pipeline reaches it -- right after `after_id`
+        completes -- and the pipeline moves on once every task in it is done.
+        """
+        group_id = self.create_group(tasks, parent_id=parent_id, enqueue=False)
+        self.splice_tasks(parent_id, after_id, [group_id])
+        return group_id
+
     def splice_tasks(self, parent_id, after_id, new_tids, retries=10):
         """Inserts task ids into a parent's task_ids after `after_id`, atomically.
 

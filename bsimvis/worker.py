@@ -456,6 +456,44 @@ class Worker:
                 self.job_service.add_log(job_id, perf_summary)
                 logging.info(f"[#] Job {job_id} {perf_summary}")
 
+    def _plan_build_shards(self, job_id, payload, collection, batch_uuid, md5, algo):
+        """Splits a big batch build into parallel BUILD_SIM jobs; True if it did.
+
+        One build_sim is serial (~2-5 fn/s), so a 49k-function batch held the
+        collection lane for hours while most workers sat idle. Above
+        `similarity.shard_min_functions` unbuilt functions the job splices a
+        group of `similarity.build_shards` shard jobs after itself; each builds
+        one `in_shard` slice through the same build_batch, so the result is the
+        same as one serial build (checked on 360 functions / 31k sims).
+        """
+        shards = int(config_service.get("similarity.build_shards", 8) or 0)
+        if shards < 2 or "shard" in payload or not batch_uuid or md5:
+            return False
+        if payload.get("address") or payload.get("force") or payload.get("skip_write"):
+            return False
+        r = self.job_service.r
+        parent = r.hget(f"job:{job_id}", "parent_id")
+        if not parent or r.hget(f"job:{parent}", "type") != "pipeline":
+            return False
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        built_key = (
+            f"{collection}:built:functions:{resolve_collection_algo(collection, algo)}"
+        )
+        ids = list(self.r_data.smembers(f"{collection}:batch:{batch_uuid}:functions"))
+        unbuilt = len(self.similarity_service._unbuilt(built_key, ids))
+        if unbuilt < int(config_service.get("similarity.shard_min_functions", 5000)):
+            return False
+        tasks = [
+            (JobType.BUILD_SIM.value, {**payload, "shard": k, "shards": shards})
+            for k in range(shards)
+        ]
+        self.job_service.splice_group(parent, job_id, tasks)
+        msg = f"{unbuilt} functions to build: split into {shards} parallel jobs."
+        self.job_service.add_log(job_id, msg)
+        logging.info(f"[*] build_sim {job_id}: {msg}")
+        return True
+
     def _run_ghidra_out_of_process(self, job_id, payload):
         """Runs one Ghidra analysis in a child process, with retries.
 
@@ -702,6 +740,10 @@ class Worker:
                     index_depth=index_depth,
                     force=payload.get("force", False),
                 )
+            if self._plan_build_shards(
+                job_id, payload, collection, batch_uuid, md5, algo
+            ):
+                return True
             return self.similarity_service.build_batch(
                 collection,
                 batch_uuid=batch_uuid,
@@ -715,6 +757,8 @@ class Worker:
                 index_depth=index_depth,
                 skip_write=payload.get("skip_write", False),  # ponytail
                 force=payload.get("force", False),
+                shard=payload.get("shard"),
+                shards=payload.get("shards"),
             )
 
         elif jtype == JobType.INDEX_SIM.value:

@@ -213,7 +213,13 @@ stripped from table and API links. The model is checked in `scripts/test_nway_li
 **Panes (every view).** Left: a selector of the lens's groups, nothing else (`groupList` / `navRow` in
 `nway_lineage.js`): a search, Core / Common / Rare sections (tiered lens) with Collapse / Expand all, one row per group
 (swatch, name, holders, presence squares, count) and its sub-groups under a chevron. A click selects the group (`NAV.focus`,
-also the track) and opens it in the Inspector; a second click or Esc unselects. No cards, tabs or function lists here: a
+also the track) and opens it in the Inspector; a second click or Esc unselects. A group key covers its sub-groups
+(`catUnder`: a lane lights its regions). Cohesion: a pane row hover lights the group in the Tree (`focusHover`), Ring
+(`ring.hoverTrack`) and Births (`births.hoverTrack`); a group hovered there lights its pane rows (`paneHl`, via
+`ctx.onHover`). A group selected on the page goes to the table with `NwayPanel.focusTrack` (rows brought in, scrolled,
+pulsed); one tracked in the table selects its pane row (revealed, scrolled) and opens the Inspector. A table row click
+(`onRowPick` -> `markRow`) marks its files on the chart until another row or Esc; a function picked on the chart
+scrolls the table to its row (`onFn` -> `NwayPanel.showFn`, loaded rows only). No cards, tabs or function lists here: a
 view never adds its own card (Births has none; Tracks' One group / Small multiples is a toolbar switch). Right: the Inspector (`inspHead`, docked in `.lin-body`,
 never over the canvas): the selected group (`inspGroup`: tier, numbers, what its files are made of, its files, its
 functions as one table, `fnTr`: the app's `showCodePreview` on hover and `showGraphContextMenu` on the kebab or right

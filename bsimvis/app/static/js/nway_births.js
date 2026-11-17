@@ -70,7 +70,7 @@
         const o = { bucket: BUCKETS.includes(ctx.opts.bucket) ? ctx.opts.bucket : 'month', axis: ctx.opts.axis === 'cal' ? 'cal' : 'rank', sel: ctx.opts.sel || '' };
         // ctx.tiers: the Lanes lens tiers (TIERS, KEYS, rank(cat), fill(defs, cache, color, tier), css(color, tier), tip(cat))
         const T = ctx.tiers;
-        let M = null, frame = null, lanes = [], rareOpen = false;
+        let M = null, frame = null, lanes = [], rareOpen = false, catAt = () => null;
         const dotPos = new Map(); // node index -> its file dot, for the page's highlight
         const emit = () => ctx.onOpt({ ...o });
         const getModel = () => {
@@ -183,6 +183,7 @@
             const order = fc ? ['<', ...mods.map(m => `m:${m.key}`), '>'] : M.list.map(c => c.key);
             const paint = k => (!fc ? cohortColor(M.byKey.get(k)) : k === '<' || k === '>' ? 'var(--lin-slate)' : fillOf(modBy.get(k.slice(2)).cat));
             const catOf = k => (fc && k.startsWith('m:') ? modBy.get(k.slice(2)).cat : null);
+            catAt = catOf;
             const counts = new Map(vis.map(v => { const c = {}; for (const r of M.heldM[v.idx]) { const k = keyOf(r); c[k] = (c[k] || 0) + 1; } return [v.id, c]; }));
             const titleOf = k => (!fc ? M.byKey.get(k).long : k === '<' ? `Born before ${fc.label}` : k === '>' ? `Born after ${fc.label}` : modBy.get(k.slice(2)).cat.label);
 
@@ -206,7 +207,7 @@
                     for (const v of ch) { const c = counts.get(v.id); pts.push({ x: X(v) - hw, c, v }, { x: X(v) + hw, c, v }); }
                     const keys = order.filter(k => ch.some(v => counts.get(v.id)[k]));
                     const series = d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts);
-                    g.append('g').selectAll('path').data(series).join('path')
+                    g.append('g').selectAll('path').data(series).join('path').attr('class', 'lin-layer')
                         .attr('d', area(ln)).style('fill', s => paint(s.key)).attr('fill-opacity', s => (s.key === '>' ? 0.4 : 1))
                         .style('stroke', 'var(--lin-card)').attr('stroke-width', 0.6).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
                         .on('mousemove', (ev, s) => {
@@ -216,10 +217,11 @@
                             const k = counts.get(v.id)[s.key] || 0, cat = catOf(s.key), tt = cat && !cat.folded ? T.tip(cat) : null;
                             // a lane says its tier (badge, its files, the cuts); the folded Rare layer its tier only
                             const dot = tt ? tt.badge : cat && cat.tier ? { glyph: T.TIERS[cat.tier][0], tag: T.TIERS[cat.tier][1], color: T.TIERS[cat.tier][2] } : cat ? cat.color : paint(s.key);
+                            if (ctx.onHover) ctx.onHover(cat && !cat.folded ? cat : null);
                             ctx.showTip(ev, titleOf(s.key), dot, [['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
                                 ['Click', !fc ? 'select this birth' : cat && cat.folded ? 'open the Rare lanes' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']], (tt ? tt.html : '') + (cat && !cat.folded ? ctx.catMeta(cat) : ''));
                         })
-                        .on('mouseleave', ctx.hideTip)
+                        .on('mouseleave', () => { ctx.hideTip(); if (ctx.onHover) ctx.onHover(null); })
                         .on('click', (ev, s) => {
                             ctx.hideTip();
                             if (!fc) return select(M.byKey.get(s.key));
@@ -332,6 +334,8 @@
             draw,
             box: () => frame,
             dotAt: i => dotPos.get(i) || null,
+            // the page's pane hovers a group: with a birth selected, every other lens layer fades (null: none fades)
+            hoverTrack(test) { g.selectAll('path.lin-layer').style('opacity', function (d) { if (!test) return null; const c = d && catAt(d.key); return c && test(c) ? null : 0.15; }); },
             // for the page's state bar: the selected birth and the opened Rare lanes, and closing either
             state: () => ({ sel: current() ? current().label : '', rare: rareOpen }),
             clear(k) { if (k === 'rare') { rareOpen = false; draw(); } else select(null); },

@@ -236,7 +236,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-nsl{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .lin-nsb{height:5px;border-radius:3px;background:var(--lin-line);overflow:hidden;min-width:24px}.lin-nsb i{display:block;height:100%}
 .lin-nr{display:grid;grid-template-columns:16px 12px minmax(0,1fr) auto 40px;gap:7px;align-items:center;width:100%;border:0;border-left:3px solid transparent;background:none;color:inherit;font:inherit;padding:5px 10px;cursor:pointer;text-align:left}
-.lin-nr:hover{background:var(--hover,#2d2d2d)}.lin-nr.on{border-left-color:var(--accent,#66d9ef);background:color-mix(in oklab,var(--accent,#66d9ef) 12%,transparent)}
+.lin-nr:hover,.lin-nr.hl{background:var(--hover,#2d2d2d)}.lin-nr.hl{box-shadow:inset 3px 0 color-mix(in oklab,var(--accent,#66d9ef) 55%,transparent)}.lin-nr.on{border-left-color:var(--accent,#66d9ef);background:color-mix(in oklab,var(--accent,#66d9ef) 12%,transparent)}
 .lin-nt{min-width:0;display:grid}.lin-nn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.lin-ns{font-size:11px;opacity:.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lin-nc{font-size:12px;opacity:.7;text-align:right;font-variant-numeric:tabular-nums}
 .lin-nk{border:0;background:none;color:inherit;padding:0;width:16px;height:16px;cursor:pointer;opacity:.6;font-size:10px}.lin-nk:disabled{visibility:hidden}.lin-nk:hover{opacity:1}
@@ -934,6 +934,22 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const defs = s.append('defs');
         const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none'), gBirthG = world.append('g').style('display', 'none');
         const gAx = gTree.append('g').style('pointer-events', 'none'), gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
+        // a table row clicked: its holders outlined (Tree) or ringed (Ring, Births) until another one; null clears
+        let gPick = null;
+        function markRowFiles(row) {
+            if (!gPick) gPick = gTree.append('g').style('pointer-events', 'none');
+            gPick.selectAll('*').remove();
+            gMark.selectAll('.pick').remove();
+            if (!row || !st.L || !st.R) return;
+            const ids = new Set();
+            for (const cells of [row.cells, row.files]) for (const [k, v] of Object.entries(cells || {})) if (v && (typeof v === 'string' || v.present)) ids.add(st.R.nodeOf.get(k));
+            const nodes = [...ids].map(id => id && st.M.byId.get(id)).filter(Boolean);
+            markFiles(nodes.map(n => n.idx), 'pick');
+            for (const id of ids) {
+                const n = id && st.L.fileOf.get(st.M.rep.get(id));
+                if (n) gPick.append('rect').attr('x', n.x0 - 4).attr('y', n.y0 - 4).attr('width', NODE_W + 8).attr('height', n.h + 8).attr('rx', 7).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 2).attr('stroke-dasharray', '5 3').attr('vector-effect', 'non-scaling-stroke');
+            }
+        }
         // a table row hovered or a column picked while the Ring or Births is drawn: a ring around the file's dot
         const gMark = world.append('g').style('pointer-events', 'none');
         function markFiles(idxs, cls) {
@@ -942,7 +958,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const at = i => (fr ? fr.pos[i] : st.view === 'births' && st.births && st.births.dotAt ? st.births.dotAt(i) : null);
             for (const i of idxs) {
                 const p = at(i);
-                if (p) gMark.append('circle').attr('class', cls).attr('cx', p[0]).attr('cy', p[1]).attr('r', cls === 'hov' ? 11 : 14).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', cls === 'hov' ? 3 : 2).attr('stroke-dasharray', cls === 'hov' ? null : '4 3').attr('vector-effect', 'non-scaling-stroke');
+                if (p) gMark.append('circle').attr('class', cls).attr('cx', p[0]).attr('cy', p[1]).attr('r', cls === 'hov' ? 11 : cls === 'pick' ? 17 : 14).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', cls === 'hov' ? 3 : 2).attr('stroke-dasharray', cls === 'hov' ? null : '4 3').attr('vector-effect', 'non-scaling-stroke');
             }
         }
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
@@ -1075,9 +1091,18 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const md5Of = id => String(id).split(':').pop();
         // st.fk: the lens group whose lineage is lit, a hovered one first, else the tracked one (null: none)
         // a tier bundle carries a group when one of its lanes is that group
-        const linkHas = (l, t) => l.cat.tk === t || (!!l.members && l.members.some(c => c.tk === t));
+        // does lens cat c sit in the group with track key t: itself, or a sub-group of it (a lane's regions)?
+        function catUnder(c, t) {
+            if (!c || !t) return false;
+            if (c.tk === t) return true;
+            const C = cats(st.lens);
+            if (!C.groups || !c.g) return false;
+            const id = (C._tkId || (C._tkId = new Map(C.groups.map(x => [x.tk, x.g.id])))).get(t);
+            return !!id && (c.g.path || []).includes(id);
+        }
+        const linkHas = (l, t) => catUnder(l.cat, t) || (!!l.members && l.members.some(c => catUnder(c, t)));
         const syncFocus = () => { const t = st.hoverTk || st.track; st.fk = t && st.P && st.P.links.some(l => linkHas(l, t)) ? t : null; };
-        const holds = n => { const sp = st.P && st.P.segs.get(n.id); return !!sp && [...sp.m.values()].some(x => x.cat.tk === st.fk); };
+        const holds = n => { const sp = st.P && st.P.segs.get(n.id); return !!sp && [...sp.m.values()].some(x => catUnder(x.cat, st.fk)); };
         const nodeOp = n => (st.hoverTk && st.fk ? (holds(n) ? 1 : 0.3) : st.T && !(st.T.info.get(n.id) || {}).tk ? 0.3 : 1);
         const ribOp = l => (st.fk ? (linkHas(l, st.fk) ? 1 : 0.12) : 1) * (l.fade && !st.fk ? 0.28 : 1) * (st.T && !(st.T.info.get(l.target.id) || {}).tk ? 0.3 : 1);
         // the lens group a reuse class mostly is: the group of the rows held by exactly its files (null: grey or none)
@@ -1302,10 +1327,18 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const rows = it.x.g ? gTip(it.x.g) : [['Functions', fmt(it.rows.length)], ['Files', `${it.hold.length} of ${st.L.vis.length}`]];
             showTip(ev, it.label, tt ? tt.badge : it.color, rows, (tt ? tt.html : '') + fileMetaHtml(st.doc, it.hold.flatMap(v => nodeFiles(v)), 'the files holding it'));
         }
-        const navHover = it => { if (st.P && nodeBase) focusHover(it ? it.tk : null); };
+        // a pane row hovered: light the group (and its sub-groups) in whatever view is drawn
+        const navHover = it => {
+            const tk = it ? it.tk : null, test = tk ? c => catUnder(c, tk) : null;
+            if (st.P && nodeBase && st.view !== 'ring' && st.view !== 'births') focusHover(tk);
+            if (st.ring && st.view === 'ring' && st.ring.hoverTrack) st.ring.hoverTrack(test);
+            if (st.births && st.view === 'births' && st.births.hoverTrack) st.births.hoverTrack(test);
+        };
+        // a group hovered in the graph (or the table): its row, and the rows of the groups it is under, light in the pane
+        const paneHl = c => { for (const r of side.querySelectorAll('.lin-nr')) r.classList.toggle('hl', !!c && catUnder(c, r.dataset.tk)); };
         function navRow(it, depth = 0) {
             const on = NAV.focus === it.tk, kk = `k:${it.tk}`, open = !!it.kids.length && (NAV.q ? true : NAV.open.get(kk) === true);
-            const row = el('div', { class: `lin-nr${on ? ' on' : ''}`, role: 'button', tabindex: 0, 'aria-pressed': String(on), title: on ? 'Selected: click again to unselect' : 'Select this group: lit in the view, details in the Inspector' });
+            const row = el('div', { class: `lin-nr${on ? ' on' : ''}`, 'data-tk': it.tk || '', role: 'button', tabindex: 0, 'aria-pressed': String(on), title: on ? 'Selected: click again to unselect' : 'Select this group: lit in the view, details in the Inspector' });
             row.style.paddingLeft = `${6 + depth * 14}px`;
             const chev = el('button', { type: 'button', class: 'lin-nk', 'aria-label': open ? 'Hide its sub-groups' : 'Show its sub-groups', 'aria-expanded': String(open) });
             if (it.kids.length) chev.append(el('i', { class: `fa-solid fa-chevron-${open ? 'down' : 'right'}` })); else chev.disabled = true;
@@ -1327,8 +1360,18 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             return box;
         }
         // select a group (null: none): the track, and the Inspector shows it
+        // open the section and the parents of a group so its row is drawn
+        function revealItem(tk) {
+            const it = findItem(tk);
+            if (!it) return;
+            let top = it;
+            for (let p = it.parent; p; p = p.parent) { NAV.open.set(`k:${p.tk}`, true); top = p; }
+            if (top.tier !== undefined) NAV.open.set(`t:${top.tier || ''}`, true);
+        }
         function navFocus(tk) {
+            if (tk) revealItem(tk);
             NAV.focus = tk || null;
+            NAV.scrollTo = NAV.focus;
             st.multi = false;
             setTrack(tk || '');
             if (tk) pick({ group: tk });
@@ -1373,6 +1416,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 side.append(sec);
             }
             if (!vis.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No group matches the search.'));
+            const on = side.querySelector('.lin-nr.on');
+            if (on && on.scrollIntoView && NAV.scrollTo === NAV.focus) { on.scrollIntoView({ block: 'nearest' }); NAV.scrollTo = null; }
             syncBar();
             return false;
         }
@@ -1415,6 +1460,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             groupList();
             pick({ fn: r });
             hoverRowIdx(r);
+            if (opts.onFn) opts.onFn(st.R.fid[r], (st.R.fids && st.R.fids[r]) || [st.R.fid[r]]);
         }
         const groupMap = () => Object.fromEntries((st.doc.groups || []).map(g => [g.id, g]));
         // "Call graph" / "Open in table": the N-way table on this lens with the group tracked (and its call graph open)
@@ -1924,6 +1970,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
         function leave() {
             st.hover++;
+            paneHl(null);
             if (st.hoverTk) { st.hoverTk = null; syncFocus(); applySel(); }
             ribs.style('opacity', ribOp);
             arcSel.style('opacity', 1); strSel.style('opacity', 1);
@@ -1949,6 +1996,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const catMeta = cat => (st.R ? fileMetaHtml(st.doc, filesOfNodes(st.doc, catNodes(st.doc, st.R, cats(st.lens), cat)), 'the files holding it') : '');
         function lensTip(ev, cat, local) {
             focusHover(cat.tk);
+            paneHl(cat);
             const g = cat.g, nm = g && NG.shownName(st.S.names[g.id]), tt = tierTip(cat, st.doc);
             showTip(ev, nm || cat.label, tt ? tt.badge : cat.color, [...local, ...(g ? gTip(g) : [])], (tt ? tt.html : '') + catMeta(cat));
         }
@@ -2063,7 +2111,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.ring = window.NwayRing.mount({
                     g: gRingG.node(), svg: s.node(), host: canvas, controls: ringBox, controls2: ringBox2, opts: opts.ring || {},
                     getDoc: () => st.doc, getR: () => st.R, getCats: () => cats(st.lens), lens: () => st.lens, getTrack: () => st.track,
-                    setTrack, onOpt: o => { st.ringList = !!o.list; legendBox.style.display = st.ringList ? 'contents' : 'none'; if (opts.onRing) opts.onRing(o); },
+                    setTrack, onHover: c => paneHl(c), onOpt: o => { st.ringList = !!o.list; legendBox.style.display = st.ringList ? 'contents' : 'none'; if (opts.onRing) opts.onRing(o); },
                     onFile: id => {
                         const top = st.M.rep.get(st.R ? st.R.nodeOf.get(id) || id : id);
                         if (top && top.startsWith('agg:')) { st.collapsed = new Set(); rebuild(); }
@@ -2095,6 +2143,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
                     tiers: { TIERS, KEYS: TIER_KEYS, rank: tierRank, fill: tierFill, css: tierCss, tip: c => tierTip(c, st.doc) },
+                    onHover: c => paneHl(c),
                     // what a set of files is made of: of node indexes, of a lens group
                     meta: (idx, what) => fileMetaHtml(st.doc, filesOfNodes(st.doc, idx), what), catMeta: c => catMeta(c),
                 });
@@ -2257,7 +2306,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const t = ev.target;
             if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
             if (window.graphContextMenuOpen) return;
-            if (drawer.classList.contains('open')) closeDock();
+            if (gPick && !gPick.empty() && gPick.selectAll('*').size()) markRowFiles(null);
+            else if (drawer.classList.contains('open')) closeDock();
             else if (st.track.startsWith('fn:')) setTrack(NAV.focus || '');
             else if (st.view === 'ring' && st.ring && st.ring.state.fc) st.ring.exitFocus();
             else if (NAV.focus || st.track) navFocus(null);
@@ -2302,8 +2352,14 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             setTrack(t) {
                 if ((t || '') === st.track) return;
                 st.track = t || '';
+                const grp = !!st.track && !st.track.startsWith('fn:') && !!findItem(st.track);
+                if (grp) { revealItem(st.track); NAV.scrollTo = st.track; }
                 if (st.L) applyTrack(true);
+                if (grp && (!st.sel || st.sel.group)) pick({ group: st.track });
+                else if (!st.track && st.sel && st.sel.group) closeDock();
             },
+            // a table row clicked: mark the files holding it in every view, until another row or Esc
+            markRow(row) { markRowFiles(row); },
             // the canvas changes size with the view (group list, split pane): show the whole tree again
             setView(v) {
                 st.view = v;

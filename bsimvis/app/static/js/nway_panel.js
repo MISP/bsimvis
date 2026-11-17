@@ -155,6 +155,7 @@
             this.onSlot = opts.onSlot || null;
             this.onTrack = opts.onTrack || null;
             this.onRowHover = opts.onRowHover || null;
+            this.onRowPick = opts.onRowPick || null;
             // The lineage page's shared controls: no lineage link, order, rows toggle or stats; `noTable` skips the
             // table (one-row fetch); `onStage(el)` gets the slot between the controls and the table to park the chart in.
             this.lean = !!opts.lean;
@@ -204,6 +205,11 @@
             document.addEventListener('click', this._ddClose);
             this.el.addEventListener('mouseover', e => this._gTip(e, true));
             this.el.addEventListener('mouseout', e => this._gTip(e, false));
+            // the lineage page marks the files of the row that was clicked
+            if (this.onRowPick) this.el.addEventListener('click', e => {
+                const tr = e.target.closest('#nway-table tbody tr'), td = tr && tr.querySelector('td[data-fn-open]');
+                if (td) this.onRowPick(this._rowAt(td) || null);
+            });
             if (this.onRowHover) {
                 this.el.addEventListener('mouseover', e => {
                     const tr = e.target.closest('#nway-table tbody tr');
@@ -311,6 +317,28 @@
         setTrack(track) {
             this.state.track = track || '';
             this._paintTrack();
+        }
+
+        // The lineage page selected something: light it and, for a group, bring its rows in, scroll to them and pulse them.
+        focusTrack(track) {
+            this.setTrack(track);
+            if (track && !this.noTable && !track.startsWith('fn:')) { this._tf = 1; this._trackFocusStep(); }
+        }
+
+        // Scroll the loaded row holding this function into view and pulse it (no load, no track change).
+        showFn(fid) {
+            const table = this.el.querySelector('#nway-table');
+            if (!table || this.noTable) return false;
+            for (const td of table.querySelectorAll('td[data-fn-open]')) {
+                const row = this._rowAt(td), cells = row && { ...(row.cells || {}), ...(row.files || {}) };
+                if (!cells || !Object.values(cells).some(v => v === fid || (v && v.fid === fid))) continue;
+                const tr = td.closest('tr');
+                if (tr.scrollIntoView) tr.scrollIntoView({ block: 'center', behavior: window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+                tr.classList.add('nway-pulse');
+                setTimeout(() => tr.classList.remove('nway-pulse'), 1600);
+                return true;
+            }
+            return false;
         }
 
         _track(track) {

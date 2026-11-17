@@ -235,6 +235,8 @@ window.NwayLineageView = {
                 onData: fromTable,
                 onTrack: t => { if (t !== st.track) setTrack(t); },
                 onRowHover: row => { if (this._inst) this._inst.hover(row); },
+                // a clicked row stays marked on the chart (its files outlined or ringed) until another row or Esc
+                onRowPick: row => { if (this._inst) this._inst.markRow(row); },
             });
             this._panel.load();
         };
@@ -328,7 +330,10 @@ window.NwayLineageView = {
                         else setTrack(tk);
                         return true;
                     },
-                    onTrack: t => { st.track = t; writeUrl(); if (this._panel) this._panel.setTrack(t); },
+                    // the chart selected a group: the table brings its rows in, scrolls to them and pulses them
+                    onTrack: t => { st.track = t; writeUrl(); if (this._panel) { if (split() && t && !t.startsWith('fn:')) this._panel.focusTrack(t); else this._panel.setTrack(t); } },
+                    // a function picked on the chart: the table scrolls to its row when that row is loaded
+                    onFn: (fid, fids) => { if (this._panel && split()) fids.some(f => this._panel.showFn(f)); },
                     // split: a node is the table's column filter (a second click clears it), not the dock
                     onNode: n => {
                         if (!split()) return false;

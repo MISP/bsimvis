@@ -1222,9 +1222,9 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (e.m !== undefined) {
                 node.dataset.m = String(e.m);
                 node.style.cursor = 'pointer';
-                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); modTip(ev, mods.find(x => x.k === e.m), e.pair, e.pairs, e.bundle, e.fcov, e.lc); });
+                node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; clear(); act(e.m); const b = mods.find(x => x.k === e.m); modTip(ev, b, e.pair, e.pairs, e.bundle, e.fcov, e.lc); if (ctx.onHover && b) ctx.onHover(b.cat); });
                 node.addEventListener('mousemove', ctx.moveTip);
-                node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); });
+                node.addEventListener('mouseleave', () => { rest(); ctx.hideTip(); if (ctx.onHover) ctx.onHover(null); });
                 node.addEventListener('click', () => { if (S.sim.moved) return; const b = mods.find(x => x.k === e.m); if (b) ctx.setTrack(ctx.getTrack() === b.tk ? '' : b.tk); });
             } else if (e.file !== undefined) {
                 node.addEventListener('mouseenter', ev => { if (S.sim.drag) return; fileTip(ev, e.file); });
@@ -1558,6 +1558,8 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             draw: full,
             // the table's track changed: relight
             setTrack: rest,
+            // the page's pane hovers a group: light every module test(cat) accepts (a lane and its regions); null: back to the pin
+            hoverTrack(test) { clear(); if (!test) { rest(); return; } for (const b of mods) if (test(b.cat)) act(b.k); },
             reset() { S.sim.reset(); full(); },
             // for the page's state bar: leave the focus, close the opened clusters, open the shut ones
             exitFocus,

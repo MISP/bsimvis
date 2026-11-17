@@ -52,6 +52,7 @@
     const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];
     // nway_region_service.SPECIAL
     const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
+    const NAMING = 'naming\u2026';
     const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, NAV_ROWS = 50;
     const hueOf = i => window.NwayColors.hue(i);
     // --lin-hl is the table's top-level lightness: 52%, 44% on the light theme (.nway-sq.on)
@@ -1020,7 +1021,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             // a {color, glyph, tag} badge (Core / Rare ...) in the colour of the thing, else the plain dot
             if (dot && typeof dot === 'object') t.append('span').text(`${dot.glyph} ${dot.tag}`).style('color', dot.color).style('border', '1px solid').style('border-radius', '6px').style('padding', '0 6px').style('margin-right', '8px').style('font-weight', '700').style('white-space', 'nowrap');
             else t.append('span').attr('class', 'lin-dot').style('background', dot);
-            t.append('span').text(title);
+            if (title === NAMING) t.append('span').attr('class', 'nway-lname wait').attr('role', 'status').attr('aria-label', 'Naming this group');
+            else t.append('span').text(title);
+            tipSrc = ev && ev.currentTarget && ev.currentTarget.nodeType === 1 ? { el: ev.currentTarget, type: ev.type, x: ev.clientX, y: ev.clientY, tk: ev.currentTarget.dataset ? ev.currentTarget.dataset.tk : '' } : tipSrc;
             const kv = tip.append('div').attr('class', 'lin-kv');
             for (const [k, v] of rows) { kv.append('span').attr('class', 'k').text(k); kv.append('span').text(v); }
             if (html) tip.append('div').style('margin-top', '6px').style('font-size', '11px').html(html); // the caller escapes every value
@@ -1031,7 +1034,17 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const w = tip.node().offsetWidth || 240;
             tip.style('left', `${Math.min(ev.clientX + 14, window.innerWidth - w - 8)}px`).style('top', `${ev.clientY + 10}px`);
         };
-        const hideTip = () => tip.style('display', 'none');
+        const hideTip = () => { tip.style('display', 'none'); tipSrc = null; };
+        // names arrived while a tooltip is open: hover its element again (a pane row redrawn since is found by its key)
+        let tipSrc = null;
+        function refreshTip() {
+            if (!tipSrc || tip.style('display') === 'none') return;
+            let target = tipSrc.el;
+            if (!target.isConnected && tipSrc.tk) target = [...side.querySelectorAll('.lin-nr')].find(r => r.dataset.tk === tipSrc.tk) || null;
+            if (!target || !target.isConnected) return;
+            const src = tipSrc;
+            target.dispatchEvent(new MouseEvent(src.type, { clientX: src.x, clientY: src.y, bubbles: src.type !== 'mouseenter' }));
+        }
         const name = id => st.names.get(id) || id;
         const names = ids => ids.slice(0, 8).map(name).join(', ') + (ids.length > 8 ? ` +${ids.length - 8} more` : '');
 
@@ -1051,13 +1064,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // a server group as plain text: its label, the model's name, or what it is made of
         function gText(g) {
             if (g.kind === 'fold') return `${g.lanes} small lanes`;
-            if (g.label) return g.label;
-            const nm = NG.shownName(st.S.names[g.id]);
-            if (nm) return nm;
-            if (st.S.busy) return 'naming\u2026';
-            if (st.S.done && !st.S.off) return NG.laneFallback(g, st.S);
-            if (g.kind === 'lane') return `${g.core ? `${g.lanes} lanes, ` : ''}${g.files}-file lane${g.hint ? ` ${g.hint}` : ''}`;
-            return g.hint || (g.sample || []).slice(0, 2).join(', ') || 'Region';
+            return plainName(g);
         }
         // as the table's header names it: icon, label, the model's name (shimmer while it works) or its fallback
         function gHtml(g) {
@@ -1290,16 +1297,21 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // the visible nodes that hold any of these rows
         const holdersOf = rows => st.L.vis.filter(v => rows.some(r => v.has(r)));
         // a group's name without the model: its own label, the model's name, its fallback, its function names, its file count
+        // NAMING while the model is still naming it: drawn as the table's loading bar (loadBar), never as text
         function plainName(g) {
             const nm = NG.shownName(st.S.names[g.id]);
             if (nm) return nm;
             if (g.label) return g.label;
-            const fb = st.S.done && !st.S.off ? NG.laneFallback(g, st.S) : '';
-            if (fb && fb !== 'unlabelled') return fb;
+            if (st.S.busy && !st.S.off && NG.nameable(g)) return NAMING;
+            if (st.S.done && !st.S.off) return NG.laneFallback(g, st.S);
             const named = (g.sample || []).filter(x => !/^(FUN|sub|thunk|LAB|DAT)_/.test(x)).slice(0, 2).join(', ');
             if (g.hint || named) return g.hint || named;
-            return g.kind === 'lane' ? `${g.files}-file lane` : g.kind === 'fold' ? `${g.lanes} small lanes` : gText(g);
+            return g.kind === 'lane' ? `${g.core ? `${g.lanes} lanes, ` : ''}${g.files}-file lane` : g.kind === 'fold' ? `${g.lanes} small lanes` : 'Region';
         }
+        // the table's loading bar for a name the model has not given yet
+        const loadBar = () => el('span', { class: 'nway-lname wait', role: 'status', 'aria-label': 'Naming this group', title: 'The model is naming this group' });
+        // a name into an element: the text, or the loading bar while it is being named
+        const putName = (box, txt) => { if (txt === NAMING) box.append(loadBar()); else box.append(document.createTextNode(txt)); };
         const itemOf = (x, rows, kids, parent) => {
             const hold = holdersOf(rows);
             return { x, tk: x.tk, label: x.g ? plainName(x.g) : x.label, color: x.color === GREY && kids.length ? kids[0].color : x.color, tier: x.tier, rows, kids, parent, hold,
@@ -1362,7 +1374,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (it.kids.length) chev.append(el('i', { class: `fa-solid fa-chevron-${open ? 'down' : 'right'}` })); else chev.disabled = true;
             const sw = el('span', { class: 'lin-sw' }), t = el('span', { class: 'lin-nt' }), nm = el('span', { class: 'lin-nn' });
             sw.style.background = tierCss(it.color, it.tier);
-            nm.textContent = it.label;
+            putName(nm, it.label);
             t.append(nm, el('span', { class: 'lin-ns' }, it.sub));
             row.append(chev, sw, t, el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
             chev.addEventListener('click', ev => { ev.stopPropagation(); NAV.open.set(kk, !open); groupList(); });
@@ -1514,6 +1526,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             applyTrack(false);
             if (st.ring && st.view === 'ring') st.ring.draw();
             if (drawer.classList.contains('open') && st.sel && (st.sel.node || st.sel.group)) openDrawer(st.sel);
+            refreshTip();
         }
 
         // small multiples: the six biggest groups, each on the same layout (minimap style), fill = share held
@@ -1685,7 +1698,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             x.addEventListener('click', closeDock);
             r1.append(el('span', { class: 'lin-ik' }, kind), el('span', { style: 'flex:1' }), x);
             if (color) { const sw = el('span', { class: 'lin-sw' }); sw.style.background = color; r2.append(sw); }
-            r2.append(el('b', { title }, title));
+            const tb = el('b', { title: title === NAMING ? '' : title });
+            putName(tb, title);
+            r2.append(tb);
             const acts = el('div', { class: 'lin-acts' });
             h.append(r1, r2, acts);
             const body = el('div', { class: 'lin-ib' });

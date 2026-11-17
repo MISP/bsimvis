@@ -73,7 +73,10 @@ window.NwayGroups = (function () {
     // A lane the model could not describe (the call failed): its main library calls, else a plain note.
     function laneFallback(g, S) {
         const calls = (((S.evid || {})[g.id] || {}).calls || []).slice(0, 3);
-        return calls.length ? `calls ${calls.join(', ')}` : 'unlabelled';
+        if (calls.length) return `calls ${calls.join(', ')}`;
+        // nothing from the model: what it is made of, never a bare "unlabelled"
+        const named = (g.sample || []).filter(x => !/^(FUN|sub|thunk|LAB|DAT)_/.test(x)).slice(0, 2).join(', ');
+        return g.hint || named || (g.kind === 'lane' && g.files ? `${g.files}-file lane` : 'no name');
     }
 
     // The lane's name once the model has answered; a placeholder while it is still working.

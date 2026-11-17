@@ -206,7 +206,10 @@ stream: height = the file's matching functions, layers = the birth they come fro
 from its parent's date. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
 the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
 `+N from X` (violet) where it shows up off its parent; the selection is a chip in the state bar, the left pane stays the
-group selector. A layer click tracks that group.
+group selector. A layer click tracks that group. **Layers** (toolbar, not in the URL, default Lanes): with no birth
+selected the streams are layered by the lens groups (tier order, zebra, tier guides), so a lane hovers, selects and
+fades (`fadeBy`, the selected group stays lit) with no birth picked; Births colours them by birth as before (a chip
+in the state bar while on).
 `bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
 stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
 
@@ -216,7 +219,9 @@ stripped from table and API links. The model is checked in `scripts/test_nway_li
 also the track) and opens it in the Inspector; a second click or Esc unselects. A group key covers its sub-groups
 (`catUnder`: a lane lights its regions). Cohesion: a pane row hover lights the group in the Tree (`focusHover`), Ring
 (`ring.hoverTrack`) and Births (`births.hoverTrack`); a group hovered there lights its pane rows (`paneHl`, via
-`ctx.onHover`). A group selected on the page goes to the table with `NwayPanel.focusTrack` (rows brought in, scrolled,
+`ctx.onHover`); a hover in a view lights the whole lane there, as the pane does (`graphHover` / `laneOf`: the deepest
+pane group holding the hovered cat that is not a region), and the Tree fades the other node segments (`rect.lin-sg`).
+A group selected on the page goes to the table with `NwayPanel.focusTrack` (rows brought in, scrolled,
 pulsed); one tracked in the table selects its pane row (revealed, scrolled) and opens the Inspector. A table row click
 (`onRowPick` -> `markRow`) marks its files on the chart until another row or Esc; a function picked on the chart
 scrolls the table to its row (`onFn` -> `NwayPanel.showFn`, loaded rows only). No cards, tabs or function lists here: a

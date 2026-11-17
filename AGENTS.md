@@ -166,8 +166,10 @@ order (`column_parents`, each column's default index as `base`). Both pages shar
 state: `track` (`fn:<fid>` or `<lens>:<key>`; lane hex bits and colours are over the
 default column order, `NwayColors` in `nway_colors.js`), and the lineage page keeps its
 own `layout` (tree / chain / star) and `lview`: Tree, Tracks (one lens group through the
-tree, or six small multiples) or Split (compact tree over a real `NwayPanel`, wired by
-`setTrack` / `onTrack` / `onRowHover`). With the table's `group` (the lens preset) the route
+tree, or six small multiples), Ring, Timeline or Births. `table=1` (the toolbar's Table button) puts a real
+`NwayPanel` under the chart in any view, wired by `setTrack` / `onTrack` / `onRowHover`; a hovered row or the
+picked column is outlined on the Tree and ringed on the Ring's and Births' file dots (`markFiles`). An old
+`lview=split` link opens the Tree with the table. With the table's `group` (the lens preset) the route
 also sends the first-level `groups` that `/nway` builds over the same filtered rows (same
 `group_rows` call, so same ids, meta and LLM names) and `rows.group` (each matching row's
 deepest one); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
@@ -208,6 +210,23 @@ share per lane over time, its functions (`rowEl`, a click is the usual `fn:` tra
 `bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
 stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
 
+**Panes (every view).** Left: the lens navigator (`groupList` / `navList` / `navPage` in `nway_lineage.js`): sections
+(Core / Common / Rare for a tiered lens, else the first-level groups) with chevrons, counts and a share bar, Expand all /
+Collapse all, a search over groups, files and function names, tier chips. A row click focuses the group (`NAV.focus`,
+also the track): its page has a crumb back, the tier card, evidence, "What its files are made of", In table / Call graph /
+Functions pivots, and tabs Functions (one table, `fnTr`: the app's `showCodePreview` on hover and `showGraphContextMenu`
+on the kebab or right click, `NAV_ROWS` at a time), Files and Groups. Births puts its own card on top. The toolbar's lens
+chips are gone (only the Ring's Module list still draws them). Right: the Inspector (`inspHead`, docked in `.lin-body`,
+never over the canvas): File / Cluster / Same-code files (`dock`), Function (`inspectFnDraw`: code, every copy with its
+address), Edge and Reuse (`inspOther`), each with pivots; an edge has a file diff (`buildFileDiffUrl`). Closing it clears
+the outline. Under the toolbar the state bar (`syncBar`) shows every non-default state as a chip with x (focus, tracked
+function, inspector, filters, sections, grouped subtrees, small multiples, reuse layer, per-lane ribbons, Ring focus /
+opened / closed clusters via `ring.state` / `clear`, the selected birth and Rare lanes via `births.state` / `clear`, the
+table via `opts.chips`), Back (a snapshot stack of the page's own state) and Reset view (as the page opened). One page Esc
+(`onEsc`, never inside a field) closes the newest: inspector, tracked function, Ring focus, group, birth. Every tooltip
+that names a set of files carries `fileMetaHtml` (architecture, format, size, batch, collection, tags; bar = share of
+those files, tick = share of all). The reuse layer starts off.
+
 **Lane tiers (Lanes lens).** `lensCats` gives every Lanes-lens group a `tier` (its `tier:*` band from the table, else its
 lane's file share with the Ring's cuts: Core >= 90%, Common >= 50%, Rare) and its lane `mask`; rows in no lane are split by
 their own `rows.tier` (`~core`, `~common`, `~rare`, "Core functions in no lane") instead of one grey "Other functions". Lanes
@@ -221,9 +240,8 @@ A lane tooltip carries the tier badge, the files holding the lane and a Rare / 5
 **Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
 `lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the
 file they start in (`added-N`, `dropped-N`, `span-N-M` take node N's Tree colour; kept / scattered / rewritten are grey).
-Tree, Tracks and Split keep painting Deltas by the node a row is born in (`st.C` is keyed `deltas:ring` for the Ring and
-rebuilt when the view changes). The group card is only in the left pane (a second copy in the drawer was the duplicate
-buttons). It ends with "All functions (N)", collapsed, filled on first open, 200 rows at a time (`ALL_ROWS`).
+Tree and Tracks keep painting Deltas by the node a row is born in (`st.C` is keyed `deltas:ring` for the Ring and
+rebuilt when the view changes).
 
 **Open in table / Call graph** (the lane card): the URL carries `track`, `group` and the lineage page's `columns` /
 `col_open` plus `tfocus=1` (lineage-only: stripped from table and API links). The table (`nway_panel.js`) consumes it
@@ -267,12 +285,12 @@ left out of everything (segments, ribbons, lanes, fans, colours) and never merge
 means the same everywhere. The canvas note and the select's title always say how many modules
 are hidden and how many are shown. Scale and floor widths are computed after the gate.
 
-**Toolbar (all four views).** One pattern: the View picker (the table's pill dropdown, `NwayPanel._dd`: Tree,
-Tracks, Split, Ring, an "auto" badge while the page chose for you; arrows / Enter / Esc), the file search, zoom
+**Toolbar (every view).** One pattern: the View picker (the table's pill dropdown, `NwayPanel._dd`: Tree,
+Tracks, Ring, Timeline, Births, an "auto" badge while the page chose for you; arrows / Enter / Esc), the file search, zoom
 (floating: - + Fit) and at most two view essentials, then one "More" `.lin-btn` (`aria-expanded`, chevron) that
-opens a second row. Visible per view: Tree = Reuse layer; Tracks, Split = nothing extra; Ring = Min size and
+opens a second row. Visible per view: the Table toggle, then Tree = Reuse layer; Tracks = nothing extra; Ring = Min size and
 Reset layout. Behind More (every view): the tree's Layout and Root, Collapse deep, Expand all, 100%, Selection,
-Reuse layer (Tracks, Split), and for the Ring Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list
+Reuse layer (Tracks), Lane ribbons (trees, Lanes lens), and for the Ring Arcs, Nested clusters, Bundle ribbons, Tier buckets, Module list
 (the lens chip legend, hidden by default). More starts open when the URL carries a non-default advanced key
 (`layout`, `root`, `rarc`, `rnest=0`, `rlist`, `rtier=hide`, `rbundle=0`). The on/off switches are `.lin-seg`
 groups of buttons with `aria-pressed`, never selects. Defaults: Arcs = grouped, Min size 0.5%, Nested on,

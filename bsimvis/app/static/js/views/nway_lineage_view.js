@@ -1,6 +1,6 @@
 /**
  * N-way lineage view (full page):
- * /diff/nway/lineage?<same set params as /diff/nway>[&layout=tree|chain|star][&root=<file id>][&lview=tree|tracks|split|ring|timeline|births]
+ * /diff/nway/lineage?<same set params as /diff/nway>[&layout=tree|chain|star][&root=<file id>][&lview=tree|tracks|ring|timeline|births][&table=1]
  *
  * Routing, URL state and fetching only; the chart is nway_lineage.js
  * (NwayLineage.mount). The page reads and writes the N-way table's own params
@@ -34,10 +34,10 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '' };
+        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '', table: '' };
         // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview); tfield: the Timeline's date;
         // bgrp, baxis, bsel: the Births view's grouping (file | week | month), axis (rank | cal) and selected birth
-        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel'];
+        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'table'];
         const q = new URLSearchParams(window.location.search);
         // `order` is the table's column order and passes through; an old link's order=tree|chain|star is the layout
         const legacy = ['tree', 'chain', 'star'].includes(q.get('order')) ? q.get('order') : '';
@@ -53,6 +53,9 @@ window.NwayLineageView = {
         let mem = {};
         try { mem = JSON.parse(store.get('nway.ring') || '{}') || {}; } catch (e) { mem = {}; }
         for (const k of KEYS) st[k] = q.has(k) ? q.get(k) : RING_KEYS.includes(k) && typeof mem[k] === 'string' ? mem[k] : k === 'lview' && store.get('nway.lview') ? store.get('nway.lview') : String(D[k] ?? '');
+        // Split used to be a view (tree only): it is the table toggle now, under any view
+        if (st.lview === 'split') { st.lview = 'tree'; st.table = '1'; }
+        const table0 = st.table;
         // the lens a group string stands for: its preset, else the lens of its first level
         const lensOf = g => {
             const first = (g || '').split(',')[0];
@@ -68,7 +71,7 @@ window.NwayLineageView = {
         const timed = () => st.lview === 'timeline' || st.lview === 'births';
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
-            for (const k of ['order', 'layout', 'lview', 'tfield', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph', 'bgrp', 'baxis', 'bsel']) out.delete(k);
+            for (const k of ['order', 'layout', 'lview', 'tfield', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph', 'bgrp', 'baxis', 'bsel', 'table']) out.delete(k);
             for (const k of ['q', 'scope', 'tab', 'group']) if (st[k]) out.set(k, st[k]); else out.delete(k);
             // match, columns and groups must be the table's: the server's own defaults differ (tab=core, no twin tree, no merge)
             for (const k of Object.keys(D)) if ((['k', 'core_min', 'mode', 'twin_depth', 'twin_link', 'child_presence', 'sort_dir'].includes(k) || k.startsWith('group_')) && !out.has(k) && D[k] !== undefined && D[k] !== '') out.set(k, String(D[k]));
@@ -129,7 +132,6 @@ window.NwayLineageView = {
         const VIEWS = [
             ['tree', 'Tree', 'fa-solid fa-sitemap', 'A few similar builds of one family'],
             ['tracks', 'Tracks', 'fa-solid fa-route', 'Follow one lens group through the tree'],
-            ['split', 'Split', 'fa-solid fa-table-columns', 'A compact tree over the N-way table'],
             ['ring', 'Ring', 'fa-solid fa-circle-nodes', 'Many builds and clusters: shared code between them'],
             ['timeline', 'Timeline', 'fa-solid fa-timeline', 'Files in date order, each off its closest earlier relative'],
             ['births', 'Births', 'fa-solid fa-seedling', 'What code first appears when, and how long it lasts'],
@@ -193,14 +195,19 @@ window.NwayLineageView = {
             if (this._inst) this._inst.setTrack(t);
             if (this._panel) this._panel.setTrack(t);
         };
-        const split = () => st.lview === 'split';
+        // the N-way table under the chart, in any view (the toolbar's Table button, `table=1`)
+        const split = () => st.table === '1';
+        const tableBtn = mk('button', { type: 'button', class: 'lin-btn', title: 'The N-way table under the chart, synced with it (works in every view)' });
+        const paintTable = () => { tableBtn.setAttribute('aria-pressed', String(split())); tableBtn.innerHTML = '<i class="fa-solid fa-table"></i> Table'; tableBtn.classList.toggle('on', split()); };
+        tableBtn.addEventListener('click', () => { st.table = split() ? '' : '1'; writeUrl(); applyView(); });
+        paintTable();
         const chartView = () => (['tracks', 'ring', 'births'].includes(st.lview) ? st.lview : 'tree');
         let started = false;
         // the panel's state is the page's (URL), read the way its Lineage tab hands it over (with the
         // columns it auto-opened); a filter or column change refetches the tree
         const fromTable = () => {
             const p = this._panel, s = p.state, u = p._lineageQs(), cur = new URLSearchParams(window.location.search);
-            for (const k of ['layout', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
+            for (const k of ['layout', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'table', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
             for (const k of ['q', 'scope', 'tab', 'group', 'columns', 'track']) st[k] = String(s[k] ?? D[k] ?? '');
             st.column = s.column || '';
@@ -215,7 +222,7 @@ window.NwayLineageView = {
             const u = new URLSearchParams(window.location.search), source = {}, state = {};
             for (const k of ['md5s', 'batch_uuid', 'collection', 'pool', 'cluster_uuid', 'axis']) if (u.get(k)) source[k] = u.get(k);
             for (const k of Object.keys(window.NwayPanel.DEFAULTS)) if (u.has(k)) state[k] = u.get(k);
-            for (const k of KEYS) if (u.has(k) && !['lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel'].includes(k)) state[k] = u.get(k);
+            for (const k of KEYS) if (u.has(k) && !['lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'table'].includes(k)) state[k] = u.get(k);
             this._panel = new window.NwayPanel(panelHost, {
                 source, state,
                 lean: true,
@@ -233,12 +240,13 @@ window.NwayLineageView = {
         };
         const applyView = () => {
             renderPicker();
+            paintTable();
             wrap.classList.toggle('lin-split', split());
             if (this._panel) this._panel.setTable(split());
             const tl = timed();
             tfieldSel.style.display = tl ? '' : 'none';
             layoutSel.style.display = rootSel.style.display = tl ? 'none' : '';
-            if (this._inst) { this._inst.setView(chartView()); this._inst.select(split() ? st.column : null); }
+            if (this._inst) { this._inst.setView(chartView()); this._inst.select(split() ? st.column : null); this._inst.sync(); }
             // in or out of the Timeline the server's tree changes (order=time): fetch it again
             if (started && apiQs().toString() !== loadedQs) load();
         };
@@ -294,7 +302,10 @@ window.NwayLineageView = {
             if (!this._inst) {
                 chart.replaceChildren();
                 this._inst = NL.mount(chart, {
-                    toolbar: [viewPick, tfieldSel, status],
+                    toolbar: [viewPick, tableBtn, tfieldSel, status],
+                    // the state bar shows the table, and Reset view puts it back as the page opened
+                    chips: () => (split() && table0 !== '1' ? [['Table', 'open', () => { st.table = ''; writeUrl(); applyView(); }]] : !split() && table0 === '1' ? [['Table', 'closed', () => { st.table = '1'; writeUrl(); applyView(); }]] : []),
+                    onReset: () => { if (st.table !== table0) { st.table = table0; writeUrl(); applyView(); } },
                     // the tree's layout and root, and every other control of the view, sit behind "More"; it starts open when the URL carries a non-default one
                     more: [layoutSel, rootSel],
                     moreOpen: advanced(),

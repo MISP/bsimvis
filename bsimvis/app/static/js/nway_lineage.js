@@ -936,6 +936,17 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const defs = s.append('defs');
         const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none'), gBirthG = world.append('g').style('display', 'none');
         const gAx = gTree.append('g').style('pointer-events', 'none'), gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
+        // a table row hovered or a column picked while the Ring or Births is drawn: a ring around the file's dot
+        const gMark = world.append('g').style('pointer-events', 'none');
+        function markFiles(idxs, cls) {
+            gMark.selectAll(`.${cls}`).remove();
+            const fr = st.view === 'ring' && st.ring && st.ring.frame ? st.ring.frame() : null;
+            const at = i => (fr ? fr.pos[i] : st.view === 'births' && st.births && st.births.dotAt ? st.births.dotAt(i) : null);
+            for (const i of idxs) {
+                const p = at(i);
+                if (p) gMark.append('circle').attr('class', cls).attr('cx', p[0]).attr('cy', p[1]).attr('r', cls === 'hov' ? 11 : 14).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', cls === 'hov' ? 3 : 2).attr('stroke-dasharray', cls === 'hov' ? null : '4 3').attr('vector-effect', 'non-scaling-stroke');
+            }
+        }
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
         // in the Ring view a press on a draggable shape drags it; the rest still pans
         zoom.filter(ev => (!ev.ctrlKey || ev.type === 'wheel') && !ev.button && !(st.view === 'ring' && ev.type !== 'wheel' && ev.target.closest && ev.target.closest('[data-drag]')));
@@ -1603,9 +1614,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // a hovered table row (cells keyed by column id, files by file id): outline the nodes holding it
         function hoverRow(row) {
             gHov.selectAll('*').remove();
+            gMark.selectAll('.hov').remove();
             if (!row || !st.L || !st.R) return;
             const ids = new Set();
             for (const cells of [row.cells, row.files]) for (const [k, v] of Object.entries(cells || {})) if (v && (typeof v === 'string' || v.present)) ids.add(st.R.nodeOf.get(k));
+            markFiles([...ids].map(id => id && st.M.byId.get(id)).filter(Boolean).map(n => n.idx), 'hov');
             for (const id of ids) {
                 const n = id && st.L.fileOf.get(st.M.rep.get(id));
                 if (n) gHov.append('rect').attr('x', n.x0 - 5).attr('y', n.y0 - 5).attr('width', NODE_W + 10).attr('height', n.h + 10).attr('rx', 8).attr('fill', 'none')
@@ -2271,6 +2284,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 if (S.open.size) add('Ring', `${S.open.size} cluster${S.open.size === 1 ? '' : 's'} opened`, () => st.ring.clear('open'));
                 if (S.shut.size) add('Ring', `${S.shut.size} cluster${S.shut.size === 1 ? '' : 's'} closed`, () => st.ring.clear('shut'));
             }
+            if (opts.chips) for (const x of opts.chips()) add(...x);
             if (st.births && st.view === 'births') {
                 const b = st.births.state();
                 if (b.sel) add('Birth', b.sel, () => st.births.clear('sel'));
@@ -2328,6 +2342,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 if (st.births) { const b = st.births.state(); if (b.rare) st.births.clear('rare'); if (b.sel) st.births.clear('sel'); }
                 rebuild();
                 setTrack('');
+                if (opts.onReset) opts.onReset();
                 fit(true);
             } finally { restoring = false; lastSnap = snap(); syncBar(); }
         }
@@ -2387,6 +2402,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             // the canvas changes size with the view (group list, split pane): show the whole tree again
             setView(v) {
                 st.view = v;
+                gMark.selectAll('*').remove();
                 if (!st.L) return;
                 // the Ring's Deltas cats are the server's lanes, the trees' are born-in cats: repaint on the way in and out
                 if (st.lens === 'deltas') { st.C = new Map(); rebuild(); }
@@ -2402,7 +2418,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const n = id && st.L && st.L.fileOf.get(st.M.rep.get(st.R ? st.R.nodeOf.get(id) || id : id));
                 st.sel = n ? { node: n } : null;
                 applySel();
+                markFiles(n && !n.agg ? [n.idx] : [], 'sel');
             },
+            // the page changed something the state bar shows (the table toggle)
+            sync: () => syncBar(),
             zoomTo(wx, wy, k) {
                 const { w, h } = size();
                 s.call(zoom.transform, d3.zoomIdentity.translate(w / 2 - k * wx, h / 2 - k * wy).scale(k));
@@ -2429,7 +2448,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

@@ -71,6 +71,7 @@
         // ctx.tiers: the Lanes lens tiers (TIERS, KEYS, rank(cat), fill(defs, cache, color, tier), css(color, tier), tip(cat))
         const T = ctx.tiers;
         let M = null, frame = null, lanes = [], rareOpen = false;
+        const dotPos = new Map(); // node index -> its file dot, for the page's highlight
         const emit = () => ctx.onOpt({ ...o });
         const getModel = () => {
             const doc = ctx.getDoc(), R = ctx.getR();
@@ -257,7 +258,9 @@
             }
 
             // file dots under each lane; a click selects what was born in it
+            dotPos.clear();
             for (const v of vis) {
+                dotPos.set(v.idx, [X(v), laneOf(v).bot + 7]);
                 const ln = laneOf(v), isBirth = !!fc && fc.nodes.includes(v.idx), par = L.fileOf.get(L.parentOf.get(v.id));
                 g.append('circle').attr('cx', X(v)).attr('cy', ln.bot + 7).attr('r', isBirth ? 4.5 : 3).style('fill', isBirth ? 'var(--lin-born)' : 'var(--lin-grey)').style('cursor', 'pointer')
                     .on('mousemove', ev => ctx.showTip(ev, ctx.name(v.id), 'var(--lin-grey)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Parent', par ? ctx.name(par.id) : 'none (a root)'], ['Functions', fmt(tot(v))], ['Born here', fmt(M.bornIn[v.idx].length)],
@@ -416,6 +419,7 @@
             draw,
             panel,
             box: () => frame,
+            dotAt: i => dotPos.get(i) || null,
             // for the page's state bar: the selected birth and the opened Rare lanes, and closing either
             state: () => ({ sel: current() ? current().label : '', rare: rareOpen }),
             clear(k) { if (k === 'rare') { rareOpen = false; draw(); } else select(null); },

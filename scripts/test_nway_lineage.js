@@ -133,6 +133,15 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.deepStrictEqual(window.NwayBirths.share(BM, BM.list[0]), [0.75, 0.5, 0.75, 0.25], 'share of a birth each node holds');
     const BF = births([true, false, true, true, true, true], 'month');
     assert.deepStrictEqual([BF.birth[1], BF.list[0].rows], [-1, [0, 3, 4]], 'a row the filters drop is born nowhere');
+    // reuse: d holds a row its parent b lacks and was not born in; its nearest earlier holder c is in another chain
+    {
+        const d = dated(null);
+        d.rows.mask[3] = 'c';
+        const M2 = window.NwayBirths.model(d, rowModel(d, buildModel(d, new Set())), 'month'), par = [-1, 0, 0, 1];
+        assert.deepStrictEqual(window.NwayBirths.reuse(M2, i => par[i], i => (i === 2 ? 1 : 0)), [{ src: 2, dst: 3, rows: [3] }], 'from the nearest earlier holder, across chains');
+        assert.deepStrictEqual(window.NwayBirths.reuse(M2, i => par[i], () => 0), [], 'nothing inside one chain');
+        assert.deepStrictEqual(M2.holders[3], [2, 3], 'holders by date rank');
+    }
     const tqb = window.NwayLineage.tableQs('md5s=a&bgrp=week&baxis=cal&bsel=2024-01&bcol=birth').toString();
     assert.ok(!/b(grp|axis|sel|col)=/.test(tqb), 'table links drop the births keys');
 }

@@ -203,7 +203,10 @@ a birth is the rows born in one file, week or month (`bgrp`). Each Timeline lane
 stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom; a chain grows
 from its parent's date. `bcol=lens` (default) splits every birth by the lens's groups and paints them in the group colour, so
 all groups show at every date with no selection (no lens chips in the toolbar, as the Ring; a tracked group keeps its layers lit, the rest fade);
-`bcol=birth` paints one layer per birth on an old-to-new ramp. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
+`bcol=birth` paints one layer per birth on an old-to-new ramp. Hovering a layer lights the same group (or birth)
+in every lane. Reuse ribbons (`reuse()`, dashed violet) join a file to its nearest earlier holder in another chain for
+code it holds that its parent lacks and that was not born in it (reuse, independent birth or matcher miss); at most
+`RIB_MAX` (400), biggest first, with a note on how many are left out. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
 the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
 `+N from X` (violet) where it shows up off its parent, and fills the pane: where it was born, later files holding it, its
 share per lane over time, its functions (`rowEl`, a click is the usual `fn:` track). A lens chip or layer tracks that group.

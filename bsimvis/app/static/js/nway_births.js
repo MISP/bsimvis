@@ -24,8 +24,9 @@
     const iso = t => new Date(t).toISOString().slice(0, 10);
     const pct = v => `${Math.round(v * 100)}%`;
     const short = (s, n = 22) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-    // ponytail: fixed geometry; TARGET_H is the lanes' height at k=1 before the KY clamps
-    const B = { TOP: 58, PAD: 16, LABEL_W: 170, MR: 70, STEP_MIN: 26, CAL_PX: 18, LANE_GAP: 30, TARGET_H: 640, KY_MAX: 1.2, KY_MIN: 0.03, STRIP_H: 70, ROWS: 30, SURV_LANES: 6 };
+    // ponytail: fixed geometry; TARGET_H is the lanes' height at k=1 before the KY clamps; RIB_MAX caps the reuse ribbons
+    // (the biggest kept), raise it or bundle them if real sets lose ones that matter
+    const B = { RIB_MAX: 400, TOP: 58, PAD: 16, LABEL_W: 170, MR: 70, STEP_MIN: 26, CAL_PX: 18, LANE_GAP: 30, TARGET_H: 640, KY_MAX: 1.2, KY_MIN: 0.03, STRIP_H: 70, ROWS: 30, SURV_LANES: 6 };
     const BUCKETS = ['file', 'week', 'month'];
 
     // ---------------------------------------------------------------- model (no DOM)
@@ -42,7 +43,7 @@
     }
 
     // birth[r] = node index the row is born in (-1: filtered out), cohorts in time order (list), per node
-    // the matching rows it holds (heldM) and the rows born in it (bornIn)
+    // the matching rows it holds (heldM) and the rows born in it (bornIn), per row its holders by date rank (holders)
     function model(doc, R, bucket) {
         const nodes = doc.nodes, N = nodes.length;
         const pos = new Int32Array(N);
@@ -55,7 +56,27 @@
         for (const i of [...Array(N).keys()].sort((a, b) => pos[a] - pos[b])) if (bornIn[i].length) byKey.get(keyOf[i]).nodes.push(i);
         const list = [...byKey.values()].filter(c => c.rows.length).sort((a, b) => a.sort - b.sort);
         list.forEach((c, k) => { c.idx = k; });
-        return { doc, R, bucket, pos, birth, keyOf, byKey, list, heldM, bornIn, cohortOf: r => byKey.get(keyOf[birth[r]]) };
+        const holders = Array.from({ length: R.n }, () => []);
+        for (const i of [...Array(N).keys()].sort((a, b) => pos[a] - pos[b])) for (const r of heldM[i]) holders[r].push(i);
+        return { doc, R, bucket, pos, birth, keyOf, byKey, list, heldM, bornIn, holders, cohortOf: r => byKey.get(keyOf[birth[r]]) };
+    }
+
+    // Code a node holds that its parent does not and that it was not born in: from its nearest earlier holder
+    // (reuse, independent birth or matcher miss). [{ src, dst, rows }] (node indices), only across chains (chainOf).
+    function reuse(M, parentIdx, chainOf) {
+        const out = new Map();
+        M.heldM.forEach((rows, v) => {
+            const p = parentIdx(v);
+            for (const r of rows) {
+                if (M.birth[r] === v || (p >= 0 && M.R.has(r, p))) continue;
+                let src = -1;
+                for (const i of M.holders[r]) { if (M.pos[i] >= M.pos[v]) break; src = i; }
+                if (src < 0 || chainOf(src) === chainOf(v)) continue;
+                const k = `${src}>${v}`;
+                (out.get(k) || out.set(k, { src, dst: v, rows: [] }).get(k)).rows.push(r);
+            }
+        });
+        return [...out.values()];
     }
 
     // per node: the share of cohort c it holds
@@ -201,8 +222,19 @@
             gAx.append('text').attr('x', B.PAD).attr('y', B.TOP - 22).attr('font-size', 11).attr('font-weight', 600).style('fill', 'var(--text)').style('opacity', 0.75).text(o.axis === 'rank' ? 'Date rank' : 'Date');
 
             const area = ln => d3.area().curve(d3.curveBumpX).x(d => d.data.x).y0(d => ln.bot - d[0] * ky).y1(d => ln.bot - d[1] * ky);
+            // hover lights one group (a birth when coloured by birth) in every lane and its reuse ribbons; bands: each layer's y at each file
+            const hid = k => { const gk = groupOf(k); return gk != null ? `g:${gk}` : k; };
+            const baseOp = k => (k === '>' ? 0.4 : 1) * fade(k), ribOp = k => 0.35 * fade(k);
+            const hover = id => {
+                g.selectAll('path.bl-layer').attr('fill-opacity', s => (!id ? baseOp(s.key) : hid(s.key) === id ? 1 : 0.15));
+                g.selectAll('path.bl-rib').attr('fill-opacity', d => (!id ? ribOp(d.key) : hid(d.key) === id ? 0.8 : 0.04));
+            };
+            const band = new Map(), chainOf = new Map();
+            let chainN = 0;
             for (const ln of lanes) {
                 for (const ch of ln.chains) {
+                    for (const v of ch) chainOf.set(v.idx, chainN);
+                    chainN++;
                     // a chain grows out of its parent's date, from a dashed link to the parent's lane
                     const pts = [], par = L.fileOf.get(L.parentOf.get(ch[0].id));
                     if (par) {
@@ -212,8 +244,10 @@
                     }
                     for (const v of ch) { const c = counts.get(v.id); pts.push({ x: X(v) - hw, c, v }, { x: X(v) + hw, c, v }); }
                     const keys = order.filter(k => ch.some(v => counts.get(v.id)[k]));
-                    g.append('g').selectAll('path').data(d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts)).join('path')
-                        .attr('d', area(ln)).style('fill', s => paint(s.key)).attr('fill-opacity', s => (s.key === '>' ? 0.4 : 1) * fade(s.key))
+                    const S = d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts);
+                    for (const sr of S) sr.forEach((d, i) => { if (pts[i].v && d[1] > d[0]) band.set(`${pts[i].v.idx}\n${sr.key}`, [ln.bot - d[1] * ky, ln.bot - d[0] * ky]); });
+                    g.append('g').selectAll('path').data(S).join('path').attr('class', 'bl-layer')
+                        .attr('d', area(ln)).style('fill', s => paint(s.key)).attr('fill-opacity', s => baseOp(s.key))
                         .style('stroke', 'var(--lin-card)').attr('stroke-width', 0.6).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
                         .on('mousemove', (ev, s) => {
                             const [mx] = d3.pointer(ev, ctx.g);
@@ -223,7 +257,8 @@
                             ctx.showTip(ev, titleOf(s.key), dot, [...(lensMode ? [['Born', birthOf(s.key).label]] : []), ['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
                                 ['Click', !fc ? 'select this birth' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']]);
                         })
-                        .on('mouseleave', ctx.hideTip)
+                        .on('mouseenter', (ev, s) => hover(hid(s.key)))
+                        .on('mouseleave', () => { ctx.hideTip(); hover(null); })
                         .on('click', (ev, s) => {
                             ctx.hideTip();
                             if (!fc) return select(birthOf(s.key));
@@ -236,6 +271,35 @@
                 g.append('text').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4)).attr('font-size', 12).attr('font-weight', 600).style('fill', 'var(--text)').text(short(ctx.name(first.id)));
                 g.append('text').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4) + 14).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${ln.vs.length} file${ln.vs.length === 1 ? '' : 's'}${ln.chains.length > 1 ? `, ${ln.chains.length} chains` : ''}`);
             }
+
+            // reuse across chains: a ribbon from the nearest earlier holder's band to the file that picks the code up
+            // off its parent, one per (source, file, layer), stacked from the top of each band
+            const visByIdx = new Map(vis.map(v => [v.idx, v])), ribs = [];
+            const parentIdx = i => { const v = visByIdx.get(i), p = v && L.fileOf.get(L.parentOf.get(v.id)); return p ? p.idx : -1; };
+            for (const x of reuse(M, parentIdx, i => chainOf.get(i))) {
+                const by = new Map();
+                for (const r of x.rows) by.set(keyOf(r), (by.get(keyOf(r)) || 0) + 1);
+                for (const [key, n] of by) ribs.push({ src: visByIdx.get(x.src), dst: visByIdx.get(x.dst), key, n });
+            }
+            ribs.sort((a, b) => b.n - a.n);
+            const offOut = new Map(), offIn = new Map(), shown = ribs.slice(0, B.RIB_MAX).filter(d => d.src && d.dst);
+            for (const d of shown) {
+                const a = band.get(`${d.src.idx}\n${d.key}`), b = band.get(`${d.dst.idx}\n${d.key}`);
+                if (!a || !b) continue;
+                const ka = `${d.src.idx}\n${d.key}`, kb = `${d.dst.idx}\n${d.key}`, oa = offOut.get(ka) || 0, ob = offIn.get(kb) || 0;
+                const ha = Math.min(d.n * ky, a[1] - a[0] - oa), hb = Math.min(d.n * ky, b[1] - b[0] - ob);
+                offOut.set(ka, oa + ha); offIn.set(kb, ob + hb);
+                // the ends leave and enter flat even between neighbour columns, so a ribbon across lanes keeps its thickness
+                const x0 = X(d.src) + hw, x1 = X(d.dst) - hw, y0 = a[0] + oa, y1 = b[0] + ob, c = Math.max((x1 - x0) / 2, 70), ea = y0 + Math.max(0.5, ha), eb = y1 + Math.max(0.5, hb);
+                d.path = `M${x0},${y0}C${x0 + c},${y0} ${x1 - c},${y1} ${x1},${y1}L${x1},${eb}C${x1 - c},${eb} ${x0 + c},${ea} ${x0},${ea}Z`;
+            }
+            g.append('g').selectAll('path').data(shown.filter(d => d.path)).join('path').attr('class', 'bl-rib').attr('d', d => d.path)
+                .style('fill', d => paint(d.key)).attr('fill-opacity', d => ribOp(d.key)).style('stroke', 'var(--lin-reuse)').attr('stroke-opacity', 0.5).attr('stroke-dasharray', '3 2').attr('stroke-width', 0.8).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
+                .on('mouseenter', (ev, d) => hover(hid(d.key)))
+                .on('mousemove', (ev, d) => ctx.showTip(ev, `Reused: ${titleOf(d.key)}`, 'var(--lin-reuse)', [...(lensMode ? [['Born', birthOf(d.key).label]] : []),
+                    ['From', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['To', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)], ['Note', 'not in its parent: reuse, independent birth or matcher miss']]))
+                .on('mouseleave', () => { ctx.hideTip(); hover(null); });
+            if (ribs.length > shown.length) g.append('text').attr('x', B.PAD).attr('y', sBase + 24).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${fmt(ribs.length - shown.length)} smaller reuse ribbons not drawn`);
 
             // file dots under each lane; a click selects what was born in it
             for (const v of vis) {
@@ -395,5 +459,5 @@
         };
     }
 
-    window.NwayBirths = { model, share, mount, bucketOf };
+    window.NwayBirths = { model, share, reuse, mount, bucketOf };
 })();

@@ -19,8 +19,10 @@ Evidence, in order of preference (each function counted once):
 A same-caller-pair fallback is not implemented.
 
 Order: tree = maximum spanning tree (Prim, O(N^2)); chain = nearest neighbour +
-2-opt, O(N^2) per pass, capped at CHAIN_MAX files; star = all files vs the root.
-A version-key (e.g. 1.2 < 1.3) order is out of scope.
+2-opt, O(N^2) per pass, capped at CHAIN_MAX files; star = all files vs the root;
+time = each file's parent is the most similar file dated before it (columns carry
+`t`, ms or None), and a file with no earlier relative over TIME_FLOOR starts its
+own root (a forest). A version-key (e.g. 1.2 < 1.3) order is out of scope.
 """
 
 from collections import Counter
@@ -29,7 +31,7 @@ import numpy as np
 
 from bsimvis.app.services.nway_match import PairEdges
 
-ORDERS = ("tree", "chain", "star")
+ORDERS = ("tree", "chain", "star", "time")
 MAX_KIDS = 4  # more children than this: keep the biggest subsets, fold the rest
 KEEP_SUBSETS = 6
 REUSE_TOP = 12  # reuse classes returned; the rest fold into one entry
@@ -37,6 +39,10 @@ BY_FILE_MAX = 60  # beyond this many files by_file is served for one file= at a 
 REUSE_MAX = 300  # reuse classes are skipped beyond this many files
 CHAIN_MAX = 200  # 2-opt is O(N^2) per pass
 TWO_OPT_PASSES = 20
+# ponytail: fixed floors; a file under TIME_FLOOR to every earlier file starts a new root,
+# a later file INVERSION_GAP closer than the parent means the date is likely late
+TIME_FLOOR = 0.05
+INVERSION_GAP = 0.15
 
 
 class BadParams(ValueError):
@@ -85,6 +91,31 @@ def spanning_tree(w, root):
         # ties go to the newest node: identical builds chain into one lane, not a star
         closer = ((w[j] > best) | ((w[j] == best) & (best > 0))) & ~seen
         best[closer], via[closer] = w[j][closer], j
+    return out
+
+
+def time_order(columns):
+    """Column indices by date (undated last), then bigger file first: the timeline's ranks."""
+    return sorted(
+        range(len(columns)),
+        key=lambda i: (
+            columns[i].get("t") is None,
+            columns[i].get("t") or 0,
+            -columns[i]["functions"],
+            i,
+        ),
+    )
+
+
+def time_parents(w, order):
+    """[(parent, child)] in `order`: the most similar earlier node (ties: the latest), none under TIME_FLOOR."""
+    out = []
+    for k in range(1, len(order)):
+        i, prev = order[k], order[:k]
+        s = w[prev, i]
+        j = len(prev) - 1 - int(np.argmax(s[::-1]))
+        if s[j] >= TIME_FLOOR:
+            out.append((prev[j], i))
     return out
 
 
@@ -214,6 +245,9 @@ def tree(columns, edges_by_pair, min_edge, root=None, order="tree"):
     if order == "chain" and len(ids) > CHAIN_MAX:
         raise BadParams(f"order=chain handles at most {CHAIN_MAX} files")
     w = similarity_matrix(columns, edges_by_pair, min_edge)
+    if order == "time":  # the earliest file is the root; `root` does not apply
+        rank = time_order(columns)
+        return w, rank[0], time_parents(w, rank)
     if root is not None:
         r = ids.index(root)
     else:
@@ -394,7 +428,7 @@ def build(
                     if g != f:
                         row_co[g] += cnt
     # reuse: a presence mask whose files are not connected in the tree
-    depth = {ids[r]: 0}
+    depth = dict.fromkeys(ids, 0)  # every root of a time forest sits at 0
     for p, c in pairs:
         depth[ids[c]] = depth[ids[p]] + 1
     pos = {i: n for n, i in enumerate(ids)}
@@ -458,6 +492,21 @@ def build(
                 "born_by_file": dict(born_bf[k]) if k in born_bf else None,
             }
         )
+    timed = {}
+    if order == "time":
+        rank = time_order(columns)
+        at = {i: k for k, i in enumerate(rank)}
+        par = {c: p for p, c in pairs}
+        for i, c in enumerate(columns):
+            # a root's relatives are all later by definition: only a child can be inverted
+            later = rank[at[i] + 1 :]
+            best = float(w[later, i].max()) if later and i in par else 0.0
+            timed[c["id"]] = {
+                "t": c.get("t"),
+                "rank": at[i],
+                "time_inversion": i in par
+                and best - float(w[par[i], i]) > INVERSION_GAP,
+            }
     nodes = [
         {
             "id": c["id"],
@@ -477,6 +526,7 @@ def build(
                 if want
                 else None
             ),
+            **timed.get(c["id"], {}),
         }
         for i, c in enumerate(columns)
     ]
@@ -787,6 +837,22 @@ def demo():
             pass
     for g in got.values():
         check_invariants(g)
+    # time: parents are dated earlier; C's closest relative B is later (inversion);
+    # E shares nothing and is undated: its own root, ranked last
+    tc = [{**c, "t": t} for c, t in zip(cols, (1, 3, 2, 4))]
+    tc.append({"id": "E", "file_name": "E", "functions": 1, "t": None})
+    tm = build(tc, rows + [{"cells": {"E": "e1"}}], e, 0.5, names.get, order="time")
+    tn = {x["id"]: x for x in tm["nodes"]}
+    assert tm["root"] == "A"
+    assert {(x["parent"], x["child"]) for x in tm["edges"]} == {
+        ("A", "C"),
+        ("A", "B"),
+        ("C", "D"),
+    }, tm["edges"]
+    assert all(tn[x["parent"]]["rank"] < tn[x["child"]]["rank"] for x in tm["edges"])
+    assert [tn[i]["time_inversion"] for i in "ABCD"] == [False, False, True, False]
+    assert (tn["E"]["rank"], tn["E"]["depth"], tn["E"]["t"]) == (4, 0, None)
+    check_invariants(tm)
     # C keeps 2 functions in B and D, 1 in B only, and 3 in no child
     cp = {
         tuple(p["children"]): p["count"] for p in t["partitions"] if p["parent"] == "C"

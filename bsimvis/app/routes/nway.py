@@ -20,6 +20,7 @@ from bsimvis.app.services import (
     nway_role_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
+from bsimvis.app.services.index_service import normalize_timestamp
 from bsimvis.app.services.bin_sim_service import _origin_coll
 from bsimvis.app.services.bin_sim_tags import merge_tag_fields, tag_axis
 from bsimvis.app.services.redis_client import get_queue_redis, get_redis
@@ -2065,6 +2066,32 @@ def _lineage_nodes(doc):
     return None
 
 
+LINEAGE_TIME_FIELDS = ("first_seen", "last_seen", "entry_date")
+
+
+def _lineage_times(doc, r, cols, field):
+    """`cols` with `t` (ms or None): the node's earliest `field` (latest for last_seen) over its files.
+
+    Read off the live file metas, not the cached doc: propagation updates
+    first_seen after a build.
+    """
+    files = doc.get("file_columns") or doc["columns"]
+    pipe = r.pipeline(transaction=False)
+    for c in files:
+        pipe.get(f"{c['collection']}:file:{c['md5']}:meta")
+    pick = max if field == "last_seen" else min
+    t = {}
+    for c, raw in zip(files, pipe.execute()):
+        v = normalize_timestamp((json.loads(raw) if raw else {}).get(field), pick)
+        if v:
+            t[c["id"]] = v
+    out = []
+    for c in cols:
+        ts = [t[m] for m in (c.get("members") or [c["id"]]) if m in t]
+        out.append({**c, "t": pick(ts) if ts else None})
+    return out
+
+
 def _node_of(cols, raw):
     """The node id a `root` / `file` param names: a node id, a member file id or an md5."""
     raw = (raw or "").strip().lower()
@@ -2277,6 +2304,11 @@ def get_nway_lineage():
             "lineage needs file, twin or cluster columns: use columns=files, twins or children",
         )
     cols, rows, edges = nodes
+    if order == "time":
+        tfield = request.args.get("tfield", "first_seen")
+        if tfield not in LINEAGE_TIME_FIELDS:
+            abort(400, f"tfield must be one of {', '.join(LINEAGE_TIME_FIELDS)}")
+        cols = _lineage_times(doc, r, cols, tfield)
     fmeta = doc["fmeta"]
 
     def name_of(fid):
@@ -2300,6 +2332,8 @@ def get_nway_lineage():
     # the toolbar counts stay those of the whole set
     out["counts"] = _tab_counts(all_rows, _tab_args(doc, request.args))
     out["columns_mode"] = doc["columns_mode"]
+    if order == "time":
+        out["tfield"] = tfield
     out["min_edge"] = doc["min_edge"]
     out["warnings"] = doc["warnings"]
     # per file metadata (the ring tooltip's distributions); a node's `members` are these ids

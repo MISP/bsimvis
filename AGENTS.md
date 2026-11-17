@@ -184,6 +184,18 @@ answers 400 for children (old server, no shared cluster). Opening a cluster node
 Node check: `node scripts/test_nway_lineage.js`; the service self-check: `uv run python -I
 bsimvis/app/services/nway_lineage_service.py`.
 
+**Timeline (`lview=timeline`).** The Tree renderer over `order=time`: the server makes each node's parent the
+most similar node dated before it (`nway_lineage_service.time_order` / `time_parents`, ties: the latest, equal dates
+allowed), and a node under `TIME_FLOOR` (0.05) to every earlier one starts its own root, so the doc can be a forest
+(`buildModel` walks every root). `tfield` = `first_seen` (default), `last_seen` or `entry_date`, read off the live file
+metas in the route (`_lineage_times`, the cached doc has no dates; a node takes its earliest file, latest for
+`last_seen`); undated nodes rank last. Nodes get `t`, `rank` and `time_inversion` (a later file is more than
+`INVERSION_GAP` closer than the parent: the date is probably late; drawn as a warning). In `layout()`, `doc.order ===
+'time'` sets `n.d` to the date rank (one column per node, `T_GAP` apart), so reuse arcs, slots and anchors are the tree's;
+`timeLanes` puts a parent's first child in its lane and every other child or root in the free lane nearest it; `timeTicks`
+draws the date where the day changes, a dashed `+N` mark for gaps of `GAP_DAYS` (30) or more and an "undated" mark. Never
+auto-collapsed, never auto-chosen; `tfield` is stripped from table links.
+
 **Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
 `lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the
 file they start in (`added-N`, `dropped-N`, `span-N-M` take node N's Tree colour; kept / scattered / rewritten are grey).

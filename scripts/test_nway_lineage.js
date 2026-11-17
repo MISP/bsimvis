@@ -94,6 +94,27 @@ const filtered = trackInfo(some.L, some.R, trackRows(some.R, some.cats, 'fn:c:fu
 assert.strictEqual(filtered.holders, 0, 'a row the filters drop is not tracked');
 assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tracks fill bar)');
 
+// --- timeline (order=time): columns by date rank, lanes = chains sharing code, a forest, date marks ---
+{
+    const D0 = Date.UTC(2024, 0, 1), day = 864e5;
+    const td = {
+        order: 'time', root: 'A',
+        // A > C > D (one lane), A > B (branch), E: its own root; D undated
+        nodes: [node('A', 4, { rank: 0, t: D0 }), node('B', 3, { rank: 2, t: D0 + 40 * day }), node('C', 4, { rank: 1, t: D0 + day }), node('D', 2, { rank: 4, t: null }), node('E', 2, { rank: 3, t: D0 + 50 * day })],
+        edges: [edge('A', 'C', 0.9), edge('A', 'B', 0.5), edge('C', 'D', 0.8)],
+        partitions: [], reuse: [], reuse_skipped: true,
+    };
+    const TM = buildModel(td, new Set()), TL = layout(td, TM), at = id => TL.fileOf.get(id);
+    assert.deepStrictEqual(TM.vis.map(n => n.id), ['A', 'C', 'D', 'B', 'E'], 'every root of the forest is walked, the earliest first');
+    assert.deepStrictEqual(['A', 'C', 'B', 'E', 'D'].map(id => at(id).d), [0, 1, 2, 3, 4], 'a column per date rank, undated last');
+    assert.deepStrictEqual(['A', 'C', 'D', 'B', 'E'].map(id => at(id).lane), [0, 0, 0, 1, 1], 'the first child continues its lane; a branch and a later root share a free lane');
+    assert.ok(at('A').y0 === at('D').y0 && at('B').y0 === at('E').y0 && at('B').y0 >= at('A').y1, 'one y per lane, lanes do not overlap');
+    assert.ok(['A', 'C', 'B', 'E', 'D'].every((id, i, a) => !i || at(a[i - 1]).x1 < at(id).x0), 'strict left to right by date');
+    assert.deepStrictEqual(TL.ticks.filter(k => k.gap).map(k => k.gap), ['+39 d', 'undated'], 'a gap mark past 30 days and before the undated files');
+    assert.deepStrictEqual(TL.ticks.filter(k => k.label).map(k => k.label), ['2024-01-01', '2024-01-02', '2024-02-10', '2024-02-20']);
+    assert.strictEqual(layout(doc(null), buildModel(doc(null), new Set())).ticks.length, 0, 'no marks on a tree');
+}
+
 // --- the Ring's Deltas lens: the server's delta lanes, coloured by their origin node; the trees keep the born-in cats ----
 {
     const dd = doc([true, true, true, true, true, true]);
@@ -865,7 +886,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(/NP\.prototype\._dd\.call\(\{ _tip: NP\.prototype\._tip \}, 'View'/.test(vv) && !/'aria-label': 'View'/.test(vv), 'the view picker is NwayPanel._dd, not a button group');
             assert.ok(/<span class="nway-ctlwrap"><span class="nway-lbl">[^`]*<details class="nway-ddl"><summary>[^`]*<div class="nway-ddl-menu">/.test(ps), 'the markup _dd produces: .nway-ctlwrap > details.nway-ddl > .nway-ddl-menu');
             assert.ok(/\['tree', 'Tree', 'fa-solid fa-sitemap'[^\]]*\],\s*\['tracks', 'Tracks', 'fa-solid fa-route'[^\]]*\],\s*\['split', 'Split', 'fa-solid fa-table-columns'[^\]]*\],\s*\['ring', 'Ring', 'fa-solid fa-circle-nodes'/.test(vv), 'four views with icons and tips');
-            assert.ok(/toolbar: \[viewPick, status\]/.test(vv) && /more: \[layoutSel, rootSel\]/.test(vv) && /moreOpen: advanced\(\)/.test(vv), 'picker + status in view, layout and root behind More');
+            assert.ok(/toolbar: \[viewPick, tfieldSel, status\]/.test(vv) && /more: \[layoutSel, rootSel\]/.test(vv) && /moreOpen: advanced\(\)/.test(vv), 'picker + status in view, layout and root behind More');
             assert.ok(/st\.layout !== 'tree' \|\| !!st\.root \|\| st\.rnest === '0' \|\| st\.rarc !== R\.ARC_DEFAULT \|\| st\.rlist === '1' \|\| st\.rtier === 'hide' \|\| st\.rbundle === '0'/.test(vv), 'a non-default advanced key opens More');
             assert.ok(/tb\.append\(trackBox, legendBox, ringBox, more\.btn, more\.row\)/.test(lin) && /more\.row\.append\(\.\.\.\(opts\.more \|\| \[\]\),[\s\S]*'Collapse deep'[\s\S]*'Expand all'[\s\S]*'100%'[\s\S]*'Selection'/.test(lin), 'Collapse deep, Expand all, 100% and Selection stay reachable behind More');
             assert.ok(/zbtn\('−'/.test(lin) && /zbtn\('\+'/.test(lin) && /zbtn\('Fit'/.test(lin) && !/zbtn\('100%'/.test(lin), 'zoom in view: − + Fit');

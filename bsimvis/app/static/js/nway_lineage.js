@@ -37,6 +37,11 @@
     const KY_MAX = 1.2, KY_MIN = 0.12, TARGET_H = 1600, REUSE_MAX = 14;
     const ARC_MAX_PIECES = 6, AUTO_FILES = 40, AUTO_SHOW = 60, FAN_FADE = 8, K_MIN = 0.05, K_MAX = 40;
     const DETAIL_K = 0.3, LABEL_K = 0.55, HATCH_K = 1.5;
+    // timeline (doc.order 'time'): the gap between rank columns, a gap marker past GAP_DAYS, the date field's label
+    const T_GAP = 160, T_TOP = 76, GAP_DAYS = 30, DAY = 864e5;
+    const TFIELDS = { first_seen: 'First seen', last_seen: 'Last seen', entry_date: 'Uploaded' };
+    const isoDay = t => new Date(t).toISOString().slice(0, 10);
+    const span = ms => { const d = Math.round(ms / DAY); return d < 60 ? `${d} d` : d < 730 ? `${Math.round(d / 30.4)} mo` : `${(d / 365).toFixed(1)} y`; };
     const V = { born: 'var(--lin-born)', died: 'var(--lin-died)', shared: 'var(--lin-grey)', fork: 'var(--lin-grey-d)', slate: 'var(--lin-slate)', slateHi: 'var(--lin-slate-hi)', reuse: 'var(--lin-reuse)' };
     const CAVEAT = 'reuse, independent birth or matcher miss';
     // same as nway_panel.js LENSES (key, label, group preset) and its tab icons
@@ -203,7 +208,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         for (const e of doc.edges) { (kids.get(e.parent) || kids.set(e.parent, []).get(e.parent)).push(e.child); inE.set(e.child, e); }
         const size = new Map();
         const sz = id => { if (!size.has(id)) size.set(id, 1 + (kids.get(id) || []).reduce((a, c) => a + sz(c), 0)); return size.get(id); };
-        sz(doc.root);
+        // a time doc is a forest: the earliest root, then every other root by date
+        const roots = [doc.root, ...doc.nodes.filter(n => n.id !== doc.root && !inE.has(n.id)).sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).map(n => n.id)];
+        for (const r of roots) sz(r);
         // first child continues the parent's lane: most similar build first, divergent ones below
         for (const l of kids.values()) l.sort((a, b) => (inE.get(b).similarity ?? 0) - (inE.get(a).similarity ?? 0) || size.get(b) - size.get(a) || (inE.get(b).shared - inE.get(a).shared));
         const rep = new Map(), vis = [];
@@ -214,7 +221,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const ms = members(id), nodes = ms.map(m => byId.get(m));
                 const sum = f => nodes.reduce((a, x) => a + (f(x) || 0), 0);
                 const a = {
-                    id: `agg:${id}`, agg: true, top: id, members: ms, d, file_name: `${ms.length} files`, idx: n.idx,
+                    id: `agg:${id}`, agg: true, top: id, members: ms, d, file_name: `${ms.length} files`, idx: n.idx, rank: n.rank, t: n.t,
                     functions: sum(x => x.functions), died_all: sum(x => x.died_all), only_here: sum(x => x.only_here), reuse_in: sum(x => x.reuse_in),
                     born: ms.reduce((s, m) => s + (inE.get(m)?.gained || 0), 0), suspect: ms.reduce((s, m) => s + (inE.get(m)?.recall_suspect || 0), 0),
                 };
@@ -227,14 +234,15 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             vis.push(n);
             for (const c of kids.get(id) || []) walk(c, d + 1);
         };
-        walk(doc.root, 0);
-        return { byId, kids, inE, vis, rep, size };
+        for (const r of roots) walk(r, 0);
+        return { byId, kids, inE, vis, rep, size, roots };
     }
 
     // Above AUTO_FILES files: group every subtree below the deepest level that keeps about AUTO_SHOW nodes visible.
+    // Never on a timeline: an aggregate would break the strict date order.
     function autoCollapse(doc) {
         const out = new Set();
-        if (doc.nodes.length <= AUTO_FILES) return out;
+        if (doc.nodes.length <= AUTO_FILES || doc.order === 'time') return out;
         const kids = new Map(), depth = new Map([[doc.root, 0]]);
         for (const e of doc.edges) { (kids.get(e.parent) || kids.set(e.parent, []).get(e.parent)).push(e.child); depth.set(e.child, depth.get(e.parent) + 1); }
         const perDepth = new Map();
@@ -276,7 +284,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (const r of held[i]) if (bornIn[r] < 0 && (p < 0 || !has(r, p))) bornIn[r] = i;
             for (const c of M.kids.get(id) || []) walk(c);
         };
-        walk(doc.root);
+        for (const r of M.roots) walk(r);
         const col = k => R[k] || [];
         // a member file id -> its node id: a deltas key or a hovered table row may name files, not nodes
         const nodeOf = new Map();
@@ -462,20 +470,63 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         return { info, holders, max };
     }
 
+    // Timeline: the column is the node's date rank among the visible nodes (n.d), the lane a chain of files
+    // sharing code (n.lane): a parent's first child continues its lane, every other child (and every root)
+    // takes the free lane nearest its parent's, free over [column after the parent, end of its chain].
+    function timeLanes(vis, parentOf, fileOf) {
+        [...vis].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).forEach((n, i) => { n.d = i; });
+        const first = new Map(), lanes = [];
+        for (const n of vis) { const p = parentOf.get(n.id); if (p && !first.has(p)) first.set(p, n); }
+        const end = n => { while (first.has(n.id)) n = first.get(n.id); return n.d; };
+        for (const n of vis) { // DFS order: a parent comes before its children
+            const p = fileOf.get(parentOf.get(n.id));
+            if (p && first.get(p.id) === n) { n.lane = p.lane; continue; }
+            const a = p ? p.d + 1 : n.d, b = end(n), pl = p ? p.lane : 0;
+            let k = lanes.length;
+            for (let i = 0; i < lanes.length; i++) if (!lanes[i].some(([x, y]) => x <= b && a <= y) && (k === lanes.length || Math.abs(i - pl) < Math.abs(k - pl))) k = i;
+            (lanes[k] || (lanes[k] = [])).push([a, b]);
+            n.lane = k;
+        }
+        return lanes.length;
+    }
+
+    // date marks over the rank columns: a date where the day changes, "+N" in a gap of GAP_DAYS or more, "undated"
+    function timeTicks(vis, G) {
+        const out = [];
+        let day = null, prev = null;
+        for (const n of [...vis].sort((a, b) => a.d - b.d)) {
+            if (n.t == null) { if (prev !== 'none') out.push({ x: n.x0 - G / 2, gap: 'undated' }); prev = 'none'; continue; }
+            if (prev != null && n.t - prev >= GAP_DAYS * DAY) out.push({ x: n.x0 - G / 2, gap: `+${span(n.t - prev)}` });
+            if (isoDay(n.t) !== day) out.push({ x: n.x0, label: isoDay(n.t) });
+            day = isoDay(n.t); prev = n.t;
+        }
+        return out;
+    }
+
     // ---------------------------------------------------------------- layout
     function layout(doc, M) {
         const { vis, rep, kids, inE } = M;
         const fileOf = new Map(vis.map(n => [n.id, n]));
         const visPos = new Map(vis.map((n, i) => [n.id, i]));
         const repOf = id => fileOf.get(rep.get(id));
-        const maxd = Math.max(...vis.map(n => n.d));
-        const colSum = new Map();
-        for (const n of vis) colSum.set(n.d, (colSum.get(n.d) || 0) + (n.agg ? 40 / 0.5 : Math.max(1, n.functions)));
-        const ky = Math.max(KY_MIN, Math.min(KY_MAX, TARGET_H / Math.max(...colSum.values())));
-        for (const n of vis) n.h = n.agg ? Math.max(30, Math.min(260, n.functions * ky)) : Math.max(3, n.functions * ky);
-        const x0Of = d => PAD + d * (NODE_W + GAP);
         const parentOf = new Map();
-        for (const n of vis) if (!n.agg || true) { const e = inE.get(n.agg ? n.top : n.id); if (e) parentOf.set(n.id, rep.get(e.parent)); }
+        for (const n of vis) { const e = inE.get(n.agg ? n.top : n.id); if (e) parentOf.set(n.id, rep.get(e.parent)); }
+        const time = doc.order === 'time', G = time ? T_GAP : GAP, T0 = time ? T_TOP : 46;
+        const nLanes = time ? timeLanes(vis, parentOf, fileOf) : 0;
+        const maxd = Math.max(...vis.map(n => n.d));
+        // tree: a column's files stack; timeline: the lanes stack, each as tall as its biggest file
+        const colSum = new Map();
+        if (time) for (const n of vis) colSum.set(n.lane, Math.max(colSum.get(n.lane) || 0, n.agg ? 80 : Math.max(1, n.functions)));
+        else for (const n of vis) colSum.set(n.d, (colSum.get(n.d) || 0) + (n.agg ? 40 / 0.5 : Math.max(1, n.functions)));
+        const ky = Math.max(KY_MIN, Math.min(KY_MAX, TARGET_H / (time ? [...colSum.values()].reduce((a, b) => a + b, 0) : Math.max(...colSum.values()))));
+        for (const n of vis) n.h = n.agg ? Math.max(30, Math.min(260, n.functions * ky)) : Math.max(3, n.functions * ky);
+        const x0Of = d => PAD + d * (NODE_W + G);
+        const laneOff = [];
+        if (time) {
+            const lh = new Array(nLanes).fill(0);
+            for (const n of vis) lh[n.lane] = Math.max(lh[n.lane], n.h);
+            for (let k = 0, y = 0; k < nLanes; y += lh[k] + NPAD, k++) laneOff[k] = y;
+        }
 
         // reuse classes mapped onto the visible nodes
         const classes = [];
@@ -503,14 +554,14 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (const n of vis) {
                 n.x0 = x0Of(n.d); n.x1 = n.x0 + NODE_W;
                 const pb = bottom.has(n.d) ? bottom.get(n.d) + NPAD : top;
-                n.y0 = Math.max(pb, fileOf.get(parentOf.get(n.id))?.y0 ?? top);
+                n.y0 = time ? top + laneOff[n.lane] : Math.max(pb, fileOf.get(parentOf.get(n.id))?.y0 ?? top);
                 n.y1 = n.y0 + n.h;
                 bottom.set(n.d, n.y1);
                 fb = Math.max(fb, n.y1);
             }
             return fb;
         };
-        let top = 46, filesBottom = place(top);
+        let top = T0, filesBottom = place(top);
         const stripes = new Map(vis.map(n => [n.id, []]));
         for (const c of classes) for (const id of c.files) stripes.get(id).push({ c, n: fileOf.get(id) });
         const restack = () => {
@@ -536,7 +587,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const take = d => {
             const n = used.get(d) || 0;
             used.set(d, n + 1);
-            return 22 + n * Math.min(laneH, (GAP - 70) / Math.max(1, slotN.get(d)));
+            return 22 + n * Math.min(laneH, (G - 70) / Math.max(1, slotN.get(d)));
         };
         for (const A of arcs) { A.sa = take(A.a.d); A.sb = A.same ? A.sa : take(A.b.d); }
         const laneEnd = [];
@@ -548,7 +599,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             laneEnd[k] = A.b.x1 + A.sb + 8;
             A.lane = k;
         }
-        if (laneEnd.length) { top = 46 + laneEnd.length * laneH + 18; filesBottom = place(top); restack(); }
+        if (laneEnd.length) { top = T0 + laneEnd.length * laneH + 18; filesBottom = place(top); restack(); }
         for (const A of arcs) {
             A.ya = stripeOf(A.c, A.a.id).y0 + A.c.th / 2;
             A.yb = stripeOf(A.c, A.b.id).y0 + A.c.th / 2;
@@ -612,7 +663,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             }
         }
         const W = x0Of(maxd) + NODE_W + 90, H = filesBottom + 30;
-        return { vis, fileOf, parentOf, links, segs, origs, arcs, classes, stripes, W, H, ky, top };
+        return { vis, fileOf, parentOf, links, segs, origs, arcs, classes, stripes, W, H, ky, top, ticks: time ? timeTicks(vis, G) : [] };
     }
 
     function arcPath(A) {
@@ -732,7 +783,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
         const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none');
-        const gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
+        const gAx = gTree.append('g').style('pointer-events', 'none'), gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
         // in the Ring view a press on a draggable shape drags it; the rest still pans
         zoom.filter(ev => (!ev.ctrlKey || ev.type === 'wheel') && !ev.button && !(st.view === 'ring' && ev.type !== 'wheel' && ev.target.closest && ev.target.closest('[data-drag]')));
@@ -772,7 +823,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         placeBar();
         const deepAll = () => {
             const out = new Set();
-            for (const n of st.M.vis) if (!n.agg && n.d >= 2 && (st.M.kids.get(n.id) || []).length && !out.has(st.M.rep.get(n.id))) out.add(n.id);
+            for (const n of st.M.vis) if (!n.agg && (n.depth ?? n.d) >= 2 && (st.M.kids.get(n.id) || []).length && !out.has(st.M.rep.get(n.id))) out.add(n.id);
             return out;
         };
 
@@ -1225,8 +1276,16 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function drawStatic() {
             const L = st.L;
             // a relayout starts from an empty scene: joins would keep the old boxes and arcs
-            for (const g of [defs, gRib, gArc, gNode, gStr, gLib, gDet, gOv, gLab, gHov]) g.selectAll('*').remove();
+            for (const g of [defs, gAx, gRib, gArc, gNode, gStr, gLib, gDet, gOv, gLab, gHov]) g.selectAll('*').remove();
             syncFocus();
+            // timeline marks: dates, gaps (dashed, full height) and a warning where a later file is closer than the parent
+            for (const k of L.ticks) {
+                if (k.gap) {
+                    gAx.append('line').attr('x1', k.x).attr('x2', k.x).attr('y1', 22).attr('y2', L.H).style('stroke', 'var(--lin-grey-d)').attr('stroke-dasharray', '4 5').attr('vector-effect', 'non-scaling-stroke');
+                    gAx.append('text').attr('class', 'lin-halo').attr('x', k.x).attr('y', 16).attr('text-anchor', 'middle').attr('font-size', 11.5).style('fill', 'var(--lin-grey)').text(k.gap);
+                } else gAx.append('text').attr('class', 'lin-halo').attr('x', k.x).attr('y', 36).attr('font-size', 11.5).style('fill', 'var(--text)').style('opacity', 0.8).text(k.label);
+            }
+            for (const n of L.ticks.length ? L.vis : []) if (n.time_inversion) gAx.append('text').attr('x', n.x1 + 4).attr('y', n.y0 + 11).attr('font-size', 12).style('fill', V.died).text('⚠');
             for (const [k, c] of [['born', V.born]]) {
                 const p = defs.append('pattern').attr('id', `hatch-${k}-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
                 p.append('rect').attr('width', 6).attr('height', 6).style('fill', c).attr('fill-opacity', 0.22);
@@ -1588,7 +1647,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             hideTip();
         }
         const partRows = p => [['Kept by', p.folded ? 'several children (folded)' : names(p.children)], ['Functions', fmt(p.count)]];
-        const edgeRows = e => [['Born', fmt(e.gained)], ['Died', fmt(e.lost)], ['Shared', fmt(e.shared)], ['Recall suspect', fmt(e.recall_suspect)]];
+        // timeline: the node's date (and its warning), an edge's time between parent and child
+        const timeRows = n => (st.doc.order !== 'time' ? [] : [[TFIELDS[st.doc.tfield] || 'Date', n.t == null ? 'undated' : isoDay(n.t)],
+            ...(n.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date may be late']] : [])]);
+        const edgeTime = e => { const p = st.M.byId.get(e.parent), c = st.M.byId.get(e.child); return st.doc.order === 'time' && p && c && p.t != null && c.t != null ? [['After the parent', span(c.t - p.t)]] : []; };
+        const edgeRows = e => [['Born', fmt(e.gained)], ['Died', fmt(e.lost)], ['Shared', fmt(e.shared)], ['Recall suspect', fmt(e.recall_suspect)], ...edgeTime(e)];
         function hoverRib(ev, l) {
             st.last = { edge: l.edge };
             dimRibs(d => d.edge === l.edge);
@@ -1629,7 +1692,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             nodeBase.style('opacity', n => r.files.some(f => st.M.rep.get(f) === n.id) ? 1 : 0.45);
             const rc = reuseCat(r);
             if (rc) focusHover(rc.tk);
-            showTip(ev, 'Code outside the tree path', V.reuse, [['Files', names(r.files)], ['Functions', fmt(r.count)], ['Level', r.same_level ? 'same level' : `across depth (span ${r.depth_span})`], ['Tree pieces', r.components.length], ['Note', CAVEAT]]);
+            // timeline: the earliest file holding it, and how long until the last one does
+            const by = st.doc.order === 'time' ? r.files.map(f => st.M.byId.get(f)).sort((a, b) => a.rank - b.rank) : [];
+            const when = by.length && by[0].t != null ? [['First in', `${name(by[0].id)} (${isoDay(by[0].t)})`], ...(by[by.length - 1].t != null ? [['Spread over', span(by[by.length - 1].t - by[0].t)]] : [])] : [];
+            showTip(ev, 'Code outside the tree path', V.reuse, [['Files', names(r.files)], ['Functions', fmt(r.count)], ...when, ['Level', r.same_level ? 'same level' : `across depth (span ${r.depth_span})`], ['Tree pieces', r.components.length], ['Note', CAVEAT]]);
         }
         async function hoverFile(ev, F) {
             const tok = ++st.hover;
@@ -1639,7 +1705,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 return;
             }
             const tw = twinsOf(F);
-            const rows = [['Functions', fmt(F.functions)], ['In reuse classes', F.reuse_in == null ? 'n/a' : fmt(F.reuse_in)], ...(tw ? [['Same code', names(tw.map(md5Of))]] : [])];
+            const rows = [['Functions', fmt(F.functions)], ['In reuse classes', F.reuse_in == null ? 'n/a' : fmt(F.reuse_in)], ...(tw ? [['Same code', names(tw.map(md5Of))]] : []), ...timeRows(F)];
             if (st.P) {
                 const sp = st.P.segs.get(F.id);
                 ribs.style('opacity', l => (l.source === F || l.target === F ? 1 : 0.1));
@@ -1914,7 +1980,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

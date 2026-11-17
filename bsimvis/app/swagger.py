@@ -2982,7 +2982,8 @@ class BinSimNwayLineage(Resource):
             "md5s": "Same file set / scope params as /nway (collection, pool, mode, min_edge, ...)",
             "root": "Root file, md5 or collection:md5 (default: the file with most functions)",
             "file": "Big sets (more than 60 files): file id (or md5) whose per-file overlay (by_file) to include",
-            "order": "tree (maximum spanning tree, default; `lineage` is read as tree), chain (seriation, at most 200 files) or star (every file vs root)",
+            "order": "tree (maximum spanning tree, default; `lineage` is read as tree), chain (seriation, at most 200 files), star (every file vs root) or time (each file's parent is the most similar file dated before it; a file with no earlier relative starts its own root; nodes get `t`, `rank` and `time_inversion`; `root` is ignored)",
+            "tfield": "order=time: the date a node is placed by: first_seen (default), last_seen or entry_date (upload). The earliest over a node's files (latest for last_seen); undated nodes rank last",
             "columns": "files (default), twins (each node is a twin column) or children (each node is a child file cluster, opened with `col_open`); `nodes[i].members` are its files, `path` the groups it was opened out of",
             "tab": "With q, k, scope, tags, column, feat_min, feat_max, support_min, ...: the /nway row filter, flagged per row in `rows.match` (the tree always uses every row)",
         }

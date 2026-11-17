@@ -6977,6 +6977,45 @@ def test_nway_lineage():
     )
     r = requests.get(url, params={**base, "order": "bogus"}, timeout=60)
     check("nway lineage: bad order is a 400", r.status_code == 400)
+    # order=time: parents rank before children, nodes carry the live date of tfield.
+    # Only the first upload carries first_seen: the second file is undated and ranks last.
+    from bsimvis.app.services.index_service import parse_timestamp
+
+    first = f"{COLLECTION}:{file_md5}"
+    want_t = {
+        "first_seen": lambda tn: tn[first]["t"] == parse_timestamp(UPLOAD_FIRST_SEEN)
+        and all(x["t"] is None for i, x in tn.items() if i != first)
+        and tn[first]["rank"] == 0,
+        "entry_date": lambda tn: all(isinstance(x["t"], int) for x in tn.values()),
+    }
+    for tf in ("first_seen", "entry_date"):
+        r = requests.get(
+            url, params={**base, "order": "time", "tfield": tf}, timeout=60
+        )
+        t = r.json() if r.status_code == 200 else {}
+        tn = {x["id"]: x for x in t.get("nodes", [])}
+        check(
+            f"nway lineage time ({tf}): parents dated first, ranks 0..N-1, dates set",
+            r.status_code == 200
+            and t["order"] == "time"
+            and t["tfield"] == tf
+            and sorted(x["rank"] for x in tn.values()) == list(range(len(tn)))
+            and all(
+                tn[e["parent"]]["rank"] < tn[e["child"]]["rank"] for e in t["edges"]
+            )
+            and tn[t["root"]]["rank"] == 0
+            and want_t[tf](tn)
+            and all(x["time_inversion"] in (True, False) for x in tn.values()),
+            f"HTTP {r.status_code} {str(t)[:300]}",
+        )
+        try:
+            nway_lineage_service.check_invariants(t)
+            ok = True
+        except (AssertionError, KeyError, TypeError) as e:
+            ok = repr(e)
+        check(f"nway lineage time ({tf}): partitions add up", ok is True, str(ok))
+    r = requests.get(url, params={**base, "order": "time", "tfield": "x"}, timeout=60)
+    check("nway lineage: bad tfield is a 400", r.status_code == 400)
     r = requests.get(url, params={**base, "root": "0" * 32}, timeout=60)
     check("nway lineage: unknown root is a 400", r.status_code == 400)
     r = requests.get(url, params={**base, "order": "tree"}, timeout=60)

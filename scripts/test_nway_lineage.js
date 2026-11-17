@@ -178,7 +178,7 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.ok(/!\(st\.view === 'tree'/.test('') || !/st\.sel = \{ group: true \}/.test(src), 'the group card is not opened a second time in the drawer');
     // a lane's key covers its sub-groups (regions): hovering or selecting a lane lights their ribbons, nodes, Ring modules and Births layers
     assert.ok(/const linkHas = \(l, t\) => catUnder\(l\.cat, t\)/.test(src) && /some\(x => catUnder\(x\.cat, st\.fk\)\)/.test(src) && /\(c\.g\.path \|\| \[\]\)\.includes\(id\)/.test(src), 'lane keys light their sub-groups');
-    assert.ok(/st\.ring\.hoverTrack\(test\)/.test(src) && /st\.births\.hoverTrack\(test\)/.test(src) && /onHover: c => paneHl\(c\)/.test(src), 'pane hover reaches every view, view hover reaches the pane');
+    assert.ok(/st\.ring\.hoverTrack\(test\)/.test(src) && /st\.births\.hoverTrack\(test\)/.test(src) && /onHover: c => graphHover\(c\)/.test(src) && /function laneOf\(c\)/.test(src), 'pane hover reaches every view, a view hover lights its whole lane there and in the pane');
     // the left pane is a selector only; a selected group's functions are a table in the Inspector, NAV_ROWS at a time
     assert.ok(/NAV_ROWS = 50/.test(src) && /function fnTr\(r, onClick\)/.test(src) && /fnTable\(body, it\.rows, `g:\$\{tk\}`\)/.test(src) && /st\.inspShown\.set\(key, lim \+ NAV_ROWS\)/.test(src) && !/function navPage/.test(src), 'group functions: a table in the Inspector, paged');
     const ft = src.slice(src.indexOf('function fnTr('), src.indexOf('function hoverRowIdx('));

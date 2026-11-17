@@ -56,6 +56,7 @@ window.NwayLineageView = {
         // Split used to be a view (tree only): it is the table toggle now, under any view
         if (st.lview === 'split') { st.lview = 'tree'; st.table = '1'; }
         const table0 = st.table;
+        let blay = 'lanes'; // Births: streams layered by lane (default) or by birth; not in the URL
         // the lens a group string stands for: its preset, else the lens of its first level
         const lensOf = g => {
             const first = (g || '').split(',')[0];
@@ -319,8 +320,8 @@ window.NwayLineageView = {
                     rowTier: () => st.tab !== 'all' && st.tab !== 'unique',
                     ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0', openNodes },
                     onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; store.set('nway.ring', JSON.stringify(Object.fromEntries(RING_KEYS.map(k => [k, st[k]])))); writeUrl(); },
-                    births: { bucket: st.bgrp, axis: st.baxis, sel: st.bsel },
-                    onBirths: o => { st.bgrp = o.bucket; st.baxis = o.axis; st.bsel = o.sel || ''; writeUrl(); },
+                    births: { bucket: st.bgrp, axis: st.baxis, sel: st.bsel, layers: blay },
+                    onBirths: o => { st.bgrp = o.bucket; st.baxis = o.axis; st.bsel = o.sel || ''; blay = o.layers; writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page
                     onGroup: (what, tk) => {

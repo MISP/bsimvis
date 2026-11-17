@@ -1122,7 +1122,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function focusHover(tk) {
             st.hoverTk = tk; syncFocus();
             ribs.style('opacity', ribOp); nodeBase.style('opacity', nodeOp);
-            const lit = r => { const c = reuseCat(r); return !tk || (c && c.tk === tk); };
+            gNode.selectAll('rect.lin-sg').style('opacity', d => (!tk || catUnder(d.cat, tk) ? null : 0.25));
+            const lit = r => { const c = reuseCat(r); return !tk || (c && catUnder(c, tk)); };
             strSel.style('opacity', d => (lit(d.c.r) ? 1 : 0.3));
             arcSel.style('opacity', A => (lit(A.r) ? 1 : 0.15));
             applySel();
@@ -1258,6 +1259,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             }
             if (nodeBase) { nodeBase.style('opacity', nodeOp); ribs.style('opacity', ribOp); applySel(); }
             if (st.ring) st.ring.setTrack();
+            if (st.births && st.births.setTrack) st.births.setTrack();
             legend();
             if (groupList()) return;
             multiples();
@@ -1336,6 +1338,20 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (st.ring && st.view === 'ring' && st.ring.hoverTrack) st.ring.hoverTrack(test);
             if (st.births && st.view === 'births' && st.births.hoverTrack) st.births.hoverTrack(test);
         };
+        // the pane's lane for a hovered lens cat: the deepest group holding it that is not a region (a region lights its lane)
+        function laneOf(c) {
+            if (!c || !st.navItems) return null;
+            let best = null;
+            for (const it of allItems(st.navItems)) if (catUnder(c, it.tk) && !(it.x.g && it.x.g.kind === 'region' && it.parent)) best = it;
+            return best;
+        }
+        // a lens cat hovered in any view: the whole lane lights there, as from the pane
+        function graphHover(c) {
+            paneHl(c);
+            const it = laneOf(c);
+            if (!c) { if (st.births && st.view === 'births') st.births.hoverTrack(null); return; }
+            if (it) navHover(it);
+        }
         // a group hovered in the graph (or the table): its row, and the rows of the groups it is under, light in the pane
         const paneHl = c => { for (const r of side.querySelectorAll('.lin-nr')) r.classList.toggle('hl', !!c && catUnder(c, r.dataset.tk)); };
         function navRow(it, depth = 0) {
@@ -1383,7 +1399,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             side.hidden = false;
             side.replaceChildren();
             if (!st.R) { side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'This server sends no row list: the groups need it.')); return false; }
-            const items = navItems();
+            const items = st.navItems = navItems();
             if (NAV.focus && !findItem(NAV.focus)) NAV.focus = null;
             const lens = LENSES.find(l => l[0] === st.lens), tiered = items.some(it => it.tier), q = NAV.q.toLowerCase();
             const match = it => !q || `${it.label} ${it.sub}`.toLowerCase().includes(q) || it.kids.some(match);
@@ -1618,7 +1634,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const sp = st.P.segs.get(n.id), g = d3.select(this).append('g').attr('clip-path', `url(#clip-${id}-${n.idx}-${n.agg ? 'a' : 'f'})`);
                 for (const sg of sp.m.values()) {
                     if (sg.h < 0.3) continue;
-                    g.append('rect').attr('x', n.x0).attr('y', sg.y0).attr('width', NODE_W).attr('height', sg.h).style('fill', tierFill(defs, st.zc, sg.cat.color, sg.cat.tier))
+                    g.append('rect').datum(sg).attr('class', 'lin-sg').attr('x', n.x0).attr('y', sg.y0).attr('width', NODE_W).attr('height', sg.h).style('fill', tierFill(defs, st.zc, sg.cat.color, sg.cat.tier))
                         .on('mouseenter', ev => hoverLensSeg(ev, n, sg)).on('mousemove', moveTip).on('mouseleave', leave);
                 }
                 if (sp.faint.h >= 0.3) g.append('rect').attr('x', n.x0).attr('y', sp.faint.y0).attr('width', NODE_W).attr('height', sp.faint.h).style('fill', V.shared).attr('fill-opacity', 0.16)
@@ -1997,7 +2013,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // what the files holding a lens group are made of
         const catMeta = cat => (st.R ? fileMetaHtml(st.doc, filesOfNodes(st.doc, catNodes(st.doc, st.R, cats(st.lens), cat)), 'the files holding it') : '');
         function lensTip(ev, cat, local) {
-            focusHover(cat.tk);
+            const it = laneOf(cat);
+            focusHover(it ? it.tk : cat.tk);
             paneHl(cat);
             const g = cat.g, nm = g && NG.shownName(st.S.names[g.id]), tt = tierTip(cat, st.doc);
             showTip(ev, nm || cat.label, tt ? tt.badge : cat.color, [...local, ...(g ? gTip(g) : [])], (tt ? tt.html : '') + catMeta(cat));
@@ -2113,7 +2130,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.ring = window.NwayRing.mount({
                     g: gRingG.node(), svg: s.node(), host: canvas, controls: ringBox, controls2: ringBox2, opts: opts.ring || {},
                     getDoc: () => st.doc, getR: () => st.R, getCats: () => cats(st.lens), lens: () => st.lens, getTrack: () => st.track,
-                    setTrack, onHover: c => paneHl(c), onOpt: o => { st.ringList = !!o.list; legendBox.style.display = st.ringList ? 'contents' : 'none'; if (opts.onRing) opts.onRing(o); },
+                    setTrack, onHover: c => graphHover(c), onOpt: o => { st.ringList = !!o.list; legendBox.style.display = st.ringList ? 'contents' : 'none'; if (opts.onRing) opts.onRing(o); },
                     onFile: id => {
                         const top = st.M.rep.get(st.R ? st.R.nodeOf.get(id) || id : id);
                         if (top && top.startsWith('agg:')) { st.collapsed = new Set(); rebuild(); }
@@ -2145,7 +2162,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
                     tiers: { TIERS, KEYS: TIER_KEYS, rank: tierRank, fill: tierFill, css: tierCss, tip: c => tierTip(c, st.doc) },
-                    onHover: c => paneHl(c),
+                    onHover: c => graphHover(c), under: (c, t) => catUnder(c, t),
                     // what a set of files is made of: of node indexes, of a lens group
                     meta: (idx, what) => fileMetaHtml(st.doc, filesOfNodes(st.doc, idx), what), catMeta: c => catMeta(c),
                 });
@@ -2245,6 +2262,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 const b = st.births.state();
                 if (b.sel) add('Birth', b.sel, () => st.births.clear('sel'));
                 if (b.rare) add('Rare lanes', 'open', () => st.births.clear('rare'));
+                if (b.layers === 'births') add('Births', 'coloured by birth', () => st.births.clear('layers'));
             }
             return c;
         }

@@ -67,11 +67,16 @@
     // ---------------------------------------------------------------- renderer
     function mount(ctx) {
         const el = ctx.el, fmt = ctx.fmt, g = d3.select(ctx.g);
-        const o = { bucket: BUCKETS.includes(ctx.opts.bucket) ? ctx.opts.bucket : 'month', axis: ctx.opts.axis === 'cal' ? 'cal' : 'rank', sel: ctx.opts.sel || '' };
+        const o = { bucket: BUCKETS.includes(ctx.opts.bucket) ? ctx.opts.bucket : 'month', axis: ctx.opts.axis === 'cal' ? 'cal' : 'rank', sel: ctx.opts.sel || '', layers: ctx.opts.layers === 'births' ? 'births' : 'lanes' };
         // ctx.tiers: the Lanes lens tiers (TIERS, KEYS, rank(cat), fill(defs, cache, color, tier), css(color, tier), tip(cat))
         const T = ctx.tiers;
         let M = null, frame = null, lanes = [], rareOpen = false, catAt = () => null;
         const dotPos = new Map(); // node index -> its file dot, for the page's highlight
+        // fade every layer test(cat) refuses; no test: the selected group's (ctx.under) layers stay lit, or none fades
+        function fadeBy(test) {
+            const tr = ctx.getTrack(), t = test || (tr && !tr.startsWith('fn:') && ctx.under ? c => ctx.under(c, tr) : null);
+            g.selectAll('path.lin-layer').style('opacity', d => { if (!t) return null; const c = d && catAt(d.key); return c && t(c) ? null : 0.15; });
+        }
         const emit = () => ctx.onOpt({ ...o });
         const getModel = () => {
             const doc = ctx.getDoc(), R = ctx.getR();
@@ -108,9 +113,11 @@
         pick.addEventListener('change', () => select(M.byKey.get(pick.value) || null));
         const stepper = el('span', { style: 'display:inline-flex;gap:4px;align-items:center' });
         stepper.append(prevB, pick, nextB);
-        ctx.controls.append(byB.el, axB.el, stepper);
+        // the streams' layers: the lens groups (lanes: hover and select them as in every view), or the births
+        const layB = ctx.segSwitch('Layers', 'Colour the streams by lane (the lens groups) or by birth', [['lanes', 'Lanes'], ['births', 'Births']], () => o.layers, v => { o.layers = v; emit(); draw(); });
+        ctx.controls.append(layB.el, byB.el, axB.el, stepper);
         const syncControls = () => {
-            byB.paint(); axB.paint();
+            byB.paint(); axB.paint(); layB.paint();
             pick.replaceChildren(el('option', { value: '' }, 'No birth selected'));
             for (const c of M.list) pick.append(el('option', { value: c.key }, `${short(c.label, 28)} · ${fmt(c.rows.length)}`));
             const c = current();
@@ -175,17 +182,18 @@
 
             // what each file holds, keyed by cohort, or with a selection: '<' born before, its lens groups, '>' born after
             // more than one Rare lane: one folded Rare layer until it is opened (a click on it, or the pane)
-            const all = fc ? modulesOf(fc, C) : [], rares = all.filter(m => m.cat.tier === 'rare'), fold = !rareOpen && rares.length > 1;
+            const byLane = !fc && o.layers === 'lanes';
+            const all = fc ? modulesOf(fc, C) : byLane ? modulesOf({ rows: M.list.flatMap(c => c.rows) }, C) : [], rares = all.filter(m => m.cat.tier === 'rare'), fold = !rareOpen && rares.length > 1;
             const folded = new Set(fold ? rares.map(m => m.key) : []), fk = k => (folded.has(k) ? '^rare' : k);
             const mods = fold ? [...all.filter(m => !folded.has(m.key)), { key: '^rare', n: d3.sum(rares, m => m.n), cat: { key: '^rare', label: `Rare lanes (${rares.length})`, color: T.TIERS.rare[2], tier: 'rare', folded: true } }].sort((a, b) => T.rank(a.cat) - T.rank(b.cat) || b.n - a.n) : all;
             const modBy = new Map(mods.map(m => [m.key, m]));
-            const keyOf = r => { const c = M.cohortOf(r); return !fc ? c.key : c === fc ? `m:${fk(C.of(r))}` : c.idx < fc.idx ? '<' : '>'; };
-            const order = fc ? ['<', ...mods.map(m => `m:${m.key}`), '>'] : M.list.map(c => c.key);
-            const paint = k => (!fc ? cohortColor(M.byKey.get(k)) : k === '<' || k === '>' ? 'var(--lin-slate)' : fillOf(modBy.get(k.slice(2)).cat));
-            const catOf = k => (fc && k.startsWith('m:') ? modBy.get(k.slice(2)).cat : null);
+            const keyOf = r => { const c = M.cohortOf(r); return byLane ? `m:${fk(C.of(r))}` : !fc ? c.key : c === fc ? `m:${fk(C.of(r))}` : c.idx < fc.idx ? '<' : '>'; };
+            const order = fc ? ['<', ...mods.map(m => `m:${m.key}`), '>'] : byLane ? mods.map(m => `m:${m.key}`) : M.list.map(c => c.key);
+            const paint = k => (k.startsWith('m:') ? fillOf(modBy.get(k.slice(2)).cat) : !fc ? cohortColor(M.byKey.get(k)) : 'var(--lin-slate)');
+            const catOf = k => (k.startsWith('m:') && modBy.has(k.slice(2)) ? modBy.get(k.slice(2)).cat : null);
             catAt = catOf;
             const counts = new Map(vis.map(v => { const c = {}; for (const r of M.heldM[v.idx]) { const k = keyOf(r); c[k] = (c[k] || 0) + 1; } return [v.id, c]; }));
-            const titleOf = k => (!fc ? M.byKey.get(k).long : k === '<' ? `Born before ${fc.label}` : k === '>' ? `Born after ${fc.label}` : modBy.get(k.slice(2)).cat.label);
+            const titleOf = k => (k.startsWith('m:') ? modBy.get(k.slice(2)).cat.label : !fc ? M.byKey.get(k).long : k === '<' ? `Born before ${fc.label}` : `Born after ${fc.label}`);
 
             const gAx = g.append('g').style('pointer-events', 'none');
             for (const k of ticks) {
@@ -219,19 +227,18 @@
                             const dot = tt ? tt.badge : cat && cat.tier ? { glyph: T.TIERS[cat.tier][0], tag: T.TIERS[cat.tier][1], color: T.TIERS[cat.tier][2] } : cat ? cat.color : paint(s.key);
                             if (ctx.onHover) ctx.onHover(cat && !cat.folded ? cat : null);
                             ctx.showTip(ev, titleOf(s.key), dot, [['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
-                                ['Click', !fc ? 'select this birth' : cat && cat.folded ? 'open the Rare lanes' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']], (tt ? tt.html : '') + (cat && !cat.folded ? ctx.catMeta(cat) : ''));
+                                ['Click', cat && cat.folded ? 'open the Rare lanes' : s.key.startsWith('m:') ? 'select this group' : !fc ? 'select this birth' : 'show every birth']], (tt ? tt.html : '') + (cat && !cat.folded ? ctx.catMeta(cat) : ''));
                         })
                         .on('mouseleave', () => { ctx.hideTip(); if (ctx.onHover) ctx.onHover(null); })
                         .on('click', (ev, s) => {
                             ctx.hideTip();
-                            if (!fc) return select(M.byKey.get(s.key));
-                            if (!s.key.startsWith('m:')) return select(null);
                             if (s.key === 'm:^rare') { rareOpen = true; return draw(); }
+                            if (!s.key.startsWith('m:')) return fc ? select(null) : select(M.byKey.get(s.key));
                             const tk = modBy.get(s.key.slice(2)).cat.tk;
                             if (tk) ctx.setTrack(ctx.getTrack() === tk ? '' : tk);
                         });
                     // a line over each tier's band (Core at the bottom), its name at the chain's end when the band is tall enough
-                    if (fc) for (const t of T.KEYS) {
+                    if (fc || byLane) for (const t of T.KEYS) {
                         const mine = series.filter(x => (catOf(x.key) || {}).tier === t);
                         if (!mine.length) continue;
                         const lo = mine[0], hi = mine[mine.length - 1], e = pts.length - 1;
@@ -326,6 +333,7 @@
             });
             g.append('line').attr('x1', x0 - 8).attr('x2', xEnd + 8).attr('y1', sBase).attr('y2', sBase).style('stroke', 'var(--lin-grey)').attr('vector-effect', 'non-scaling-stroke');
             frame = { x0: 0, y0: 0, x1: xEnd + B.MR, y1: sBase + 30, vis, X };
+            fadeBy(null);
             syncControls();
         }
 
@@ -335,10 +343,12 @@
             box: () => frame,
             dotAt: i => dotPos.get(i) || null,
             // the page's pane hovers a group: with a birth selected, every other lens layer fades (null: none fades)
-            hoverTrack(test) { g.selectAll('path.lin-layer').style('opacity', function (d) { if (!test) return null; const c = d && catAt(d.key); return c && test(c) ? null : 0.15; }); },
+            hoverTrack(test) { fadeBy(test); },
+            // the page's selection changed: the selected group stays lit
+            setTrack() { fadeBy(null); },
             // for the page's state bar: the selected birth and the opened Rare lanes, and closing either
-            state: () => ({ sel: current() ? current().label : '', rare: rareOpen }),
-            clear(k) { if (k === 'rare') { rareOpen = false; draw(); } else select(null); },
+            state: () => ({ sel: current() ? current().label : '', rare: rareOpen, layers: o.layers }),
+            clear(k) { if (k === 'rare') { rareOpen = false; draw(); } else if (k === 'layers') { o.layers = 'lanes'; emit(); draw(); } else select(null); },
             destroy() { ctx.controls.replaceChildren(); g.selectAll('*').remove(); },
         };
     }

@@ -958,5 +958,16 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             delete global.document; delete global.cancelAnimationFrame;
         }
     }
+    // fileMeta: a field equal over the whole set is left out; values are escaped; one file never gets "only this"
+    {
+        const esc = x => String(x).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+        global.escapeHtml = global.escapeAttr = esc;
+        const all = [{ language_id: 'x86', format: 'ELF', tags: ['a'] }, { language_id: 'ARM', format: 'ELF', tags: ['<b>'] }, { language_id: 'ARM', format: 'ELF' }];
+        const h = window.NwayGroups.fileMeta(all.slice(1), all, "the lane's files");
+        assert(h.includes('Architecture') && !h.includes('Format') && h.includes('only this'), h);
+        assert(!h.includes('<b>') && h.includes('&#60;b&#62;'), h);
+        assert(!window.NwayGroups.fileMeta(all.slice(0, 1), all, 'this file').includes('only this'));
+        assert.strictEqual(window.NwayGroups.fileMeta([], all), '');
+    }
     console.log('nway lineage self-check OK');
 })().catch(e => { console.error(e); process.exit(1); });

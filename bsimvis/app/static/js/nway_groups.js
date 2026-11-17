@@ -182,5 +182,31 @@ window.NwayGroups = (function () {
         return String(gid);
     }
 
-    return { ROLES, BAND_ICONS, shownName, nameable, payload, nameLanes, laneFallback, laneName, laneParent, parentChip, laneTags, tagBadge, laneColor, laneEv, roleIcon, roleMix, bandIcon, score, stats, trackKey };
+    // The metadata of a set of files (architecture, format, size, batch, collection, tags) as tooltip html: per value
+    // a bar (its share of `here`) and a tick (its share of `all`). `here` / `all` are file metas ({language_id, ...});
+    // `noun` names `here` in the legend. A field with one value over the whole set says nothing and is left out.
+    const SIZE = n => { n = Number(n); return !n ? null : n < 16384 ? '<16 KB' : n < 65536 ? '16-64 KB' : n < 262144 ? '64-256 KB' : n < 1048576 ? '256 KB-1 MB' : n < 4194304 ? '1-4 MB' : '>4 MB'; };
+    const META_DIMS = [['Architecture', m => m.language_id], ['Format', m => m.format], ['Size', m => SIZE(m.file_size)], ['Batch', m => m.batch_name], ['Collection', m => m.collection], ['Tags', m => m.tags, true]];
+    function fileMeta(here, all, noun = "the lane's files", top = 4) {
+        here = here.filter(Boolean);
+        all = all.filter(Boolean);
+        if (!here.length || !all.length) return '';
+        const count = (list, get, multi) => {
+            const m = new Map();
+            for (const c of list) for (const v of [].concat(multi ? get(c) || [] : [get(c)])) if (v !== null && v !== undefined && v !== '') m.set(String(v), (m.get(String(v)) || 0) + 1);
+            return m;
+        };
+        let out = '';
+        for (const [title, get, multi] of META_DIMS) {
+            const h = count(here, get, multi), a = count(all, get, multi);
+            if (!h.size || (h.size === 1 && a.size === 1)) continue;
+            const best = [...h].sort((x, y) => y[1] - x[1]).slice(0, top);
+            const only = here.length > 1 && h.size === 1 && a.size > 1 && best[0][1] === here.length;
+            out += `<div class="nway-tip-h">${escapeHtml(title)}${only ? ` <span class="nway-tip-flag" title="${escapeAttr(`Every one of ${noun} shares it, the other files do not all`)}">only this</span>` : ''}${h.size > best.length ? ` <span class="dim">+${h.size - best.length} more</span>` : ''}</div>`;
+            for (const [v, n] of best) out += `<div class="nway-tip-row" title="${escapeAttr(v)}"><span class="nway-tip-v">${escapeHtml(v)}</span><span class="nway-tip-bar"><i style="width:${((100 * n) / here.length).toFixed(0)}%"></i><b style="left:${((100 * (a.get(v) || 0)) / all.length).toFixed(0)}%"></b></span><span class="dim">${n}</span></div>`;
+        }
+        return out && `<div class="dim nway-tip-legend">bar: share of ${escapeHtml(noun)} &middot; tick: share of all files</div>${out}`;
+    }
+
+    return { ROLES, BAND_ICONS, shownName, nameable, payload, nameLanes, laneFallback, laneName, laneParent, parentChip, laneTags, tagBadge, laneColor, laneEv, roleIcon, roleMix, bandIcon, score, stats, trackKey, fileMeta };
 })();

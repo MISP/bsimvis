@@ -910,6 +910,22 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             return x ? { C, x } : null;
         }
         const twinsOf = n => (!n.agg && (n.members || []).length > 1 ? n.members : null);
+        // tooltip html: the metadata of the files of node indexes `idx` (a twins / cluster node stands for its members)
+        const metaOf = (idx, noun) => {
+            const fm = st.doc.file_meta;
+            if (!fm) return '';
+            const ids = idx.flatMap(i => { const n = st.doc.nodes[i]; return n.members && n.members.length ? n.members : [n.id]; });
+            return NG.fileMeta(ids.map(id => fm[id]), st.doc._fmAll || (st.doc._fmAll = Object.values(fm)), noun);
+        };
+        // the node indexes an aggregate (collapsed subtree) or a file stands for
+        const idxOf = F => (F.agg ? F.members.map(m => st.M.byId.get(m).idx) : [F.idx]);
+        // the nodes holding a lens group's matching rows; cached on the cat (the cats are rebuilt with the doc)
+        const catNodes = cat => {
+            if (cat._nodes) return cat._nodes;
+            const C = cats(st.lens), R = st.R, mark = new Uint8Array(R.n);
+            for (let r = 0; r < R.n; r++) if (R.match(r) && C.of(r) === cat.key) mark[r] = 1;
+            return (cat._nodes = st.doc.nodes.map((_, i) => i).filter(i => R.held[i].some(r => mark[r])));
+        };
         const md5Of = id => String(id).split(':').pop();
         // st.fk: the lens group whose lineage is lit, a hovered one first, else the tracked one (null: none)
         const syncFocus = () => { const t = st.hoverTk || st.track; st.fk = t && st.P && st.P.links.some(l => l.cat.tk === t) ? t : null; };
@@ -1675,7 +1691,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function lensTip(ev, cat, local) {
             focusHover(cat.tk);
             const g = cat.g, nm = g && NG.shownName(st.S.names[g.id]);
-            showTip(ev, nm || cat.label, cat.color, [...local, ...(g ? gTip(g) : [])]);
+            const held = st.R ? catNodes(cat) : [];
+            showTip(ev, nm || cat.label, cat.color, [...local, ...(g ? gTip(g) : []), ...(!g && held.length ? [['Held by', `${fmt(held.length)} of ${fmt(st.doc.nodes.length)} nodes`]] : [])], metaOf(held, "the group's files"));
         }
         function hoverLens(ev, l) {
             st.last = { edge: l.edge };
@@ -1686,7 +1703,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
         function hoverSeg(ev, sg) {
             const n = sg.n;
-            if (sg.agg) { showTip(ev, n.file_name, V.slate, [['Functions (summed)', fmt(n.functions)], ['Born inside', fmt(n.born)], ['Kept by no child', fmt(n.died_all)], ['In reuse', fmt(n.reuse_in)]]); return; }
+            if (sg.agg) { showTip(ev, n.file_name, V.slate, [['Functions (summed)', fmt(n.functions)], ['Born inside', fmt(n.born)], ['Kept by no child', fmt(n.died_all)], ['In reuse', fmt(n.reuse_in)]], metaOf(idxOf(n), 'these files')); return; }
             st.last = { node: n };
             dimRibs(l => sg.part && l.part === sg.part);
             if (sg.died) showTip(ev, `${name(n.id)}: died`, V.died, [['Kept by no child', fmt(sg.count)]]);
@@ -1714,22 +1731,23 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const tok = ++st.hover;
             st.last = F.agg ? null : { node: F };
             if (F.agg) {
-                showTip(ev, F.file_name, V.slate, [['Functions (summed)', fmt(F.functions)], ['Born inside', fmt(F.born)], ['Kept by no child', fmt(F.died_all)], ['In reuse', fmt(F.reuse_in)], ['', 'click to expand']]);
+                showTip(ev, F.file_name, V.slate, [['Functions (summed)', fmt(F.functions)], ['Born inside', fmt(F.born)], ['Kept by no child', fmt(F.died_all)], ['In reuse', fmt(F.reuse_in)], ['', 'click to expand']], metaOf(idxOf(F), 'these files'));
                 return;
             }
             const tw = twinsOf(F);
             const rows = [['Functions', fmt(F.functions)], ['In reuse classes', F.reuse_in == null ? 'n/a' : fmt(F.reuse_in)], ...(tw ? [['Same code', names(tw.map(md5Of))]] : []), ...timeRows(F)];
+            const meta = metaOf([F.idx], tw || (F.members || []).length > 1 ? "the node's files" : 'this file');
             if (st.P) {
                 const sp = st.P.segs.get(F.id);
                 ribs.style('opacity', l => (l.source === F || l.target === F ? 1 : 0.1));
-                showTip(ev, name(F.id), nodeColor(st.doc, F.idx), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])]);
+                showTip(ev, name(F.id), nodeColor(st.doc, F.idx), [...rows, ['Shown', `${fmt(sp.shown)} of ${fmt(F.rows.length)}`], ...[...sp.m.values()].sort((a, b) => b.cnt - a.cnt).slice(0, 6).map(x => [x.cat.label, fmt(x.cnt)])], meta);
                 return;
             }
             // the reuse arcs that touch this file light up at once; the per-file overlay follows
             arcSel.style('opacity', A => A.r.files.includes(F.id) ? 1 : 0.12);
             strSel.style('opacity', d => d.c.r.files.includes(F.id) ? 1 : 0.25);
             ribs.style('opacity', 0.1);
-            showTip(ev, name(F.id), V.slate, rows);
+            showTip(ev, name(F.id), V.slate, rows, meta);
             const bfDoc = await bfFor(F.id);
             if (tok !== st.hover || !bfDoc) return;
             const L = st.L, ni = F.idx;
@@ -1751,7 +1769,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             }
             gDet.style('opacity', 0.35);
             const nn = bfDoc.nodes[ni];
-            showTip(ev, name(F.id), V.slate, [...rows, ['In every file (core)', fmt(bfDoc.core)], ['Only in this file', fmt(nn.only_here)], ...(nn.top_shared || []).map(([g, c]) => [`Shared with ${name(g)}`, fmt(c)])]);
+            showTip(ev, name(F.id), V.slate, [...rows, ['In every file (core)', fmt(bfDoc.core)], ['Only in this file', fmt(nn.only_here)], ...(nn.top_shared || []).map(([g, c]) => [`Shared with ${name(g)}`, fmt(c)])], meta);
             void ebf;
         }
         async function bfFor(fid) {
@@ -1808,7 +1826,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.births = window.NwayBirths.mount({
                     g: gBirthG.node(), side, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
-                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, reuseOn: () => st.reuseOn, width: () => size().w, fit: () => fit(true),
+                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, meta: metaOf, reuseOn: () => st.reuseOn, width: () => size().w, fit: () => fit(true),
                 });
             }
             st.births.draw();

@@ -14,8 +14,8 @@
  * NwayBirths.model(doc, R, bucket) and share(M, c) are DOM-free (checked in scripts/test_nway_lineage.js).
  * NwayBirths.mount(ctx) -> { draw(), panel(), box(), destroy() }; ctx is what nway_lineage.js hands over
  * (g, side, controls, getDoc, getR, getL, getCats, getTrack, setTrack, showTip, hideTip, rowEl, el,
- * segSwitch, fmt, name, reuseOn, width, fit, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
- * textContent or d3 .text(), never innerHTML.
+ * segSwitch, fmt, name, meta, reuseOn, width, fit, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
+ * textContent or d3 .text(), never innerHTML; meta(nodeIdx, noun) is the lineage's escaped file metadata html.
  */
 (function () {
     const DAY = 864e5;
@@ -191,6 +191,9 @@
             let y = B.TOP;
             for (const ln of lanes) { ln.top = y; ln.bot = y + Math.max(12, ln.max * ky); y = ln.bot + B.LANE_GAP; }
             const laneOf = v => lanes[v.lane ?? 0];
+            // a lane is named by its first file; its tooltip carries the metadata of its files
+            const laneName = ln => `${ctx.name(ln.vs[0].id)} \u00b7 ${ln.vs.length} file${ln.vs.length === 1 ? '' : 's'}`;
+            const laneMeta = ln => (ctx.meta ? ctx.meta(ln.vs.map(v => v.idx), "the lane's files") : '');
             const sTop = y + 4, sBase = sTop + B.STRIP_H;
 
             // what each file holds, keyed by birth (by birth and lens group when coloured by lens), or with a selection:
@@ -252,7 +255,7 @@
                             for (const w of ch) if (Math.abs(X(w) - mx) < Math.abs(X(v) - mx)) v = w;
                             const k = counts.get(v.id)[s.key] || 0, dot = paint(s.key);
                             ctx.showTip(ev, titleOf(s.key), dot, [...(lensMode ? [['Born', birthOf(s.key).label]] : []), ['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
-                                ['Click', !fc ? 'select this birth' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']]);
+                                ['Lane', laneName(ln)], ['Click', !fc ? 'select this birth' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']], laneMeta(ln));
                         })
                         .on('mouseenter', (ev, s) => hover(hid(s.key)))
                         .on('mouseleave', () => { ctx.hideTip(); hover(null); })
@@ -265,8 +268,12 @@
                         });
                 }
                 const first = ln.vs[0];
-                g.append('text').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4)).attr('font-size', 12).attr('font-weight', 600).style('fill', 'var(--text)').text(short(ctx.name(first.id)));
-                g.append('text').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4) + 14).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${ln.vs.length} file${ln.vs.length === 1 ? '' : 's'}${ln.chains.length > 1 ? `, ${ln.chains.length} chains` : ''}`);
+                g.append('rect').attr('x', B.PAD - 4).attr('y', ln.top).attr('width', B.LABEL_W - B.PAD).attr('height', Math.max(30, ln.bot - ln.top)).attr('fill', 'transparent')
+                    .on('mousemove', ev => ctx.showTip(ev, `Lane: ${ctx.name(first.id)}`, 'var(--lin-grey)', [['Files', `${ln.vs.length}${ln.chains.length > 1 ? ` in ${ln.chains.length} chains` : ''}`],
+                        ['Dates', `${first.t == null ? 'undated' : iso(first.t)} \u2192 ${ln.vs[ln.vs.length - 1].t == null ? 'undated' : iso(ln.vs[ln.vs.length - 1].t)}`], ['Functions', `up to ${fmt(ln.max)}`]], laneMeta(ln)))
+                    .on('mouseleave', ctx.hideTip);
+                g.append('text').style('pointer-events', 'none').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4)).attr('font-size', 12).attr('font-weight', 600).style('fill', 'var(--text)').text(short(ctx.name(first.id)));
+                g.append('text').style('pointer-events', 'none').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4) + 14).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${ln.vs.length} file${ln.vs.length === 1 ? '' : 's'}${ln.chains.length > 1 ? `, ${ln.chains.length} chains` : ''}`);
             }
 
             // reuse across chains: a ribbon from the nearest earlier holder's band to the file that picks the code up
@@ -303,7 +310,7 @@
                 .style('fill', d => paint(d.key)).attr('fill-opacity', d => forkOp(d.key)).style('cursor', 'pointer')
                 .on('mouseenter', (ev, d) => hover(hid(d.key)))
                 .on('mousemove', (ev, d) => ctx.showTip(ev, `Inherited: ${titleOf(d.key)}`, paint(d.key), [...(lensMode ? [['Born', birthOf(d.key).label]] : []),
-                    ['From parent', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['Into fork', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)]]))
+                    ['From parent', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['Into fork', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)], ['From lane', laneName(laneOf(d.src))], ['Into lane', laneName(laneOf(d.dst))]]))
                 .on('mouseleave', () => { ctx.hideTip(); hover(null); });
             for (const d of shown) d.path = flow(d);
             // the lineage's Reuse layer switch shows or hides this group (applyReuse)
@@ -312,7 +319,7 @@
                 .style('fill', d => paint(d.key)).attr('fill-opacity', d => ribOp(d.key)).style('stroke', 'var(--lin-reuse)').attr('stroke-opacity', 0.5).attr('stroke-dasharray', '3 2').attr('stroke-width', 0.8).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
                 .on('mouseenter', (ev, d) => hover(hid(d.key)))
                 .on('mousemove', (ev, d) => ctx.showTip(ev, `Reused: ${titleOf(d.key)}`, 'var(--lin-reuse)', [...(lensMode ? [['Born', birthOf(d.key).label]] : []),
-                    ['From', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['To', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)], ['Note', 'not in its parent: reuse, independent birth or matcher miss']]))
+                    ['From', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['To', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)], ['From lane', laneName(laneOf(d.src))], ['To lane', laneName(laneOf(d.dst))], ['Note', 'not in its parent: reuse, independent birth or matcher miss']]))
                 .on('mouseleave', () => { ctx.hideTip(); hover(null); });
             if (ribs.length > shown.length) gR.append('text').attr('x', B.PAD).attr('y', sBase + 24).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${fmt(ribs.length - shown.length)} smaller reuse ribbons not drawn`);
 
@@ -320,8 +327,8 @@
             for (const v of vis) {
                 const ln = laneOf(v), isBirth = !!fc && fc.nodes.includes(v.idx), par = L.fileOf.get(L.parentOf.get(v.id));
                 g.append('circle').attr('cx', X(v)).attr('cy', ln.bot + 7).attr('r', isBirth ? 4.5 : 3).style('fill', isBirth ? 'var(--lin-born)' : 'var(--lin-grey)').style('cursor', 'pointer')
-                    .on('mousemove', ev => ctx.showTip(ev, ctx.name(v.id), 'var(--lin-grey)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Parent', par ? ctx.name(par.id) : 'none (a root)'], ['Functions', fmt(tot(v))], ['Born here', fmt(M.bornIn[v.idx].length)],
-                        ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late']] : []), ['Click', 'select what was born here']]))
+                    .on('mousemove', ev => ctx.showTip(ev, ctx.name(v.id), 'var(--lin-grey)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Parent', par ? ctx.name(par.id) : 'none (a root)'], ['Functions', fmt(tot(v))], ['Born here', fmt(M.bornIn[v.idx].length)], ['Lane', laneName(ln)],
+                        ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late']] : []), ['Click', 'select what was born here']], ctx.meta ? ctx.meta([v.idx], 'this file') : ''))
                     .on('mouseleave', ctx.hideTip)
                     .on('click', () => { ctx.hideTip(); const c = M.byKey.get(M.keyOf[v.idx]); if (c && c.rows.length) select(c); });
                 if (v.time_inversion) g.append('text').attr('x', X(v) + 6).attr('y', ln.bot + 11).attr('font-size', 11).style('fill', 'var(--lin-died)').text('⚠');
@@ -362,7 +369,7 @@
                 const bg = g.append('g').style('cursor', 'pointer')
                     .on('mousemove', ev => {
                         const top = modulesOf({ rows: M.bornIn[v.idx] }, C).slice(0, 4).map(m => `${m.cat.label} ${fmt(m.n)}`).join(', ');
-                        ctx.showTip(ev, `Born in ${ctx.name(v.id)}`, 'var(--lin-born)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Functions', fmt(k)], ...(top ? [['Mostly', top]] : []), ['Click', 'select this birth']]);
+                        ctx.showTip(ev, `Born in ${ctx.name(v.id)}`, 'var(--lin-born)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Functions', fmt(k)], ...(top ? [['Mostly', top]] : []), ['Lane', laneName(laneOf(v))], ['Click', 'select this birth']]);
                     })
                     .on('mouseleave', ctx.hideTip)
                     .on('click', () => { ctx.hideTip(); if (k) select(c); });

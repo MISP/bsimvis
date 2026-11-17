@@ -1502,22 +1502,7 @@
                 for (const ev of ['wheel', 'scroll', 'pointerdown']) window.addEventListener(ev, this._tipDrop, { capture: true, passive: true });
             }
             this._tipFiles = lane;
-            const size = c => { const n = Number(c.file_size); if (!n) return null; return n < 16384 ? '<16 KB' : n < 65536 ? '16-64 KB' : n < 262144 ? '64-256 KB' : n < 1048576 ? '256 KB-1 MB' : n < 4194304 ? '1-4 MB' : '>4 MB'; };
-            const dims = [['Architecture', c => c.language_id], ['Format', c => c.format], ['Size', size], ['Batch', c => c.batch_name], ['Collection', c => c.collection], ['Tags', c => c.tags, true]];
-            const count = (list, get, multi) => {
-                const m = new Map();
-                for (const c of list) for (const v of [].concat(multi ? get(c) || [] : [get(c)])) if (v !== null && v !== undefined && v !== '') m.set(String(v), (m.get(String(v)) || 0) + 1);
-                return m;
-            };
-            const sections = dims.map(([title, get, multi]) => {
-                const here = count(lane, get, multi), all = count(files, get, multi);
-                if (!here.size) return '';
-                const top = [...here].sort((a, b) => b[1] - a[1]).slice(0, 5);
-                const uniform = here.size === 1 && all.size > 1 && top[0][1] === lane.length;
-                const rows = top.map(([v, n]) => `<div class="nway-tip-row" title="${escapeAttr(v)}"><span class="nway-tip-v">${escapeHtml(v)}</span><span class="nway-tip-bar"><i style="width:${(100 * n / lane.length).toFixed(0)}%"></i><b style="left:${(100 * (all.get(v) || 0) / files.length).toFixed(0)}%"></b></span><span class="dim">${n}</span></div>`).join('');
-                return `<div class="nway-tip-h">${escapeHtml(title)}${uniform ? ' <span class="nway-tip-flag" title="Every file of this lane shares it, the other files do not all">only this</span>' : ''}${here.size > top.length ? ` <span class="dim">+${here.size - top.length} more</span>` : ''}</div>${rows}`;
-            }).join('');
-            this._laneTipEl.innerHTML = `<div class="nway-tip-top"><b>${lane.length} of ${files.length} files</b><span class="nway-tip-act"><button data-tip-copy="md5" data-tip-label="md5s">md5s</button><button data-tip-copy="name" data-tip-label="names">names</button><button data-tip-copy="id" data-tip-label="coll:md5">coll:md5</button></span></div><div class="dim nway-tip-legend">bar: share of the lane's files &middot; tick: share of all files</div>${sections}`;
+            this._laneTipEl.innerHTML = `<div class="nway-tip-top"><b>${lane.length} of ${files.length} files</b><span class="nway-tip-act"><button data-tip-copy="md5" data-tip-label="md5s">md5s</button><button data-tip-copy="name" data-tip-label="names">names</button><button data-tip-copy="id" data-tip-label="coll:md5">coll:md5</button></span></div>${window.NwayGroups.fileMeta(lane, files, "the lane's files", 5)}`;
             const r = lbl.getBoundingClientRect(), t = this._laneTipEl;
             t.style.display = 'block';
             t.style.left = `${Math.min(r.left, window.innerWidth - t.offsetWidth - 8)}px`;

@@ -52,7 +52,7 @@
     const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];
     // nway_region_service.SPECIAL
     const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
-    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5, ALL_ROWS = 200;
+    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5, ALL_ROWS = 200, NAV_ROWS = 50, NAV_SEC = 12;
     const hueOf = i => window.NwayColors.hue(i);
     // --lin-hl is the table's top-level lightness: 52%, 44% on the light theme (.nway-sq.on)
     const hsl = (h, l = 52) => `hsl(${h} 62% calc(var(--lin-hl) + ${l - 52}%))`;
@@ -211,7 +211,40 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .nway-lean.has-table .nway-stage{flex:none;height:42%;min-height:360px}
 .lin-body{flex:1;min-height:0;display:flex}
 .lin-body>.lin-canvas{min-width:0}
-.lin-glist{flex:none;width:300px;max-width:45%;overflow:auto;border-right:1px solid var(--lin-line);padding:6px 8px;background:var(--lin-card)}
+.lin-glist{flex:none;width:340px;max-width:45%;overflow:auto;border-right:1px solid var(--lin-line);padding:0 0 12px;background:var(--lin-card)}
+.lin-nh{position:sticky;top:0;z-index:2;background:var(--lin-card);border-bottom:1px solid var(--lin-line);padding:8px 10px;display:grid;gap:6px}
+.lin-nrow{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}
+.lin-link{background:none;border:0;padding:0;color:var(--accent,#66d9ef);cursor:pointer;font:inherit;font-size:12px}
+.lin-link:disabled{color:inherit;opacity:.45;cursor:default}
+.lin-nq{width:100%;box-sizing:border-box;border:1px solid var(--lin-line);background:var(--bg,#121212);color:inherit;border-radius:6px;padding:4px 8px;font:inherit}
+.lin-nsec{border-bottom:1px solid var(--lin-line)}
+.lin-nsh{display:grid;grid-template-columns:12px auto 1fr auto;gap:7px;align-items:center;width:100%;border:0;background:var(--lin-card2,rgba(127,127,127,.07));color:inherit;font:inherit;font-size:12px;padding:6px 10px;cursor:pointer;text-align:left}
+.lin-nsh .lin-chev{font-size:10px;opacity:.7;transition:transform .12s}.lin-nsh[aria-expanded="false"] .lin-chev{transform:rotate(-90deg)}
+.lin-nsl{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.lin-nsb{height:5px;border-radius:3px;background:var(--lin-line);overflow:hidden;min-width:24px}.lin-nsb i{display:block;height:100%}
+.lin-nr{display:grid;grid-template-columns:12px minmax(0,1fr) auto 40px;gap:8px;align-items:center;width:100%;border:0;border-left:3px solid transparent;background:none;color:inherit;font:inherit;padding:5px 10px;cursor:pointer;text-align:left}
+.lin-nr:hover{background:var(--hover,#2d2d2d)}.lin-nr.on{border-left-color:var(--accent,#66d9ef);background:color-mix(in oklab,var(--accent,#66d9ef) 12%,transparent)}
+.lin-nt{min-width:0;display:grid}.lin-nn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.lin-ns{font-size:11px;opacity:.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lin-nc{font-size:12px;opacity:.7;text-align:right;font-variant-numeric:tabular-nums}
+.lin-nmore{display:block;padding:4px 10px 6px 31px}
+.lin-crumb{display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-size:12px}
+.lin-ncard{padding:10px;display:grid;gap:7px;border-bottom:1px solid var(--lin-line)}
+.lin-ntier{display:grid;gap:2px}.lin-tchip{justify-self:start;border:1px solid currentColor;border-radius:999px;padding:0 7px;font-size:11.5px;font-weight:700}
+.lin-nmeta summary{cursor:pointer;font-size:12px;opacity:.8}.lin-nmeta>div{margin-top:4px;font-size:11px}
+.lin-ntabs{display:flex;gap:2px;border-bottom:2px solid var(--lin-line);padding:0 10px;position:sticky;top:0;background:var(--lin-card);z-index:1}
+.lin-ntabs button{border:0;background:none;color:inherit;opacity:.7;border-bottom:3px solid transparent;margin-bottom:-2px;padding:7px 9px;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600}
+.lin-ntabs button[aria-selected="true"]{opacity:1;color:var(--accent,#66d9ef);border-bottom-color:var(--accent,#66d9ef)}
+.lin-ntools{display:flex;flex-wrap:wrap;gap:5px;padding:8px 10px;align-items:center}.lin-ntools .lin-nq{flex:1 1 140px;width:auto}
+.lin-ft{width:100%;border-collapse:collapse;font-size:12.5px}
+.lin-ft th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;opacity:.7;font-weight:600;padding:4px 6px;border-bottom:1px solid var(--lin-line)}
+.lin-ft th button{border:0;background:none;padding:0;color:inherit;font:inherit;cursor:pointer;text-transform:inherit;letter-spacing:inherit}
+.lin-ft td{padding:3px 6px;border-bottom:1px solid color-mix(in oklab,var(--lin-line) 50%,transparent);vertical-align:middle}
+.lin-fr{cursor:pointer}.lin-fr:hover td,.lin-fr.on td{background:var(--hover,#2d2d2d)}.lin-fr.on td:first-child{box-shadow:inset 3px 0 var(--accent,#66d9ef)}
+.lin-fn{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace;font-size:12px}
+.lin-num{text-align:right;font-variant-numeric:tabular-nums;opacity:.75}
+.lin-kebab{border:0;background:none;color:inherit;opacity:.6;cursor:pointer;padding:0 6px;border-radius:4px;font-weight:700}.lin-kebab:hover{opacity:1;background:var(--lin-line)}
+.lin-bside:empty{display:none}.lin-bside{padding:8px 10px;border-bottom:1px solid var(--lin-line)}
+@media (prefers-reduced-motion:reduce){.lin-nsh .lin-chev{transition:none}}
 .lin-glist .lin-seg{margin:2px 0 8px}
 .lin-gi{display:flex;flex-direction:column;gap:4px;width:100%;margin-bottom:2px;text-align:left;background:none;border:1px solid transparent;border-radius:6px;color:inherit;padding:5px 7px;cursor:pointer;font:inherit}
 .lin-gi:hover{background:var(--hover,#2d2d2d)}
@@ -881,7 +914,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         root.append(tb, body);
         container.replaceChildren(root);
 
-        const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: true, tierBundle: true, zc: new Map(), sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
+        const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: false, tierBundle: true, zc: new Map(), sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
             lens: opts.lens || 'lanes', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false, ringList: !!(opts.ring && opts.ring.list),
             // the model's group names (NwayGroups naming state) and one-line function summaries by fid
             S: { names: {}, evid: {}, busy: false, done: false, off: opts.laneNames === false }, lnSig: '', sums: new Map() };
@@ -1078,7 +1111,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function legend() {
             const doc = st.doc;
             legendBox.replaceChildren();
-            if (st.P) { lensLegend(); return; }
+            if (st.P) return; // the lens's groups are the navigator's list
             const chip = (color, text, mode) => {
                 const c = el('span', { class: 'lin-chip' }), sw = el('span', { class: 'lin-sw' });
                 sw.style.background = mode === 'hatch' ? `repeating-linear-gradient(45deg,${color} 0 2px,transparent 2px 4px)` : mode === 'dash' ? `repeating-linear-gradient(90deg,${color} 0 4px,transparent 4px 7px)` : color;
@@ -1148,6 +1181,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // fade the nodes without the tracked rows, outline the holders, a bar for how much each holds,
         // +born badges (violet frame: also born elsewhere = reuse or independent birth), -lost on the edges
         function applyTrack(fromUser) {
+            if (st.nav) { if (!st.track) st.nav.focus = null; else if (!st.track.startsWith('fn:')) st.nav.focus = st.track; }
             const mark = st.R && st.track ? trackRows(st.R, cats, st.track, st.lens) : null;
             st.T = mark ? trackInfo(st.L, st.R, mark) : null;
             syncFocus();
@@ -1192,63 +1226,294 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (let r = 0; r < st.R.n; r++) if (st.R.match(r)) by.get(C.of(r)).push(r);
             return C.cats.filter(c => by.get(c.key).length).map(c => ({ c, rows: by.get(c.key), tk: c.tk, leaf: true }));
         }
-        // true when it picked the biggest group itself (that setTrack already redrew everything)
+        // ---- the left pane: the lens navigator, in every view ----
+        // Sections (Core / Common / Rare for a tiered lens, else the first-level groups), one row per group. A click focuses
+        // the group: its own page (card, pivots, its functions and files) until "All ..." or the state bar closes it.
+        // Births keeps its own card (bside) under the header.
+        const bside = el('div', { class: 'lin-bside' });
+        const NAV = { q: '', tier: null, open: new Map(), tab: 'functions', fq: '', role: null, sort: 'weight', shown: NAV_ROWS, focus: null };
+        st.nav = NAV;
+        const fparts = fid => { const i = String(fid).indexOf(':func:'), [md5, addr] = String(fid).slice(i + 6).split(':'); return { coll: String(fid).slice(0, i), md5, addr }; };
+        // the visible nodes that hold any of these rows
+        const holdersOf = rows => st.L.vis.filter(v => rows.some(r => v.has(r)));
+        function navItems() {
+            const C = cats(st.lens), R = st.R, out = [];
+            const own = new Map();
+            for (let r = 0; r < R.n; r++) if (R.match(r)) { const k = C.of(r); (own.get(k) || own.set(k, []).get(k)).push(r); }
+            if (C.groups) {
+                for (const x of C.groups.filter(y => y.depth === 0)) {
+                    const rows = C.members[x.i].filter(R.match);
+                    if (!rows.length) continue;
+                    const kids = C.groups.filter(y => y.depth === 1 && (y.g.path || []).includes(x.g.id) && C.members[y.i].some(R.match));
+                    // a lane split by region has no rows of its own, so no colour: take its first sub-group's
+                    out.push({ x, tk: x.tk, label: gText(x.g), color: x.color === GREY && kids.length ? kids[0].color : x.color, tier: x.tier, rows, kids });
+                }
+                for (const c of C.cats) if (!c.g && own.has(c.key)) out.push({ x: c, tk: c.tk, label: c.label, color: c.color, tier: c.tier, rows: own.get(c.key), kids: [] });
+            } else for (const c of C.cats) if (own.has(c.key)) out.push({ x: c, tk: c.tk, label: c.label, color: c.color, tier: c.tier, rows: own.get(c.key), kids: [] });
+            for (const it of out) { it.hold = holdersOf(it.rows); it.sub = `in ${it.hold.length} of ${st.L.vis.length} · ${it.hold.slice(0, 3).map(v => name(v.id)).join(', ')}${it.hold.length > 3 ? ` +${it.hold.length - 3}` : ''}`; }
+            return out;
+        }
+        // squares, one per visible node, filled by the share of the rows it holds
+        function presSquares(rows) {
+            const pres = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
+            for (const v of st.L.vis) {
+                const h = rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), i = el('i', { title: `${name(v.id)}: ${fmt(h)}` });
+                if (h) { i.style.background = nodeColor(st.doc, v.idx); i.style.opacity = (0.25 + 0.75 * h / rows.length).toFixed(2); i.style.boxShadow = 'none'; }
+                pres.append(i);
+            }
+            return pres;
+        }
+        // the group tooltip: tier, the table's numbers, and what its files are made of
+        function navTip(ev, it) {
+            const tt = tierTip(it.x, st.doc);
+            const rows = it.x.g ? gTip(it.x.g) : [['Functions', fmt(it.rows.length)], ['Files', `${it.hold.length} of ${st.L.vis.length}`]];
+            showTip(ev, it.label, tt ? tt.badge : it.color, rows, (tt ? tt.html : '') + fileMetaHtml(st.doc, it.hold.flatMap(v => nodeFiles(v)), 'the files holding it'));
+        }
+        const navHover = it => { if (st.P && nodeBase) focusHover(it ? it.tk : null); if (st.ring && st.view === 'ring' && st.ring.hoverTrack) st.ring.hoverTrack(it ? it.tk : null); };
+        function navRow(it, depth = 0) {
+            const on = NAV.focus === it.tk;
+            const b = el('button', { type: 'button', class: `lin-nr${on ? ' on' : ''}`, 'aria-pressed': String(on), title: 'Focus this group: its functions and files' });
+            if (depth) b.style.paddingLeft = `${10 + depth * 14}px`;
+            const sw = el('span', { class: 'lin-sw' }), t = el('span', { class: 'lin-nt' }), nm = el('span', { class: 'lin-nn' });
+            sw.style.background = tierCss(it.color, it.tier);
+            if (it.x.g) nm.innerHTML = gHtml(it.x.g); else nm.textContent = it.label;
+            t.append(nm, el('span', { class: 'lin-ns' }, it.sub));
+            b.append(sw, t, presSquares(it.rows), el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
+            b.addEventListener('mouseenter', ev => { navHover(it); navTip(ev, it); });
+            b.addEventListener('mousemove', moveTip);
+            b.addEventListener('mouseleave', () => { navHover(null); hideTip(); });
+            b.addEventListener('click', () => { hideTip(); navFocus(it.tk); });
+            return b;
+        }
+        function navFocus(tk) {
+            NAV.focus = tk || null;
+            NAV.fq = ''; NAV.role = null; NAV.shown = NAV_ROWS; NAV.tab = 'functions';
+            st.multi = false;
+            setTrack(tk || '');
+        }
         function groupList() {
-            const tracks = st.view === 'tracks';
-            // the Births view's pane is its own: the biggest births, or the selected one
-            if (st.view === 'births') { side.hidden = false; if (st.births) st.births.panel(); return false; }
-            // the left pane lists the groups in every view; tree view just does not pick one for you
-            side.hidden = !tracks && !st.R;
+            side.hidden = false;
             side.replaceChildren();
-            if (side.hidden) return false;
-            if (!st.R) { side.append(el('div', { class: 'lin-dim' }, 'This server sends no row list: groups need it.')); return false; }
-            const list = groupRows();
-            if (tracks && !st.track && list.length) { setTrack(list.filter(x => x.leaf).sort((a, b) => b.rows.length - a.rows.length)[0].tk); return true; }
-            if (tracks) {
+            if (!st.R) { side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'This server sends no row list: the groups need it.')); return false; }
+            const items = navItems();
+            const focused = NAV.focus && (items.find(it => it.tk === NAV.focus) || items.flatMap(it => it.kids.map(k => kidItem(k, it))).find(it => it.tk === NAV.focus));
+            if (NAV.focus && !focused) NAV.focus = null;
+            if (focused) navPage(focused, items);
+            else navList(items);
+            if (st.view === 'births') { side.prepend(bside); if (st.births) st.births.panel(); }
+            return false;
+        }
+        const kidItem = (k, parent) => { const C = cats(st.lens), rows = C.members[k.i].filter(st.R.match), hold = holdersOf(rows); return { x: k, tk: k.tk, label: gText(k.g), color: k.color, tier: k.tier, rows, kids: [], parent, hold, sub: `in ${hold.length} of ${st.L.vis.length}` }; };
+        function navList(items) {
+            const lens = LENSES.find(l => l[0] === st.lens), tiered = items.some(it => it.tier);
+            const head = el('div', { class: 'lin-nh' }), top = el('div', { class: 'lin-nrow' });
+            const q = NAV.q.toLowerCase();
+            const vis = items.filter(it => (!NAV.tier || it.tier === NAV.tier) && (!q || `${it.label} ${it.sub}`.toLowerCase().includes(q)));
+            // sections: tiers, else the first-level groups with their sub-groups, else one list
+            const secs = tiered ? [...TIER_KEYS, ''].map(t => ({ key: `t:${t}`, label: t ? `${TIERS[t][0]} ${TIERS[t][1]}` : 'Other', color: t ? TIERS[t][2] : 'var(--text)', items: vis.filter(it => (it.tier || '') === t), dflt: t !== 'rare' }))
+                : vis.some(it => it.kids.length) ? vis.map((it, i) => ({ key: `g:${it.tk}`, head: it, label: it.label, items: it.kids.map(k => kidItem(k, it)), dflt: i < 3 }))
+                    : [{ key: 'all', label: lens ? lens[1] : 'Groups', items: vis, dflt: true }];
+            const isOpen = s => (q ? true : NAV.open.has(s.key) ? NAV.open.get(s.key) : s.dflt);
+            const openAll = v => { for (const s of secs) NAV.open.set(s.key, v); groupList(); };
+            const exA = btn('Expand all', 'Open every section', () => openAll(true), 'lin-link'), coA = btn('Collapse all', 'Close every section', () => openAll(false), 'lin-link');
+            exA.disabled = secs.every(isOpen); coA.disabled = !secs.some(isOpen);
+            top.append(el('b', {}, lens ? lens[1] : 'Groups'), el('span', { class: 'lin-dim' }, `${fmt(vis.length)} of ${fmt(items.length)}`), el('span', { style: 'flex:1' }), exA, el('span', { class: 'lin-dim' }, '·'), coA);
+            const qi = el('input', { type: 'search', class: 'lin-nq', placeholder: 'Find a group, a file or a function', 'aria-label': 'Find a group' });
+            qi.value = NAV.q;
+            qi.addEventListener('input', () => { NAV.q = qi.value; const p = qi.selectionStart; groupList(); const n = side.querySelector('.lin-nq'); n.focus(); n.setSelectionRange(p, p); });
+            head.append(top, qi);
+            if (tiered) {
+                const f = el('div', { class: 'lin-nrow', role: 'group', 'aria-label': 'Tier filter' });
+                for (const t of TIER_KEYS) {
+                    const n = items.filter(it => it.tier === t).length;
+                    if (!n) continue;
+                    const b = el('button', { type: 'button', class: 'lin-chip', 'aria-pressed': String(NAV.tier === t), style: `color:${TIERS[t][2]}` }, `${TIERS[t][0]} ${TIERS[t][1]} `);
+                    b.append(el('span', { class: 'lin-dim' }, fmt(n)));
+                    b.addEventListener('click', () => { NAV.tier = NAV.tier === t ? null : t; groupList(); });
+                    f.append(b);
+                }
+                head.append(f);
+            }
+            if (st.view === 'tracks') {
                 const seg = el('div', { class: 'lin-seg', role: 'group', 'aria-label': 'Group view' });
                 for (const [v, t] of [[false, 'One group'], [true, 'Small multiples']]) {
                     const b = el('button', { type: 'button', 'aria-pressed': String(st.multi === v) }, t);
                     b.addEventListener('click', () => { st.multi = v; groupList(); multiples(); });
                     seg.append(b);
                 }
-                side.append(seg);
+                head.append(seg);
             }
-            const tg = trackedGroup();
-            if (tg) side.append(groupCard(tg.x, tg.C));
-            for (const { c, rows, tk } of list) {
-                // a div: the evidence line holds the call graph button
-                const b = el('div', { role: 'button', tabindex: 0, class: `lin-gi${st.track === tk ? ' on' : ''}`, 'aria-pressed': String(st.track === tk), title: 'Track this group across the tree' });
-                const t = el('span', { class: 't' }), sw = el('span', { class: 'lin-sw' }), pres = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
-                sw.style.background = c.color;
-                if (c.g) {
-                    b.style.marginLeft = `${c.depth * 14}px`;
-                    const nm = el('span', { class: 'lin-gn' });
-                    nm.innerHTML = gHtml(c.g);
-                    t.append(sw, nm, el('span', { class: 'lin-dim' }, fmt(rows.length)));
-                    const ev = el('span', { class: 'lin-gev' }), sts = el('span', { class: 'lin-gst' });
-                    ev.innerHTML = (c.g.kind === 'lane' || (c.g.kind === 'region' && !c.g.label) ? NG.laneEv(c.g, st.S) : NG.laneEv(c.g, st.S, false)) + (c.g.kind === 'lane' ? NG.parentChip(c.g, groupMap(), st.S) : '');
-                    sts.innerHTML = gStats(c.g);
-                    b.append(t, ev, sts, pres);
-                } else {
-                    t.append(sw, el('b', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rows.length)));
-                    b.append(t, pres);
+            side.append(head);
+            const total = st.R.match ? items.reduce((a, it) => a + it.rows.length, 0) : 0;
+            for (const s of secs) {
+                if (!s.items.length && !s.head) continue;
+                const open = isOpen(s), n = s.head ? s.head.rows.length : s.items.reduce((a, it) => a + it.rows.length, 0);
+                const sec = el('section', { class: 'lin-nsec' }), h = el('button', { type: 'button', class: 'lin-nsh', 'aria-expanded': String(open) });
+                const lab = el('span', { class: 'lin-nsl', style: s.color ? `color:${s.color}` : '' });
+                if (s.head && s.head.x.g) lab.innerHTML = gHtml(s.head.x.g); else lab.textContent = s.label;
+                const bar = el('span', { class: 'lin-nsb', title: `${Math.round((100 * n) / Math.max(1, total))}% of the functions` }), fill = el('i');
+                fill.style.width = `${((100 * n) / Math.max(1, total)).toFixed(1)}%`; fill.style.background = s.color || (s.head ? s.head.color : 'var(--accent)');
+                bar.append(fill);
+                h.append(el('i', { class: 'fa-solid fa-chevron-down lin-chev' }), lab, bar, el('span', { class: 'lin-dim' }, `${s.head ? `${s.items.length} groups` : `${s.items.length} group${s.items.length === 1 ? '' : 's'}`} · ${fmt(n)} fn`));
+                h.addEventListener('click', () => { NAV.open.set(s.key, !open); groupList(); });
+                if (s.head) { h.addEventListener('mouseenter', ev => { navHover(s.head); navTip(ev, s.head); }); h.addEventListener('mousemove', moveTip); h.addEventListener('mouseleave', () => { navHover(null); hideTip(); }); }
+                sec.append(h);
+                if (open) {
+                    if (s.head) sec.append(navRow(s.head));
+                    const lim = NAV.open.get(`${s.key}:all`) ? Infinity : NAV_SEC;
+                    for (const it of s.items.slice(0, lim)) sec.append(navRow(it, s.head ? 1 : 0));
+                    if (s.items.length > lim) { const m = btn(`Show all ${fmt(s.items.length)}`, '', () => { NAV.open.set(`${s.key}:all`, true); groupList(); }, 'lin-link lin-nmore'); sec.append(m); }
                 }
-                for (const v of st.L.vis) {
-                    const h = rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), i = el('i', { title: `${name(v.id)}: ${fmt(h)}` });
-                    if (h) { i.style.background = nodeColor(st.doc, v.idx); i.style.opacity = (0.25 + 0.75 * h / rows.length).toFixed(2); i.style.boxShadow = 'none'; }
-                    pres.append(i);
-                }
-                const go = ev => {
-                    if (ev.target.closest('[data-lane-graph]')) return groupPivot('graph', c, ev);
-                    st.multi = false;
-                    setTrack(tk);
-                };
-                b.addEventListener('click', go);
-                b.addEventListener('keydown', ev => { if (ev.target === b && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); go(ev); } });
-                side.append(b);
+                side.append(sec);
             }
-            if (!list.length) side.append(el('div', { class: 'lin-dim' }, 'No group matches the filters.'));
-            return false;
+            // functions whose name matches the search: a click focuses its group and selects it
+            if (q) {
+                const C = cats(st.lens), hits = [];
+                for (let r = 0; r < st.R.n && hits.length < 8; r++) if (st.R.match(r) && String(st.R.name[r] || '').toLowerCase().includes(q)) hits.push(r);
+                if (hits.length) {
+                    const sec = el('section', { class: 'lin-nsec' });
+                    sec.append(el('div', { class: 'lin-nsh', style: 'cursor:default' }, `Functions matching “${NAV.q}”`));
+                    const tb2 = el('table', { class: 'lin-ft' }), body = el('tbody');
+                    for (const r of hits) body.append(fnTr(r, () => { const it = items.find(x => x.rows.includes(r)); if (it) navFocus(it.tk); pickFn(r); }));
+                    tb2.append(body); sec.append(tb2); side.append(sec);
+                    void C;
+                }
+            }
+            if (!vis.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No group matches. Clear the search or the tier filter.'));
+        }
+        // a function as a table row: name (the app's code preview on hover), role, files, features, the app's context menu
+        function fnTr(r, onClick) {
+            const R = st.R, fid = R.fid[r], p = fparts(fid), on = st.fnSel === r;
+            const tr = el('tr', { class: `lin-fr${on ? ' on' : ''}`, tabindex: 0 });
+            const nm = el('td'), n = el('span', { class: 'lin-fn' });
+            n.append(el('i', { class: `fa-solid ${R.library[r] ? 'fa-cubes' : 'fa-code'}` }), document.createTextNode(` ${R.name[r] || fid}`));
+            nm.append(n);
+            const kb = el('button', { type: 'button', class: 'lin-kebab', 'aria-label': `${R.name[r] || fid}: open in…`, title: 'Open in another view' }, '⋯');
+            const tdk = el('td'); tdk.append(kb);
+            const tdr = el('td'); tdr.append(rolePill(R.role[r]));
+            const tdp = el('td'); tdp.append(presence(r));
+            tr.append(nm, tdr, tdp, el('td', { class: 'lin-num' }, fmt(Math.round(R.weight[r] || 0))), tdk);
+            n.addEventListener('mouseenter', ev => { if (window.showCodePreview) window.showCodePreview(fid, R.name[r] || '', p.addr, p.md5, Number(R.weight[r]) || 0, ev); hoverRowIdx(r); });
+            n.addEventListener('mousemove', ev => { if (window.moveCodePreview) window.moveCodePreview(ev); });
+            n.addEventListener('mouseleave', ev => { if (window.hideCodePreview) window.hideCodePreview(ev); hoverRowIdx(null); });
+            const menu = ev => { ev.preventDefault(); ev.stopPropagation(); if (window.hideCodePreview) window.hideCodePreview(); if (window.showGraphContextMenu) window.showGraphContextMenu(ev, 'function', { id: fid, function_name: R.name[r] || '', entrypoint_address: p.addr, md5: p.md5, collection: p.coll }); };
+            kb.addEventListener('click', menu);
+            tr.addEventListener('contextmenu', menu);
+            tr.addEventListener('click', ev => { if (!ev.target.closest('.lin-kebab')) (onClick || (() => pickFn(r)))(); });
+            tr.addEventListener('keydown', ev => { if (ev.key === 'Enter') (onClick || (() => pickFn(r)))(); });
+            return tr;
+        }
+        // outline the nodes holding one row (a hovered function), like a hovered table row
+        function hoverRowIdx(r) {
+            gHov.selectAll('*').remove();
+            if (r == null || !st.L) return;
+            for (const n of st.L.vis) if (n.has(r)) gHov.append('rect').attr('x', n.x0 - 5).attr('y', n.y0 - 5).attr('width', NODE_W + 10).attr('height', n.h + 10).attr('rx', 8).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 3).attr('vector-effect', 'non-scaling-stroke');
+        }
+        // a focused group's page
+        function navPage(it, items) {
+            const lens = LENSES.find(l => l[0] === st.lens), g = it.x.g;
+            const head = el('div', { class: 'lin-nh' }), crumb = el('nav', { class: 'lin-crumb', 'aria-label': 'Where you are' });
+            const back = btn(`← All ${lens ? lens[1].toLowerCase() : 'groups'}`, 'Back to every group (Esc)', () => navFocus(null), 'lin-link');
+            crumb.append(back);
+            if (it.tier) crumb.append(el('span', { class: 'lin-dim' }, '/'), el('span', { style: `color:${TIERS[it.tier][2]}` }, `${TIERS[it.tier][0]} ${TIERS[it.tier][1]}`));
+            if (it.parent) { const pb = btn(it.parent.label, 'Focus the parent group', () => navFocus(it.parent.tk), 'lin-link'); crumb.append(el('span', { class: 'lin-dim' }, '/'), pb); }
+            head.append(crumb);
+            side.append(head);
+            const card = el('section', { class: 'lin-ncard' }), h = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), nm = el('span', { class: 'lin-gn' });
+            sw.style.background = tierCss(it.color, it.tier);
+            if (g) nm.innerHTML = gHtml(g); else nm.textContent = it.label;
+            h.append(sw, nm);
+            card.append(h);
+            const tt = tierTip(it.x, st.doc);
+            if (tt) { const b = el('div', { class: 'lin-ntier' }); b.innerHTML = `<span class="lin-tchip" style="color:${tt.badge.color}">${tt.badge.glyph} ${tt.badge.tag}</span>${tt.html}`; card.append(b); }
+            if (g) {
+                const ev = el('div', { class: 'lin-gev' }), sts = el('div', { class: 'lin-gst' });
+                ev.innerHTML = NG.laneEv(g, st.S, false) + (g.kind === 'lane' ? NG.parentChip(g, groupMap(), st.S) : '');
+                sts.innerHTML = gStats(g);
+                card.append(ev, sts);
+            } else card.append(el('div', { class: 'lin-dim' }, `${fmt(it.rows.length)} functions in ${it.hold.length} of ${st.L.vis.length} nodes`));
+            const meta = fileMetaHtml(st.doc, it.hold.flatMap(v => nodeFiles(v)), 'the files holding it');
+            if (meta) { const d = el('details', { class: 'lin-nmeta' }), m = el('div'); m.innerHTML = meta; d.append(el('summary', {}, 'What its files are made of'), m); card.append(d); }
+            const acts = el('div', { class: 'lin-acts' });
+            const act = (icon, txt, tip, f) => { const b = el('button', { type: 'button', class: 'lin-btn', title: tip }); b.append(el('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${txt}`)); b.addEventListener('click', f); acts.append(b); };
+            if (it.tk) {
+                act('fa-table', 'In table', 'The N-way table with this group tracked and scrolled into view', e => groupPivot('table', it, e));
+                act('fa-diagram-project', 'Call graph', "The group's call graph in the N-way table", e => groupPivot('graph', it, e));
+            }
+            if (window.NwayPanel && window.NwayPanel.urlForFunctions) act('fa-layer-group', 'Functions', 'Every function of the group side by side in the N-way function view', e => { const url = window.NwayPanel.urlForFunctions(it.rows.slice(0, 200).map(r => st.R.fid[r])); if (window.Nav) window.Nav.openPath(url, e, { title: 'N-way diff', type: 'bin_sim' }); else location.href = url; });
+            card.append(acts);
+            side.append(card);
+            // tabs: its functions, its files, its sub-groups
+            const tabs = el('div', { class: 'lin-ntabs', role: 'tablist' });
+            const T = [['functions', `Functions ${fmt(it.rows.length)}`], ['files', `Files ${it.hold.length}`], ...(it.kids.length ? [['groups', `Groups ${it.kids.length}`]] : [])];
+            if (!T.some(x => x[0] === NAV.tab)) NAV.tab = 'functions';
+            for (const [k, t] of T) { const b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(NAV.tab === k) }, t); b.addEventListener('click', () => { NAV.tab = k; groupList(); }); tabs.append(b); }
+            side.append(tabs);
+            const R = st.R;
+            if (NAV.tab === 'functions') {
+                const roles = ROLES.map(x => [x, it.rows.filter(r => R.role[r] === x[0]).length]).filter(x => x[1]);
+                const tools = el('div', { class: 'lin-ntools' }), fq = el('input', { type: 'search', class: 'lin-nq', placeholder: `Filter ${fmt(it.rows.length)} functions`, 'aria-label': 'Filter functions' });
+                fq.value = NAV.fq;
+                fq.addEventListener('input', () => { NAV.fq = fq.value; NAV.shown = NAV_ROWS; const p = fq.selectionStart; groupList(); const n = side.querySelector('.lin-ntools .lin-nq'); n.focus(); n.setSelectionRange(p, p); });
+                tools.append(fq);
+                for (const [x, n] of roles) {
+                    const b = el('button', { type: 'button', class: 'lin-chip', 'aria-pressed': String(NAV.role === x[0]) }, `${x[1]} `);
+                    b.append(el('span', { class: 'lin-dim' }, fmt(n)));
+                    b.addEventListener('click', () => { NAV.role = NAV.role === x[0] ? null : x[0]; NAV.shown = NAV_ROWS; groupList(); });
+                    tools.append(b);
+                }
+                side.append(tools);
+                const f = NAV.fq.toLowerCase();
+                const rows = it.rows.filter(r => (!NAV.role || R.role[r] === NAV.role) && (!f || String(R.name[r] || R.fid[r]).toLowerCase().includes(f)));
+                rows.sort(NAV.sort === 'name' ? (a, b) => String(R.name[a] || '').localeCompare(String(R.name[b] || '')) : (a, b) => (R.weight[b] || 0) - (R.weight[a] || 0));
+                const t = el('table', { class: 'lin-ft' }), th = el('thead'), hr = el('tr'), body = el('tbody');
+                const sortTh = (k, txt, cls) => { const c = el('th', { class: cls || '', 'aria-sort': NAV.sort === k ? (k === 'name' ? 'ascending' : 'descending') : 'none' }), b = el('button', { type: 'button' }, `${txt}${NAV.sort === k ? (k === 'name' ? ' ▴' : ' ▾') : ''}`); b.addEventListener('click', () => { NAV.sort = k; groupList(); }); c.append(b); return c; };
+                hr.append(sortTh('name', 'Function'), el('th', {}, 'Role'), el('th', {}, 'Files'), sortTh('weight', 'Feat', 'lin-num'), el('th', { 'aria-label': 'Actions' }));
+                th.append(hr);
+                for (const r of rows.slice(0, NAV.shown)) body.append(fnTr(r));
+                t.append(th, body);
+                side.append(t);
+                if (rows.length > NAV.shown) side.append(btn(`Show ${fmt(Math.min(NAV_ROWS, rows.length - NAV.shown))} more · ${fmt(rows.length - NAV.shown)} left`, '', () => { NAV.shown += NAV_ROWS; groupList(); }, 'lin-link lin-nmore'));
+                if (!rows.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No function matches the filter.'));
+            } else if (NAV.tab === 'files') {
+                const t = el('table', { class: 'lin-ft' }), body = el('tbody');
+                for (const v of it.hold) {
+                    const k = it.rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), tr = el('tr', { class: 'lin-fr', tabindex: 0 });
+                    const td = el('td'), sw2 = el('span', { class: 'lin-sw', style: 'display:inline-block;vertical-align:middle;margin-right:6px' });
+                    sw2.style.background = nodeColor(st.doc, v.idx);
+                    td.append(sw2, document.createTextNode(name(v.id)));
+                    const kb = el('button', { type: 'button', class: 'lin-kebab', 'aria-label': `${name(v.id)}: open in…` }, '⋯'), tdk = el('td');
+                    tdk.append(kb);
+                    tr.append(td, el('td', { class: 'lin-dim' }, v.t != null ? isoDay(v.t) : ''), el('td', { class: 'lin-num' }, `${fmt(k)} / ${fmt(v.rows.length)}`), tdk);
+                    tr.addEventListener('mouseenter', ev => { hoverRowIdxNode(v); showTip(ev, name(v.id), nodeColor(st.doc, v.idx), [['Here', `${fmt(k)} of the group's ${fmt(it.rows.length)}`], ['Functions', fmt(v.functions)], ...timeRows(v)], fileMetaHtml(st.doc, nodeFiles(v), twinsOf(v) ? "this node's files" : 'this file')); });
+                    tr.addEventListener('mousemove', moveTip);
+                    tr.addEventListener('mouseleave', () => { hoverRowIdxNode(null); hideTip(); });
+                    tr.addEventListener('click', ev => { if (!ev.target.closest('.lin-kebab')) pickNode(v); });
+                    kb.addEventListener('click', ev => { ev.stopPropagation(); fileMenu(ev, v); });
+                    body.append(tr);
+                }
+                t.append(body);
+                side.append(t);
+            } else {
+                for (const k of it.kids) side.append(navRow(kidItem(k, it), 0));
+            }
+        }
+        function hoverRowIdxNode(v) {
+            gHov.selectAll('*').remove();
+            if (v) gHov.append('rect').attr('x', v.x0 - 5).attr('y', v.y0 - 5).attr('width', NODE_W + 10).attr('height', v.h + 10).attr('rx', 8).attr('fill', 'none').style('stroke', 'var(--accent,#66d9ef)').attr('stroke-width', 3).attr('vector-effect', 'non-scaling-stroke');
+        }
+        // the app's file context menu on a node's (first) file
+        function fileMenu(ev, v) {
+            const fid = (v.members && v.members[0]) || v.id, i = String(fid).lastIndexOf(':');
+            if (window.showGraphContextMenu) window.showGraphContextMenu(ev, 'file', { id: fid, md5: String(fid).slice(i + 1), collection: String(fid).slice(0, i), file_name: name(v.id) });
+        }
+        // a picked function: selected in the lists, its holders outlined; the inspector shows it
+        function pickFn(r) {
+            st.fnSel = r;
+            st.dockFn = r;
+            hoverRowIdx(r);
+            groupList();
+            if (st.inspectFn) st.inspectFn(r);
         }
         const groupMap = () => Object.fromEntries((st.doc.groups || []).map(g => [g.id, g]));
         // A tracked group as its table header reads, with its heaviest functions and their one-line LLM summaries.
@@ -1922,7 +2187,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (st.collapsed.size) { st.collapsed = new Set(); rebuild(); return; }
             if (!st.births) {
                 st.births = window.NwayBirths.mount({
-                    g: gBirthG.node(), side, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
+                    g: gBirthG.node(), side: bside, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
                     tiers: { TIERS, KEYS: TIER_KEYS, rank: tierRank, fill: tierFill, css: tierCss, tip: c => tierTip(c, st.doc) },

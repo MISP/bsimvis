@@ -803,7 +803,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         zbtn('+', 'Zoom in', () => s.transition().duration(200).call(zoom.scaleBy, 1.5));
         zbtn('Fit', 'Fit the whole chart', () => fit(true));
         // visible: the view picker (the page's), search, zoom (floating) and what the view needs most; the rest is behind "More"
-        const reuse = segSwitch('Reuse layer', 'Show or hide the reuse arcs', [[false, 'Off'], [true, 'On']], () => st.reuseOn, v => { st.reuseOn = v; applyReuse(); });
+        const reuse = segSwitch('Reuse layer', 'Show or hide the reuse arcs (Births: the reuse ribbons between lanes)', [[false, 'Off'], [true, 'On']], () => st.reuseOn, v => { st.reuseOn = v; applyReuse(); });
         const more = moreToggle(!!opts.moreOpen);
         more.row.append(...(opts.more || []),
             btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
@@ -822,7 +822,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const birthBox = el('span', { style: 'display:none' });
         tb.append(trackBox, legendBox, ringBox, birthBox, more.btn, more.row);
         // Tree keeps Reuse layer in view; Tracks and Split have it behind More; the Ring has no reuse arcs
-        const placeBar = () => { (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' || st.view === 'births' ? 'none' : ''; };
+        // Births keeps it in view too: its reuse ribbons
+        const placeBar = () => { (st.view === 'tree' || st.view === 'births' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' ? 'none' : ''; };
         placeBar();
         const deepAll = () => {
             const out = new Set();
@@ -1370,6 +1371,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function applyReuse() {
             const d = st.reuseOn ? null : 'none';
             gArc.style('display', d); gStr.style('display', d);
+            gBirthG.selectAll('g.bl-ribs').style('display', d);
         }
         function applySel() {
             const sel = st.sel;
@@ -1801,7 +1803,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.births = window.NwayBirths.mount({
                     g: gBirthG.node(), side, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
-                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
+                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, reuseOn: () => st.reuseOn, width: () => size().w, fit: () => fit(true),
                 });
             }
             st.births.draw();

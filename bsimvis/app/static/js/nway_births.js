@@ -14,7 +14,7 @@
  * NwayBirths.model(doc, R, bucket) and share(M, c) are DOM-free (checked in scripts/test_nway_lineage.js).
  * NwayBirths.mount(ctx) -> { draw(), panel(), box(), destroy() }; ctx is what nway_lineage.js hands over
  * (g, side, controls, getDoc, getR, getL, getCats, getTrack, setTrack, showTip, hideTip, rowEl, el,
- * segSwitch, fmt, name, width, fit, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
+ * segSwitch, fmt, name, reuseOn, width, fit, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
  * textContent or d3 .text(), never innerHTML.
  */
 (function () {
@@ -293,13 +293,15 @@
                 const x0 = X(d.src) + hw, x1 = X(d.dst) - hw, y0 = a[0] + oa, y1 = b[0] + ob, c = Math.max((x1 - x0) / 2, 70), ea = y0 + Math.max(0.5, ha), eb = y1 + Math.max(0.5, hb);
                 d.path = `M${x0},${y0}C${x0 + c},${y0} ${x1 - c},${y1} ${x1},${y1}L${x1},${eb}C${x1 - c},${eb} ${x0 + c},${ea} ${x0},${ea}Z`;
             }
-            g.append('g').selectAll('path').data(shown.filter(d => d.path)).join('path').attr('class', 'bl-rib').attr('d', d => d.path)
+            // the lineage's Reuse layer switch shows or hides this group (applyReuse)
+            const gR = g.append('g').attr('class', 'bl-ribs').style('display', ctx.reuseOn && !ctx.reuseOn() ? 'none' : null);
+            gR.selectAll('path').data(shown.filter(d => d.path)).join('path').attr('class', 'bl-rib').attr('d', d => d.path)
                 .style('fill', d => paint(d.key)).attr('fill-opacity', d => ribOp(d.key)).style('stroke', 'var(--lin-reuse)').attr('stroke-opacity', 0.5).attr('stroke-dasharray', '3 2').attr('stroke-width', 0.8).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
                 .on('mouseenter', (ev, d) => hover(hid(d.key)))
                 .on('mousemove', (ev, d) => ctx.showTip(ev, `Reused: ${titleOf(d.key)}`, 'var(--lin-reuse)', [...(lensMode ? [['Born', birthOf(d.key).label]] : []),
                     ['From', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['To', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)], ['Note', 'not in its parent: reuse, independent birth or matcher miss']]))
                 .on('mouseleave', () => { ctx.hideTip(); hover(null); });
-            if (ribs.length > shown.length) g.append('text').attr('x', B.PAD).attr('y', sBase + 24).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${fmt(ribs.length - shown.length)} smaller reuse ribbons not drawn`);
+            if (ribs.length > shown.length) gR.append('text').attr('x', B.PAD).attr('y', sBase + 24).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${fmt(ribs.length - shown.length)} smaller reuse ribbons not drawn`);
 
             // file dots under each lane; a click selects what was born in it
             for (const v of vis) {

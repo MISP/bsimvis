@@ -206,7 +206,8 @@ all groups show at every date with no selection (no lens chips in the toolbar, a
 `bcol=birth` paints one layer per birth on an old-to-new ramp. Hovering a layer lights the same group (or birth)
 in every lane. Reuse ribbons (`reuse()`, dashed violet) join a file to its nearest earlier holder in another chain for
 code it holds that its parent lacks and that was not born in it (reuse, independent birth or matcher miss); at most
-`RIB_MAX` (400), biggest first, with a note on how many are left out. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
+`RIB_MAX` (400), biggest first, with a note on how many are left out. The lineage's Reuse layer switch (in view, as in
+Tree) shows or hides them (`g.bl-ribs`, `applyReuse`). A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
 the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
 `+N from X` (violet) where it shows up off its parent, and fills the pane: where it was born, later files holding it, its
 share per lane over time, its functions (`rowEl`, a click is the usual `fn:` track). A lens chip or layer tracks that group.

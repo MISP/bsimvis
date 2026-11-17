@@ -921,7 +921,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(/st\.layout !== 'tree' \|\| !!st\.root \|\| st\.rnest === '0' \|\| st\.rarc !== R\.ARC_DEFAULT \|\| st\.rlist === '1' \|\| st\.rtier === 'hide' \|\| st\.rbundle === '0'/.test(vv), 'a non-default advanced key opens More');
             assert.ok(/tb\.append\(trackBox, legendBox, ringBox, birthBox, more\.btn, more\.row\)/.test(lin) && /more\.row\.append\(\.\.\.\(opts\.more \|\| \[\]\),[\s\S]*'Collapse deep'[\s\S]*'Expand all'[\s\S]*'100%'[\s\S]*'Selection'/.test(lin), 'Collapse deep, Expand all, 100% and Selection stay reachable behind More');
             assert.ok(/zbtn\('−'/.test(lin) && /zbtn\('\+'/.test(lin) && /zbtn\('Fit'/.test(lin) && !/zbtn\('100%'/.test(lin), 'zoom in view: − + Fit');
-            assert.ok(/\(st\.view === 'tree' \? reuseSlot : more\.row\)\.append\(reuse\.el\)/.test(lin), 'Reuse layer: in view for Tree, behind More for Tracks and Split');
+            assert.ok(/\(st\.view === 'tree' \|\| st\.view === 'births' \? reuseSlot : more\.row\)\.append\(reuse\.el\)/.test(lin), 'Reuse layer: in view for Tree and Births, behind More for Tracks and Split');
             const lst = segs.find(e => e.attrs['aria-label'] === 'Module list');
             lst.children[1].ls.click[0]();
             assert.strictEqual(bar.sink[bar.sink.length - 1].list, true, 'the Module list switch reports list: true');

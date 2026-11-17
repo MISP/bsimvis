@@ -14,7 +14,7 @@
  * NwayBirths.model(doc, R, bucket) and share(M, c) are DOM-free (checked in scripts/test_nway_lineage.js).
  * NwayBirths.mount(ctx) -> { draw(), panel(), box(), destroy() }; ctx is what nway_lineage.js hands over
  * (g, side, controls, getDoc, getR, getL, getCats, getTrack, setTrack, showTip, hideTip, rowEl, el,
- * segSwitch, fmt, name, width, fit, showLegend, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
+ * segSwitch, fmt, name, width, fit, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
  * textContent or d3 .text(), never innerHTML.
  */
 (function () {
@@ -192,7 +192,6 @@
                 if (mark) for (let r = 0; r < R.n; r++) if (mark[r]) lit.add(C.of(r));
             }
             const fade = k => { if (!lit.size) return 1; const gk = groupOf(k); return gk != null && lit.has(gk) ? 1 : 0.2; };
-            if (ctx.showLegend) ctx.showLegend(o.color === 'lens' || !!fc);
 
             const gAx = g.append('g').style('pointer-events', 'none');
             for (const k of ticks) {

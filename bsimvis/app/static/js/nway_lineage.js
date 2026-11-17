@@ -1059,7 +1059,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 x.addEventListener('click', () => setTrack(''));
                 c.append(el('i', { class: 'fa-solid fa-crosshairs' }), el('span', {}, 'Tracking'), el('b', {}, trackLabel()), el('span', { class: 'lin-dim' }, `\u00b7 in ${st.T.holders}/${st.L.vis.length} nodes`), x);
                 trackBox.append(c);
-            } else if (st.R) trackBox.append(el('span', { class: 'lin-dim' }, 'Click a legend chip or a row in the dock to track it.'));
+            } else if (st.R && st.view !== 'births') trackBox.append(el('span', { class: 'lin-dim' }, 'Click a legend chip or a row in the dock to track it.'));
             if (nodeBase) { nodeBase.style('opacity', nodeOp); ribs.style('opacity', ribOp); applySel(); }
             if (st.ring) st.ring.setTrack();
             legend();
@@ -1802,8 +1802,6 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     g: gBirthG.node(), side, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
-                    // the lens chips (a click tracks a group) whenever layers wear the lens's colours
-                    showLegend: v => { legendBox.style.display = v && st.P ? 'contents' : 'none'; },
                 });
             }
             st.births.draw();

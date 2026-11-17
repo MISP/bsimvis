@@ -1,6 +1,6 @@
 /**
  * N-way lineage view (full page):
- * /diff/nway/lineage?<same set params as /diff/nway>[&layout=tree|chain|star][&root=<file id>][&lview=tree|tracks|split|ring]
+ * /diff/nway/lineage?<same set params as /diff/nway>[&layout=tree|chain|star][&root=<file id>][&lview=tree|tracks|split|ring|timeline|births]
  *
  * Routing, URL state and fetching only; the chart is nway_lineage.js
  * (NwayLineage.mount). The page reads and writes the N-way table's own params
@@ -34,9 +34,10 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '' };
-        // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview); tfield: the Timeline's date
-        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'];
+        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '' };
+        // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview); tfield: the Timeline's date;
+        // bgrp, baxis, bsel: the Births view's grouping (file | week | month), axis (rank | cal) and selected birth
+        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel'];
         const q = new URLSearchParams(window.location.search);
         // `order` is the table's column order and passes through; an old link's order=tree|chain|star is the layout
         const legacy = ['tree', 'chain', 'star'].includes(q.get('order')) ? q.get('order') : '';
@@ -64,16 +65,17 @@ window.NwayLineageView = {
         const cols = () => (st.columns === 'children' && childrenOk && hasCluster() ? 'children' : st.columns === 'twins' && twinsOk ? 'twins' : 'files');
         // what the panel's Merge files menu may offer: only what the server answered for
         const modes = () => ['files', ...(childrenOk ? ['children'] : []), ...(twinsOk ? ['twins'] : [])];
+        const timed = () => st.lview === 'timeline' || st.lview === 'births';
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
-            for (const k of ['order', 'layout', 'lview', 'tfield', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph']) out.delete(k);
+            for (const k of ['order', 'layout', 'lview', 'tfield', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph', 'bgrp', 'baxis', 'bsel']) out.delete(k);
             for (const k of ['q', 'scope', 'tab', 'group']) if (st[k]) out.set(k, st[k]); else out.delete(k);
             // match, columns and groups must be the table's: the server's own defaults differ (tab=core, no twin tree, no merge)
             for (const k of Object.keys(D)) if ((['k', 'core_min', 'mode', 'twin_depth', 'twin_link', 'child_presence', 'sort_dir'].includes(k) || k.startsWith('group_')) && !out.has(k) && D[k] !== undefined && D[k] !== '') out.set(k, String(D[k]));
             out.set('columns', cols());
-            // the Timeline is the tree drawn over a time-ordered tree: parents dated before their children
-            if (st.lview === 'timeline') { out.set('order', 'time'); out.set('tfield', st.tfield); } else out.set('order', st.layout);
-            if (st.root && st.lview !== 'timeline') out.set('root', st.root);
+            // the Timeline (and Births, over its lanes) is the tree drawn over a time-ordered tree: parents dated before their children
+            if (timed()) { out.set('order', 'time'); out.set('tfield', st.tfield); } else out.set('order', st.layout);
+            if (st.root && !timed()) out.set('root', st.root);
             for (const [k, v] of Object.entries(extra || {})) out.set(k, v);
             return out;
         };
@@ -130,6 +132,7 @@ window.NwayLineageView = {
             ['split', 'Split', 'fa-solid fa-table-columns', 'A compact tree over the N-way table'],
             ['ring', 'Ring', 'fa-solid fa-circle-nodes', 'Many builds and clusters: shared code between them'],
             ['timeline', 'Timeline', 'fa-solid fa-timeline', 'Files in date order, each off its closest earlier relative'],
+            ['births', 'Births', 'fa-solid fa-seedling', 'What code first appears when, and how long it lasts'],
         ];
         const viewPick = mk('span');
         let recommended = '';
@@ -191,13 +194,13 @@ window.NwayLineageView = {
             if (this._panel) this._panel.setTrack(t);
         };
         const split = () => st.lview === 'split';
-        const chartView = () => (st.lview === 'tracks' || st.lview === 'ring' ? st.lview : 'tree');
+        const chartView = () => (['tracks', 'ring', 'births'].includes(st.lview) ? st.lview : 'tree');
         let started = false;
         // the panel's state is the page's (URL), read the way its Lineage tab hands it over (with the
         // columns it auto-opened); a filter or column change refetches the tree
         const fromTable = () => {
             const p = this._panel, s = p.state, u = p._lineageQs(), cur = new URLSearchParams(window.location.search);
-            for (const k of ['layout', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
+            for (const k of ['layout', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
             for (const k of ['q', 'scope', 'tab', 'group', 'columns', 'track']) st[k] = String(s[k] ?? D[k] ?? '');
             st.column = s.column || '';
@@ -212,7 +215,7 @@ window.NwayLineageView = {
             const u = new URLSearchParams(window.location.search), source = {}, state = {};
             for (const k of ['md5s', 'batch_uuid', 'collection', 'pool', 'cluster_uuid', 'axis']) if (u.get(k)) source[k] = u.get(k);
             for (const k of Object.keys(window.NwayPanel.DEFAULTS)) if (u.has(k)) state[k] = u.get(k);
-            for (const k of KEYS) if (u.has(k) && !['lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle'].includes(k)) state[k] = u.get(k);
+            for (const k of KEYS) if (u.has(k) && !['lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel'].includes(k)) state[k] = u.get(k);
             this._panel = new window.NwayPanel(panelHost, {
                 source, state,
                 lean: true,
@@ -232,7 +235,7 @@ window.NwayLineageView = {
             renderPicker();
             wrap.classList.toggle('lin-split', split());
             if (this._panel) this._panel.setTable(split());
-            const tl = st.lview === 'timeline';
+            const tl = timed();
             tfieldSel.style.display = tl ? '' : 'none';
             layoutSel.style.display = rootSel.style.display = tl ? 'none' : '';
             if (this._inst) { this._inst.setView(chartView()); this._inst.select(split() ? st.column : null); }
@@ -303,6 +306,8 @@ window.NwayLineageView = {
                     rowTier: () => st.tab !== 'all' && st.tab !== 'unique',
                     ring: { nest: st.rnest !== '0', arc: st.rarc, min: Number(st.rmin), list: st.rlist === '1', tier: st.rtier, bundle: st.rbundle !== '0', openNodes },
                     onRing: o => { st.rnest = o.nest ? '1' : '0'; st.rarc = o.arc; st.rmin = String(o.min); st.rlist = o.list ? '1' : ''; st.rtier = o.tier === 'hide' ? 'hide' : ''; st.rbundle = o.bundle ? '' : '0'; store.set('nway.ring', JSON.stringify(Object.fromEntries(RING_KEYS.map(k => [k, st[k]])))); writeUrl(); },
+                    births: { bucket: st.bgrp, axis: st.baxis, sel: st.bsel },
+                    onBirths: o => { st.bgrp = o.bucket; st.baxis = o.axis; st.bsel = o.sel || ''; writeUrl(); },
                     laneNames: q.get('lane_names') !== 'off',
                     // split: a group's call graph or its table opens in the table below, not on a new page
                     onGroup: (what, tk) => {

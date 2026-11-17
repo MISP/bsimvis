@@ -4,7 +4,8 @@
  * NwayLineage.mount(container, opts) -> { setDoc(doc, lens), setLens(lens), setTrack(t), setView(v), hover(row), select(id), destroy() }.
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
- * ring {nest, arc, min, list, tier, bundle}, onRing(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
+ * ring {nest, arc, min, list, tier, bundle}, onRing(state) | 'births': nway_births.js draws what is born when over the Timeline's lanes,
+ * births {bucket, axis, sel}, onBirths(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -782,7 +783,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             S: { names: {}, evid: {}, busy: false, done: false, off: opts.laneNames === false }, lnSig: '', sums: new Map() };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
         const defs = s.append('defs');
-        const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none');
+        const world = s.append('g'), gTree = world.append('g'), gRingG = world.append('g').style('display', 'none'), gBirthG = world.append('g').style('display', 'none');
         const gAx = gTree.append('g').style('pointer-events', 'none'), gRib = gTree.append('g'), gArc = gTree.append('g'), gNode = gTree.append('g'), gDet = gTree.append('g'), gStr = gTree.append('g'), gLib = gTree.append('g').style('pointer-events', 'none'), gTrk = gTree.append('g').style('pointer-events', 'none'), gOv = gTree.append('g').style('pointer-events', 'none'), gLab = gTree.append('g').style('pointer-events', 'none'), gHov = gTree.append('g').style('pointer-events', 'none');
         const zoom = d3.zoom().scaleExtent([K_MIN, K_MAX]).on('zoom', ev => { st.t = ev.transform; world.attr('transform', st.t); schedule(); });
         // in the Ring view a press on a draggable shape drags it; the rest still pans
@@ -817,9 +818,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // the Ring's controls sit in the same flex row as the others; its "More" row wraps below
         const ringBox = el('span', { style: 'display:none' }), ringBox2 = el('div', { style: 'display:none' });
         more.row.append(ringBox2);
-        tb.append(trackBox, legendBox, ringBox, more.btn, more.row);
+        // the Births view's grouping, axis and selected birth
+        const birthBox = el('span', { style: 'display:none' });
+        tb.append(trackBox, legendBox, ringBox, birthBox, more.btn, more.row);
         // Tree keeps Reuse layer in view; Tracks and Split have it behind More; the Ring has no reuse arcs
-        const placeBar = () => { (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' ? 'none' : ''; };
+        const placeBar = () => { (st.view === 'tree' ? reuseSlot : more.row).append(reuse.el); reuse.el.style.display = st.view === 'ring' || st.view === 'births' ? 'none' : ''; };
         placeBar();
         const deepAll = () => {
             const out = new Set();
@@ -945,6 +948,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             note();
             applyTrack(false);
             ringDraw();
+            birthsDraw();
             if (!st.hasView) fit(false);
             schedule(true);
             // a node pick survives a relayout when the node is still drawn
@@ -1081,6 +1085,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // true when it picked the biggest group itself (that setTrack already redrew everything)
         function groupList() {
             const tracks = st.view === 'tracks';
+            // the Births view's pane is its own: the biggest births, or the selected one
+            if (st.view === 'births') { side.hidden = false; if (st.births) st.births.panel(); return false; }
             // the left pane lists the groups in every view; tree view just does not pick one for you
             side.hidden = !tracks && !st.R;
             side.replaceChildren();
@@ -1751,15 +1757,15 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 
         // ---- ring view (nway_ring.js): clusters as circles, modules as rings and ribbons ----
         function ringDraw() {
-            const on = st.view === 'ring' && !!window.NwayRing;
-            gTree.style('display', on ? 'none' : null);
+            const on = st.view === 'ring' && !!window.NwayRing, own = on || st.view === 'births';
+            gTree.style('display', own ? 'none' : null);
             gRingG.style('display', on ? null : 'none');
-            mini.style.display = on ? 'none' : '';
+            mini.style.display = own ? 'none' : '';
             ringBox.style.display = on ? 'contents' : 'none';
             ringBox2.style.display = on ? 'contents' : 'none';
             placeBar();
             // the chip legend is the Ring's optional "Module list"
-            legendBox.style.display = on && !(opts.ring && st.ringList) ? 'none' : 'contents';
+            legendBox.style.display = (on && !(opts.ring && st.ringList)) || st.view === 'births' ? 'none' : 'contents';
             if (!on) { if (st.ring) st.ring.show(false); return; }
             if (!st.ring) {
                 st.ring = window.NwayRing.mount({
@@ -1783,11 +1789,29 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             st.ring.show(true);
             st.ring.draw();
         }
+        // ---- births view (nway_births.js): the Timeline's lanes as streams layered by when their code was born ----
+        function birthsDraw() {
+            const on = st.view === 'births' && !!window.NwayBirths;
+            gBirthG.style('display', on ? null : 'none');
+            birthBox.style.display = on ? 'contents' : 'none';
+            if (!on) return;
+            // a stream needs every file: never grouped
+            if (st.collapsed.size) { st.collapsed = new Set(); rebuild(); return; }
+            if (!st.births) {
+                st.births = window.NwayBirths.mount({
+                    g: gBirthG.node(), side, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
+                    getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
+                    showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
+                });
+            }
+            st.births.draw();
+        }
         const nameOf = id => st.names.get(id) || id;
         // ---- zoom helpers ----
         function fit(animate) {
-            if (st.view === 'ring' && st.ring && st.ring.box()) {
-                const b = st.ring.box(), { w, h } = size(), bw = b.x1 - b.x0, bh = b.y1 - b.y0, k = Math.max(K_MIN, Math.min(1, 0.95 * Math.min(w / bw, h / bh)));
+            const own = st.view === 'ring' ? st.ring : st.view === 'births' ? st.births : null;
+            if (own && own.box()) {
+                const b = own.box(), { w, h } = size(), bw = b.x1 - b.x0, bh = b.y1 - b.y0, k = Math.max(K_MIN, Math.min(1, 0.95 * Math.min(w / bw, h / bh)));
                 st.hasView = true;
                 (animate ? s.transition().duration(400) : s).call(zoom.transform, d3.zoomIdentity.translate(w / 2 - (k * (b.x0 + b.x1)) / 2, h / 2 - (k * (b.y0 + b.y1)) / 2).scale(k));
                 return;
@@ -1890,6 +1914,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 if (st.lens === 'deltas') { st.C = new Map(); rebuild(); }
                 applyTrack(false);
                 ringDraw();
+                birthsDraw();
                 fit(true);
             },
             hover: hoverRow,
@@ -1907,6 +1932,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             destroy() {
                 st.dead = true;
                 if (st.ring) st.ring.destroy();
+                if (st.births) st.births.destroy();
                 cancelAnimationFrame(st.raf);
                 ro.disconnect();
                 document.removeEventListener('keydown', dblClose);
@@ -1980,7 +2006,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

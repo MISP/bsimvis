@@ -6,7 +6,7 @@
  * node holds); rows failing the page filters (rows.match) are left out. A birth (cohort) is the rows
  * born in one file, week or month. Each Timeline lane (layout()'s n.lane, a chain of files sharing code)
  * is drawn as a stream: its height is the file's matching functions, its layers are the cohorts those
- * functions were born in, oldest at the bottom; coloured by the lens's groups (each birth split into its groups, so
+ * functions were born in, oldest at the bottom; a fork is fed by ribbons from its parent's layers (inherited code); coloured by the lens's groups (each birth split into its groups, so
  * every group is visible at every date) or by birth date (one layer per birth, old to new). A strip under the lanes counts the rows born in each
  * file. Selecting a cohort greys the others (born before / after) and splits it by the lens's groups;
  * the side pane says where it was born, how much of it later files keep, per lane, and its functions.
@@ -224,24 +224,21 @@
             const area = ln => d3.area().curve(d3.curveBumpX).x(d => d.data.x).y0(d => ln.bot - d[0] * ky).y1(d => ln.bot - d[1] * ky);
             // hover lights one group (a birth when coloured by birth) in every lane and its reuse ribbons; bands: each layer's y at each file
             const hid = k => { const gk = groupOf(k); return gk != null ? `g:${gk}` : k; };
-            const baseOp = k => (k === '>' ? 0.4 : 1) * fade(k), ribOp = k => 0.35 * fade(k);
+            const baseOp = k => (k === '>' ? 0.4 : 1) * fade(k), ribOp = k => 0.35 * fade(k), forkOp = k => 0.5 * fade(k);
             const hover = id => {
                 g.selectAll('path.bl-layer').attr('fill-opacity', s => (!id ? baseOp(s.key) : hid(s.key) === id ? 1 : 0.15));
+                g.selectAll('path.bl-fork').attr('fill-opacity', d => (!id ? forkOp(d.key) : hid(d.key) === id ? 0.85 : 0.04));
                 g.selectAll('path.bl-rib').attr('fill-opacity', d => (!id ? ribOp(d.key) : hid(d.key) === id ? 0.8 : 0.04));
             };
-            const band = new Map(), chainOf = new Map();
+            const band = new Map(), chainOf = new Map(), forks = [];
             let chainN = 0;
             for (const ln of lanes) {
                 for (const ch of ln.chains) {
                     for (const v of ch) chainOf.set(v.idx, chainN);
                     chainN++;
-                    // a chain grows out of its parent's date, from a dashed link to the parent's lane
+                    // a chain that forks off another lane is fed by fork ribbons from its parent (drawn below)
                     const pts = [], par = L.fileOf.get(L.parentOf.get(ch[0].id));
-                    if (par) {
-                        pts.push({ x: X(par) + hw, c: {} });
-                        const pl = laneOf(par);
-                        g.append('line').attr('x1', X(par)).attr('x2', X(par)).attr('y1', pl.bot + 12).attr('y2', ln.bot).style('stroke', 'var(--lin-grey)').attr('stroke-dasharray', '3 4').attr('vector-effect', 'non-scaling-stroke');
-                    }
+                    if (par) forks.push({ par, v: ch[0] });
                     for (const v of ch) { const c = counts.get(v.id); pts.push({ x: X(v) - hw, c, v }, { x: X(v) + hw, c, v }); }
                     const keys = order.filter(k => ch.some(v => counts.get(v.id)[k]));
                     const S = d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts);
@@ -283,16 +280,32 @@
             }
             ribs.sort((a, b) => b.n - a.n);
             const offOut = new Map(), offIn = new Map(), shown = ribs.slice(0, B.RIB_MAX).filter(d => d.src && d.dst);
-            for (const d of shown) {
-                const a = band.get(`${d.src.idx}\n${d.key}`), b = band.get(`${d.dst.idx}\n${d.key}`);
-                if (!a || !b) continue;
-                const ka = `${d.src.idx}\n${d.key}`, kb = `${d.dst.idx}\n${d.key}`, oa = offOut.get(ka) || 0, ob = offIn.get(kb) || 0;
+            // a ribbon from the source's band of a layer to the same layer's band in the target, stacked from the top of each band
+            const flow = d => {
+                const ka = `${d.src.idx}\n${d.key}`, kb = `${d.dst.idx}\n${d.key}`, a = band.get(ka), b = band.get(kb);
+                if (!a || !b) return null;
+                const oa = offOut.get(ka) || 0, ob = offIn.get(kb) || 0;
                 const ha = Math.min(d.n * ky, a[1] - a[0] - oa), hb = Math.min(d.n * ky, b[1] - b[0] - ob);
                 offOut.set(ka, oa + ha); offIn.set(kb, ob + hb);
                 // the ends leave and enter flat even between neighbour columns, so a ribbon across lanes keeps its thickness
                 const x0 = X(d.src) + hw, x1 = X(d.dst) - hw, y0 = a[0] + oa, y1 = b[0] + ob, c = Math.max((x1 - x0) / 2, 70), ea = y0 + Math.max(0.5, ha), eb = y1 + Math.max(0.5, hb);
-                d.path = `M${x0},${y0}C${x0 + c},${y0} ${x1 - c},${y1} ${x1},${y1}L${x1},${eb}C${x1 - c},${eb} ${x0 + c},${ea} ${x0},${ea}Z`;
+                return `M${x0},${y0}C${x0 + c},${y0} ${x1 - c},${y1} ${x1},${y1}L${x1},${eb}C${x1 - c},${eb} ${x0 + c},${ea} ${x0},${ea}Z`;
+            };
+            // fork ribbons: what a fork's first file keeps from its parent, layer by layer (the code it inherits), always drawn
+            const fr = [];
+            for (const { par, v } of forks) {
+                const by = new Map();
+                for (const r of M.heldM[v.idx]) if (R.has(r, par.idx)) by.set(keyOf(r), (by.get(keyOf(r)) || 0) + 1);
+                for (const k of order) if (by.has(k)) fr.push({ src: par, dst: v, key: k, n: by.get(k) });
             }
+            for (const d of fr) d.path = flow(d);
+            g.append('g').selectAll('path').data(fr.filter(d => d.path)).join('path').attr('class', 'bl-fork').attr('d', d => d.path)
+                .style('fill', d => paint(d.key)).attr('fill-opacity', d => forkOp(d.key)).style('cursor', 'pointer')
+                .on('mouseenter', (ev, d) => hover(hid(d.key)))
+                .on('mousemove', (ev, d) => ctx.showTip(ev, `Inherited: ${titleOf(d.key)}`, paint(d.key), [...(lensMode ? [['Born', birthOf(d.key).label]] : []),
+                    ['From parent', `${ctx.name(d.src.id)} \u00b7 ${d.src.t == null ? 'undated' : iso(d.src.t)}`], ['Into fork', `${ctx.name(d.dst.id)} \u00b7 ${d.dst.t == null ? 'undated' : iso(d.dst.t)}`], ['Functions', fmt(d.n)]]))
+                .on('mouseleave', () => { ctx.hideTip(); hover(null); });
+            for (const d of shown) d.path = flow(d);
             // the lineage's Reuse layer switch shows or hides this group (applyReuse)
             const gR = g.append('g').attr('class', 'bl-ribs').style('display', ctx.reuseOn && !ctx.reuseOn() ? 'none' : null);
             gR.selectAll('path').data(shown.filter(d => d.path)).join('path').attr('class', 'bl-rib').attr('d', d => d.path)

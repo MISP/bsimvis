@@ -200,8 +200,9 @@ auto-collapsed, never auto-chosen; `tfield` is stripped from table links.
 lineage canvas like the Ring (own `g`, own toolbar box, the left pane is its panel). A row is born in its holder with the
 lowest date rank (`model()`, not the tree's `bornIn`; undated nodes rank last; rows failing `rows.match` are left out);
 a birth is the rows born in one file, week or month (`bgrp`). Each Timeline lane (`n.lane`, split into its chains) is a
-stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom; a chain grows
-from its parent's date. `bcol=lens` (default) splits every birth by the lens's groups and paints them in the group colour, so
+stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom. A chain that forks
+off another lane is fed by fork ribbons (`bl-fork`, always drawn): each layer its first file shares with its parent flows
+from the parent's band into the fork's, so inherited code (the big core lanes) visibly carries across forks. `bcol=lens` (default) splits every birth by the lens's groups and paints them in the group colour, so
 all groups show at every date with no selection (no lens chips in the toolbar, as the Ring; a tracked group keeps its layers lit, the rest fade);
 `bcol=birth` paints one layer per birth on an old-to-new ramp. Hovering a layer lights the same group (or birth)
 in every lane. Reuse ribbons (`reuse()`, dashed violet) join a file to its nearest earlier holder in another chain for

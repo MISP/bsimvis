@@ -11,14 +11,18 @@
 # --seed-main: start from a hardlinked checkpoint of the MAIN stack's kvrocks
 # instead of an empty DB (instant, no extra disk; same filesystem only). Only
 # seeds when this worktree has no kvrocks db yet. Needs main kvrocks running.
-# SEED_KV_PORT=7650 ./scripts/wt-setup.sh --seed-main seeds from that kvrocks instead.
+# --seed PORT: the same from the kvrocks on PORT (e.g. another worktree's stack).
 #
 # Confidentiality: the main repo's 17G data/kvrocks is NEVER symlinked or
 # read. Each worktree gets its own empty data dir; tests build their own
 # collections from the git-tracked data/test/ binaries.
 set -uo pipefail
 SEED_MAIN=false
-[ "${1:-}" = "--seed-main" ] && SEED_MAIN=true
+SEED_KV_PORT=
+case "${1:-}" in
+  --seed-main) SEED_MAIN=true ;;
+  --seed) [ -n "${2:-}" ] || { echo "--seed needs a kvrocks port"; exit 1; }; SEED_MAIN=true; SEED_KV_PORT=$2 ;;
+esac
 
 # --- locate worktree + main repo -------------------------------------------
 WT_ROOT="$(git rev-parse --show-toplevel)"
@@ -109,7 +113,6 @@ APP_PORT=${APP_PORT:-5100}
 
 # --- 2b. optional: seed kvrocks from main via hardlinked checkpoint ---------
 if $SEED_MAIN && [ ! -d "$DATA_BASE_DIR/kvrocks/db" ]; then
-  # SEED_KV_PORT=<port>: seed from another stack's kvrocks (e.g. another worktree's) instead of main's
   MAIN_KV_PORT=${SEED_KV_PORT:-$(grep -E '^KVROCKS_PORT=' "$MAIN_ROOT/.env" | tail -n 1 | cut -d= -f2)}
   MAIN_KV_DIR=$(redis-cli -p "$MAIN_KV_PORT" config get dir | tail -n 1)
   echo "Checkpointing main kvrocks (:$MAIN_KV_PORT)..."

@@ -195,7 +195,10 @@ many-to-many candidates and scored files sharing a handful of rows near 1, and a
 (`buildModel` walks every root). `tfield` = `first_seen` (default), `last_seen` or `entry_date`, read off the live file
 metas in the route (`_lineage_times`, the cached doc has no dates; a node takes its earliest file, latest for
 `last_seen`); undated nodes rank last. Nodes get `t`, `rank` and `time_inversion` (a later file is more than
-`INVERSION_GAP` closer than the parent: the date is probably late; drawn as a warning). In `layout()`, `doc.order ===
+`INVERSION_GAP` closer than the parent: the date is probably late; drawn as a warning; `time_closer` names that later
+node). `tswap=a,b;c,d` (node id, member file id or md5) swaps two nodes' dates in the answer only, before the tree is
+built (`_swap_times`; stored dates never change); nodes get `t_swapped`. The File inspector's Swap dates / Undo swap
+(Births: click the warning) toggles a pair in the page URL's `tswap`, a state bar chip clears it; stripped from table links. In `layout()`, `doc.order ===
 'time'` sets `n.d` to the date rank (one column per node, `T_GAP` apart), so reuse arcs, slots and anchors are the tree's;
 `timeLanes` puts a parent's first child in its lane when they share at least `LANE_KEEP` (0.5) of the bigger file
 (else it starts a lane of its own) and every other child or root in the free lane nearest it; `timeTicks`

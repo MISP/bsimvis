@@ -331,10 +331,11 @@
                 const ln = laneOf(v), isBirth = !!fc && fc.nodes.includes(v.idx), par = L.fileOf.get(L.parentOf.get(v.id));
                 g.append('circle').attr('cx', X(v)).attr('cy', ln.bot + 7).attr('r', isBirth ? 4.5 : 3).style('fill', isBirth ? 'var(--lin-born)' : 'var(--lin-grey)').style('cursor', 'pointer')
                     .on('mousemove', ev => ctx.showTip(ev, ctx.name(v.id), 'var(--lin-grey)', [['Date', v.t == null ? 'undated' : iso(v.t)], ['Parent', par ? ctx.name(par.id) : 'none (a root)'], ['Functions', fmt(tot(v))], ['Born here', fmt(M.bornIn[v.idx].length)],
-                        ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late']] : []), ['Click', 'select what was born here']]))
+                        ...(v.t_swapped ? [['⇄ Swapped', `date of ${ctx.name(v.t_swapped)}, in this view only`]] : []), ...(v.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date, and its births, may be late. Click the ⚠ to swap it with the closer file']] : []), ['Click', 'select what was born here']]))
                     .on('mouseleave', ctx.hideTip)
                     .on('click', () => { ctx.hideTip(); const c = M.byKey.get(M.keyOf[v.idx]); if (c && c.rows.length) select(c); });
-                if (v.time_inversion) g.append('text').attr('x', X(v) + 6).attr('y', ln.bot + 11).attr('font-size', 11).style('fill', 'var(--lin-died)').text('⚠');
+                if (v.time_inversion) g.append('text').attr('x', X(v) + 6).attr('y', ln.bot + 11).attr('font-size', 11).style('fill', 'var(--lin-died)').style('cursor', 'pointer').text('⚠')
+                    .on('click', ev => { ev.stopPropagation(); ctx.hideTip(); if (ctx.inspect) ctx.inspect(v); });
             }
 
             // the selection: "+N" where it is born, "+N from X" where it shows up off its parent (reuse, independent birth or matcher miss)

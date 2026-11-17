@@ -1771,6 +1771,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 act('fa-table-columns', 'Column in table', 'The N-way table on this column', ev => openUrl(`/diff/nway?${q}`, ev, 'N-way', 'bin_sim'));
                 if (p && !p.agg && typeof buildFileDiffUrl === 'function') { const a = firstFile(p); act('fa-code-compare', 'Diff with parent', `The file diff ${name(p.id)} → ${name(n.id)}`, ev => openUrl(buildFileDiffUrl(a.coll, a.md5, f.coll, f.md5), ev, 'File diff', 'file')); }
             }
+            // a timeline break: try the order with this node's date and the closer later one's swapped (view only, the URL's tswap)
+            if (st.doc.order === 'time' && opts.onSwapDates) {
+                if (n.t_swapped) act('fa-rotate-left', 'Undo swap', `Give ${name(n.id)} and ${name(n.t_swapped)} their own dates back`, () => opts.onSwapDates(n.id, n.t_swapped));
+                else if (n.time_closer) act('fa-right-left', 'Swap dates', `Place ${name(n.id)} and ${name(n.time_closer)} in each other's date slot, in this view only (stored dates are not changed)`, () => opts.onSwapDates(n.id, n.time_closer));
+            }
             const shown = n.rows.filter(R.match), born = p ? shown.filter(r => !p.has(r)) : [], lost = p ? p.rows.filter(r => R.match(r) && !n.has(r)) : [];
             const e = st.M.inE.get(n.agg ? n.top : n.id);
             kvBox(body, [['Functions', `${fmt(shown.length)} shown of ${fmt(n.rows.length)}`], ...(p ? [['Parent', `${name(p.id)}${e ? ` · similarity ${e.similarity}` : ''}`], ['vs parent', `+${fmt(born.length)} born · −${fmt(lost.length)} lost`]] : [['Parent', 'none (a root)']]), ...timeRows(n), ...(tw ? [['Files', `${tw.length}: ${tw.slice(0, 4).map(md5Of).join(', ')}${tw.length > 4 ? ` +${tw.length - 4}` : ''}`]] : [])]);
@@ -2035,7 +2040,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const partRows = p => [['Kept by', p.folded ? 'several children (folded)' : names(p.children)], ['Functions', fmt(p.count)]];
         // timeline: the node's date (and its warning), an edge's time between parent and child
         const timeRows = n => (st.doc.order !== 'time' ? [] : [[TFIELDS[st.doc.tfield] || 'Date', n.t == null ? 'undated' : isoDay(n.t)],
-            ...(n.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date may be late']] : [])]);
+            ...(n.t_swapped ? [['⇄ Swapped', `date of ${name(n.t_swapped)}, in this view only`]] : []),
+            ...(n.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date may be late'], ...(n.time_closer ? [['Closer, later', name(n.time_closer)]] : [])] : [])]);
         const edgeTime = e => { const p = st.M.byId.get(e.parent), c = st.M.byId.get(e.child); return st.doc.order === 'time' && p && c && p.t != null && c.t != null ? [['After the parent', span(c.t - p.t)]] : []; };
         const edgeRows = e => [['Born', fmt(e.gained)], ['Died', fmt(e.lost)], ['Shared', fmt(e.shared)], ['Recall suspect', fmt(e.recall_suspect)], ...edgeTime(e)];
         function hoverRib(ev, l) {
@@ -2201,6 +2207,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     onHover: c => graphHover(c), under: (c, t) => catUnder(c, t),
                     // what a set of files is made of: of node indexes, of a lens group
                     meta: (idx, what) => fileMetaHtml(st.doc, filesOfNodes(st.doc, idx), what), catMeta: c => catMeta(c),
+                    inspect: v => pick({ node: v }),
                 });
             }
             st.births.draw();
@@ -2465,7 +2472,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table'); q.delete('bcol');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table'); q.delete('bcol'); q.delete('tswap');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

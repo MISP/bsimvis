@@ -526,12 +526,14 @@ def build(
         for i, c in enumerate(columns):
             # a root's relatives are all later by definition: only a child can be inverted
             later = rank[at[i] + 1 :]
-            best = float(w[later, i].max()) if later and i in par else 0.0
+            j = later[int(np.argmax(w[later, i]))] if later and i in par else None
+            inv = j is not None and float(w[j, i] - w[par[i], i]) > INVERSION_GAP
             timed[c["id"]] = {
                 "t": c.get("t"),
                 "rank": at[i],
-                "time_inversion": i in par
-                and best - float(w[par[i], i]) > INVERSION_GAP,
+                "time_inversion": inv,
+                # the later node it is closest to: the pair a `tswap` would try
+                "time_closer": columns[j]["id"] if inv else None,
             }
     nodes = [
         {
@@ -916,6 +918,7 @@ def demo():
     )
     xt = {x["id"]: x for x in build(xz, xr, {}, 0.5, names.get, order="time")["nodes"]}
     assert [xt[i]["time_inversion"] for i in "XZY"] == [False, True, False]
+    assert [xt[i]["time_closer"] for i in "XZY"] == [None, "Y", None]
     assert (tn["E"]["rank"], tn["E"]["depth"], tn["E"]["t"]) == (4, 0, None)
     check_invariants(tm)
     # C keeps 2 functions in B and D, 1 in B only, and 3 in no child

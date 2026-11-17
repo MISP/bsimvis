@@ -34,10 +34,11 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '', table: '', bcol: 'lens' };
+        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '', table: '', bcol: 'lens', tswap: '' };
         // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview); tfield: the Timeline's date;
         // bgrp, baxis, bsel, bcol: the Births view's grouping (file | week | month), axis (rank | cal), selected birth and colour (lens | birth)
-        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'bcol', 'table'];
+        // tswap: the Timeline's swapped dates (`a,b;c,d`), in the answer only, never stored
+        const KEYS = ['q', 'scope', 'tab', 'group', 'columns', 'track', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'bcol', 'table', 'tswap'];
         const q = new URLSearchParams(window.location.search);
         // `order` is the table's column order and passes through; an old link's order=tree|chain|star is the layout
         const legacy = ['tree', 'chain', 'star'].includes(q.get('order')) ? q.get('order') : '';
@@ -55,7 +56,7 @@ window.NwayLineageView = {
         for (const k of KEYS) st[k] = q.has(k) ? q.get(k) : RING_KEYS.includes(k) && typeof mem[k] === 'string' ? mem[k] : k === 'lview' && store.get('nway.lview') ? store.get('nway.lview') : String(D[k] ?? '');
         // Split used to be a view (tree only): it is the table toggle now, under any view
         if (st.lview === 'split') { st.lview = 'tree'; st.table = '1'; }
-        const table0 = st.table;
+        const table0 = st.table, tswap0 = st.tswap;
         // the lens a group string stands for: its preset, else the lens of its first level
         const lensOf = g => {
             const first = (g || '').split(',')[0];
@@ -71,13 +72,13 @@ window.NwayLineageView = {
         const timed = () => st.lview === 'timeline' || st.lview === 'births';
         const apiQs = extra => {
             const out = new URLSearchParams(window.location.search);
-            for (const k of ['order', 'layout', 'lview', 'tfield', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph', 'bgrp', 'baxis', 'bsel', 'bcol', 'table']) out.delete(k);
+            for (const k of ['order', 'layout', 'lview', 'tfield', 'rhold', 'rnest', 'rfocus', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'tfocus', 'track_only', 'root', 'file', 'offset', 'track', 'lane_names', 'lane_graph', 'bgrp', 'baxis', 'bsel', 'bcol', 'table', 'tswap']) out.delete(k);
             for (const k of ['q', 'scope', 'tab', 'group']) if (st[k]) out.set(k, st[k]); else out.delete(k);
             // match, columns and groups must be the table's: the server's own defaults differ (tab=core, no twin tree, no merge)
             for (const k of Object.keys(D)) if ((['k', 'core_min', 'mode', 'twin_depth', 'twin_link', 'child_presence', 'sort_dir'].includes(k) || k.startsWith('group_')) && !out.has(k) && D[k] !== undefined && D[k] !== '') out.set(k, String(D[k]));
             out.set('columns', cols());
             // the Timeline (and Births, over its lanes) is the tree drawn over a time-ordered tree: parents dated before their children
-            if (timed()) { out.set('order', 'time'); out.set('tfield', st.tfield); } else out.set('order', st.layout);
+            if (timed()) { out.set('order', 'time'); out.set('tfield', st.tfield); if (st.tswap) out.set('tswap', st.tswap); } else out.set('order', st.layout);
             if (st.root && !timed()) out.set('root', st.root);
             for (const [k, v] of Object.entries(extra || {})) out.set(k, v);
             return out;
@@ -207,7 +208,7 @@ window.NwayLineageView = {
         // columns it auto-opened); a filter or column change refetches the tree
         const fromTable = () => {
             const p = this._panel, s = p.state, u = p._lineageQs(), cur = new URLSearchParams(window.location.search);
-            for (const k of ['layout', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'bcol', 'table', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
+            for (const k of ['layout', 'lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'bcol', 'table', 'tswap', 'root']) if (cur.get(k)) u.set(k, cur.get(k));
             history.replaceState(history.state, '', `${window.location.pathname}?${u.toString()}`);
             for (const k of ['q', 'scope', 'tab', 'group', 'columns', 'track']) st[k] = String(s[k] ?? D[k] ?? '');
             st.column = s.column || '';
@@ -222,7 +223,7 @@ window.NwayLineageView = {
             const u = new URLSearchParams(window.location.search), source = {}, state = {};
             for (const k of ['md5s', 'batch_uuid', 'collection', 'pool', 'cluster_uuid', 'axis']) if (u.get(k)) source[k] = u.get(k);
             for (const k of Object.keys(window.NwayPanel.DEFAULTS)) if (u.has(k)) state[k] = u.get(k);
-            for (const k of KEYS) if (u.has(k) && !['lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'bcol', 'table'].includes(k)) state[k] = u.get(k);
+            for (const k of KEYS) if (u.has(k) && !['lview', 'tfield', 'rnest', 'rarc', 'rmin', 'rlist', 'rtier', 'rbundle', 'bgrp', 'baxis', 'bsel', 'bcol', 'table', 'tswap'].includes(k)) state[k] = u.get(k);
             this._panel = new window.NwayPanel(panelHost, {
                 source, state,
                 lean: true,
@@ -306,8 +307,16 @@ window.NwayLineageView = {
                 this._inst = NL.mount(chart, {
                     toolbar: [viewPick, tableBtn, tfieldSel, status],
                     // the state bar shows the table, and Reset view puts it back as the page opened
-                    chips: () => (split() && table0 !== '1' ? [['Table', 'open', () => { st.table = ''; writeUrl(); applyView(); }]] : !split() && table0 === '1' ? [['Table', 'closed', () => { st.table = '1'; writeUrl(); applyView(); }]] : []),
-                    onReset: () => { if (st.table !== table0) { st.table = table0; writeUrl(); applyView(); } },
+                    chips: () => [...(split() && table0 !== '1' ? [['Table', 'open', () => { st.table = ''; writeUrl(); applyView(); }]] : !split() && table0 === '1' ? [['Table', 'closed', () => { st.table = '1'; writeUrl(); applyView(); }]] : []),
+                        ...(st.tswap && timed() ? [['Dates swapped', `${st.tswap.split(';').length} pair(s), view only`, () => { st.tswap = ''; writeUrl(); load(); }]] : [])],
+                    onReset: () => { if (st.table !== table0) { st.table = table0; writeUrl(); applyView(); } if (st.tswap !== tswap0) { st.tswap = tswap0; writeUrl(); load(); } },
+                    // the Timeline's dates of two nodes swapped in this view (a second click on the same pair undoes it); nothing is stored
+                    onSwapDates: (a, b) => {
+                        const key = p => p.split(',').sort().join(','), pair = key(`${a},${b}`), list = st.tswap ? st.tswap.split(';') : [];
+                        const rest = list.filter(p => key(p) !== pair);
+                        st.tswap = (rest.length < list.length ? rest : [...list, `${a},${b}`]).join(';');
+                        writeUrl(); load();
+                    },
                     // the tree's layout and root, and every other control of the view, sit behind "More"; it starts open when the URL carries a non-default one
                     more: [layoutSel, rootSel],
                     moreOpen: advanced(),

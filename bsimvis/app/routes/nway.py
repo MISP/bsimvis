@@ -2092,6 +2092,26 @@ def _lineage_times(doc, r, cols, field):
     return out
 
 
+def _swap_times(cols, raw):
+    """`tswap=a,b;c,d`: swap the two nodes' dates in this answer only (stored dates never change).
+
+    Each id is a node id, a member file id or an md5. Returns (cols, [[a, b], ...]).
+    """
+    ids = {c["id"]: k for k, c in enumerate(cols)}
+    cols, pairs = list(cols), []
+    for part in filter(None, (p.strip() for p in raw.split(";"))):
+        ab = [_node_of(cols, x) for x in part.split(",")]
+        if len(ab) != 2 or ab[0] == ab[1] or not all(x in ids for x in ab):
+            abort(400, f"tswap: {part!r} is not two different nodes of this lineage")
+        i, j = ids[ab[0]], ids[ab[1]]
+        cols[i], cols[j] = {**cols[i], "t": cols[j]["t"]}, {
+            **cols[j],
+            "t": cols[i]["t"],
+        }
+        pairs.append(ab)
+    return cols, pairs
+
+
 def _node_of(cols, raw):
     """The node id a `root` / `file` param names: a node id, a member file id or an md5."""
     raw = (raw or "").strip().lower()
@@ -2323,6 +2343,7 @@ def get_nway_lineage():
         if tfield not in LINEAGE_TIME_FIELDS:
             abort(400, f"tfield must be one of {', '.join(LINEAGE_TIME_FIELDS)}")
         cols = _lineage_times(doc, r, cols, tfield)
+        cols, tswap = _swap_times(cols, request.args.get("tswap", ""))
     fmeta = doc["fmeta"]
 
     def name_of(fid):
@@ -2348,6 +2369,11 @@ def get_nway_lineage():
     out["columns_mode"] = doc["columns_mode"]
     if order == "time":
         out["tfield"] = tfield
+        out["tswap"] = tswap
+        for n in out["nodes"]:
+            n["t_swapped"] = next((b for a, b in tswap if a == n["id"]), None) or next(
+                (a for a, b in tswap if b == n["id"]), None
+            )
     out["min_edge"] = doc["min_edge"]
     out["warnings"] = doc["warnings"]
     # per file metadata (the ring tooltip's distributions); a node's `members` are these ids

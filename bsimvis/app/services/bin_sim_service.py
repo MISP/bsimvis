@@ -169,20 +169,63 @@ def _discover_edges_py(
 _BLOCK_ROWS = 1000
 
 
-def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0):
+def discover_edges(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0, greedy=False
+):
     """Sparse-matmul discovery; same contract and output as `_discover_edges_py`.
 
     Falls back to the pure-Python loop when numpy/scipy are missing or tf values
     are not positive integers (the layer identity below needs integers).
+
+    `greedy=True` returns only what `greedy_match` would accept from the result.
+    Exact for a caller that discovers over the functions its stored edges left
+    unmatched and then greedy-matches stored + discovered: the two edge sets
+    share no function, so the combined assignment is the union of both. Keeps
+    the candidates in numpy instead of a tuple list -- one 15k x 15k DEX pair
+    had 120M of them (13.5 GB) and OOM-killed the worker.
     """
     try:
         return _discover_edges_sparse(
-            vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
+            vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df, greedy
         )
     except (ImportError, _NotSparsable):
-        return _discover_edges_py(
+        edges = _discover_edges_py(
             vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
         )
+        if not greedy:
+            return edges
+        from bsimvis.app.services.bin_sim_tags import greedy_match
+
+        return greedy_match(edges)[0]
+
+
+def _greedy_arrays(fids_a, fids_b, rows, cols, scores, skip_pairs):
+    """`greedy_match` over candidates held as arrays; same order, same result.
+
+    fids_a and fids_b are sorted, so (row, col) index order is greedy_match's
+    (fid_a, fid_b) tie-break.
+    """
+    import numpy as np
+
+    order = np.lexsort((cols, rows, -scores))
+    used_a = bytearray(len(fids_a))
+    used_b = bytearray(len(fids_b))
+    left = min(len(fids_a), len(fids_b))
+    accepted = []
+    for start in range(0, len(order), 1 << 20):
+        o = order[start : start + (1 << 20)]
+        for x, y, sc in zip(rows[o].tolist(), cols[o].tolist(), scores[o].tolist()):
+            if used_a[x] or used_b[y]:
+                continue
+            fa, fb = fids_a[x], fids_b[y]
+            if skip_pairs and frozenset((fa, fb)) in skip_pairs:
+                continue
+            used_a[x] = used_b[y] = 1
+            accepted.append((fa, fb, sc))
+            left -= 1
+            if not left:
+                return accepted
+    return accepted
 
 
 class _NotSparsable(Exception):
@@ -190,7 +233,7 @@ class _NotSparsable(Exception):
 
 
 def _discover_edges_sparse(
-    vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df, greedy=False
 ):
     import numpy as np
     from scipy import sparse
@@ -282,6 +325,7 @@ def _discover_edges_sparse(
             b_layers.append(ones(Bk).T.tocsr())
 
     edges = []
+    found = []
     for start in range(0, len(fids_a), _BLOCK_ROWS):
         end = min(start + _BLOCK_ROWS, len(fids_a))
         Ablk = A[start:end]
@@ -322,11 +366,22 @@ def _discover_edges_sparse(
         if is_weighted:
             score = np.minimum(score, 1.0)
         keep = ok & (score >= min_score) & (score > 0)
+        if greedy:
+            found.append(
+                (i[keep].astype(np.int32), j[keep].astype(np.int32), score[keep])
+            )
+            continue
         for x, y, sc in zip(i[keep], j[keep], score[keep]):
             fa, fb = fids_a[x], fids_b[y]
             if skip_pairs and frozenset((fa, fb)) in skip_pairs:
                 continue
             edges.append((fa, fb, float(sc)))
+    if greedy:
+        if not found:
+            return []
+        rows, cols, scores = (np.concatenate([f[k] for f in found]) for k in range(3))
+        del found
+        return _greedy_arrays(fids_a, fids_b, rows, cols, scores, skip_pairs)
     return edges
 
 
@@ -1111,6 +1166,7 @@ class BinSimService:
                         algo,
                         discovery_min_score,
                         max_df=discovery_max_df,
+                        greedy=True,
                     )
                 )
 

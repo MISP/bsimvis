@@ -2908,6 +2908,7 @@ class SimilarityService:
                             algo,
                             discovery_min_score,
                             max_df=discovery_max_df,
+                            greedy=True,
                         )
                     )
 

@@ -763,7 +763,9 @@ class ScanService:
             if t["fid"] in left_a and t["features"]
         }
         vectors.update(load_vectors(self.r, left_b))
-        return discover_edges(vectors, left_a, left_b, algo, min_score, max_df=max_df)
+        return discover_edges(
+            vectors, left_a, left_b, algo, min_score, max_df=max_df, greedy=True
+        )
 
     def _enrich_clusters(self, collection, diff, meta_b, params, names_a):
         """Attach, per matched row, the cluster the scan function would land in.

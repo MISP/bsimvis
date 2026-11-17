@@ -40,6 +40,8 @@
     const DETAIL_K = 0.3, LABEL_K = 0.55, HATCH_K = 1.5;
     // timeline (doc.order 'time'): the gap between rank columns, a gap marker past GAP_DAYS, the date field's label
     const T_GAP = 160, T_TOP = 76, GAP_DAYS = 30, DAY = 864e5;
+    // a child continues its parent's timeline lane only when they share at least this share of the bigger file
+    const LANE_KEEP = 0.5;
     const TFIELDS = { first_seen: 'First seen', last_seen: 'Last seen', entry_date: 'Uploaded' };
     const isoDay = t => new Date(t).toISOString().slice(0, 10);
     const span = ms => { const d = Math.round(ms / DAY); return d < 60 ? `${d} d` : d < 730 ? `${Math.round(d / 30.4)} mo` : `${(d / 365).toFixed(1)} y`; };
@@ -472,12 +474,13 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     }
 
     // Timeline: the column is the node's date rank among the visible nodes (n.d), the lane a chain of files
-    // sharing code (n.lane): a parent's first child continues its lane, every other child (and every root)
-    // takes the free lane nearest its parent's, free over [column after the parent, end of its chain].
-    function timeLanes(vis, parentOf, fileOf) {
+    // sharing code (n.lane): a parent's first child that keeps most of the code (keeps(n)) continues its lane,
+    // every other child (and every root) takes the free lane nearest its parent's, free over [column after the
+    // parent, end of its chain].
+    function timeLanes(vis, parentOf, fileOf, keeps = () => true) {
         [...vis].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)).forEach((n, i) => { n.d = i; });
         const first = new Map(), lanes = [];
-        for (const n of vis) { const p = parentOf.get(n.id); if (p && !first.has(p)) first.set(p, n); }
+        for (const n of vis) { const p = parentOf.get(n.id); if (p && !first.has(p) && keeps(n)) first.set(p, n); }
         const end = n => { while (first.has(n.id)) n = first.get(n.id); return n.d; };
         for (const n of vis) { // DFS order: a parent comes before its children
             const p = fileOf.get(parentOf.get(n.id));
@@ -513,7 +516,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const parentOf = new Map();
         for (const n of vis) { const e = inE.get(n.agg ? n.top : n.id); if (e) parentOf.set(n.id, rep.get(e.parent)); }
         const time = doc.order === 'time', G = time ? T_GAP : GAP, T0 = time ? T_TOP : 46;
-        const nLanes = time ? timeLanes(vis, parentOf, fileOf) : 0;
+        // the shared rows over the bigger of the two files: a lane holds files that keep most of each other's code
+        const keeps = n => { const e = inE.get(n.agg ? n.top : n.id), p = fileOf.get(parentOf.get(n.id)); return !!e && !!p && e.shared / Math.max(1, p.functions, n.functions) >= LANE_KEEP; };
+        const nLanes = time ? timeLanes(vis, parentOf, fileOf, keeps) : 0;
         const maxd = Math.max(...vis.map(n => n.d));
         // tree: a column's files stack; timeline: the lanes stack, each as tall as its biggest file
         const colSum = new Map();

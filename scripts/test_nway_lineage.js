@@ -114,6 +114,10 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.deepStrictEqual(TL.ticks.filter(k => k.gap).map(k => k.gap), ['+39 d', 'undated'], 'a gap mark past 30 days and before the undated files');
     assert.deepStrictEqual(TL.ticks.filter(k => k.label).map(k => k.label), ['2024-01-01', '2024-01-02', '2024-02-10', '2024-02-20']);
     assert.strictEqual(layout(doc(null), buildModel(doc(null), new Set())).ticks.length, 0, 'no marks on a tree');
+    // a child keeps its parent's lane only when they share at least half of the bigger file: C keeps 1 of 4, B 2 of 4
+    const td2 = { ...td, edges: [{ ...edge('A', 'C', 0.9), shared: 1 }, edge('A', 'B', 0.5), edge('C', 'D', 0.8)] };
+    const KL = layout(td2, buildModel(td2, new Set())), at2 = id => KL.fileOf.get(id);
+    assert.ok(at2('B').lane === at2('A').lane && at2('C').lane !== at2('A').lane, 'C forks off; B, which keeps most, continues the lane');
 }
 
 // --- births (lview=births): a row is born in its earliest dated holder, grouped by file, week or month ---

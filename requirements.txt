@@ -70,6 +70,8 @@ h11==0.16.0
     #   uvicorn
 hdbscan==0.8.44
     # via bsimvis (pyproject.toml)
+hiredis==3.5.0
+    # via redis
 httpcore==1.0.9
     # via httpx
 httpx==0.28.1

@@ -68,7 +68,9 @@
     function mount(ctx) {
         const el = ctx.el, fmt = ctx.fmt, g = d3.select(ctx.g);
         const o = { bucket: BUCKETS.includes(ctx.opts.bucket) ? ctx.opts.bucket : 'month', axis: ctx.opts.axis === 'cal' ? 'cal' : 'rank', sel: ctx.opts.sel || '' };
-        let M = null, frame = null, lanes = [];
+        // ctx.tiers: the Lanes lens tiers (TIERS, KEYS, rank(cat), fill(defs, cache, color, tier), css(color, tier), tip(cat))
+        const T = ctx.tiers;
+        let M = null, frame = null, lanes = [], rareOpen = false;
         const emit = () => ctx.onOpt({ ...o });
         const getModel = () => {
             const doc = ctx.getDoc(), R = ctx.getR();
@@ -78,12 +80,12 @@
         const current = () => { const c = M && M.byKey.get(o.sel); return c && c.rows.length ? c : null; };
         const select = c => { o.sel = c ? c.key : ''; emit(); draw(); };
         const cohortColor = c => (c.key === 'undated' ? 'var(--lin-grey-d)' : `color-mix(in oklab, var(--lin-born) ${Math.round(12 + 88 * c.idx / Math.max(1, M.list.length - 1))}%, var(--lin-slate))`);
-        // the lens's groups of a cohort, biggest first
+        // the lens's groups of a cohort: Core, Common, Rare (a tiered lens), biggest first inside a tier
         const modulesOf = (c, C) => {
             const n = new Map();
             for (const r of c.rows) n.set(C.of(r), (n.get(C.of(r)) || 0) + 1);
             const cat = new Map(C.cats.map(x => [x.key, x]));
-            return [...n].map(([key, k]) => ({ key, n: k, cat: cat.get(key) || { key, label: 'Other functions', color: 'var(--lin-grey-d)' } })).sort((a, b) => b.n - a.n);
+            return [...n].map(([key, k]) => ({ key, n: k, cat: cat.get(key) || { key, label: 'Other functions', color: 'var(--lin-grey-d)' } })).sort((a, b) => T.rank(a.cat) - T.rank(b.cat) || b.n - a.n);
         };
 
         // ---- toolbar: grouping, axis, the selected birth with a stepper ----
@@ -118,6 +120,7 @@
 
         function draw() {
             g.selectAll('*').remove();
+            const defs = g.append('defs'), zc = new Map(), fillOf = cat => T.fill(defs, zc, cat.color, cat.tier);
             const doc = ctx.getDoc(), R = ctx.getR(), L = ctx.getL();
             if (!doc || !L) return;
             if (!R || doc.order !== 'time') {
@@ -171,10 +174,15 @@
             const sTop = y + 4, sBase = sTop + B.STRIP_H;
 
             // what each file holds, keyed by cohort, or with a selection: '<' born before, its lens groups, '>' born after
-            const mods = fc ? modulesOf(fc, C) : [], modBy = new Map(mods.map(m => [m.key, m]));
-            const keyOf = r => { const c = M.cohortOf(r); return !fc ? c.key : c === fc ? `m:${C.of(r)}` : c.idx < fc.idx ? '<' : '>'; };
+            // more than one Rare lane: one folded Rare layer until it is opened (a click on it, or the pane)
+            const all = fc ? modulesOf(fc, C) : [], rares = all.filter(m => m.cat.tier === 'rare'), fold = !rareOpen && rares.length > 1;
+            const folded = new Set(fold ? rares.map(m => m.key) : []), fk = k => (folded.has(k) ? '^rare' : k);
+            const mods = fold ? [...all.filter(m => !folded.has(m.key)), { key: '^rare', n: d3.sum(rares, m => m.n), cat: { key: '^rare', label: `Rare lanes (${rares.length})`, color: T.TIERS.rare[2], tier: 'rare', folded: true } }].sort((a, b) => T.rank(a.cat) - T.rank(b.cat) || b.n - a.n) : all;
+            const modBy = new Map(mods.map(m => [m.key, m]));
+            const keyOf = r => { const c = M.cohortOf(r); return !fc ? c.key : c === fc ? `m:${fk(C.of(r))}` : c.idx < fc.idx ? '<' : '>'; };
             const order = fc ? ['<', ...mods.map(m => `m:${m.key}`), '>'] : M.list.map(c => c.key);
-            const paint = k => (!fc ? cohortColor(M.byKey.get(k)) : k === '<' || k === '>' ? 'var(--lin-slate)' : modBy.get(k.slice(2)).cat.color);
+            const paint = k => (!fc ? cohortColor(M.byKey.get(k)) : k === '<' || k === '>' ? 'var(--lin-slate)' : fillOf(modBy.get(k.slice(2)).cat));
+            const catOf = k => (fc && k.startsWith('m:') ? modBy.get(k.slice(2)).cat : null);
             const counts = new Map(vis.map(v => { const c = {}; for (const r of M.heldM[v.idx]) { const k = keyOf(r); c[k] = (c[k] || 0) + 1; } return [v.id, c]; }));
             const titleOf = k => (!fc ? M.byKey.get(k).long : k === '<' ? `Born before ${fc.label}` : k === '>' ? `Born after ${fc.label}` : modBy.get(k.slice(2)).cat.label);
 
@@ -197,29 +205,55 @@
                     }
                     for (const v of ch) { const c = counts.get(v.id); pts.push({ x: X(v) - hw, c, v }, { x: X(v) + hw, c, v }); }
                     const keys = order.filter(k => ch.some(v => counts.get(v.id)[k]));
-                    g.append('g').selectAll('path').data(d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts)).join('path')
+                    const series = d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts);
+                    g.append('g').selectAll('path').data(series).join('path')
                         .attr('d', area(ln)).style('fill', s => paint(s.key)).attr('fill-opacity', s => (s.key === '>' ? 0.4 : 1))
                         .style('stroke', 'var(--lin-card)').attr('stroke-width', 0.6).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
                         .on('mousemove', (ev, s) => {
                             const [mx] = d3.pointer(ev, ctx.g);
                             let v = ch[0];
                             for (const w of ch) if (Math.abs(X(w) - mx) < Math.abs(X(v) - mx)) v = w;
-                            const k = counts.get(v.id)[s.key] || 0, dot = paint(s.key);
+                            const k = counts.get(v.id)[s.key] || 0, cat = catOf(s.key), tt = cat && !cat.folded ? T.tip(cat) : null;
+                            // a lane says its tier (badge, its files, the cuts); the folded Rare layer its tier only
+                            const dot = tt ? tt.badge : cat && cat.tier ? { glyph: T.TIERS[cat.tier][0], tag: T.TIERS[cat.tier][1], color: T.TIERS[cat.tier][2] } : cat ? cat.color : paint(s.key);
                             ctx.showTip(ev, titleOf(s.key), dot, [['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
-                                ['Click', !fc ? 'select this birth' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']]);
+                                ['Click', !fc ? 'select this birth' : cat && cat.folded ? 'open the Rare lanes' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']], tt && tt.html);
                         })
                         .on('mouseleave', ctx.hideTip)
                         .on('click', (ev, s) => {
                             ctx.hideTip();
                             if (!fc) return select(M.byKey.get(s.key));
                             if (!s.key.startsWith('m:')) return select(null);
+                            if (s.key === 'm:^rare') { rareOpen = true; return draw(); }
                             const tk = modBy.get(s.key.slice(2)).cat.tk;
                             if (tk) ctx.setTrack(ctx.getTrack() === tk ? '' : tk);
                         });
+                    // a line over each tier's band (Core at the bottom), its name at the chain's end when the band is tall enough
+                    if (fc) for (const t of T.KEYS) {
+                        const mine = series.filter(x => (catOf(x.key) || {}).tier === t);
+                        if (!mine.length) continue;
+                        const lo = mine[0], hi = mine[mine.length - 1], e = pts.length - 1;
+                        g.append('path').attr('d', d3.line().curve(d3.curveBumpX).x(d => d.data.x).y(d => ln.bot - d[1] * ky)(hi)).attr('fill', 'none').style('stroke', 'var(--text)')
+                            .attr('stroke-opacity', 0.65).attr('stroke-width', 1.2).attr('stroke-dasharray', t === 'rare' ? '4 3' : null).attr('vector-effect', 'non-scaling-stroke').style('pointer-events', 'none');
+                        if ((hi[e][1] - lo[e][0]) * ky >= 9) g.append('text').attr('class', 'lin-halo').attr('x', pts[e].x + 6).attr('y', ln.bot - ((lo[e][0] + hi[e][1]) / 2) * ky + 4)
+                            .attr('font-size', 11).attr('font-weight', 600).style('fill', T.TIERS[t][2]).style('pointer-events', 'none').text(`${T.TIERS[t][0]} ${T.TIERS[t][1]}`);
+                    }
                 }
                 const first = ln.vs[0];
                 g.append('text').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4)).attr('font-size', 12).attr('font-weight', 600).style('fill', 'var(--text)').text(short(ctx.name(first.id)));
                 g.append('text').attr('class', 'lin-halo').attr('x', B.PAD).attr('y', ln.top + Math.min(14, (ln.bot - ln.top) / 2 + 4) + 14).attr('font-size', 11).style('fill', 'var(--text)').style('opacity', 0.7).text(`${ln.vs.length} file${ln.vs.length === 1 ? '' : 's'}${ln.chains.length > 1 ? `, ${ln.chains.length} chains` : ''}`);
+            }
+
+            // tier rail: beside each file, its functions by tier (the Functions dropdown's Core / Common / Rare), whatever the layers are
+            if (R.tier) for (const v of vis) {
+                const c = { core: 0, common: 0, rare: 0 };
+                for (const r of M.heldM[v.idx]) c[R.tier[r] || 'rare']++;
+                let y = laneOf(v).bot;
+                for (const t of T.KEYS) {
+                    const h = c[t] * ky;
+                    if (h >= 0.5) g.append('rect').attr('x', X(v) - hw - 6).attr('y', y - h).attr('width', 3.5).attr('height', Math.max(0.5, h - 0.5)).style('fill', T.TIERS[t][2]).append('title').text(`${T.TIERS[t][1]}: ${fmt(c[t])} functions`);
+                    y -= h;
+                }
             }
 
             // file dots under each lane; a click selects what was born in it
@@ -279,7 +313,7 @@
                     const sc = Math.min(1, cap / k);
                     for (const m of modulesOf({ rows: M.bornIn[v.idx] }, C)) {
                         const h = hOf(m.n) * sc;
-                        bg.append('rect').attr('x', x - bw / 2).attr('y', yy - h).attr('width', bw).attr('height', h).style('fill', m.cat.color);
+                        bg.append('rect').attr('x', x - bw / 2).attr('y', yy - h).attr('width', bw).attr('height', h).style('fill', fillOf(m.cat));
                         yy -= h;
                     }
                 } else bg.append('rect').attr('x', x - bw / 2).attr('y', sBase - hOf(k)).attr('width', bw).attr('height', hOf(k)).style('fill', fc ? 'var(--lin-slate)' : cohortColor(c)).attr('fill-opacity', fc ? 0.6 : 1);
@@ -331,12 +365,18 @@
             for (const m of modulesOf(fc, C)) {
                 const on = !!m.cat.tk && ctx.getTrack() === m.cat.tk;
                 const b = el('button', { type: 'button', class: `lin-chip${on ? ' on' : ''}`, 'aria-pressed': String(on), title: m.cat.tk ? 'Track this group' : '' }), sw = el('span', { class: 'lin-sw' });
-                sw.style.background = m.cat.color;
-                b.append(sw, el('span', { class: 'lin-gn' }, m.cat.label), el('span', { class: 'lin-dim' }, fmt(m.n)));
+                sw.style.background = T.css(m.cat.color, m.cat.tier);
+                b.append(sw, ...(m.cat.tier ? [el('span', { title: T.TIERS[m.cat.tier][1] }, T.TIERS[m.cat.tier][0])] : []), el('span', { class: 'lin-gn' }, m.cat.label), el('span', { class: 'lin-dim' }, fmt(m.n)));
                 if (m.cat.tk) b.addEventListener('click', () => ctx.setTrack(on ? '' : m.cat.tk));
                 chips.append(b);
             }
             card.append(chips);
+            const nRare = modulesOf(fc, C).filter(m => m.cat.tier === 'rare').length;
+            if (nRare > 1) {
+                const fb = el('button', { type: 'button', class: 'lin-btn', style: 'margin-top:4px' }, rareOpen ? `Fold the ${nRare} Rare lanes into one layer` : `Open the ${nRare} Rare lanes`);
+                fb.addEventListener('click', () => { rareOpen = !rareOpen; draw(); });
+                card.append(fb);
+            }
 
             // where it went: the share each lane's files keep, over time
             card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'Where it went: share held, per lane'));

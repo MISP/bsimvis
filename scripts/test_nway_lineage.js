@@ -80,6 +80,23 @@ const ab = lit.P.links.filter(l => l.source.id === 'c:file:a' && l.target.id ===
 assert.deepStrictEqual(ab.map(l => [l.cat.label, l.value]), [['attack_*', 2]], 'one ribbon per group, shared rows only');
 assert.strictEqual(ab[0].edge.child, 'c:file:b');
 
+// --- Lanes lens tiers: lanes by file share (Core >= 90%, Common >= 50%), loose rows by their own tier; Core first in a node; tier bundles
+{
+    const d = doc(null);
+    d.group = 'lane,region';
+    d.groups = [{ id: 'lane:1111', kind: 'lane', mask: '1111', path: ['lane:1111'] }, { id: 'lane:1100', kind: 'lane', mask: '1100', path: ['lane:1100'] }, { id: 'lane:0010', kind: 'lane', mask: '0010', path: ['lane:0010'] }];
+    Object.assign(d.rows, { group: [0, 1, null, 2, null, null], tier: ['core', 'common', 'common', 'rare', 'common', 'rare'] });
+    const t = build(d, 'lanes'), C = t.cats('lanes');
+    assert.deepStrictEqual(C.cats.map(c => [c.key, c.tier]), [['lanes:f', 'core'], ['lanes:3', 'common'], ['lanes:4', 'rare'], ['~common', 'common'], ['~rare', 'rare']], 'every group has a tier');
+    assert.strictEqual(C.of(2), '~common', 'a row in no lane goes to its own tier');
+    const ys = [...t.P.segs.get('c:file:a').m.values()].map(x => x.cat.tier);
+    assert.deepStrictEqual(ys, ['core', 'common', 'common'], 'a node stacks Core, then Common');
+    const B = lensPaint(t.M, t.L, t.R, C, { bundle: true });
+    const ab2 = B.links.filter(l => l.source.id === 'c:file:a' && l.target.id === 'c:file:b');
+    assert.deepStrictEqual(ab2.map(l => [l.cat.tier, l.value, l.members.length]), [['core', 1, 1], ['common', 1, 1]], 'one ribbon per tier and edge');
+    assert.ok(B.links.length <= t.P.links.length && B.links.every(l => l.members), 'bundles never add ribbons');
+}
+
 // --- tracking --------------------------------------------------------------------
 const info = t => { const m = trackRows(all.R, all.cats, t); return m && trackInfo(all.L, all.R, m); };
 const fn = info('fn:c:func:d:2');

@@ -208,6 +208,16 @@ share per lane over time, its functions (`rowEl`, a click is the usual `fn:` tra
 `bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
 stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
 
+**Lane tiers (Lanes lens).** `lensCats` gives every Lanes-lens group a `tier` (its `tier:*` band from the table, else its
+lane's file share with the Ring's cuts: Core >= 90%, Common >= 50%, Rare) and its lane `mask`; rows in no lane are split by
+their own `rows.tier` (`~core`, `~common`, `~rare`, "Core functions in no lane") instead of one grey "Other functions". Lanes
+are coloured by tier hue family (`tierColor`: Core greens, Common ambers, Rare blues), Common / Rare fill with the Ring's
+zebra (`tierFill`, `tierCss`). The trees stack every node Core, Common, Rare; "Lane ribbons" (More row, Lanes lens only,
+not in the URL) draws one ribbon per tier and edge (`lensPaint(..., { bundle })`, default on) or one per lane. Births
+stacks a selected birth's lane layers Core at the bottom, draws a line and a label over each tier's band, folds more
+than one Rare lane into one layer (a click on it or the pane button opens them) and puts a tier rail beside each file.
+A lane tooltip carries the tier badge, the files holding the lane and a Rare / 50% / 90% scale (`tierTip`).
+
 **Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
 `lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the
 file they start in (`added-N`, `dropped-N`, `span-N-M` take node N's Tree colour; kept / scattered / rewritten are grey).

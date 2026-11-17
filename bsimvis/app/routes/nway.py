@@ -2226,6 +2226,8 @@ LEVEL_KINDS = {
     "lane": {"tier", "lane", "fold"},
     "delta": {"delta", "born"},
 }
+# first-level kinds that only gather other groups: never a lineage category of their own
+CONTAINER_KINDS = {"tier", "fold"}
 
 
 def _lineage_groups(rows, doc, r, args):
@@ -2260,17 +2262,29 @@ def _lineage_groups(rows, doc, r, args):
             g.get("kind") in kinds or (g.get("kind") == "rest" and len(g["path"]) == 1)
         )
 
-    listed = [g for gid, g in groups.items() if all(map(first, g["path"]))]
+    def listable(path):
+        # a tier / fold is only a header: what it holds outside its lanes stays in the group the table put it in
+        # (a module, "Other functions"), so a tier never sits beside its own lanes as a category
+        for i, p in enumerate(path):
+            if not first(p):
+                return (
+                    i == len(path) - 1
+                    and i > 0
+                    and groups[path[i - 1]].get("kind") in CONTAINER_KINDS
+                )
+        return True
+
+    listed = [g for gid, g in groups.items() if listable(g["path"])]
     at = {g["id"]: i for i, g in enumerate(listed)}
     member = {}
     for gid, row, _ in entries:
         if row is None or gid not in groups:
             continue
-        top = None
-        for p in groups[gid]["path"]:
-            if not first(p):
+        path, top = groups[gid]["path"], None
+        for k in range(len(path)):
+            if not listable(path[: k + 1]):
                 break
-            top = p
+            top = path[k]
         if top:
             member.setdefault(id(row), at[top])
     return listed, member, note

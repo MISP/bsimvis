@@ -170,7 +170,9 @@ tree, or six small multiples) or Split (compact tree over a real `NwayPanel`, wi
 `setTrack` / `onTrack` / `onRowHover`). With the table's `group` (the lens preset) the route
 also sends the first-level `groups` that `/nway` builds over the same filtered rows (same
 `group_rows` call, so same ids, meta and LLM names) and `rows.group` (each matching row's
-deepest one); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
+deepest one; a tier or fold is a header only, never a row's group: what it holds outside its lanes keeps the
+module / "Other functions" group the table put it in, `CONTAINER_KINDS` in `routes/nway.py`, so no view paints
+"Core" beside its own lanes); both pages draw them with `nway_groups.js` (`NwayGroups`: header pieces, track
 keys, and one lane-name cache keyed by content, so a lane is never named twice).
 **Merge files** on the lineage page: `columns=files`, `twins` (Same code) or `children` (Cluster, needs
 a `cluster_uuid` or a shared cluster; the same availability rule as the table's menu). `children` and

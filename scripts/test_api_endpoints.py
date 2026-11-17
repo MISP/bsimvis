@@ -7158,6 +7158,18 @@ def _check_lineage_groups(base, url, tree):
                 and sum(g["rows"] for g in listed if len(g["path"]) == 1) == sum(match),
                 str([(g["id"], g["rows"]) for g in listed]),
             )
+            held = {listed[i]["id"] for i in idx if i is not None}
+            kind = {g["id"]: g.get("kind") for g in listed}
+            check(
+                f"nway lineage groups {group} {extra}: a tier / fold never holds rows beside its own sub-groups",
+                not any(
+                    p in held and kind[p] in ("tier", "fold")
+                    for g in listed
+                    if g["id"] in held
+                    for p in g["path"][:-1]
+                ),
+                str(sorted(held)),
+            )
     r = requests.get(url, params={**base, "group": "bogus"}, timeout=60)
     check("nway lineage groups: a bad group is a 400", r.status_code == 400)
 

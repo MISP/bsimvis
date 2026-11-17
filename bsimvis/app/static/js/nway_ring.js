@@ -213,17 +213,20 @@
         }
         const mods = [], gate = ((o.minPct || 0) / 100) * R.n;
         let hidden = 0, buckets = 0, bucketsHidden = 0, bucketFuncs = 0;
+        // a remainder's tier: the tier / fold itself (an older server), or the tier a module / "Other functions" group sits in
+        const gById = new Map((o.groups || []).map(x => [x.id, x]));
+        const holderOf = x => (x.kind === 'tier' || x.kind === 'fold' ? x : (p => (p && (p.kind === 'tier' || p.kind === 'fold') && x.kind !== 'lane' && x.kind !== 'fold' ? p : null))(gById.get((x.path || [])[(x.path || []).length - 2])));
         C.cats.forEach((c, g) => {
             if (!size[g]) return;
             const mem = [];
             for (let i = 0; i < N; i++) if (has[g * N + i]) mem.push(i);
             // the gate: a module's own rows against all functions of the set, before any split between families
             if (mem.length && size[g] < gate) { hidden++; return; }
-            // the tier / fold groups of the Lanes lens that hold rows of their own: remainders, not lanes
-            const bucket = !!(c.g && (c.g.kind === 'tier' || c.g.kind === 'fold'));
+            // the Lanes lens's remainders (a tier's rows in no lane), not lanes
+            const tierG = c.g ? holderOf(c.g) : null, bucket = !!tierG;
             if (mem.length && bucket) buckets++;
             if (mem.length && bucket && o.tier === 'hide') { bucketsHidden++; bucketFuncs += size[g]; return; }
-            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), fnTiers: tiers[g], pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return this.bucket ? (c.g.kind === 'fold' ? 'slim lanes folded' : `${c.g.label || this.cat.label}: rows in no lane`) : this.cat.label; } });
+            if (mem.length) mods.push({ cat: c, tk: c.tk, size: size[g], mem, cnt: cnt.subarray(g * N, g * N + N), rowsIn: Array.from(rowsIn.subarray(g * F, g * F + F)), fnTiers: tiers[g], pair: pair[g], hold: hold[g], grey: !!o.grey && c.color === o.grey, bucket, get label() { return !this.bucket ? this.cat.label : c.g.kind === 'fold' ? 'slim lanes folded' : tierG === c.g ? `${c.g.label || this.cat.label}: rows in no lane` : `${this.cat.label} (${tierG.label || 'tier'}, in no lane)`; } });
         });
         mods.hidden = hidden; mods.buckets = buckets; mods.bucketsHidden = bucketsHidden; mods.bucketFuncs = bucketFuncs;
         return mods;
@@ -241,7 +244,7 @@
             return t && t.h != null ? hsl(t.h, t.l) : hsl(o.hue ? o.hue(fi) : (fi * 137) % 360, 52 - 4 * Math.min(c.level, 2));
         };
         roots.forEach((f, fi) => { const walk = c => { c.col = colour(c, fi); c.kids.forEach(walk); }; walk(f); f.famCol = f.other ? 'var(--lin-grey)' : f.col; });
-        const mods = R && C ? modulesOf(R, C, N, T.famOf, roots.length, o) : [];
+        const mods = R && C ? modulesOf(R, C, N, T.famOf, roots.length, { ...o, groups: doc.groups }) : [];
         const laneCount = new Map();
         const lanes = n => { if (!laneCount.has(n.id)) { const set = new Set(n.files); laneCount.set(n.id, mods.filter(m => m.mem.some(i => set.has(i))).length); } return laneCount.get(n.id); };
         roots.forEach(f => sizeNode(f, lanes));

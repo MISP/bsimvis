@@ -133,8 +133,8 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.deepStrictEqual(window.NwayBirths.share(BM, BM.list[0]), [0.75, 0.5, 0.75, 0.25], 'share of a birth each node holds');
     const BF = births([true, false, true, true, true, true], 'month');
     assert.deepStrictEqual([BF.birth[1], BF.list[0].rows], [-1, [0, 3, 4]], 'a row the filters drop is born nowhere');
-    const tqb = window.NwayLineage.tableQs('md5s=a&bgrp=week&baxis=cal&bsel=2024-01').toString();
-    assert.ok(!/b(grp|axis|sel)=/.test(tqb), 'table links drop the births keys');
+    const tqb = window.NwayLineage.tableQs('md5s=a&bgrp=week&baxis=cal&bsel=2024-01&bcol=birth').toString();
+    assert.ok(!/b(grp|axis|sel|col)=/.test(tqb), 'table links drop the births keys');
 }
 
 // --- the Ring's Deltas lens: the server's delta lanes, coloured by their origin node; the trees keep the born-in cats ----

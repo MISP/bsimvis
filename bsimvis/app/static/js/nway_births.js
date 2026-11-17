@@ -6,14 +6,15 @@
  * node holds); rows failing the page filters (rows.match) are left out. A birth (cohort) is the rows
  * born in one file, week or month. Each Timeline lane (layout()'s n.lane, a chain of files sharing code)
  * is drawn as a stream: its height is the file's matching functions, its layers are the cohorts those
- * functions were born in, oldest at the bottom. A strip under the lanes counts the rows born in each
+ * functions were born in, oldest at the bottom; coloured by the lens's groups (each birth split into its groups, so
+ * every group is visible at every date) or by birth date (one layer per birth, old to new). A strip under the lanes counts the rows born in each
  * file. Selecting a cohort greys the others (born before / after) and splits it by the lens's groups;
  * the side pane says where it was born, how much of it later files keep, per lane, and its functions.
  *
  * NwayBirths.model(doc, R, bucket) and share(M, c) are DOM-free (checked in scripts/test_nway_lineage.js).
  * NwayBirths.mount(ctx) -> { draw(), panel(), box(), destroy() }; ctx is what nway_lineage.js hands over
  * (g, side, controls, getDoc, getR, getL, getCats, getTrack, setTrack, showTip, hideTip, rowEl, el,
- * segSwitch, fmt, name, width, fit, opts {bucket, axis, sel}, onOpt). Every sample value is set with
+ * segSwitch, fmt, name, width, fit, showLegend, opts {bucket, axis, sel, color}, onOpt). Every sample value is set with
  * textContent or d3 .text(), never innerHTML.
  */
 (function () {
@@ -67,7 +68,7 @@
     // ---------------------------------------------------------------- renderer
     function mount(ctx) {
         const el = ctx.el, fmt = ctx.fmt, g = d3.select(ctx.g);
-        const o = { bucket: BUCKETS.includes(ctx.opts.bucket) ? ctx.opts.bucket : 'month', axis: ctx.opts.axis === 'cal' ? 'cal' : 'rank', sel: ctx.opts.sel || '' };
+        const o = { bucket: BUCKETS.includes(ctx.opts.bucket) ? ctx.opts.bucket : 'month', axis: ctx.opts.axis === 'cal' ? 'cal' : 'rank', sel: ctx.opts.sel || '', color: ctx.opts.color === 'birth' ? 'birth' : 'lens' };
         let M = null, frame = null, lanes = [];
         const emit = () => ctx.onOpt({ ...o });
         const getModel = () => {
@@ -87,6 +88,7 @@
         };
 
         // ---- toolbar: grouping, axis, the selected birth with a stepper ----
+        const colB = ctx.segSwitch('Colour', 'Layers coloured by the lens\'s groups, or by when they were born', [['lens', 'Lens groups'], ['birth', 'Birth date']], () => o.color, v => { o.color = v; emit(); draw(); });
         const byB = ctx.segSwitch('Births by', 'Group what is born by file, week or month', [['file', 'File'], ['week', 'Week'], ['month', 'Month']], () => o.bucket, v => {
             const c = current(), anchor = c ? c.nodes[0] : -1;
             o.bucket = v;
@@ -105,9 +107,9 @@
         pick.addEventListener('change', () => select(M.byKey.get(pick.value) || null));
         const stepper = el('span', { style: 'display:inline-flex;gap:4px;align-items:center' });
         stepper.append(prevB, pick, nextB);
-        ctx.controls.append(byB.el, axB.el, stepper);
+        ctx.controls.append(colB.el, byB.el, axB.el, stepper);
         const syncControls = () => {
-            byB.paint(); axB.paint();
+            colB.paint(); byB.paint(); axB.paint();
             pick.replaceChildren(el('option', { value: '' }, 'No birth selected'));
             for (const c of M.list) pick.append(el('option', { value: c.key }, `${short(c.label, 28)} · ${fmt(c.rows.length)}`));
             const c = current();
@@ -170,13 +172,27 @@
             const laneOf = v => lanes[v.lane ?? 0];
             const sTop = y + 4, sBase = sTop + B.STRIP_H;
 
-            // what each file holds, keyed by cohort, or with a selection: '<' born before, its lens groups, '>' born after
-            const mods = fc ? modulesOf(fc, C) : [], modBy = new Map(mods.map(m => [m.key, m]));
-            const keyOf = r => { const c = M.cohortOf(r); return !fc ? c.key : c === fc ? `m:${C.of(r)}` : c.idx < fc.idx ? '<' : '>'; };
-            const order = fc ? ['<', ...mods.map(m => `m:${m.key}`), '>'] : M.list.map(c => c.key);
-            const paint = k => (!fc ? cohortColor(M.byKey.get(k)) : k === '<' || k === '>' ? 'var(--lin-slate)' : modBy.get(k.slice(2)).cat.color);
+            // what each file holds, keyed by birth (by birth and lens group when coloured by lens), or with a selection:
+            // '<' born before, its lens groups, '>' born after
+            const lensMode = !fc && o.color === 'lens', SEP = '\t';
+            const catBy = new Map(C.cats.map(x => [x.key, x])), catOf = gk => catBy.get(gk) || { key: gk, label: 'Other functions', color: 'var(--lin-grey-d)' };
+            const mods = fc ? modulesOf(fc, C) : [];
+            const keyOf = r => { const c = M.cohortOf(r); return !fc ? (lensMode ? `${c.key}${SEP}${C.of(r)}` : c.key) : c === fc ? `m:${C.of(r)}` : c.idx < fc.idx ? '<' : '>'; };
+            const order = fc ? ['<', ...mods.map(m => `m:${m.key}`), '>'] : lensMode ? M.list.flatMap(c => modulesOf(c, C).map(m => `${c.key}${SEP}${m.key}`)) : M.list.map(c => c.key);
+            const groupOf = k => (lensMode ? k.slice(k.indexOf(SEP) + 1) : fc && k.startsWith('m:') ? k.slice(2) : null);
+            const birthOf = k => (lensMode ? M.byKey.get(k.slice(0, k.indexOf(SEP))) : !fc ? M.byKey.get(k) : null);
+            const paint = k => { const gk = groupOf(k); return gk != null ? catOf(gk).color : !fc ? cohortColor(M.byKey.get(k)) : 'var(--lin-slate)'; };
             const counts = new Map(vis.map(v => { const c = {}; for (const r of M.heldM[v.idx]) { const k = keyOf(r); c[k] = (c[k] || 0) + 1; } return [v.id, c]; }));
-            const titleOf = k => (!fc ? M.byKey.get(k).long : k === '<' ? `Born before ${fc.label}` : k === '>' ? `Born after ${fc.label}` : modBy.get(k.slice(2)).cat.label);
+            const titleOf = k => { const gk = groupOf(k); return gk != null ? catOf(gk).label : !fc ? M.byKey.get(k).long : k === '<' ? `Born before ${fc.label}` : `Born after ${fc.label}`; };
+            // a tracked lens group (or a parent of groups) keeps its layers lit, the rest fade
+            const tk = ctx.getTrack(), lit = new Set();
+            if (tk && !tk.startsWith('fn:')) {
+                for (const x of C.cats) if (x.tk === tk) lit.add(x.key);
+                const mark = C.track ? C.track(tk) : null;
+                if (mark) for (let r = 0; r < R.n; r++) if (mark[r]) lit.add(C.of(r));
+            }
+            const fade = k => { if (!lit.size) return 1; const gk = groupOf(k); return gk != null && lit.has(gk) ? 1 : 0.2; };
+            if (ctx.showLegend) ctx.showLegend(o.color === 'lens' || !!fc);
 
             const gAx = g.append('g').style('pointer-events', 'none');
             for (const k of ticks) {
@@ -198,23 +214,23 @@
                     for (const v of ch) { const c = counts.get(v.id); pts.push({ x: X(v) - hw, c, v }, { x: X(v) + hw, c, v }); }
                     const keys = order.filter(k => ch.some(v => counts.get(v.id)[k]));
                     g.append('g').selectAll('path').data(d3.stack().keys(keys).value((d, k) => d.c[k] || 0)(pts)).join('path')
-                        .attr('d', area(ln)).style('fill', s => paint(s.key)).attr('fill-opacity', s => (s.key === '>' ? 0.4 : 1))
+                        .attr('d', area(ln)).style('fill', s => paint(s.key)).attr('fill-opacity', s => (s.key === '>' ? 0.4 : 1) * fade(s.key))
                         .style('stroke', 'var(--lin-card)').attr('stroke-width', 0.6).attr('vector-effect', 'non-scaling-stroke').style('cursor', 'pointer')
                         .on('mousemove', (ev, s) => {
                             const [mx] = d3.pointer(ev, ctx.g);
                             let v = ch[0];
                             for (const w of ch) if (Math.abs(X(w) - mx) < Math.abs(X(v) - mx)) v = w;
                             const k = counts.get(v.id)[s.key] || 0, dot = paint(s.key);
-                            ctx.showTip(ev, titleOf(s.key), dot, [['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
+                            ctx.showTip(ev, titleOf(s.key), dot, [...(lensMode ? [['Born', birthOf(s.key).label]] : []), ['File', `${ctx.name(v.id)} · ${v.t == null ? 'undated' : iso(v.t)}`], ['Functions', `${fmt(k)} of ${fmt(tot(v))}`],
                                 ['Click', !fc ? 'select this birth' : s.key.startsWith('m:') ? 'track this group' : 'show every birth']]);
                         })
                         .on('mouseleave', ctx.hideTip)
                         .on('click', (ev, s) => {
                             ctx.hideTip();
-                            if (!fc) return select(M.byKey.get(s.key));
+                            if (!fc) return select(birthOf(s.key));
                             if (!s.key.startsWith('m:')) return select(null);
-                            const tk = modBy.get(s.key.slice(2)).cat.tk;
-                            if (tk) ctx.setTrack(ctx.getTrack() === tk ? '' : tk);
+                            const gt = catOf(groupOf(s.key)).tk;
+                            if (gt) ctx.setTrack(ctx.getTrack() === gt ? '' : gt);
                         });
                 }
                 const first = ln.vs[0];
@@ -274,7 +290,7 @@
                     .on('click', () => { ctx.hideTip(); if (k) select(c); });
                 bg.append('rect').attr('x', x - bw / 2 - 3).attr('y', sTop).attr('width', bw + 6).attr('height', B.STRIP_H).attr('fill', 'transparent');
                 if (!k) return;
-                if (inF) {
+                if (inF || lensMode) {
                     let yy = sBase;
                     const sc = Math.min(1, cap / k);
                     for (const m of modulesOf({ rows: M.bornIn[v.idx] }, C)) {
@@ -303,7 +319,7 @@
                 side.append(el('div', { class: 'lin-gh' }, 'Biggest births'), el('div', { class: 'lin-dim', style: 'margin-bottom:8px' }, 'Pick one to see what it was and where it went, or click a layer, a file dot or a bar.'));
                 for (const c of [...M.list].sort((a, b) => b.rows.length - a.rows.length).slice(0, 10)) {
                     const b = el('button', { type: 'button', class: 'lin-gi' }), t = el('span', { class: 't' }), sw = el('span', { class: 'lin-sw' });
-                    sw.style.background = cohortColor(c);
+                    sw.style.background = o.color === 'lens' ? modulesOf(c, C)[0].cat.color : cohortColor(c);
                     t.append(sw, el('b', {}, c.label), el('span', { class: 'lin-dim' }, fmt(c.rows.length)));
                     b.append(t, el('span', { class: 'lin-dim' }, modulesOf(c, C).slice(0, 3).map(m => m.cat.label).join(', ')));
                     b.addEventListener('click', () => select(c));

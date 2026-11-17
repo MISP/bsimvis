@@ -5,7 +5,7 @@
  * opts: toolbar (elements), fetchFile(id), lens, track, onTrack(track), view ('tree' | 'tracks':
  * a group list beside the tree, or six mini trees | 'ring': nway_ring.js draws the clusters and modules in the same canvas,
  * ring {nest, arc, min, list, tier, bundle}, onRing(state) | 'births': nway_births.js draws what is born when over the Timeline's lanes,
- * births {bucket, axis, sel}, onBirths(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
+ * births {bucket, axis, sel, color}, onBirths(state)), more (elements for the "More" row), moreOpen (it starts open), onNode(node) (true when it took the click: no dock),
  * laneNames (false: no model names), onGroup(what, track, lens) ('graph' | 'table'; true when it took it).
  * One node per file at a fixed px-per-function scale, columns by tree depth. A
  * node body is cut by which children keep the code (grey), plus "kept by no
@@ -1086,7 +1086,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function groupList() {
             const tracks = st.view === 'tracks';
             // the Births view's pane is its own: the biggest births, or the selected one
-            if (st.view === 'births') { side.hidden = false; if (st.births) st.births.panel(); return false; }
+            if (st.view === 'births') { side.hidden = false; if (st.births) st.births.draw(); return false; }
             // the left pane lists the groups in every view; tree view just does not pick one for you
             side.hidden = !tracks && !st.R;
             side.replaceChildren();
@@ -1802,6 +1802,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     g: gBirthG.node(), side, controls: birthBox, opts: opts.births || {}, onOpt: o => { if (opts.onBirths) opts.onBirths(o); },
                     getDoc: () => st.doc, getR: () => st.R, getL: () => st.L, getCats: () => cats(st.lens), getTrack: () => st.track, setTrack,
                     showTip, hideTip, rowEl, el, segSwitch, fmt, name: nameOf, width: () => size().w, fit: () => fit(true),
+                    // the lens chips (a click tracks a group) whenever layers wear the lens's colours
+                    showLegend: v => { legendBox.style.display = v && st.P ? 'contents' : 'none'; },
                 });
             }
             st.births.draw();
@@ -2006,7 +2008,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('bcol');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

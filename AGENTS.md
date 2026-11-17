@@ -201,11 +201,13 @@ lineage canvas like the Ring (own `g`, own toolbar box, the left pane is its pan
 lowest date rank (`model()`, not the tree's `bornIn`; undated nodes rank last; rows failing `rows.match` are left out);
 a birth is the rows born in one file, week or month (`bgrp`). Each Timeline lane (`n.lane`, split into its chains) is a
 stream: height = the file's matching functions, layers = the birth they come from, oldest at the bottom; a chain grows
-from its parent's date. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
+from its parent's date. `bcol=lens` (default) splits every birth by the lens's groups and paints them in the group colour, so
+all groups show at every date with no selection (lens chips shown; a tracked group keeps its layers lit, the rest fade);
+`bcol=birth` paints one layer per birth on an old-to-new ramp. A strip under the lanes counts rows born per file (the biggest is cut). Selecting a birth (`bsel`,
 the cohort key) greys the others (before / after), splits it by the current lens's groups, marks `+N` where it is born and
 `+N from X` (violet) where it shows up off its parent, and fills the pane: where it was born, later files holding it, its
 share per lane over time, its functions (`rowEl`, a click is the usual `fn:` track). A lens chip or layer tracks that group.
-`bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` are
+`bsel` is lineage-only, not a track key: the table does not know it. `bgrp` / `baxis` (`rank` | `cal`) / `bsel` / `bcol` are
 stripped from table and API links. The model is checked in `scripts/test_nway_lineage.js`.
 
 **Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,

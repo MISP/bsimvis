@@ -645,7 +645,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             circle(famId(2)).ls.click[0]();
             assert.strictEqual(getCalls, 1, 'the camera before the first focus is stored once'); assert.strictEqual(camCalls.length, 2);
             // Esc and the All crumb restore it and clear the fade
-            docL.keydown({ key: 'Escape' });
+            ring.exitFocus(); // Esc: the lineage page calls it
             assert.deepStrictEqual(restores, [T0], 'Esc restores the first camera'); assert.strictEqual(S2.fc, null); assert.strictEqual(dimmed(), 0, 'no fade left'); assert.strictEqual(crumbEl().style.display, 'none');
             circle(famId(2)).ls.click[0]();
             crumbEl().children[0].ls.click[0]();
@@ -661,7 +661,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             circle(big).ls.click[0]();
             assert.ok(S2.open.size > 0, 'the aggregate leaves of the focused cluster are opened');
             RING.LEAF_MAX = 60;
-            docL.keydown({ key: 'Escape' });
+            ring.exitFocus(); // Esc: the lineage page calls it
             // merged files: the server is asked, the answer is merged without touching the view state
             ring.reset(); S2.open.clear(); ring.draw();
             const shotPts = () => JSON.parse(JSON.stringify(S2.sim.pts)), f0 = famId(0);
@@ -693,7 +693,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             // a failed request keeps the old doc
             const docNow = cur.doc;
             ring.reset(); S2.open.clear(); ring.draw();
-            docL.keydown({ key: 'Escape' });
+            ring.exitFocus(); // Esc: the lineage page calls it
             const f3 = famId(3), b3 = openCalls.length;
             circle(f3).ls.click[0]();
             if (openCalls.length === b3 + 1) {
@@ -703,7 +703,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             }
             // a stale answer is ignored
             const n0 = openCalls.length, m0 = merges;
-            docL.keydown({ key: 'Escape' });
+            ring.exitFocus(); // Esc: the lineage page calls it
             circle(famId(1)).ls.click[0]();
             if (openCalls.length > n0) { circle(famId(2)).ls.click[0](); resolvers[n0].res(); await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0)); assert.strictEqual(merges, m0, 'a stale response is ignored'); }
             ring.destroy();
@@ -887,8 +887,8 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(!root.classList.contains('hlm') && root.children.every(n => !n.cls.has('on')), 'leaving clears it');
             rib.ls.click[0]();
             assert.ok(track !== '', 'a click pins the module as the table track');
-            docL.keydown({ key: 'Escape' });
-            assert.strictEqual(track, '', 'Escape clears the pin');
+            // Esc is the page's now: it leaves a Ring focus first, then clears the pin
+            assert.ok(/else if \(st\.view === 'ring' && st\.ring && st\.ring\.state\.fc\) st\.ring\.exitFocus\(\);\s*else if \(NAV\.focus \|\| st\.track\) navFocus\(null\);/.test(src), 'Escape leaves the focus, then clears the pin');
             ring.destroy();
 
             // the toolbar: lineage-style segmented switches, the tunables behind "More"

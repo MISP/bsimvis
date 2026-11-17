@@ -1540,9 +1540,7 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             if (!active || (!drag && (frames >= RING.FRAMES_MAX || now - t0 > RING.MS_MAX))) { root.classList.remove('ring-moving'); if (heavy) { liveMode = null; paint(); } lp(); return; }
             raf = requestAnimationFrame(step);
         }
-        // Escape clears the pin
-        const onKey = ev => { if (ev.key !== 'Escape') return; if (S.fc) exitFocus(); else if (pinned() != null) ctx.setTrack(''); };
-        document.addEventListener('keydown', onKey);
+        // Escape is the page's (nway_lineage.js): it leaves the focus through exitFocus below
         // a click on empty canvas leaves the focus (d3's pan swallows the click that ends a drag)
         const onSvgClick = ev => { if (ev.target === ctx.svg && S.fc) exitFocus(); };
         ctx.svg.addEventListener('click', onSvgClick);
@@ -1561,6 +1559,10 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
             // the table's track changed: relight
             setTrack: rest,
             reset() { S.sim.reset(); full(); },
+            // for the page's state bar: leave the focus, close the opened clusters, open the shut ones
+            exitFocus,
+            focusLabel: () => (S.fc && M && M.byId.get(S.fc.id) ? M.byId.get(S.fc.id).label || 'a cluster' : ''),
+            clear(k) { if (k === 'focus') return exitFocus(); if (k === 'open') S.open.clear(); else S.shut.clear(); S.sim.reset(); full(); ctx.fit(); },
             // bounding box of everything drawn, for Fit
             box() { return frame ? frame.fit : null; },
             show(on) { root.style.display = on ? '' : 'none'; note.style.display = on && note.textContent ? '' : 'none'; },
@@ -1575,7 +1577,6 @@ body.ring-dragging,body.ring-dragging .ring-root [data-drag]{cursor:grabbing}
                 window.removeEventListener('pointermove', move);
                 window.removeEventListener('pointerup', up);
                 document.removeEventListener('visibilitychange', onVis);
-                document.removeEventListener('keydown', onKey);
                 ctx.svg.removeEventListener('click', onSvgClick);
                 crumb.remove();
                 document.body.classList.remove('ring-dragging');

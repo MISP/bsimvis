@@ -408,7 +408,7 @@
             const rows = [...fc.rows].sort((a, b) => R.pop[b] - R.pop[a]);
             card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'Functions, most widely held first'));
             for (const r of rows.slice(0, B.ROWS)) card.append(ctx.rowEl(r));
-            if (rows.length > B.ROWS) card.append(el('div', { class: 'lin-dim' }, `+${fmt(rows.length - B.ROWS)} more`));
+            if (rows.length > B.ROWS) card.append(el('div', { class: 'lin-dim' }, `+${fmt(rows.length - B.ROWS)} more: the lens groups above list them all in the navigator`));
             side.append(card);
         }
 
@@ -416,6 +416,9 @@
             draw,
             panel,
             box: () => frame,
+            // for the page's state bar: the selected birth and the opened Rare lanes, and closing either
+            state: () => ({ sel: current() ? current().label : '', rare: rareOpen }),
+            clear(k) { if (k === 'rare') { rareOpen = false; draw(); } else select(null); },
             destroy() { ctx.controls.replaceChildren(); g.selectAll('*').remove(); },
         };
     }

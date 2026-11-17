@@ -157,6 +157,13 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-note button{background:none;border:0;color:var(--accent,#66d9ef);cursor:pointer;font:inherit;text-decoration:underline}
 .lin-drawer{display:none;flex:none;width:360px;max-width:45%;background:var(--lin-card);border-left:1px solid var(--lin-line);overflow:auto;padding:0 0 12px}
 .lin-drawer.open{display:block}
+.lin-sbar{display:flex;flex-wrap:wrap;gap:5px 6px;align-items:center;padding:5px 10px;border-bottom:1px solid var(--lin-line);font-size:12px;min-height:34px;background:color-mix(in oklab,var(--accent,#66d9ef) 5%,var(--lin-card))}
+.lin-sl{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;opacity:.65}
+.lin-schip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--lin-line);background:var(--lin-card);border-radius:999px;padding:1px 3px 1px 9px;max-width:300px}
+.lin-schip b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lin-schip button{border:0;background:none;color:inherit;opacity:.65;cursor:pointer;width:20px;height:20px;border-radius:50%;line-height:1;font-size:14px}.lin-schip button:hover{opacity:1;background:var(--hover,#2d2d2d)}
+.lin-sbar .lin-btn:disabled{opacity:.45;cursor:default}
+.lin-kbd{font-family:Consolas,monospace;font-size:10.5px;border:1px solid var(--lin-line);border-bottom-width:2px;border-radius:4px;padding:0 4px;opacity:.7}
 .lin-ih{position:sticky;top:0;z-index:2;background:var(--lin-card);border-bottom:1px solid var(--lin-line);padding:8px 10px;display:grid;gap:5px}
 .lin-ih1{display:flex;align-items:center}.lin-ik{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;opacity:.65}
 .lin-ih2{display:flex;gap:7px;align-items:center;min-width:0}.lin-ih2 b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
@@ -917,7 +924,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const body = el('div', { class: 'lin-body' }), side = el('nav', { class: 'lin-glist', 'aria-label': 'Groups' }), grid = el('div', { class: 'lin-multi' });
         side.hidden = grid.hidden = true;
         body.append(side, canvas, grid, drawer);
-        root.append(tb, body);
+        const sbar = el('div', { class: 'lin-sbar', 'aria-live': 'polite', 'aria-label': 'What the page shows' });
+        root.append(tb, sbar, body);
         container.replaceChildren(root);
 
         const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: false, tierBundle: true, zc: new Map(), sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
@@ -998,9 +1006,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const name = id => st.names.get(id) || id;
         const names = ids => ids.slice(0, 8).map(name).join(', ') + (ids.length > 8 ? ` +${ids.length - 8} more` : '');
 
-        const closeDock = () => { drawer.classList.remove('open'); if (st.sel) { st.sel = null; applySel(); } if (st.fnSel != null) { st.fnSel = null; gHov.selectAll('*').remove(); if (st.R) groupList(); } };
+        const closeDock = () => { drawer.classList.remove('open'); setTimeout(syncBar, 0); if (st.sel) { st.sel = null; applySel(); } if (st.fnSel != null) { st.fnSel = null; gHov.selectAll('*').remove(); if (st.R) groupList(); } };
         const openDrawer = pick => {
             drawer.classList.add('open');
+            setTimeout(syncBar, 0);
             if (pick.fn != null && st.R) inspectFnDraw(pick.fn);
             else if (pick.node && st.R) dock(pick.node);
             else if (pick.node) { const { body } = inspHead('File', name(pick.node.id), nodeColor(st.doc, pick.node.idx)); kvBox(body, [['Functions', fmt(pick.node.functions)]]); metaBox(body, nodeFiles(pick.node), 'this file'); }
@@ -1206,11 +1215,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x0).attr('y', n.y1 + 19).attr('font-size', 10.5).style('fill', 'var(--text)').text(`${fmt(t.tk)} fn`);
                     if (t.born) gTrk.append('text').attr('class', 'lin-halo').attr('x', n.x1 + 4).attr('y', n.y0 + 10).attr('font-size', 11).style('fill', t.reborn ? V.reuse : V.born).text(`+${fmt(t.born)} born${t.reborn ? `, ${fmt(t.reborn)} also born elsewhere` : ''}`);
                 }
-                const c = el('span', { class: 'lin-chip on' }), x = el('button', { type: 'button', class: 'lin-x2', 'aria-label': 'Stop tracking', title: 'Stop tracking' }, '\u00d7');
-                x.addEventListener('click', () => setTrack(''));
-                c.append(el('i', { class: 'fa-solid fa-crosshairs' }), el('span', {}, 'Tracking'), el('b', {}, trackLabel()), el('span', { class: 'lin-dim' }, `\u00b7 in ${st.T.holders}/${st.L.vis.length} nodes`), x);
-                trackBox.append(c);
-            } else if (st.R) trackBox.append(el('span', { class: 'lin-dim' }, 'Click a legend chip or a row in the dock to track it.'));
+                // what is tracked is a chip in the state bar
+            }
             if (nodeBase) { nodeBase.style('opacity', nodeOp); ribs.style('opacity', ribOp); applySel(); }
             if (st.ring) st.ring.setTrack();
             legend();
@@ -1308,6 +1314,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (focused) navPage(focused, items);
             else navList(items);
             if (st.view === 'births') { side.prepend(bside); if (st.births) st.births.panel(); }
+            syncBar();
             return false;
         }
         const kidItem = (k, parent) => { const C = cats(st.lens), rows = C.members[k.i].filter(st.R.match), hold = holdersOf(rows); return { x: k, tk: k.tk, label: gText(k.g), color: k.color, tier: k.tier, rows, kids: [], parent, hold, sub: `in ${hold.length} of ${st.L.vis.length}` }; };
@@ -2239,11 +2246,113 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         search.addEventListener('input', () => find(false));
         search.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); find(true); } });
 
+        // ---- state bar: every non-default state of the page is a chip with x; Back undoes, Reset view starts over, Esc closes the newest ----
+        const hist = [];
+        let lastSnap = null, restoring = false;
+        const selKey = p => (!p ? null : p.fn != null ? `f:${p.fn}` : p.node ? `n:${p.node.id}` : p.edge ? `e:${p.edge.parent}>${p.edge.child}` : p.reuse ? `r:${p.reuse.files.join(',')}` : '?');
+        const snap = () => ({ focus: NAV.focus, tier: NAV.tier, q: NAV.q, open: [...NAV.open], track: st.track, collapsed: [...st.collapsed], multi: st.multi, reuseOn: st.reuseOn, tierBundle: st.tierBundle, sel: st.sel, fnSel: st.fnSel });
+        const sigOf = x => JSON.stringify({ ...x, sel: selKey(x.sel) });
+        const selLabel = p => (p.fn != null ? st.R.name[p.fn] || st.R.fid[p.fn] : p.node ? name(p.node.id) : p.edge ? `${name(p.edge.parent)} → ${name(p.edge.child)}` : p.reuse ? `reuse of ${p.reuse.files.length} files` : 'selection');
+        function chips() {
+            const c = [], add = (k, v, close) => c.push([k, v, close]);
+            if (NAV.focus) add('Group', st.track === NAV.focus ? trackLabel() : NAV.focus, () => navFocus(null));
+            if (st.track && st.track.startsWith('fn:')) add('Tracking', trackLabel(), () => setTrack(NAV.focus || ''));
+            if (st.sel) add('Inspector', selLabel(st.sel), closeDock);
+            if (NAV.tier) add('Only', TIERS[NAV.tier][1], () => { NAV.tier = null; groupList(); });
+            if (NAV.q) add('Search', `“${NAV.q}”`, () => { NAV.q = ''; groupList(); });
+            if (NAV.open.size) add('Sections', 'opened or closed by hand', () => { NAV.open = new Map(); groupList(); });
+            if ([...st.collapsed].sort().join() !== [...(st.collapsed0 || [])].sort().join()) add('Grouped', st.collapsed.size ? `${st.collapsed.size} subtree${st.collapsed.size === 1 ? '' : 's'}` : 'every file shown', () => { st.collapsed = new Set(st.collapsed0 || []); rebuild(); });
+            if (st.multi) add('Tracks', 'small multiples', () => { st.multi = false; groupList(); multiples(); });
+            if (st.reuseOn) add('Reuse layer', 'on', () => { st.reuseOn = false; applyReuse(); reuse.paint(); });
+            if (!st.tierBundle && tierRib.el.style.display !== 'none') add('Lane ribbons', 'one per lane', () => { st.tierBundle = true; tierRib.paint(); rebuild(); });
+            if (st.ring && st.view === 'ring') {
+                const S = st.ring.state;
+                if (S.fc) add('Ring focus', st.ring.focusLabel(), () => st.ring.clear('focus'));
+                if (S.open.size) add('Ring', `${S.open.size} cluster${S.open.size === 1 ? '' : 's'} opened`, () => st.ring.clear('open'));
+                if (S.shut.size) add('Ring', `${S.shut.size} cluster${S.shut.size === 1 ? '' : 's'} closed`, () => st.ring.clear('shut'));
+            }
+            if (st.births && st.view === 'births') {
+                const b = st.births.state();
+                if (b.sel) add('Birth', b.sel, () => st.births.clear('sel'));
+                if (b.rare) add('Rare lanes', 'open', () => st.births.clear('rare'));
+            }
+            return c;
+        }
+        function syncBar() {
+            if (!st.doc || st.dead) return;
+            const now = snap();
+            if (!restoring && lastSnap && sigOf(lastSnap) !== sigOf(now)) { hist.push(lastSnap); if (hist.length > 60) hist.shift(); }
+            lastSnap = now;
+            const c = chips();
+            sbar.replaceChildren(el('span', { class: 'lin-sl' }, 'Showing'));
+            if (!c.length) sbar.append(el('span', { class: 'lin-dim' }, 'the default view'));
+            for (const [k, v, close] of c) {
+                const ch = el('span', { class: 'lin-schip' }), x = el('button', { type: 'button', 'aria-label': `Close ${k}: ${v}`, title: 'Close' }, '×');
+                x.addEventListener('click', ev => { ev.stopPropagation(); close(); syncBar(); });
+                ch.append(el('span', { class: 'lin-dim' }, k), el('b', { title: v }, v), x);
+                sbar.append(ch);
+            }
+            const b = btn('↶ Back', 'Undo the last step', () => back()), r = btn('Reset view', 'The page as it opened', () => resetView());
+            b.disabled = !hist.length; r.disabled = !c.length;
+            sbar.append(el('span', { style: 'flex:1' }), b, r, el('span', { class: 'lin-kbd', title: 'Esc closes the newest thing: inspector, tracked function, focus, group' }, 'Esc'));
+        }
+        function restore(x) {
+            NAV.focus = x.focus; NAV.tier = x.tier; NAV.q = x.q; NAV.open = new Map(x.open);
+            st.multi = x.multi;
+            const rb = x.collapsed.join() !== [...st.collapsed].join() || x.tierBundle !== st.tierBundle;
+            st.collapsed = new Set(x.collapsed); st.tierBundle = x.tierBundle; tierRib.paint();
+            if (x.reuseOn !== st.reuseOn) { st.reuseOn = x.reuseOn; applyReuse(); reuse.paint(); }
+            if (rb) rebuild();
+            setTrack(x.track);
+            NAV.focus = x.focus;
+            st.fnSel = x.fnSel;
+            if (x.sel) pick(x.sel); else closeDock();
+            groupList(); multiples();
+        }
+        function back() {
+            const x = hist.pop();
+            if (!x) return;
+            restoring = true;
+            try { restore(x); } finally { restoring = false; lastSnap = snap(); syncBar(); }
+        }
+        function resetView() {
+            hist.push(snap());
+            restoring = true;
+            try {
+                Object.assign(NAV, { focus: null, tier: null, q: '', open: new Map(), tab: 'functions', fq: '', role: null, shown: NAV_ROWS });
+                st.multi = false; st.tierBundle = true; tierRib.paint();
+                if (st.reuseOn) { st.reuseOn = false; applyReuse(); reuse.paint(); }
+                st.collapsed = new Set(st.collapsed0 || []);
+                closeDock();
+                if (st.ring) { if (st.ring.state.fc) st.ring.exitFocus(); st.ring.state.open.clear(); st.ring.state.shut.clear(); st.ring.state.sim.reset(); }
+                if (st.births) { const b = st.births.state(); if (b.rare) st.births.clear('rare'); if (b.sel) st.births.clear('sel'); }
+                rebuild();
+                setTrack('');
+                fit(true);
+            } finally { restoring = false; lastSnap = snap(); syncBar(); }
+        }
+        // one Esc for the whole page, newest first; typing in a field keeps its own Esc
+        const onEsc = ev => {
+            if (ev.key !== 'Escape' || ev.defaultPrevented || !root.isConnected) return;
+            const t = ev.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+            if (window.graphContextMenuOpen) return;
+            if (drawer.classList.contains('open')) closeDock();
+            else if (st.track.startsWith('fn:')) setTrack(NAV.focus || '');
+            else if (st.view === 'ring' && st.ring && st.ring.state.fc) st.ring.exitFocus();
+            else if (NAV.focus || st.track) navFocus(null);
+            else if (st.view === 'births' && st.births && st.births.state().sel) st.births.clear('sel');
+            else return;
+            ev.preventDefault();
+            syncBar();
+        };
+        // clicks inside the views (Ring clusters, Births) change state the bar shows
+        root.addEventListener('click', () => setTimeout(syncBar, 0));
+
         // ---- size ----
         const ro = new ResizeObserver(() => { const { w, h } = size(); s.attr('width', w).attr('height', h); schedule(); });
         ro.observe(canvas);
-        const dblClose = ev => { if (ev.key === 'Escape') closeDock(); };
-        document.addEventListener('keydown', dblClose);
+        document.addEventListener('keydown', onEsc);
 
         const api = {
             // o.keep: a merge (the ring opened some merged files): the view, the pick and the physics stay
@@ -2258,7 +2367,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 st.C = new Map();
                 if (!o.keep && (!same || !(st.sel && st.sel.node))) { st.sel = null; closeDock(); }
                 st.names = new Map(doc.nodes.map(n => [n.id, n.file_name || n.id]));
-                if (!same) st.collapsed = o.keep ? new Set([...st.collapsed].filter(id => st.names.has(id))) : autoCollapse(doc);
+                if (!same) { st.collapsed = o.keep ? new Set([...st.collapsed].filter(id => st.names.has(id))) : autoCollapse(doc); if (!o.keep) st.collapsed0 = [...st.collapsed]; }
                 const { w, h } = size();
                 s.attr('width', w).attr('height', h);
                 if (doc.rows) askNames();
@@ -2305,7 +2414,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 if (st.births) st.births.destroy();
                 cancelAnimationFrame(st.raf);
                 ro.disconnect();
-                document.removeEventListener('keydown', dblClose);
+                document.removeEventListener('keydown', onEsc);
                 s.on('.zoom', null);
                 tip.remove();
                 container.replaceChildren();

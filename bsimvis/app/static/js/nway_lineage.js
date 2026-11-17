@@ -118,8 +118,9 @@
         let html = '';
         if (cat.mask) {
             const on = [...cat.mask].map(c => c === '1'), n = on.filter(Boolean).length, pct = Math.round((100 * n) / on.length);
-            const sq = on.map((x, i) => { const nd = doc.nodes[i]; return `<i class="${x ? 'on' : ''}" title="${escapeAttr(nd ? nd.file_name || nd.id : '')}"></i>`; }).join('');
-            html = `<div class="lin-pres">${sq}<span>${n} of ${on.length} files \u00b7 ${pct}%</span></div><div class="lin-scale"><i></i><i></i><i></i><b style="left:${pct}%"></b></div><div class="lin-scale-l"><span>Rare</span><span>50%</span><span>90%</span></div>`;
+            // the table's file squares (.nway-sq), each in its column's colour
+            const sq = on.map((x, i) => { const nd = doc.nodes[i]; return `<i class="nway-sq${x ? ' on' : ''}"${x ? ` style="background:${nodeColor(doc, i)}"` : ''} title="${escapeAttr(nd ? nd.file_name || nd.id : '')}"></i>`; }).join('');
+            html = `<div class="lin-sqs">${sq}</div><div class="lin-dim">${n} of ${on.length} files \u00b7 ${pct}%</div><div class="lin-scale"><i></i><i></i><i></i><b style="left:${pct}%"></b></div><div class="lin-scale-l"><span>Rare</span><span>50%</span><span>90%</span></div>`;
         }
         return { badge: { glyph, tag, color }, html };
     }
@@ -178,7 +179,7 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-tip{position:fixed;pointer-events:none;display:none;z-index:1000;min-width:200px;max-width:340px;padding:9px 11px;border-radius:10px;background:var(--lin-card);color:var(--text,#f8f8f2);border:1px solid var(--lin-line);box-shadow:0 8px 24px rgba(0,0,0,.35);font:12.5px/1.45 system-ui,sans-serif}
 .lin-tip .t{display:flex;align-items:center;gap:7px;font-weight:600;margin-bottom:5px;word-break:break-all}
 .lin-dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
-.lin-pres{display:flex;align-items:center;gap:2px;margin:2px 0 4px}.lin-pres i{width:9px;height:9px;border-radius:2px;border:1px solid var(--lin-line)}.lin-pres i.on{background:var(--text,#f8f8f2);border-color:var(--text,#f8f8f2)}.lin-pres span{margin-left:6px;opacity:.72}
+.lin-sqs{display:flex;flex-wrap:wrap;gap:2px;margin:3px 0 2px}.lin-sqs .nway-sq{width:13px;height:13px}
 .lin-scale{position:relative;display:flex;height:6px;border-radius:3px}.lin-scale i{height:100%}.lin-scale i:nth-child(1){width:50%;background:color-mix(in oklab,var(--text-muted,#888) 45%,transparent);border-radius:3px 0 0 3px}.lin-scale i:nth-child(2){width:40%;background:color-mix(in oklab,var(--warning,#d97706) 55%,transparent)}.lin-scale i:nth-child(3){width:10%;background:var(--success);border-radius:0 3px 3px 0}
 .lin-scale b{position:absolute;top:-4px;width:2px;height:14px;background:var(--text,#f8f8f2);transform:translateX(-1px)}.lin-scale-l{display:grid;grid-template-columns:50% 40% 10%;font-size:10.5px;opacity:.72;white-space:nowrap}
 .lin-canvas svg text{font-family:inherit}
@@ -235,7 +236,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
 .lin-nsh .lin-chev{font-size:10px;opacity:.7;transition:transform .12s}.lin-nsh[aria-expanded="false"] .lin-chev{transform:rotate(-90deg)}
 .lin-nsl{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .lin-nsb{height:5px;border-radius:3px;background:var(--lin-line);overflow:hidden;min-width:24px}.lin-nsb i{display:block;height:100%}
-.lin-nr{display:grid;grid-template-columns:16px 12px minmax(0,1fr) auto 40px;gap:7px;align-items:center;width:100%;border:0;border-left:3px solid transparent;background:none;color:inherit;font:inherit;padding:5px 10px;cursor:pointer;text-align:left}
+.lin-nr{display:grid;grid-template-columns:16px 12px minmax(0,1fr) 40px;gap:7px;align-items:center;width:100%;border:0;border-left:3px solid transparent;background:none;color:inherit;font:inherit;padding:5px 10px;cursor:pointer;text-align:left}
 .lin-nr:hover,.lin-nr.hl{background:var(--hover,#2d2d2d)}.lin-nr.hl{box-shadow:inset 3px 0 color-mix(in oklab,var(--accent,#66d9ef) 55%,transparent)}.lin-nr.on{border-left-color:var(--accent,#66d9ef);background:color-mix(in oklab,var(--accent,#66d9ef) 12%,transparent)}
 .lin-nt{min-width:0;display:grid}.lin-nn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.lin-ns{font-size:11px;opacity:.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lin-nc{font-size:12px;opacity:.7;text-align:right;font-variant-numeric:tabular-nums}
@@ -1286,9 +1287,20 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const fparts = fid => { const i = String(fid).indexOf(':func:'), [md5, addr] = String(fid).slice(i + 6).split(':'); return { coll: String(fid).slice(0, i), md5, addr }; };
         // the visible nodes that hold any of these rows
         const holdersOf = rows => st.L.vis.filter(v => rows.some(r => v.has(r)));
+        // a group's name without the model: its own label, the model's name, its fallback, its function names, its file count
+        function plainName(g) {
+            const nm = NG.shownName(st.S.names[g.id]);
+            if (nm) return nm;
+            if (g.label) return g.label;
+            const fb = st.S.done && !st.S.off ? NG.laneFallback(g, st.S) : '';
+            if (fb && fb !== 'unlabelled') return fb;
+            const named = (g.sample || []).filter(x => !/^(FUN|sub|thunk|LAB|DAT)_/.test(x)).slice(0, 2).join(', ');
+            if (g.hint || named) return g.hint || named;
+            return g.kind === 'lane' ? `${g.files}-file lane` : g.kind === 'fold' ? `${g.lanes} small lanes` : gText(g);
+        }
         const itemOf = (x, rows, kids, parent) => {
             const hold = holdersOf(rows);
-            return { x, tk: x.tk, label: x.g ? gText(x.g) : x.label, color: x.color === GREY && kids.length ? kids[0].color : x.color, tier: x.tier, rows, kids, parent, hold,
+            return { x, tk: x.tk, label: x.g ? plainName(x.g) : x.label, color: x.color === GREY && kids.length ? kids[0].color : x.color, tier: x.tier, rows, kids, parent, hold,
                 sub: `in ${hold.length} of ${st.L.vis.length} · ${hold.slice(0, 3).map(v => name(v.id)).join(', ')}${hold.length > 3 ? ` +${hold.length - 3}` : ''}` };
         };
         function navItems() {
@@ -1311,16 +1323,6 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         }
         const allItems = items => items.flatMap(it => [it, ...allItems(it.kids)]);
         const findItem = tk => (tk && st.R ? allItems(navItems()).find(it => it.tk === tk) || null : null);
-        // squares, one per visible node, filled by the share of the rows it holds
-        function presSquares(rows) {
-            const pres = el('span', { class: 'lin-pres', 'aria-hidden': 'true' });
-            for (const v of st.L.vis) {
-                const h = rows.reduce((a, r) => a + (v.has(r) ? 1 : 0), 0), i = el('i', { title: `${name(v.id)}: ${fmt(h)}` });
-                if (h) { i.style.background = nodeColor(st.doc, v.idx); i.style.opacity = (0.25 + 0.75 * h / rows.length).toFixed(2); i.style.boxShadow = 'none'; }
-                pres.append(i);
-            }
-            return pres;
-        }
         // the group tooltip: tier, the table's numbers, and what its files are made of
         function navTip(ev, it) {
             const tt = tierTip(it.x, st.doc);
@@ -1344,9 +1346,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (it.kids.length) chev.append(el('i', { class: `fa-solid fa-chevron-${open ? 'down' : 'right'}` })); else chev.disabled = true;
             const sw = el('span', { class: 'lin-sw' }), t = el('span', { class: 'lin-nt' }), nm = el('span', { class: 'lin-nn' });
             sw.style.background = tierCss(it.color, it.tier);
-            if (it.x.g) nm.innerHTML = gHtml(it.x.g); else nm.textContent = it.label;
+            nm.textContent = it.label;
             t.append(nm, el('span', { class: 'lin-ns' }, it.sub));
-            row.append(chev, sw, t, presSquares(it.rows), el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
+            row.append(chev, sw, t, el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
             chev.addEventListener('click', ev => { ev.stopPropagation(); NAV.open.set(kk, !open); groupList(); });
             row.addEventListener('mouseenter', ev => { navHover(it); navTip(ev, it); });
             row.addEventListener('mousemove', moveTip);

@@ -212,7 +212,7 @@ stripped from table and API links. The model is checked in `scripts/test_nway_li
 
 **Panes (every view).** Left: a selector of the lens's groups, nothing else (`groupList` / `navRow` in
 `nway_lineage.js`): a search, Core / Common / Rare sections (tiered lens) with Collapse / Expand all, one row per group
-(swatch, name, holders, presence squares, count) and its sub-groups under a chevron. A click selects the group (`NAV.focus`,
+(swatch, name, holders, count; the name is `plainName`: the model's name, the label, the fallback, the group's function names, else `N-file lane`, never an empty placeholder) and its sub-groups under a chevron. A click selects the group (`NAV.focus`,
 also the track) and opens it in the Inspector; a second click or Esc unselects. A group key covers its sub-groups
 (`catUnder`: a lane lights its regions). Cohesion: a pane row hover lights the group in the Tree (`focusHover`), Ring
 (`ring.hoverTrack`) and Births (`births.hoverTrack`); a group hovered there lights its pane rows (`paneHl`, via
@@ -241,7 +241,7 @@ zebra (`tierFill`, `tierCss`). The trees stack every node Core, Common, Rare; "L
 not in the URL) draws one ribbon per tier and edge (`lensPaint(..., { bundle })`, default on) or one per lane. Births
 stacks a selected birth's lane layers Core at the bottom, draws a line and a label over each tier's band, folds more
 than one Rare lane into one layer (a click on it or the pane button opens them) and puts a tier rail beside each file.
-A lane tooltip carries the tier badge, the files holding the lane and a Rare / 50% / 90% scale (`tierTip`).
+A lane tooltip carries the tier badge, the files holding the lane as the table's `.nway-sq` squares in each column's colour, and a Rare / 50% / 90% scale (`tierTip`).
 
 **Deltas in the Ring.** The Ring's Deltas lens uses the server's delta lanes (`doc.group` `delta,region`,
 `lensCats(..., { server: true })`): `Added in X`, `Only in X`, `A to B`, `Kept`, ... with the table's labels, coloured by the

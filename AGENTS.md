@@ -242,8 +242,12 @@ those files, tick = share of all). The reuse layer starts off.
 lane's file share with the Ring's cuts: Core >= 90%, Common >= 50%, Rare) and its lane `mask`; rows in no lane are split by
 their own `rows.tier` (`~core`, `~common`, `~rare`, "Core functions in no lane") instead of one grey "Other functions". Lanes
 are coloured by tier hue family (`tierColor`: Core greens, Common ambers, Rare blues), Common / Rare fill with the Ring's
-zebra (`tierFill`, `tierCss`). The trees stack every node Core, Common, Rare; "Lane ribbons" (More row, Lanes lens only,
-not in the URL) draws one ribbon per tier and edge (`lensPaint(..., { bundle })`, default on) or one per lane. Births
+zebra (`tierFill`, `tierCss`). The trees stack every node Core, Common, Rare; The trees draw what the left pane shows
+(`lensPaint(..., { groupOf: paneGroupOf })`, node segments and ribbons alike): a closed tier section is one striped band
+per node and edge, an open one a band per lane, a lane opened with its chevron a band per sub-lane; a merged cat keeps its
+cats in `members` (`catHas`), so a hover on it lights exactly its nodes. Opening or closing a section or a lane redraws
+(`paneSig` / `st.paintSig`); the search does not. "Lane ribbons" (More row, Lanes lens only, not in the URL): As the pane
+(default) or Every group. Births
 stacks a selected birth's lane layers Core at the bottom, draws a line and a label over each tier's band, folds more
 than one Rare lane into one layer (a click on it or the pane button opens them) and puts a tier rail beside each file.
 A lane tooltip carries the tier badge, the files holding the lane as the table's `.nway-sq` squares in each column's colour, and a Rare / 50% / 90% scale (`tierTip`).

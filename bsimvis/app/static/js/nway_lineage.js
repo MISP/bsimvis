@@ -522,20 +522,27 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     }
 
     // Node bodies cut by the lens (matching rows, then the rest faint), ribbons per group from parent to child.
-    // o.bundle: tiered lenses (Lanes) draw one ribbon per tier and edge instead of one per group.
+    // o.groupOf(cat) -> { key, cat }: the cats drawn merged, node segments and ribbons alike (a closed tier, a lane whose
+    // sub-lanes are hidden: what the pane shows); a merged cat keeps its cats in `members`. Default: every cat itself.
     function lensPaint(M, L, R, C, o = {}) {
-        const pos = new Map(C.cats.map((c, i) => [c.key, i])), K = C.cats.length;
-        const segs = new Map();
-        let links = [];
+        const gof = o.groupOf || (c => ({ key: c.key, cat: c })), G = [], at = new Map(), pos = new Map();
+        for (const c of C.cats) {
+            const g = gof(c);
+            if (!at.has(g.key)) { at.set(g.key, G.length); G.push(g.cat === c ? c : { ...g.cat, key: g.key, members: [] }); }
+            const k = at.get(g.key);
+            if (G[k].members) G[k].members.push(c);
+            pos.set(c.key, k);
+        }
+        const K = G.length, segs = new Map(), links = [];
         // a tiered lens stacks every node Core, Common, Rare (the lens order inside a tier), so a tier's ribbons stay together
-        const ord = C.cats.map((c, i) => i).sort((a, b) => tierRank(C.cats[a]) - tierRank(C.cats[b]) || a - b);
+        const ord = G.map((c, i) => i).sort((a, b) => tierRank(G[a]) - tierRank(G[b]) || a - b);
         for (const v of L.vis) {
             const cnt = new Array(K).fill(0);
             let faint = 0;
             for (const r of v.rows) if (R.match(r)) cnt[pos.get(C.of(r))]++; else faint++;
             const unit = v.h / Math.max(1, v.rows.length), m = new Map();
             let y = v.y0;
-            for (const i of ord) { const c = cnt[i]; if (c) { m.set(C.cats[i].key, { cat: C.cats[i], y0: y, h: c * unit, cnt: c }); y += c * unit; } }
+            for (const i of ord) { const c = cnt[i]; if (c) { m.set(G[i].key, { cat: G[i], y0: y, h: c * unit, cnt: c }); y += c * unit; } }
             segs.set(v.id, { m, unit, faint: { y0: y, h: faint * unit, cnt: faint }, shown: v.rows.length - faint });
         }
         const kidsOf = new Map();
@@ -543,7 +550,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         for (const [pid, kids] of kidsOf) {
             const p = L.fileOf.get(pid), sp = segs.get(pid);
             const share = kids.map(c => { const s = new Array(K).fill(0); for (const r of c.rows) if (R.match(r) && p.has(r)) s[pos.get(C.of(r))]++; return s; });
-            C.cats.forEach((cat, k) => {
+            G.forEach((cat, k) => {
                 const seg = sp.m.get(cat.key), tot = share.reduce((a, s) => a + s[k], 0);
                 if (!seg || !tot) return;
                 // the parent side squeezes when its children together keep more than it shows
@@ -553,25 +560,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     const v = share[i][k];
                     if (!v) return;
                     const sc2 = segs.get(c.id), cy = sc2.m.get(cat.key).y0, hc = v * sc2.unit, hp = v * sp.unit * sc;
-                    links.push({ cat, value: v, source: p, target: c, edge: M.inE.get(c.agg ? c.top : c.id), d: ribbon(p.x1, off, hp, c.x0, cy, hc), bb: [p.x1, Math.min(off, cy), c.x0, Math.max(off + hp, cy + hc)], fade: kids.length > FAN_FADE, hp, hc });
+                    links.push({ cat, members: cat.members, value: v, source: p, target: c, edge: M.inE.get(c.agg ? c.top : c.id), d: ribbon(p.x1, off, hp, c.x0, cy, hc), bb: [p.x1, Math.min(off, cy), c.x0, Math.max(off + hp, cy + hc)], fade: kids.length > FAN_FADE, hp, hc });
                     off += hp;
                 });
             });
-        }
-        if (o.bundle && C.cats.some(c => c.tier)) {
-            // one ribbon per (parent, child, tier): from the top of the tier's band in the parent (stacked per child) to the top of it in the child
-            const by = new Map();
-            for (const l of links) { const k = `${l.source.id}|${l.target.id}|${l.cat.tier || ''}`; (by.get(k) || by.set(k, []).get(k)).push(l); }
-            const top = (id, t) => { let y = Infinity; for (const x of segs.get(id).m.values()) if ((x.cat.tier || '') === t) y = Math.min(y, x.y0); return y; };
-            const offP = new Map(), offC = new Map(), out = [];
-            for (const ls of by.values()) {
-                const p = ls[0].source, c = ls[0].target, t = ls[0].cat.tier || '', kp = `${p.id}|${t}`, kc = `${c.id}|${t}`;
-                const hp = ls.reduce((a, l) => a + l.hp, 0), hc = ls.reduce((a, l) => a + l.hc, 0), y0 = top(p.id, t) + (offP.get(kp) || 0), y1 = top(c.id, t) + (offC.get(kc) || 0);
-                offP.set(kp, (offP.get(kp) || 0) + hp); offC.set(kc, (offC.get(kc) || 0) + hc);
-                const cat = t ? { key: `tier:${t}`, tk: '', label: `${TIERS[t][1]} lanes`, color: TIERS[t][2], tier: t } : ls[0].cat;
-                out.push({ cat, members: ls.map(l => l.cat), value: ls.reduce((a, l) => a + l.value, 0), source: p, target: c, edge: ls[0].edge, d: ribbon(p.x1, y0, hp, c.x0, y1, hc), bb: [p.x1, Math.min(y0, y1), c.x0, Math.max(y0 + hp, y1 + hc)], fade: ls[0].fade, hp, hc });
-            }
-            links = out;
         }
         return { segs, links };
     }
@@ -984,7 +976,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const reuse = segSwitch('Reuse layer', 'Show or hide the reuse arcs', [[false, 'Off'], [true, 'On']], () => st.reuseOn, v => { st.reuseOn = v; applyReuse(); });
         const more = moreToggle(!!opts.moreOpen);
         // Lanes lens on the trees: a ribbon per lane, or one per tier and edge (Core, Common, Rare)
-        const tierRib = segSwitch('Lane ribbons', 'Lanes lens: one ribbon per lane, or one per tier (Core, Common, Rare) and edge', [[false, 'Per lane'], [true, 'Tier bundles']], () => st.tierBundle, v => { st.tierBundle = v; rebuild(); });
+        const tierRib = segSwitch('Lane ribbons', 'Draw the groups as the left pane shows them (a closed tier is one band, an opened lane its sub-lanes), or every sub-group', [[true, 'As the pane'], [false, 'Every group']], () => st.tierBundle, v => { st.tierBundle = v; rebuild(); });
         const syncTierRib = () => { tierRib.el.style.display = st.P && cats(st.lens).cats.some(c => c.tier) && st.view !== 'ring' && st.view !== 'births' ? 'inline-flex' : 'none'; };
         more.row.append(...(opts.more || []), tierRib.el,
             btn('Collapse deep', 'Group deep subtrees into one node each', () => { st.collapsed = autoCollapse(st.doc); if (!st.collapsed.size) st.collapsed = deepAll(); rebuild(); }),
@@ -1103,14 +1095,17 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function catUnder(c, t) {
             if (!c || !t) return false;
             if (c.tk === t) return true;
+            if (t.startsWith('tier:') && c.tier === t.slice(5) && !(cats(st.lens).groups || []).some(x => x.tk === t)) return true;
             const C = cats(st.lens);
             if (!C.groups || !c.g) return false;
             const id = (C._tkId || (C._tkId = new Map(C.groups.map(x => [x.tk, x.g.id])))).get(t);
             return !!id && (c.g.path || []).includes(id);
         }
-        const linkHas = (l, t) => catUnder(l.cat, t) || (!!l.members && l.members.some(c => catUnder(c, t)));
+        // a drawn cat may be merged (a closed tier, a collapsed lane): it holds t when one of its cats does
+        const catHas = (c, t) => catUnder(c, t) || (!!c.members && c.members.some(m => catUnder(m, t)));
+        const linkHas = (l, t) => catHas(l.cat, t);
         const syncFocus = () => { const t = st.hoverTk || st.track; st.fk = t && st.P && st.P.links.some(l => linkHas(l, t)) ? t : null; };
-        const holds = n => { const sp = st.P && st.P.segs.get(n.id); return !!sp && [...sp.m.values()].some(x => catUnder(x.cat, st.fk)); };
+        const holds = n => { const sp = st.P && st.P.segs.get(n.id); return !!sp && [...sp.m.values()].some(x => catHas(x.cat, st.fk)); };
         const nodeOp = n => (st.hoverTk && st.fk ? (holds(n) ? 1 : 0.3) : st.T && !(st.T.info.get(n.id) || {}).tk ? 0.3 : 1);
         const ribOp = l => (st.fk ? (linkHas(l, st.fk) ? 1 : 0.12) : 1) * (l.fade && !st.fk ? 0.28 : 1) * (st.T && !(st.T.info.get(l.target.id) || {}).tk ? 0.3 : 1);
         // the lens group a reuse class mostly is: the group of the rows held by exactly its files (null: grey or none)
@@ -1129,7 +1124,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function focusHover(tk) {
             st.hoverTk = tk; syncFocus();
             ribs.style('opacity', ribOp); nodeBase.style('opacity', nodeOp);
-            gNode.selectAll('rect.lin-sg').style('opacity', d => (!tk || catUnder(d.cat, tk) ? null : 0.25));
+            gNode.selectAll('rect.lin-sg').style('opacity', d => (!tk || catHas(d.cat, tk) ? null : 0.25));
             const lit = r => { const c = reuseCat(r); return !tk || (c && catUnder(c, tk)); };
             strSel.style('opacity', d => (lit(d.c.r) ? 1 : 0.3));
             arcSel.style('opacity', A => (lit(A.r) ? 1 : 0.15));
@@ -1143,7 +1138,9 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             bundle(L.links);
             if (st.doc.rows && !st.R) st.R = rowModel(st.doc, M);
             if (st.R) attachRows(M, st.R);
-            st.P = lensOn() ? lensPaint(M, L, st.R, cats(st.lens), { bundle: st.tierBundle }) : null;
+            st.navItems = null;
+            st.paintSig = paneSig();
+            st.P = lensOn() ? lensPaint(M, L, st.R, cats(st.lens), { groupOf: st.tierBundle ? paneGroupOf : null }) : null;
             syncTierRib();
             st.names = new Map(st.doc.nodes.map(n => [n.id, n.file_name || n.id]));
             for (const n of L.vis) if (n.agg) st.names.set(n.id, n.file_name);
@@ -1287,6 +1284,20 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             for (let r = 0; r < st.R.n; r++) if (st.R.match(r)) by.get(C.of(r)).push(r);
             return C.cats.filter(c => by.get(c.key).length).map(c => ({ c, rows: by.get(c.key), tk: c.tk, leaf: true }));
         }
+        // ---- the trees draw what the pane shows: a closed tier is one band, an open one a band per lane, a lane opened
+        // with its chevron a band per sub-lane (node segments and ribbons alike). The search does not reshape the drawing.
+        const secOpen = t => (NAV.open.has(`t:${t}`) ? NAV.open.get(`t:${t}`) : t !== 'rare');
+        const paneSig = () => JSON.stringify([...NAV.open].filter(([k]) => /^[tk]:/.test(k)).sort());
+        function paneGroupOf(c) {
+            const items = st.navItems || (st.navItems = navItems());
+            if (c.tier && items.some(it => it.tier) && !secOpen(c.tier)) { const t = c.tier, k = `tier:${t}`; return { key: k, cat: { key: k, tk: k, label: `${TIERS[t][1]} lanes`, color: TIERS[t][2], tier: t } }; }
+            let it = items.find(x => catUnder(c, x.tk));
+            if (!it) return { key: c.key, cat: c };
+            while (NAV.open.get(`k:${it.tk}`) === true) { const k = it.kids.find(x => catUnder(c, x.tk)); if (!k) break; it = k; }
+            if (it.tk === c.tk) return { key: c.key, cat: c };
+            return { key: it.tk, cat: { key: it.tk, tk: it.tk, label: it.label, color: it.color, tier: it.tier, g: it.x.g, mask: it.x.mask } };
+        }
+
         // ---- the left pane: a selector of the lens's groups (lanes and their sub-lanes), the same in every view ----
         // Sections (Core / Common / Rare for a tiered lens, else one list), one row per group, sub-groups under a chevron.
         // A click selects the group (it is the track, lit in every view) and opens it in the Inspector; a second click
@@ -1446,6 +1457,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 side.append(sec);
             }
             if (!vis.length) side.append(el('div', { class: 'lin-dim', style: 'padding:10px' }, 'No group matches the search.'));
+            // a section or a lane opened or closed: the trees redraw to match
+            if (st.P && st.tierBundle && st.paintSig !== undefined && paneSig() !== st.paintSig) setTimeout(() => { if (!st.dead && paneSig() !== st.paintSig) rebuild(); }, 0);
             const on = side.querySelector('.lin-nr.on');
             if (on && on.scrollIntoView && NAV.scrollTo === NAV.focus) { on.scrollIntoView({ block: 'nearest' }); NAV.scrollTo = null; }
             syncBar();
@@ -2037,10 +2050,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function hoverLens(ev, l) {
             st.last = { edge: l.edge };
             if (l.members) {
-                // a tier bundle: the lanes it carries
+                focusHover(l.cat.tk);
+                // a merged ribbon (a closed tier, a collapsed lane): the groups it carries
                 const t = TIERS[l.cat.tier], top = [...new Set(l.members)].slice(0, 5);
                 const idx = new Set(); for (const c of new Set(l.members)) for (const i of catNodes(st.doc, st.R, cats(st.lens), c)) idx.add(i);
-                showTip(ev, l.cat.label, t ? { glyph: t[0], tag: t[1], color: t[2] } : l.cat.color, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ['Lanes', fmt(new Set(l.members).size)], ...top.map(c => ['', c.g ? NG.shownName(st.S.names[c.g.id]) || c.label : c.label])], fileMetaHtml(st.doc, filesOfNodes(st.doc, [...idx]), 'the files holding these lanes'));
+                showTip(ev, l.cat.label, t ? { glyph: t[0], tag: t[1], color: t[2] } : l.cat.color, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ['Groups', fmt(new Set(l.members).size)], ...top.map(c => ['', c.g ? NG.shownName(st.S.names[c.g.id]) || c.label : c.label])], fileMetaHtml(st.doc, filesOfNodes(st.doc, [...idx]), 'the files holding these lanes'));
                 return;
             }
             lensTip(ev, l.cat, [['Link', `${name(l.source.id)} \u2192 ${name(l.target.id)}`], ['Kept', `${fmt(l.value)} fn`], ...(l.edge ? [['Similarity', l.edge.similarity]] : [])]);
@@ -2265,7 +2279,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if ([...st.collapsed].sort().join() !== [...(st.collapsed0 || [])].sort().join()) add('Grouped', st.collapsed.size ? `${st.collapsed.size} subtree${st.collapsed.size === 1 ? '' : 's'}` : 'every file shown', () => { st.collapsed = new Set(st.collapsed0 || []); rebuild(); });
             if (st.multi) add('Tracks', 'small multiples', () => { st.multi = false; groupList(); multiples(); });
             if (st.reuseOn) add('Reuse layer', 'on', () => { st.reuseOn = false; applyReuse(); reuse.paint(); });
-            if (!st.tierBundle && tierRib.el.style.display !== 'none') add('Lane ribbons', 'one per lane', () => { st.tierBundle = true; tierRib.paint(); rebuild(); });
+            if (!st.tierBundle && tierRib.el.style.display !== 'none') add('Lane ribbons', 'every group', () => { st.tierBundle = true; tierRib.paint(); rebuild(); });
             if (st.ring && st.view === 'ring') {
                 const S = st.ring.state;
                 if (S.fc) add('Ring focus', st.ring.focusLabel(), () => st.ring.clear('focus'));

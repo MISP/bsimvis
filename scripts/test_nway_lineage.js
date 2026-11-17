@@ -91,10 +91,14 @@ assert.strictEqual(ab[0].edge.child, 'c:file:b');
     assert.strictEqual(C.of(2), '~common', 'a row in no lane goes to its own tier');
     const ys = [...t.P.segs.get('c:file:a').m.values()].map(x => x.cat.tier);
     assert.deepStrictEqual(ys, ['core', 'common', 'common'], 'a node stacks Core, then Common');
-    const B = lensPaint(t.M, t.L, t.R, C, { bundle: true });
+    // merged cats (a closed tier in the pane): one segment and one ribbon per tier, holding their cats
+    const tierOf = c => (c.tier ? { key: `tier:${c.tier}`, cat: { key: `tier:${c.tier}`, tk: `tier:${c.tier}`, label: c.tier, tier: c.tier } } : { key: c.key, cat: c });
+    const B = lensPaint(t.M, t.L, t.R, C, { groupOf: tierOf });
+    assert.deepStrictEqual([...B.segs.get('c:file:a').m.keys()], ['tier:core', 'tier:common'], 'node segments merge with the ribbons');
     const ab2 = B.links.filter(l => l.source.id === 'c:file:a' && l.target.id === 'c:file:b');
-    assert.deepStrictEqual(ab2.map(l => [l.cat.tier, l.value, l.members.length]), [['core', 1, 1], ['common', 1, 1]], 'one ribbon per tier and edge');
-    assert.ok(B.links.length <= t.P.links.length && B.links.every(l => l.members), 'bundles never add ribbons');
+    assert.deepStrictEqual(ab2.map(l => [l.cat.tier, l.value, l.members.length]), [['core', 1, 1], ['common', 1, 2]], 'one ribbon per tier and edge, holding every cat of the tier');
+    assert.ok(B.links.length <= t.P.links.length && B.links.every(l => l.members), 'merging never adds ribbons');
+    assert.ok(/groupOf: st\.tierBundle \? paneGroupOf : null/.test(src) && /paneSig\(\) !== st\.paintSig/.test(src), 'the trees draw what the pane shows and redraw when it opens or closes');
 }
 
 // --- tracking --------------------------------------------------------------------
@@ -177,7 +181,7 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.strictEqual(col('delta:kept'), 'var(--lin-grey-d)', 'no single origin: grey');
     assert.ok(/!\(st\.view === 'tree'/.test('') || !/st\.sel = \{ group: true \}/.test(src), 'the group card is not opened a second time in the drawer');
     // a lane's key covers its sub-groups (regions): hovering or selecting a lane lights their ribbons, nodes, Ring modules and Births layers
-    assert.ok(/const linkHas = \(l, t\) => catUnder\(l\.cat, t\)/.test(src) && /some\(x => catUnder\(x\.cat, st\.fk\)\)/.test(src) && /\(c\.g\.path \|\| \[\]\)\.includes\(id\)/.test(src), 'lane keys light their sub-groups');
+    assert.ok(/const catHas = \(c, t\) => catUnder\(c, t\) \|\| \(!!c\.members && c\.members\.some\(m => catUnder\(m, t\)\)\)/.test(src) && /const linkHas = \(l, t\) => catHas\(l\.cat, t\)/.test(src) && /some\(x => catHas\(x\.cat, st\.fk\)\)/.test(src) && /\(c\.g\.path \|\| \[\]\)\.includes\(id\)/.test(src), 'lane keys light their sub-groups');
     assert.ok(/st\.ring\.hoverTrack\(test\)/.test(src) && /st\.births\.hoverTrack\(test\)/.test(src) && /onHover: c => graphHover\(c\)/.test(src) && /function laneOf\(c\)/.test(src), 'pane hover reaches every view, a view hover lights its whole lane there and in the pane');
     // the left pane is a selector only; a selected group's functions are a table in the Inspector, NAV_ROWS at a time
     assert.ok(/NAV_ROWS = 50/.test(src) && /function fnTr\(r, onClick\)/.test(src) && /fnTable\(body, it\.rows, `g:\$\{tk\}`\)/.test(src) && /st\.inspShown\.set\(key, lim \+ NAV_ROWS\)/.test(src) && !/function navPage/.test(src), 'group functions: a table in the Inspector, paged');

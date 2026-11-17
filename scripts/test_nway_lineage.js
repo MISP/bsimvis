@@ -176,9 +176,10 @@ assert.strictEqual(fn.max, 1, 'max: the most tracked rows one node holds (the tr
     assert.strictEqual(col('delta:span-1-2'), bornColor(1), 'span-A-B takes the colour of node A');
     assert.strictEqual(col('delta:kept'), 'var(--lin-grey-d)', 'no single origin: grey');
     assert.ok(/!\(st\.view === 'tree'/.test('') || !/st\.sel = \{ group: true \}/.test(src), 'the group card is not opened a second time in the drawer');
-    // the lane card lists every function of the group: collapsed, filled on the first open, 200 rows at a time, rows are the dock's rowEl, built with textContent only
-    assert.ok(/ALL_ROWS = 200/.test(src) && /`All functions \(\$\{fmt\(every\.length\)\}\)`/.test(src) && /det\.addEventListener\('toggle', \(\) => \{ if \(det\.open && !shown\) fill\(\); \}\)/.test(src) && /list\.append\(rowEl\(r\)\)/.test(src) && /Show more \(\$\{fmt\(every\.length - shown\)\} left\)/.test(src), 'All functions: collapsed, lazy, 200 at a time, rowEl rows');
-    assert.ok(!/every[^;]*innerHTML/.test(src.slice(src.indexOf('every function of the group'), src.indexOf('every function of the group') + 1500)), 'no innerHTML in the list');
+    // the navigator's group page lists every function of the group as a table, NAV_ROWS at a time; names go in with textContent
+    assert.ok(/NAV_ROWS = 50/.test(src) && /function fnTr\(r, onClick\)/.test(src) && /for \(const r of rows\.slice\(0, NAV\.shown\)\) body\.append\(fnTr\(r\)\)/.test(src) && /NAV\.shown \+= NAV_ROWS/.test(src), 'group functions: a table, paged');
+    const ft = src.slice(src.indexOf('function fnTr('), src.indexOf('function hoverRowIdx('));
+    assert.ok(/document\.createTextNode\(` \$\{R\.name\[r\] \|\| fid\}`\)/.test(ft) && !/innerHTML/.test(ft), 'function rows: no innerHTML');
 }
 
 // --- tracks view: a group born in two places, member ids ---------------------------
@@ -778,7 +779,7 @@ global.fetch = async () => { posts++; return { ok: true, json: async () => ({ st
             assert.ok(/q\.set\('track', x\.tk\);\s*q\.set\('tfocus', '1'\);/.test(lin), 'the pivot URL carries tfocus=1');
             assert.ok(!/tfocus/.test(window.NwayLineage.tableQs('md5s=a&tfocus=1&track_only=1').toString()) , 'tfocus is not forwarded by the table links');
             assert.ok(/'tfocus', 'track_only', 'root', 'file'/.test(vw), 'nor to the lineage API');
-            assert.ok(/highlighted and scrolled into view, showing only its functions/.test(lin), 'clear tooltips on both buttons');
+            assert.ok(/The N-way table with this group tracked and scrolled into view/.test(lin) && /The group's call graph in the N-way table/.test(lin), 'clear tooltips on both buttons');
             // the table side, on a bare panel object
             const pw = {}; global.escapeHtml = global.escapeAttr = String; global.document = { createElement: () => ({}), addEventListener() {}, head: { appendChild() {} }, getElementById: () => null };
             new Function('window', 'document', fs.readFileSync(__dirname + '/../bsimvis/app/static/js/nway_panel.js', 'utf8'))(Object.assign(pw, { NwayGroups: window.NwayGroups, NwayColors: window.NwayColors, escapeHtml: String, escapeAttr: String }), global.document);

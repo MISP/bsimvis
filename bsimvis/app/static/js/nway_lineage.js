@@ -52,7 +52,7 @@
     const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];
     // nway_region_service.SPECIAL
     const SPECIAL = { small: 'Small regions', none: 'Outside the call graph', runtime: 'Runtime', library: 'Library' };
-    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, DOCK_ROWS = 5, ALL_ROWS = 200, NAV_ROWS = 50, NAV_SEC = 12;
+    const GREY = 'var(--lin-grey-d)', LANE_MAX = 12, LEGEND_MAX = 14, NAV_ROWS = 50, NAV_SEC = 12;
     const hueOf = i => window.NwayColors.hue(i);
     // --lin-hl is the table's top-level lightness: 52%, 44% on the light theme (.nway-sq.on)
     const hsl = (h, l = 52) => `hsl(${h} 62% calc(var(--lin-hl) + ${l - 52}%))`;
@@ -155,8 +155,14 @@ html.light-theme .lin-root,html.light-theme .lin-vars{--lin-slate:#4a5870;--lin-
 .lin-mini svg{width:100%;height:100%;display:block;cursor:pointer;touch-action:none}
 .lin-note{position:absolute;left:12px;bottom:12px;max-width:60%;padding:4px 10px;border:1px solid var(--lin-line);border-radius:8px;background:var(--lin-card);font-size:12px;opacity:.95}
 .lin-note button{background:none;border:0;color:var(--accent,#66d9ef);cursor:pointer;font:inherit;text-decoration:underline}
-.lin-drawer{position:absolute;top:0;right:0;bottom:0;width:360px;max-width:85%;transform:translateX(102%);transition:transform .2s ease;background:var(--lin-card);border-left:1px solid var(--lin-line);padding:12px 14px;overflow:auto;z-index:5;box-shadow:-6px 0 18px rgba(0,0,0,.25)}
-.lin-drawer.open{transform:none}
+.lin-drawer{display:none;flex:none;width:360px;max-width:45%;background:var(--lin-card);border-left:1px solid var(--lin-line);overflow:auto;padding:0 0 12px}
+.lin-drawer.open{display:block}
+.lin-ih{position:sticky;top:0;z-index:2;background:var(--lin-card);border-bottom:1px solid var(--lin-line);padding:8px 10px;display:grid;gap:5px}
+.lin-ih1{display:flex;align-items:center}.lin-ik{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:700;opacity:.65}
+.lin-ih2{display:flex;gap:7px;align-items:center;min-width:0}.lin-ih2 b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
+.lin-xb{border:0;background:none;color:inherit;font-size:18px;line-height:1;width:26px;height:26px;border-radius:6px;cursor:pointer;opacity:.7}.lin-xb:hover{opacity:1;background:var(--hover,#2d2d2d)}
+.lin-ib{padding:8px 10px;display:grid;gap:8px}.lin-ib .lin-ntabs{padding:0;margin:0 -10px;padding-left:10px}
+.lin-acts .lin-btn.on{border-color:var(--accent,#66d9ef);color:var(--accent,#66d9ef)}
 .lin-drawer h4{margin:0 0 8px;font-size:13px;word-break:break-all;padding-right:22px}
 .lin-x{position:absolute;top:6px;right:8px;background:none;border:0;color:inherit;font-size:18px;cursor:pointer}
 .lin-kv{display:grid;grid-template-columns:1fr auto;gap:2px 14px}
@@ -910,12 +916,12 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         // Tracks view: the lens's groups on the left, the tree (or six mini trees) for the selected one
         const body = el('div', { class: 'lin-body' }), side = el('nav', { class: 'lin-glist', 'aria-label': 'Groups' }), grid = el('div', { class: 'lin-multi' });
         side.hidden = grid.hidden = true;
-        body.append(side, canvas, grid);
+        body.append(side, canvas, grid, drawer);
         root.append(tb, body);
         container.replaceChildren(root);
 
         const st = { doc: null, M: null, L: null, collapsed: new Set(), reuseOn: false, tierBundle: true, zc: new Map(), sel: null, last: null, t: d3.zoomIdentity, hasView: false, hl: null, hover: 0, raf: 0, bfCache: new Map(), dead: false,
-            lens: opts.lens || 'lanes', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'rows', dockFn: null, dockOpen: new Set(), view: opts.view || 'tree', multi: false, ringList: !!(opts.ring && opts.ring.list),
+            lens: opts.lens || 'lanes', track: opts.track || '', R: null, C: new Map(), P: null, T: null, dockTab: 'groups', dockFn: null, dockOpen: new Set(), inspShown: new Map(), fnSel: null, view: opts.view || 'tree', multi: false, ringList: !!(opts.ring && opts.ring.list),
             // the model's group names (NwayGroups naming state) and one-line function summaries by fid
             S: { names: {}, evid: {}, busy: false, done: false, off: opts.laneNames === false }, lnSig: '', sums: new Map() };
         const s = d3.select(canvas).append('svg').attr('role', 'img').attr('aria-label', 'Lineage of the files: shared, born, died and reused code');
@@ -927,7 +933,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         zoom.filter(ev => (!ev.ctrlKey || ev.type === 'wheel') && !ev.button && !(st.view === 'ring' && ev.type !== 'wheel' && ev.target.closest && ev.target.closest('[data-drag]')));
         s.call(zoom);
         const tip = d3.select(document.body).append('div').attr('class', 'lin-vars lin-tip');
-        canvas.append(noteBox, mini, drawer);
+        canvas.append(noteBox, mini);
 
         // ---- toolbar ----
         for (const e of opts.toolbar || []) tb.append(e);
@@ -992,13 +998,13 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const name = id => st.names.get(id) || id;
         const names = ids => ids.slice(0, 8).map(name).join(', ') + (ids.length > 8 ? ` +${ids.length - 8} more` : '');
 
-        const closeDock = () => drawer.classList.remove('open');
-        const closeBtn = () => { const x = el('button', { class: 'lin-x', type: 'button', 'aria-label': 'Close' }, '\u00d7'); x.addEventListener('click', closeDock); return x; };
+        const closeDock = () => { drawer.classList.remove('open'); if (st.sel) { st.sel = null; applySel(); } if (st.fnSel != null) { st.fnSel = null; gHov.selectAll('*').remove(); if (st.R) groupList(); } };
         const openDrawer = pick => {
             drawer.classList.add('open');
-            if (pick.node && st.R) dock(pick.node);
-            else if (pick.group) { drawer.replaceChildren(closeBtn()); const tg = trackedGroup(); if (tg) drawer.append(groupCard(tg.x, tg.C)); }
-            else detail(drawer, pick, name, closeDock);
+            if (pick.fn != null && st.R) inspectFnDraw(pick.fn);
+            else if (pick.node && st.R) dock(pick.node);
+            else if (pick.node) { const { body } = inspHead('File', name(pick.node.id), nodeColor(st.doc, pick.node.idx)); kvBox(body, [['Functions', fmt(pick.node.functions)]]); metaBox(body, nodeFiles(pick.node), 'this file'); }
+            else inspOther(pick);
         };
         const lensOn = () => !!st.R && st.lens !== 'deltas' && LENSES.some(l => l[0] === st.lens);
         const cats = lens => { const ring = lens === 'deltas' && st.view === 'ring', k = ring ? 'deltas:ring' : lens; return st.C.get(k) || st.C.set(k, lensCats(st.doc, st.R, lens, gText, { server: ring })).get(k); };
@@ -1111,7 +1117,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function legend() {
             const doc = st.doc;
             legendBox.replaceChildren();
-            if (st.P) return; // the lens's groups are the navigator's list
+            // the lens's groups are the navigator's list; the chips stay only as the Ring's Module list
+            if (st.P) { if (st.view === 'ring' && st.ringList) lensLegend(); return; }
             const chip = (color, text, mode) => {
                 const c = el('span', { class: 'lin-chip' }), sw = el('span', { class: 'lin-sw' });
                 sw.style.background = mode === 'hatch' ? `repeating-linear-gradient(45deg,${color} 0 2px,transparent 2px 4px)` : mode === 'dash' ? `repeating-linear-gradient(90deg,${color} 0 4px,transparent 4px 7px)` : color;
@@ -1511,65 +1518,11 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function pickFn(r) {
             st.fnSel = r;
             st.dockFn = r;
-            hoverRowIdx(r);
             groupList();
-            if (st.inspectFn) st.inspectFn(r);
+            pick({ fn: r });
+            hoverRowIdx(r);
         }
         const groupMap = () => Object.fromEntries((st.doc.groups || []).map(g => [g.id, g]));
-        // A tracked group as its table header reads, with its heaviest functions and their one-line LLM summaries.
-        function groupCard(x, C) {
-            const g = x.g, card = el('section', { class: 'lin-card', 'aria-label': 'Tracked group' });
-            const h = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), nm = el('span', { class: 'lin-gn' });
-            sw.style.background = x.color;
-            nm.innerHTML = gHtml(g);
-            h.append(sw, nm);
-            const ev = el('div', { class: 'lin-gev' }), sts = el('div', { class: 'lin-gst' });
-            ev.innerHTML = NG.laneEv(g, st.S, false) + (g.kind === 'lane' ? NG.parentChip(g, groupMap(), st.S) : '');
-            sts.innerHTML = gStats(g);
-            const acts = el('div', { class: 'lin-acts' });
-            for (const [what, txt, icon, tip] of [['graph', 'Call graph', 'fa-diagram-project', "Opens the N-way table with this group's call graph, the group highlighted and scrolled into view, showing only its functions"], ['table', 'Open in table', 'fa-table', 'Opens the N-way table with this group highlighted, scrolled into view, showing only its functions']]) {
-                const b = el('button', { type: 'button', class: 'lin-btn', title: tip });
-                b.append(el('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${txt}`));
-                b.addEventListener('click', e => groupPivot(what, x, e));
-                acts.append(b);
-            }
-            card.append(h);
-            if (g.tip) card.append(el('div', { class: 'lin-dim' }, g.tip));
-            card.append(ev, sts, acts);
-            // its heaviest matching functions, each with the first line of its LLM note when one exists
-            const top = C.members[x.i].filter(st.R.match).sort((a, b) => (st.R.weight[b] || 0) - (st.R.weight[a] || 0)).slice(0, DOCK_ROWS + 1);
-            if (top.length) card.append(el('div', { class: 'lin-dim', style: 'margin-top:6px' }, 'Heaviest functions'));
-            const want = [];
-            for (const r of top) {
-                const fid = st.R.fid[r], sum = el('div', { class: 'lin-sum' }, st.sums.get(fid) || '');
-                card.append(rowEl(r), sum);
-                if (!st.sums.has(fid)) want.push([fid, sum]);
-            }
-            // every function of the group, collapsed: rendered on first open, 200 rows at a time, a click on a row tracks it
-            const every = C.members[x.i].filter(st.R.match).sort((a, b) => (st.R.weight[b] || 0) - (st.R.weight[a] || 0));
-            if (every.length) {
-                const det = el('details', { style: 'margin-top:8px' }), list = el('div'), box = el('div', { style: 'max-height:280px;overflow:auto' }), moreB = el('button', { type: 'button', class: 'lin-more' });
-                let shown = 0;
-                const fill = () => {
-                    const n = Math.min(ALL_ROWS, every.length - shown);
-                    for (const r of every.slice(shown, shown + n)) list.append(rowEl(r));
-                    shown += n;
-                    moreB.textContent = `Show more (${fmt(every.length - shown)} left)`;
-                    moreB.style.display = shown < every.length ? '' : 'none';
-                };
-                det.addEventListener('toggle', () => { if (det.open && !shown) fill(); });
-                moreB.addEventListener('click', fill);
-                box.append(list, moreB);
-                det.append(el('summary', { style: 'cursor:pointer' }, `All functions (${fmt(every.length)})`), box);
-                card.append(det);
-            }
-            if (want.length) {
-                fetch(`/api/bin_sim/nway/facets/summaries?fids=${encodeURIComponent(want.map(w => w[0]).join(','))}`).then(res => (res.ok ? res.json() : { summaries: {} })).then(d => {
-                    for (const [fid, box] of want) { const t = (d.summaries || {})[fid] || ''; st.sums.set(fid, t); box.textContent = t; }
-                }).catch(() => {});
-            }
-            return card;
-        }
         // "Call graph" / "Open in table": the N-way table on this lens with the group tracked (and its call graph open)
         function groupPivot(what, x, ev) {
             if (opts.onGroup && opts.onGroup(what, x.tk, st.lens)) return;
@@ -1763,83 +1716,151 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         function pickNode(n) { if (!(opts.onNode && opts.onNode(n))) pick({ node: n }); }
 
         // ---- dock: a node's rows by lens, its diff against the parent, a function preview ----
-        function dock(n) {
-            const R = st.R, lens = st.lens, box = drawer;
-            if (st.dockNode !== n.id) { st.dockNode = n.id; st.dockFn = null; st.dockOpen = new Map(); }
-            box.replaceChildren();
-            const x = el('button', { class: 'lin-x', type: 'button', 'aria-label': 'Close' }, '×');
+        // ---- the right pane: the Inspector (a file, an edge, a function, a reuse class), docked beside the canvas ----
+        const openUrl = (url, ev, title, type) => { if (window.Nav) window.Nav.openPath(url, ev, { title, type }); else location.href = url; };
+        function inspHead(kind, title, color) {
+            drawer.replaceChildren();
+            const h = el('div', { class: 'lin-ih' }), r1 = el('div', { class: 'lin-ih1' }), r2 = el('div', { class: 'lin-ih2' });
+            const x = el('button', { class: 'lin-xb', type: 'button', 'aria-label': 'Close the inspector', title: 'Close (Esc)' }, '×');
             x.addEventListener('click', closeDock);
-            const h = el('h4', {}), sw = el('span', { class: 'lin-sw', style: 'margin-right:6px' }), tw = twinsOf(n);
-            sw.style.background = nodeColor(st.doc, n.idx);
-            h.append(sw, document.createTextNode(name(n.id)));
-            if (tw) h.append(el('span', { style: 'color:var(--success);margin-left:6px' }, `×${tw.length}`));
-            box.append(x, h);
-            if (tw) box.append(el('div', { class: 'lin-dim', style: 'word-break:break-all;margin-bottom:6px' }, `${st.doc.columns_mode === 'children' ? 'Cluster files' : 'Same code'}: ${tw.map(md5Of).join(', ')}`));
-            const p = st.L.fileOf.get(st.L.parentOf.get(n.id));
-            const shown = n.rows.filter(R.match);
-            const born = p ? shown.filter(r => !p.has(r)) : [], lost = p ? p.rows.filter(r => R.match(r) && !n.has(r)) : [];
-            const line = el('div', { class: 'lin-dim' }, `${fmt(shown.length)} of ${fmt(n.rows.length)} functions shown · `);
-            line.append(el('span', { class: 'lin-plus' }, `+${fmt(born.length)}`), document.createTextNode(' '), el('span', { class: 'lin-minus' }, `−${fmt(lost.length)}`));
-            box.append(line);
-            pivots(box, n);
-            const tg = trackedGroup();
-            if (tg) box.append(groupCard(tg.x, tg.C));
-            const tabs = el('div', { class: 'lin-tabs', role: 'tablist' }), body = el('div');
-            for (const [v, t, ic] of [['rows', 'Rows', 'fa-table-list'], ['diff', 'Diff vs parent', 'fa-code-compare'], ['fn', 'Function', 'fa-code']]) {
-                const b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(st.dockTab === v) });
-                b.append(el('i', { class: `fa-solid ${ic}` }), document.createTextNode(` ${t}`));
-                b.addEventListener('click', () => { st.dockTab = v; dock(n); });
-                tabs.append(b);
+            r1.append(el('span', { class: 'lin-ik' }, kind), el('span', { style: 'flex:1' }), x);
+            if (color) { const sw = el('span', { class: 'lin-sw' }); sw.style.background = color; r2.append(sw); }
+            r2.append(el('b', { title }, title));
+            const acts = el('div', { class: 'lin-acts' });
+            h.append(r1, r2, acts);
+            const body = el('div', { class: 'lin-ib' });
+            drawer.append(h, body);
+            const act = (icon, txt, tip, f) => { const b = el('button', { type: 'button', class: 'lin-btn', title: tip }); b.append(el('i', { class: `fa-solid ${icon}` }), document.createTextNode(` ${txt}`)); b.addEventListener('click', f); acts.append(b); return b; };
+            return { body, act };
+        }
+        const kvBox = (box, rows) => { const g = el('div', { class: 'lin-kv' }); for (const [k, v] of rows) g.append(el('span', { class: 'k' }, k), el('span', {}, String(v))); box.append(g); return g; };
+        const metaBox = (box, ids, what, open = true) => { const html = fileMetaHtml(st.doc, ids, what); if (!html) return; const d = el('details', { class: 'lin-nmeta' }), m = el('div'); if (open) d.open = true; m.innerHTML = html; d.append(el('summary', {}, 'What it is made of'), m); box.append(d); };
+        const firstFile = n => { const f = (n.members && n.members[0]) || n.id, i = String(f).lastIndexOf(':'); return { coll: String(f).slice(0, i), md5: String(f).slice(i + 1) }; };
+        // a function list: the shared table, a filter, NAV_ROWS at a time
+        function fnTable(box, rows, key) {
+            const R = st.R, lim = st.inspShown.get(key) || NAV_ROWS, sorted = [...rows].sort((a, b) => (R.weight[b] || 0) - (R.weight[a] || 0));
+            const t = el('table', { class: 'lin-ft' }), body = el('tbody');
+            for (const r of sorted.slice(0, lim)) body.append(fnTr(r));
+            t.append(body);
+            box.append(t);
+            if (sorted.length > lim) box.append(btn(`Show ${fmt(Math.min(NAV_ROWS, sorted.length - lim))} more · ${fmt(sorted.length - lim)} left`, '', () => { st.inspShown.set(key, lim + NAV_ROWS); openDrawer(st.sel); }, 'lin-link lin-nmore'));
+        }
+        function inspTabs(box, list, cur, set) {
+            const tabs = el('div', { class: 'lin-ntabs', role: 'tablist' });
+            for (const [k, t] of list) { const b = el('button', { type: 'button', role: 'tab', 'aria-selected': String(cur === k) }, t); b.addEventListener('click', () => { set(k); openDrawer(st.sel); }); tabs.append(b); }
+            box.append(tabs);
+        }
+        // the lens groups a set of rows falls in, biggest first, each a row that focuses it in the navigator
+        function groupsOf(box, rows) {
+            const items = navItems(), by = new Map();
+            for (const r of rows) { const it = items.find(x => x.rows.includes(r)); if (it) by.set(it, (by.get(it) || 0) + 1); }
+            for (const [it, k] of [...by].sort((a, b) => b[1] - a[1])) {
+                const b = navRow(it);
+                b.querySelector('.lin-nc').textContent = fmt(k);
+                b.querySelector('.lin-nc').title = `${fmt(k)} here, ${fmt(it.rows.length)} in all`;
+                box.append(b);
             }
-            box.append(tabs, body);
-            if (st.dockTab === 'rows') {
-                // Deltas: inherited / born here / kept by no child, like the node body; born here tracks as deltas:<node>
-                const kids = (st.M.kids.get(n.id) || []).map(k => st.M.byId.get(k).idx);
-                const C = lens !== 'deltas' ? cats(lens) : {
-                    lens, cats: [{ key: 'kept', label: 'Inherited', color: V.shared }, { key: 'born', label: 'Born here', color: V.born }, { key: 'died', label: 'Kept by no child', color: V.died }],
-                    of: r => (p && !p.has(r) ? 'born' : kids.length && !kids.some(i => R.has(r, i)) ? 'died' : 'kept'),
-                };
-                groups(body, n, shown, C, c => (lens !== 'deltas' ? c.tk : c.key === 'born' ? `deltas:${n.id}` : null));
-            } else if (st.dockTab === 'diff') {
-                if (!p) { body.append(el('div', { class: 'lin-dim' }, 'The root has no parent. Pick another node.')); return; }
-                const e = st.M.inE.get(n.id), kv = el('div', { class: 'lin-kv' });
-                kv.append(el('span', { class: 'k' }, 'Parent'), el('span', {}, name(p.id)), el('span', { class: 'k' }, 'Similarity'), el('span', {}, String(e ? e.similarity : '')));
-                body.append(kv);
-                const C = cats(lens === 'deltas' ? 'modules' : lens);
-                for (const [list, cls, sign, text] of [[born, 'lin-plus', '+', 'born here'], [lost, 'lin-minus', '−', 'lost from the parent']]) {
-                    const b = el('div', { style: 'margin-top:10px' });
+            if (!by.size) box.append(el('div', { class: 'lin-dim' }, 'No function here matches the filters.'));
+        }
+        function dock(n) {
+            const R = st.R, tw = twinsOf(n), p = st.L.fileOf.get(st.L.parentOf.get(n.id));
+            if (st.dockNode !== n.id) { st.dockNode = n.id; st.inspShown = new Map(); }
+            const kind = n.agg ? 'Grouped files' : tw ? (st.doc.columns_mode === 'children' ? 'Cluster' : 'Same-code files') : 'File';
+            const { body, act } = inspHead(kind, name(n.id), nodeColor(st.doc, n.idx));
+            if (!n.agg && window.Nav) {
+                const f = firstFile(n), m = encodeURIComponent(f.md5), q = tableQs(location.search);
+                q.set('column', n.id);
+                act('fa-file', 'File', 'The file view', ev => openUrl(window.Nav.buildUIUrl(f.coll, ['files', f.md5]), ev, 'File', 'file'));
+                act('fa-list', 'Functions', "The file's functions", ev => openUrl(`${window.Nav.buildUIUrl(f.coll, ['functions'])}?file_md5=${m}`, ev, 'Functions', 'functions'));
+                act('fa-clone', 'Similar', 'Functions similar to this file\'s', ev => openUrl(`${window.Nav.buildUIUrl(f.coll, ['functions', 'similarities'])}?md5=${m}`, ev, 'Similar functions', 'functions'));
+                act('fa-table-columns', 'Column in table', 'The N-way table on this column', ev => openUrl(`/diff/nway?${q}`, ev, 'N-way', 'bin_sim'));
+                if (p && !p.agg && typeof buildFileDiffUrl === 'function') { const a = firstFile(p); act('fa-code-compare', 'Diff with parent', `The file diff ${name(p.id)} → ${name(n.id)}`, ev => openUrl(buildFileDiffUrl(a.coll, a.md5, f.coll, f.md5), ev, 'File diff', 'file')); }
+            }
+            const shown = n.rows.filter(R.match), born = p ? shown.filter(r => !p.has(r)) : [], lost = p ? p.rows.filter(r => R.match(r) && !n.has(r)) : [];
+            const e = st.M.inE.get(n.agg ? n.top : n.id);
+            kvBox(body, [['Functions', `${fmt(shown.length)} shown of ${fmt(n.rows.length)}`], ...(p ? [['Parent', `${name(p.id)}${e ? ` · similarity ${e.similarity}` : ''}`], ['vs parent', `+${fmt(born.length)} born · −${fmt(lost.length)} lost`]] : [['Parent', 'none (a root)']]), ...timeRows(n), ...(tw ? [['Files', `${tw.length}: ${tw.slice(0, 4).map(md5Of).join(', ')}${tw.length > 4 ? ` +${tw.length - 4}` : ''}`]] : [])]);
+            metaBox(body, nodeFiles(n), tw || n.agg ? "this node's files" : 'this file', !!(tw || n.agg));
+            const tab = st.dockTab === 'diff' || st.dockTab === 'fns' ? st.dockTab : 'groups';
+            inspTabs(body, [['groups', 'Groups here'], ...(p ? [['diff', 'vs parent']] : []), ['fns', `Functions ${fmt(shown.length)}`]], tab, k => { st.dockTab = k; });
+            if (tab === 'groups') groupsOf(body, shown);
+            else if (tab === 'diff') {
+                for (const [list, cls, sign, text, key] of [[born, 'lin-plus', '+', 'born here', 'born'], [lost, 'lin-minus', '−', 'lost from the parent', 'lost']]) {
+                    const b = el('div', { class: 'lin-gh', style: 'margin-top:8px' });
                     b.append(el('span', { class: cls }, `${sign}${fmt(list.length)}`), document.createTextNode(` ${text}`));
                     body.append(b);
-                    nameGroups(body, n, list, C);
+                    fnTable(body, list, `${n.id}:${key}`);
                 }
-            } else fnPreview(body, n);
+            } else fnTable(body, shown, `${n.id}:all`);
         }
-        function groups(body, n, rows, C, trackKey) {
-            const by = new Map(C.cats.map(c => [c.key, []]));
-            for (const r of rows) by.get(C.of(r)).push(r);
-            for (const c of C.cats) {
-                const list = by.get(c.key);
-                if (!list.length) continue;
-                const gh = el('div', { class: 'lin-gh' }), sw = el('span', { class: 'lin-sw' }), tk = trackKey(c), lab = el('span', { class: 'lin-gn' });
-                sw.style.background = c.color;
-                if (c.g) lab.innerHTML = gHtml(c.g); else lab.textContent = c.label;
-                gh.append(sw, lab, el('span', { class: 'lin-dim' }, fmt(list.length)));
-                if (tk) {
-                    const b = el('button', { type: 'button', class: `lin-ic${st.track === tk ? ' on' : ''}`, title: 'Track this group across the tree', 'aria-label': `Track ${c.label}` });
-                    b.append(el('i', { class: 'fa-solid fa-crosshairs' }));
-                    b.addEventListener('click', () => setTrack(st.track === tk ? '' : tk));
-                    gh.append(b);
+        // a picked function: what it is, its code, where it is, and where to open it
+        function inspectFnDraw(r) {
+            const R = st.R, fid = R.fid[r], p = fparts(fid), C = cats(st.lens), cat = C.cats.find(c => c.key === C.of(r));
+            const { body, act } = inspHead('Function', R.name[r] || fid);
+            const fnHref = f => (window.NwayPanel && window.NwayPanel.fnUrl ? window.NwayPanel.fnUrl(f) : window.Nav ? window.Nav.buildUIUrl(fparts(f).coll, ['files', fparts(f).md5, 'functions', fparts(f).addr]) : '');
+            act('fa-arrow-up-right-from-square', 'Open', 'The function view (its Similar tab lists its matches)', ev => openUrl(fnHref(fid), ev, R.name[r] || 'Function', 'function'));
+            if (window.NwayPanel && window.NwayPanel.urlForFunctions) act('fa-layer-group', 'Family', 'Every copy side by side in the N-way function view', ev => openUrl(window.NwayPanel.urlForFunctions((R.fids && R.fids[r]) || [fid]), ev, 'N-way diff', 'bin_sim'));
+            const tk = `fn:${fid}`, tb = act('fa-crosshairs', st.track === tk ? 'Tracked' : 'Track', 'Light the files holding it in every view and the table', () => setTrack(st.track === tk ? (NAV.focus || '') : tk));
+            if (st.track === tk) tb.classList.add('on');
+            act('fa-ellipsis', 'More', 'Add to the call graph or the diff queue, show its features, ...', ev => { if (window.showGraphContextMenu) window.showGraphContextMenu(ev, 'function', { id: fid, function_name: R.name[r] || '', entrypoint_address: p.addr, md5: p.md5, collection: p.coll }); });
+            const line = el('div', { class: 'lin-nrow' });
+            line.append(rolePill(R.role[r]));
+            if (cat) { const g = btn(cat.label, 'Focus its group', () => navFocus(cat.tk), 'lin-link'), sw = el('span', { class: 'lin-sw' }); sw.style.background = tierCss(cat.color, cat.tier); line.append(sw, g); }
+            body.append(line);
+            const held = st.L.vis.filter(v => v.has(r));
+            kvBox(body, [['Features', fmt(Math.round(R.weight[r] || 0))], ['Held by', `${held.length} of ${st.L.vis.length} nodes`], ...(R.library[r] ? [['Origin', 'library code']] : [])]);
+            const code = el('div', { class: 'c-code-container nway-dock-code lin-code' }, 'Loading…');
+            body.append(code);
+            fetch(`/api/function/code?id=${encodeURIComponent(fid)}`).then(res => { if (!res.ok) throw new Error(`Function not found (${res.status})`); return res.json(); }).then(d => {
+                code.replaceChildren();
+                for (const ln of d.rows || []) {
+                    const row = el('div', { class: 'code-line' }), gut = el('div', { class: 'gutter' }), ct = el('div', { class: 'line-content' });
+                    gut.append(el('div', { class: 'line-num' }, String(Number(ln.line_idx))));
+                    for (const t of ln.tokens || []) ct.append(el('span', { class: `token token-${t.type}` }, t.text));
+                    row.append(gut, ct);
+                    code.append(row);
                 }
-                body.append(gh);
-                const gk = `${C.lens}:${c.key}`, lim = st.dockOpen.get(gk) || DOCK_ROWS;
-                for (const r of list.slice(0, lim)) body.append(rowEl(r));
-                if (list.length > lim) {
-                    const more = el('button', { type: 'button', class: 'lin-more' }, `+ ${fmt(list.length - lim)} more`);
-                    more.addEventListener('click', () => { st.dockOpen.set(gk, lim + 50); dock(n); });
-                    body.append(more);
-                }
+                if (!code.childElementCount) code.textContent = 'No code available.';
+            }).catch(err => { code.textContent = err.message; });
+            // each copy: its node and address; hover previews that copy, a click opens it
+            body.append(el('div', { class: 'lin-gh', style: 'margin-top:8px' }, `In ${held.length} node${held.length === 1 ? '' : 's'}`));
+            const t = el('table', { class: 'lin-ft' }), tbody = el('tbody'), copies = (R.fids && R.fids[r]) || [fid];
+            for (const v of held) {
+                const md5s = new Set(nodeFiles(v).map(md5Of)), f = copies.find(x => md5s.has(fparts(x).md5)) || fid, fp = fparts(f);
+                const tr = el('tr', { class: 'lin-fr', tabindex: 0 }), td = el('td'), sw = el('span', { class: 'lin-sw', style: 'display:inline-block;vertical-align:middle;margin-right:6px' });
+                sw.style.background = nodeColor(st.doc, v.idx);
+                td.append(sw, document.createTextNode(name(v.id)));
+                tr.append(td, el('td', { class: 'lin-num' }, fp.addr || ''));
+                tr.addEventListener('mouseenter', ev => { if (window.showCodePreview) window.showCodePreview(f, R.name[r] || '', fp.addr, fp.md5, Number(R.weight[r]) || 0, ev); hoverRowIdxNode(v); });
+                tr.addEventListener('mousemove', ev => { if (window.moveCodePreview) window.moveCodePreview(ev); });
+                tr.addEventListener('mouseleave', ev => { if (window.hideCodePreview) window.hideCodePreview(ev); hoverRowIdxNode(null); });
+                tr.addEventListener('click', ev => openUrl(fnHref(f), ev, R.name[r] || 'Function', 'function'));
+                tbody.append(tr);
             }
-            if (!rows.length) body.append(el('div', { class: 'lin-dim' }, 'No function of this file matches the filters.'));
+            t.append(tbody);
+            body.append(t);
+        }
+        // an edge (with the fork part it was picked through) or a reuse class
+        function inspOther(pick) {
+            if (pick.reuse) {
+                const r = pick.reuse, { body } = inspHead('Reuse', `${r.files.length} files outside the tree path`, V.reuse);
+                kvBox(body, [['Functions', fmt(r.count)], ['Level', r.same_level ? 'same level' : `across depth (span ${r.depth_span})`], ['Tree pieces', r.components.length], ...r.components.map((c, i) => [`Piece ${i + 1}`, c.map(name).join(', ')])]);
+                body.append(el('div', { class: 'lin-dim' }, `The tree has no path between these pieces: ${CAVEAT}.`));
+                metaBox(body, r.files.flatMap(f => { const v = st.M.byId.get(f); return v ? filesOfNodes(st.doc, [v.idx]) : []; }), 'these files');
+                return;
+            }
+            const e = pick.edge;
+            if (!e) return;
+            const ev2 = e.recall_evidence || {}, a = st.M.byId.get(e.parent), c = st.M.byId.get(e.child);
+            const { body, act } = inspHead('Edge', `${name(e.parent)} → ${name(e.child)}`);
+            if (a && c && typeof buildFileDiffUrl === 'function') { const fa = firstFile(a), fc = firstFile(c); act('fa-code-compare', 'File diff', 'The two files side by side', ev => openUrl(buildFileDiffUrl(fa.coll, fa.md5, fc.coll, fc.md5), ev, 'File diff', 'file')); }
+            kvBox(body, [['Similarity', e.similarity], ['Shared', fmt(e.shared)], ['Born', fmt(e.gained)], ['Lost', fmt(e.lost)], ['Recall suspect', fmt(e.recall_suspect)], ['  below the floor', fmt(ev2.edge_below_floor)], ['  refused by one-per-file', fmt(ev2.edge_refused)], ['  same name', fmt(ev2.name)]]);
+            if (pick.part) kvBox(body, [['Kept by', pick.part.folded ? 'several children (folded)' : pick.part.children.map(name).join(' + ')], ['Functions', fmt(pick.part.count)]]);
+            const pa = st.L.fileOf.get(st.M.rep.get(e.parent)), ch = st.L.fileOf.get(st.M.rep.get(e.child));
+            if (st.R && pa && ch) {
+                const shared = ch.rows.filter(r => st.R.match(r) && pa.has(r));
+                body.append(el('div', { class: 'lin-gh', style: 'margin-top:8px' }, `Groups kept along it (${fmt(shared.length)} functions)`));
+                groupsOf(body, shared);
+            }
         }
         // one function row, as in the N-way table: name, role, one hue square per node that holds it
         function rowEl(r) {
@@ -1867,49 +1888,6 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             }
             return s;
         }
-        function nameGroups(body, n, list, C) {
-            const by = new Map(C.cats.map(c => [c.key, []]));
-            for (const r of list) by.get(C.of(r)).push(r);
-            for (const c of C.cats) {
-                const rs = by.get(c.key);
-                if (!rs.length) continue;
-                const gh = el('div', { class: 'lin-gh', style: 'font-weight:400' }), sw = el('span', { class: 'lin-sw' }), box = el('div', { class: 'lin-names' });
-                sw.style.background = c.color;
-                gh.append(sw, el('span', {}, c.label), el('span', { class: 'lin-dim' }, fmt(rs.length)));
-                for (const r of rs.slice(0, 8)) {
-                    const b = el('button', { type: 'button', title: 'Track this function and preview it' }, st.R.name[r] || st.R.fid[r]);
-                    b.addEventListener('click', () => { st.dockFn = r; st.dockTab = 'fn'; setTrack(`fn:${st.R.fid[r]}`); });
-                    box.append(b);
-                }
-                if (rs.length > 8) box.append(el('span', { class: 'lin-dim' }, `+${fmt(rs.length - 8)}`));
-                body.append(gh, box);
-            }
-        }
-        // same preview as the N-way table's dock Function tab (/api/function/code), this file's own function when the row has one
-        function fnPreview(body, n) {
-            const R = st.R, r = st.dockFn;
-            if (r == null || !n.has(r)) { body.append(el('div', { class: 'lin-dim' }, 'Click a row in Rows or a name in Diff to preview it here.')); return; }
-            const head = el('div', { class: 'lin-gh' });
-            head.append(el('span', { class: 'lin-nm' }, R.name[r] || R.fid[r]), rolePill(R.role[r]));
-            const held = el('div', { class: 'lin-dim', style: 'display:flex;gap:8px;align-items:center' }, 'Held by');
-            held.append(presence(r));
-            const md5s = new Set((twinsOf(n) || [n.id]).map(md5Of));
-            const fid = (R.fids && (R.fids[r] || []).find(f => md5s.has(f.split(':')[2]))) || R.fid[r];
-            const code = el('div', { class: 'c-code-container nway-dock-code lin-code' }, 'Loading…');
-            body.append(head, held, code);
-            fetch(`/api/function/code?id=${encodeURIComponent(fid)}`).then(res => { if (!res.ok) throw new Error(`Function not found (${res.status})`); return res.json(); }).then(d => {
-                code.replaceChildren();
-                for (const ln of d.rows || []) {
-                    const row = el('div', { class: 'code-line' }), gut = el('div', { class: 'gutter' }), ct = el('div', { class: 'line-content' });
-                    gut.append(el('div', { class: 'line-num' }, String(Number(ln.line_idx))));
-                    for (const t of ln.tokens || []) ct.append(el('span', { class: `token token-${t.type}` }, t.text));
-                    row.append(gut, ct);
-                    code.append(row);
-                }
-                if (!code.childElementCount) code.textContent = 'No code available.';
-            }).catch(err => { code.textContent = err.message; });
-        }
-
         // ---- minimap ----
         let miniVp, miniS = 1;
         function drawMini() {
@@ -2334,62 +2312,6 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             },
         };
         return api;
-    }
-
-    // Pivots: file page, its functions, its similar functions, and the N-way table on this
-    // column with every page param (track and the table's order=lineage included; layout and lview are lineage-only).
-    function pivots(box, n) {
-        if (n.agg || !window.Nav) return;
-        const [col, , md5] = ((n.members || [])[0] || n.id).split(':'), m = encodeURIComponent(md5);
-        const q = tableQs(location.search);
-        q.set('column', n.id);
-        const go = (txt, url, type) => {
-            const b = el('button', { type: 'button', class: 'lin-btn', style: 'margin:6px 6px 0 0' }, txt);
-            b.addEventListener('click', ev => window.Nav.openPath(url, ev, { title: txt, type }));
-            box.append(b);
-        };
-        go('File', window.Nav.buildUIUrl(col, ['files', md5]), 'file');
-        go('Functions', `${window.Nav.buildUIUrl(col, ['functions'])}?file_md5=${m}`, 'functions');
-        go('Similar functions', `${window.Nav.buildUIUrl(col, ['functions', 'similarities'])}?md5=${m}`, 'functions');
-        go('N-way: only this file', `/diff/nway?${q}`, 'bin_sim');
-    }
-
-    function detail(box, pick, nm, close) {
-        box.replaceChildren();
-        const x = el('button', { class: 'lin-x', type: 'button', 'aria-label': 'Close' }, '×');
-        x.addEventListener('click', close);
-        box.append(x);
-        const kv = rows => {
-            const g = el('div', { class: 'lin-kv' });
-            for (const [k, v] of rows) g.append(el('span', { class: 'k' }, k), el('span', {}, String(v)));
-            box.append(g);
-        };
-        if (pick.reuse) {
-            const r = pick.reuse;
-            box.append(el('h4', {}, `Reused outside the tree path: ${r.files.map(nm).join(' + ')}`));
-            kv([['Functions', fmt(r.count)], ['Level', r.same_level ? 'same level' : `across depth (span ${r.depth_span})`], ['Tree pieces', r.components.length]]);
-            r.components.forEach((c, i) => kv([[`Piece ${i + 1}`, c.map(nm).join(', ')]]));
-            box.append(el('div', { class: 'lin-dim', style: 'margin-top:8px' }, `The tree has no path between these pieces: ${CAVEAT}.`));
-            return;
-        }
-        if (pick.part) {
-            const p = pick.part;
-            box.append(el('h4', {}, `${nm(p.parent)}: kept by ${p.folded ? 'several children (folded)' : p.children.map(nm).join(' + ')}`));
-            kv([['Functions', fmt(p.count)], ...Object.entries(p.per_child || {}).map(([c, n]) => [nm(c), fmt(n)])]);
-        }
-        if (pick.node) {
-            const n = pick.node;
-            box.append(el('h4', {}, n.file_name || n.id));
-            kv([['Functions', fmt(n.functions) + (n.root ? ' (root)' : '')], ...(n.died_all != null ? [['Kept by no child', fmt(n.died_all)]] : []), ['Only in this file', fmt(n.only_here)], ['In reuse classes', n.reuse_in == null ? 'n/a' : fmt(n.reuse_in)]]);
-            box.append(el('div', { class: 'lin-dim', style: 'margin-top:8px;word-break:break-all' }, n.id));
-            pivots(box, n);
-        } else if (pick.edge) {
-            const e = pick.edge, ev = e.recall_evidence || {};
-            if (pick.part) box.append(el('div', { style: 'height:10px' }));
-            box.append(el('h4', {}, `${nm(e.parent)} → ${nm(e.child)}`));
-            kv([['Similarity', e.similarity], ['Shared', fmt(e.shared)], ['Born', fmt(e.gained)], ['Lost', fmt(e.lost)], ['Recall suspect', fmt(e.recall_suspect)],
-                ['  below the floor', fmt(ev.edge_below_floor)], ['  refused by one-per-file', fmt(ev.edge_refused)], ['  same name', fmt(ev.name)]]);
-        }
     }
 
     // The lineage page's query as the N-way table's: its own keys (layout, lview, an old link's

@@ -2667,9 +2667,15 @@
             const i = items.findIndex(x => x.header && x.g === id);
             const tbody = this.el.querySelector('#nway-table tbody');
             const head = i < 0 || !groups[id] ? null : tbody.querySelector(`tr.nway-grow[data-gtoggle="${CSS.escape(id)}"]`);
-            // A load or another splice still in flight: fall back to the full reload.
+            // A splice still in flight: another click would flip its group back and cancel it, so wait for it.
+            if (this._gBusy) return;
+            // A load still in flight: fall back to the full reload.
             if (!head || this._drawn !== this._gen) return this._gChange(flip);
             flip();
+            // the request can take seconds on a big set: show the header is working
+            this._gBusy = id;
+            head.classList.add('nway-gbusy');
+            head.setAttribute('aria-busy', 'true');
             const gen = ++this._gen, open = this._gOpen(id), path = groups[id].path;
             const under = g => !!g && !!groups[g] && groups[g].path.includes(id);
             const qs = this._listQs();
@@ -2688,6 +2694,9 @@
                 const res = await fetch(`/api/bin_sim/nway?${qs.toString()}`, { signal: AbortSignal.timeout(NWAY_TIMEOUT_MS) });
                 body = res.ok ? await res.json() : null;
             } catch (e) { body = null; }
+            this._gBusy = null;
+            head.classList.remove('nway-gbusy');
+            head.removeAttribute('aria-busy');
             if (gen !== this._gen) return;
             if (!body) return this.load();
             if (open) {

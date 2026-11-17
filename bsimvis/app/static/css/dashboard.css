@@ -3310,6 +3310,12 @@ html.light-theme .nway-num { background: hsl(var(--h, 195) 62% var(--ll, 44%)); 
 @keyframes nway-hit { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } }
 /* What a toggle just opened: its rows, or the cells of its new columns. */
 .nway-table tr.nway-hit > td, .nway-table td.nway-hit, .nway-table th.nway-hit { animation: nway-hit 1.6s ease-out; }
+/* A group header whose open/close request is still running. */
+@keyframes nway-gbusy { to { opacity: 0.25; } }
+.nway-table tr.nway-gbusy { cursor: progress; }
+.nway-table tr.nway-gbusy > td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.nway-table tr.nway-gbusy .nway-gchev, .nway-table tr.nway-gbusy .nway-xp { animation: nway-gbusy 0.6s ease-in-out infinite alternate; }
+@media (prefers-reduced-motion: reduce) { .nway-table tr.nway-gbusy .nway-gchev, .nway-table tr.nway-gbusy .nway-xp { animation: none; opacity: 0.5; } }
 .nway-table tr.nway-grow.k-lane td:first-child { box-shadow: inset 3px 0 0 var(--lane-c), 1px 0 0 var(--border); }
 .nway-ltag { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.66rem; padding: 0 6px; border-radius: 9px; border: 1px solid; }
 .nway-lev { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 4px; padding-left: 18px; }

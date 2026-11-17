@@ -26,6 +26,7 @@ own root (a forest). A version-key (e.g. 1.2 < 1.3) order is out of scope.
 """
 
 from collections import Counter
+from itertools import groupby
 
 import numpy as np
 
@@ -40,9 +41,11 @@ REUSE_MAX = 300  # reuse classes are skipped beyond this many files
 CHAIN_MAX = 200  # 2-opt is O(N^2) per pass
 TWO_OPT_PASSES = 20
 # ponytail: fixed floors; a file under TIME_FLOOR to every earlier file starts a new root,
-# a later file INVERSION_GAP closer than the parent means the date is likely late
+# a file whose move to an earlier day adds MOVE_GAIN to the tree's parent similarity is flagged
+# (an absolute sum: per-cluster scaling if big sets over-flag)
 TIME_FLOOR = 0.05
-INVERSION_GAP = 0.15
+MOVE_GAIN = 0.15
+DAY_MS = 86_400_000
 
 
 class BadParams(ValueError):
@@ -114,9 +117,18 @@ def spanning_tree(w, root):
     return out
 
 
-def time_order(columns):
-    """Column indices by date (undated last), then bigger file first: the timeline's ranks."""
-    return sorted(
+def _day(c):
+    return None if c.get("t") is None else c["t"] // DAY_MS
+
+
+def time_order(columns, w=None):
+    """The timeline's ranks: by UTC day, undated last.
+
+    Files of one day are interchangeable (one build seen on several
+    architectures at once): with `w`, the next is the one most similar to what
+    is already placed, bigger file on ties. Without it, by time then size.
+    """
+    base = sorted(
         range(len(columns)),
         key=lambda i: (
             columns[i].get("t") is None,
@@ -125,6 +137,54 @@ def time_order(columns):
             i,
         ),
     )
+    if w is None:
+        return base
+    out = []
+    for d, grp in groupby(base, key=lambda i: _day(columns[i])):
+        grp = list(grp)
+        while grp:
+            j = grp[0]
+            if d is not None and out:
+                j = max(grp, key=lambda i: (float(w[out, i].max()), -grp.index(i)))
+            out.append(j)
+            grp.remove(j)
+    return out
+
+
+def time_moves(w, order, columns):
+    """{node index: (slot, gain)}: the earlier day a file fits best, when that is worth MOVE_GAIN.
+
+    first_seen only bounds a birth from above, so only moves to an earlier
+    day are tried, each to the start of that day (slot = position in `order`
+    it goes before). gain = how much the time tree's total parent similarity
+    grows (parents as time_parents picks them). Moving i from r to q changes
+    only i's parent and the parents of the nodes at q..r-1, so it is O(n^2).
+    """
+    n = len(order)
+    f = lambda x: x if x >= TIME_FLOOR else 0.0
+    best = np.zeros(len(w))
+    for k in range(1, n):
+        best[order[k]] = f(float(w[order[:k], order[k]].max()))
+    day = [_day(columns[i]) for i in order]
+    out = {}
+    for r in range(1, n):
+        i = order[r]
+        if day[r] is None:
+            continue
+        pre = np.maximum.accumulate(w[order[:r], i])
+        acc, top = 0.0, (MOVE_GAIN - 1e-9, None)
+        for q in range(r - 1, -1, -1):
+            k = order[q]
+            acc += max(best[k], f(float(w[i, k]))) - best[k]
+            if day[q] < day[r] and (q == 0 or day[q - 1] != day[q]):
+                g = (f(float(pre[q - 1])) if q else 0.0) - best[i] + acc
+                if (
+                    g > top[0] + 1e-9
+                ):  # ties: the nearest earlier day, the smallest move
+                    top = (g, q)
+        if top[1] is not None:
+            out[i] = (top[1], top[0])
+    return out
 
 
 def time_parents(w, order):
@@ -272,7 +332,7 @@ def tree(columns, edges_by_pair, min_edge, root=None, order="tree", rows=None):
     else:
         w = similarity_matrix(columns, edges_by_pair, min_edge)
     if order == "time":  # the earliest file is the root; `root` does not apply
-        rank = time_order(columns)
+        rank = time_order(columns, w)
         return w, rank[0], time_parents(w, rank)
     if root is not None:
         r = ids.index(root)
@@ -520,20 +580,24 @@ def build(
         )
     timed = {}
     if order == "time":
-        rank = time_order(columns)
+        rank = time_order(columns, w)
         at = {i: k for k, i in enumerate(rank)}
-        par = {c: p for p, c in pairs}
+        moves = time_moves(w, rank, columns)
         for i, c in enumerate(columns):
-            # a root's relatives are all later by definition: only a child can be inverted
-            later = rank[at[i] + 1 :]
-            j = later[int(np.argmax(w[later, i]))] if later and i in par else None
-            inv = j is not None and float(w[j, i] - w[par[i], i]) > INVERSION_GAP
+            mv = moves.get(i)
             timed[c["id"]] = {
                 "t": c.get("t"),
                 "rank": at[i],
-                "time_inversion": inv,
-                # the later node it is closest to: the pair a `tswap` would try
-                "time_closer": columns[j]["id"] if inv else None,
+                # the date is probably late: the file fits better before `before`
+                "time_inversion": mv is not None,
+                "time_move": (
+                    {
+                        "before": columns[rank[mv[0]]]["id"],
+                        "gain": round(float(mv[1]), 3),
+                    }
+                    if mv
+                    else None
+                ),
             }
     nodes = [
         {
@@ -867,7 +931,7 @@ def demo():
         check_invariants(g)
     # time: parents are dated earlier; C's closest relative B is later (inversion);
     # E shares nothing and is undated: its own root, ranked last
-    tc = [{**c, "t": t} for c, t in zip(cols, (1, 3, 2, 4))]
+    tc = [{**c, "t": t * DAY_MS} for c, t in zip(cols, (1, 3, 2, 4))]
     tc.append({"id": "E", "file_name": "E", "functions": 1, "t": None})
     tm = build(tc, rows + [{"cells": {"E": "e1"}}], e, 0.5, names.get, order="time")
     tn = {x["id"]: x for x in tm["nodes"]}
@@ -886,7 +950,7 @@ def demo():
     # (every R function against every P one, so the edge score saturates) but shares one row,
     # Q-R share 8: R hangs off Q
     pq = [
-        {"id": i, "file_name": i, "functions": 10, "t": t}
+        {"id": i, "file_name": i, "functions": 10, "t": t * DAY_MS}
         for i, t in (("P", 1), ("Q", 2), ("R", 3))
     ]
     prow = (
@@ -905,20 +969,64 @@ def demo():
     pt = build(pq, prow, pe, 0.5, names.get, order="time")
     assert {(x["parent"], x["child"]) for x in pt["edges"]} == {("P", "Q"), ("Q", "R")}
     check_invariants(pt)
-    # Z is far closer to the later Y than to its only earlier file X: its date is likely late
-    xz = [
-        {"id": i, "file_name": i, "functions": 6, "t": t}
-        for i, t in (("X", 1), ("Z", 2), ("Y", 3))
-    ]
-    xr = (
+
+    def timed(spec, rows):
+        cs = [{"id": i, "file_name": i, "functions": 6, "t": t} for i, t in spec]
+        return {
+            x["id"]: x
+            for x in build(cs, rows, {}, 0.5, names.get, order="time")["nodes"]
+        }
+
+    # Y is Z's child and closer to Z than Z's parent X: normal divergence, not a late date
+    xt = timed(
+        [("X", DAY_MS), ("Z", 2 * DAY_MS), ("Y", 3 * DAY_MS)],
         [{"cells": {"X": "x0", "Z": "z0"}}]
         + [{"cells": {"Z": f"z{k}", "Y": f"y{k}"}} for k in range(1, 6)]
         + [{"cells": {"X": f"x{k}"}} for k in range(1, 6)]
-        + [{"cells": {"Y": "y6"}}]
+        + [{"cells": {"Y": "y6"}}],
     )
-    xt = {x["id"]: x for x in build(xz, xr, {}, 0.5, names.get, order="time")["nodes"]}
-    assert [xt[i]["time_inversion"] for i in "XZY"] == [False, True, False]
-    assert [xt[i]["time_closer"] for i in "XZY"] == [None, "Y", None]
+    assert not any(x["time_inversion"] for x in xt.values())
+    # A -> D -> B with D dated last: D fits better before B (0.2 + 0.556 -> 0.556 + 0.556)
+    late = (
+        [{"cells": {"A": f"a{k}", "B": f"b{k}", "D": f"d{k}"}} for k in range(2)]
+        + [{"cells": {"A": f"a{k}", "D": f"d{k}"}} for k in range(2, 5)]
+        + [{"cells": {"B": f"b{k}", "D": f"d{k}"}} for k in range(2, 5)]
+        + [{"cells": {"A": "a9"}}, {"cells": {"B": "b9"}}]
+    )
+    lt = timed([("A", DAY_MS), ("B", 2 * DAY_MS), ("D", 3 * DAY_MS)], late)
+    assert [lt[i]["time_inversion"] for i in "ABD"] == [False, False, True]
+    assert lt["D"]["time_move"] == {"before": "B", "gain": 0.356}, lt["D"]
+    # the same files on one day are a tie: D is placed second, by similarity, and nothing is late
+    same = timed([("A", DAY_MS), ("B", DAY_MS + 1), ("D", DAY_MS + 2)], late)
+    assert [same[i]["rank"] for i in "ADB"] == [0, 1, 2]
+    assert not any(x["time_inversion"] for x in same.values())
+    # time_moves' incremental gain equals re-scoring the moved order through time_parents
+    rng = np.random.default_rng(7)
+    for _ in range(30):
+        m = 9
+        w = rng.random((m, m)) ** 2
+        w = np.triu(w, 1) + np.triu(w, 1).T
+        cs = [
+            {"id": str(k), "functions": 1, "t": int(rng.integers(0, 5)) * DAY_MS + k}
+            for k in range(m)
+        ]
+        o = time_order(cs, w)
+        score = lambda x: sum(w[p, c] for p, c in time_parents(w, x))
+        day = [cs[k]["t"] // DAY_MS for k in o]
+        want = {}
+        for r in range(1, m):
+            top = (MOVE_GAIN - 1e-9, None)
+            for q in range(r - 1, -1, -1):
+                if day[q] < day[r] and (q == 0 or day[q - 1] != day[q]):
+                    g = score(o[:q] + [o[r]] + o[q:r] + o[r + 1 :]) - score(o)
+                    if g > top[0] + 1e-9:
+                        top = (g, q)
+            if top[1] is not None:
+                want[o[r]] = top
+        got = time_moves(w, o, cs)
+        assert want.keys() == got.keys() and all(
+            want[k][1] == got[k][0] and abs(want[k][0] - got[k][1]) < 1e-9 for k in want
+        ), (want, got)
     assert (tn["E"]["rank"], tn["E"]["depth"], tn["E"]["t"]) == (4, 0, None)
     check_invariants(tm)
     # C keeps 2 functions in B and D, 1 in B only, and 3 in no child

@@ -1613,8 +1613,8 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     gAx.append('text').attr('class', 'lin-halo').attr('x', k.x).attr('y', 16).attr('text-anchor', 'middle').attr('font-size', 11.5).style('fill', 'var(--lin-grey)').text(k.gap);
                 } else gAx.append('text').attr('class', 'lin-halo').attr('x', k.x).attr('y', 36).attr('font-size', 11.5).style('fill', 'var(--text)').style('opacity', 0.8).text(k.label);
             }
-            for (const n of L.ticks.length ? L.vis : []) swapBtn(gBtn, n, n.x1 + 4, n.y0);
-            if (L.ticks.length) swapArrows(gBtn, id => { const n = L.vis.find(x => x.id === id); return n ? [(n.x0 + n.x1) / 2, n.y0 - 2] : null; });
+            for (const n of L.ticks.length ? L.vis : []) moveBtn(gBtn, n, n.x1 + 4, n.y0);
+            if (L.ticks.length) moveArrows(gBtn, id => { const n = L.vis.find(x => x.id === id); return n ? [(n.x0 + n.x1) / 2, n.y0 - 2] : null; }, (t0, id) => dateSlot(L.vis, t0, id, v => v.x1 + 20, v => v.y0 - 2));
             for (const [k, c] of [['born', V.born]]) {
                 const p = defs.append('pattern').attr('id', `hatch-${k}-${id}`).attr('width', 6).attr('height', 6).attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
                 p.append('rect').attr('width', 6).attr('height', 6).style('fill', c).attr('fill-opacity', 0.22);
@@ -1773,10 +1773,10 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                 act('fa-table-columns', 'Column in table', 'The N-way table on this column', ev => openUrl(`/diff/nway?${q}`, ev, 'N-way', 'bin_sim'));
                 if (p && !p.agg && typeof buildFileDiffUrl === 'function') { const a = firstFile(p); act('fa-code-compare', 'Diff with parent', `The file diff ${name(p.id)} → ${name(n.id)}`, ev => openUrl(buildFileDiffUrl(a.coll, a.md5, f.coll, f.md5), ev, 'File diff', 'file')); }
             }
-            // a timeline break: try the order with this node's date and the closer later one's swapped (view only, the URL's tswap)
-            if (st.doc.order === 'time' && opts.onSwapDates) {
-                if (n.t_swapped) act('fa-rotate-left', 'Undo swap', `Give ${name(n.id)} and ${name(n.t_swapped)} their own dates back`, () => opts.onSwapDates(n.id, n.t_swapped));
-                else if (n.time_closer) act('fa-right-left', 'Swap dates', `Place ${name(n.id)} and ${name(n.time_closer)} in each other's date slot, in this view only (stored dates are not changed)`, () => opts.onSwapDates(n.id, n.time_closer));
+            // a probable late date: try the file on the earlier day it fits (view only, the URL's tmove)
+            if (st.doc.order === 'time' && opts.onMoveDate) {
+                if (n.t_moved) act('fa-rotate-left', 'Undo move', `Put ${name(n.id)} back on its own date`, () => opts.onMoveDate(n.id, null));
+                else if (n.time_move) act('fa-arrow-left', 'Move earlier', `Place ${name(n.id)} just before ${name(n.time_move.before)}'s day, in this view only (stored dates are not changed)`, () => opts.onMoveDate(n.id, n.time_move.before));
             }
             const shown = n.rows.filter(R.match), born = p ? shown.filter(r => !p.has(r)) : [], lost = p ? p.rows.filter(r => R.match(r) && !n.has(r)) : [];
             const e = st.M.inE.get(n.agg ? n.top : n.id);
@@ -2042,38 +2042,43 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
         const partRows = p => [['Kept by', p.folded ? 'several children (folded)' : names(p.children)], ['Functions', fmt(p.count)]];
         // timeline: the node's date (and its warning), an edge's time between parent and child
         const timeRows = n => (st.doc.order !== 'time' ? [] : [[TFIELDS[st.doc.tfield] || 'Date', n.t == null ? 'undated' : isoDay(n.t)],
-            ...(n.t_swapped ? [['⇄ Swapped', `date of ${name(n.t_swapped)}, in this view only`]] : []),
-            ...(n.time_inversion ? [['⚠ Date', 'a later file is closer than its parent: this date may be late'], ...(n.time_closer ? [['Closer, later', name(n.time_closer)]] : [])] : [])]);
-        // the timeline-break button: swaps the node's date with the closer later node's (view only); a swapped node gets Undo
-        function swapBtn(parent, n, x, y) {
-            const other = n.t_swapped || (n.time_inversion && n.time_closer);
-            if (!other) return;
-            if (!opts.onSwapDates) { parent.append('text').attr('x', x).attr('y', y + 11).attr('font-size', 12).style('fill', V.died).text('⚠'); return; }
+            ...(n.t_moved ? [['← Moved', `before ${name(n.t_moved.before)} in this view; own date ${n.t_moved.t0 == null ? 'none' : isoDay(n.t_moved.t0)}`]] : []),
+            ...(n.time_move ? [['⚠ Date', `may be late: it fits better before ${name(n.time_move.before)} (+${n.time_move.gain} parent similarity)`]] : [])]);
+        // the late-date button: places the file on the earlier day it fits (view only); a moved file gets Undo
+        function moveBtn(parent, n, x, y) {
+            const mv = n.t_moved || n.time_move;
+            if (!mv) return;
+            if (!opts.onMoveDate) { if (n.time_move) parent.append('text').attr('x', x).attr('y', y + 11).attr('font-size', 12).style('fill', V.died).text('⚠'); return; }
             // compact: it fits the 40 px between Timeline columns; the tooltip and aria-label say it in full
-            const undo = !!n.t_swapped, label = undo ? '↺ ⇄' : '⚠ ⇄', w = 34;
+            const undo = !!n.t_moved, label = undo ? '↺' : '⚠ ←', w = undo ? 24 : 34;
             const b = parent.append('g').attr('class', 'lin-swapb').attr('transform', `translate(${x},${y})`).attr('role', 'button').attr('tabindex', 0)
-                .attr('aria-label', undo ? `Undo the date swap of ${name(n.id)} and ${name(other)}` : `Swap the dates of ${name(n.id)} and ${name(other)}`);
+                .attr('aria-label', undo ? `Put ${name(n.id)} back on its own date` : `Move ${name(n.id)} before ${name(mv.before)}`);
             b.append('rect').attr('width', w).attr('height', 18).attr('rx', 9);
             b.append('text').attr('x', w / 2).attr('y', 12.5).attr('text-anchor', 'middle').attr('font-size', 11).text(label);
-            const go = ev => { ev.stopPropagation(); hideTip(); opts.onSwapDates(n.id, other); };
+            const go = ev => { ev.stopPropagation(); hideTip(); opts.onMoveDate(n.id, undo ? null : mv.before); };
             b.on('click', go).on('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(ev); } })
-                .on('mousemove', ev => showTip(ev, undo ? 'Undo the date swap' : 'Timeline break', V.died, undo
-                    ? [['Swapped with', name(other)], ['Click', 'give both files their own dates back']]
-                    : [['⚠ Date', 'a later file is closer than its parent: this date may be late'], ['Closer, later', name(other)], ['Click', "swap the two dates in this view (stored dates are not changed)"]]))
+                .on('mousemove', ev => showTip(ev, undo ? 'Moved in this view' : 'Date may be late', V.died, undo
+                    ? [['Placed before', name(mv.before)], ['Own date', mv.t0 == null ? 'undated' : isoDay(mv.t0)], ['Click', 'put it back on its own date']]
+                    : [['Fits better', `before ${name(mv.before)}`], ['Gain', `+${mv.gain} parent similarity in the tree`], ['Click', 'place it there in this view (stored dates are not changed)']]))
                 .on('mouseleave', hideTip);
         }
-        // the swapped pairs (doc.tswap): a dashed arc with a head at each end between the two, `at(id)` = [x, y] or null
-        function swapArrows(parent, at) {
-            for (const [a, b] of (st.doc && st.doc.tswap) || []) {
-                const p = at(a), q = at(b);
+        // a moved file (doc.tmove): a dashed arrow from a hollow dot where its own date sits to where it is now.
+        // at(id) = [x, y] of a node, ghost(t0, id) = [x, y] of its own date's slot; either null skips it
+        function moveArrows(parent, at, ghost) {
+            for (const n of st.doc.nodes || []) {
+                if (!n.t_moved || n.t_moved.t0 == null) continue;
+                const p = ghost(n.t_moved.t0, n.id), q = at(n.id);
                 if (!p || !q) continue;
-                const [x1, y1] = p[0] <= q[0] ? p : q, [x2, y2] = p[0] <= q[0] ? q : p, h = Math.min(90, 24 + Math.abs(x2 - x1) * 0.25), top = Math.min(y1, y2) - h;
+                const [x1, y1] = p, [x2, y2] = q, h = Math.min(90, 24 + Math.abs(x2 - x1) * 0.25), top = Math.min(y1, y2) - h;
                 const gA = parent.append('g').style('pointer-events', 'none');
-                gA.append('path').attr('d', `M${x1},${y1 - 6}C${x1},${top} ${x2},${top} ${x2},${y2 - 6}`).attr('fill', 'none').style('stroke', V.died).attr('stroke-width', 1.8).attr('stroke-dasharray', '6 3').attr('vector-effect', 'non-scaling-stroke');
-                for (const [x, y] of [[x1, y1], [x2, y2]]) gA.append('path').attr('d', `M${x - 4.5},${y - 8}L${x + 4.5},${y - 8}L${x},${y}Z`).style('fill', V.died);
-                gA.append('text').attr('class', 'lin-halo').attr('x', (x1 + x2) / 2).attr('y', top + h * 0.25 - 4).attr('text-anchor', 'middle').attr('font-size', 11).attr('font-weight', 650).style('fill', V.died).text('dates swapped');
+                gA.append('path').attr('d', `M${x1},${y1 - 5}C${x1},${top} ${x2},${top} ${x2},${y2 - 7}`).attr('fill', 'none').style('stroke', V.died).attr('stroke-width', 1.8).attr('stroke-dasharray', '6 3').attr('vector-effect', 'non-scaling-stroke');
+                gA.append('path').attr('d', `M${x2 - 4.5},${y2 - 8}L${x2 + 4.5},${y2 - 8}L${x2},${y2}Z`).style('fill', V.died);
+                gA.append('circle').attr('cx', x1).attr('cy', y1).attr('r', 4).style('fill', 'var(--lin-card)').style('stroke', V.died).attr('stroke-width', 1.5);
+                gA.append('text').attr('class', 'lin-halo').attr('x', (x1 + x2) / 2).attr('y', top + h * 0.25 - 4).attr('text-anchor', 'middle').attr('font-size', 11).attr('font-weight', 650).style('fill', V.died).text(`own date ${isoDay(n.t_moved.t0)}`);
             }
         }
+        // the slot of a date: just after the latest other node dated on or before it
+        const dateSlot = (nodes, t0, id, x, y) => { const prev = nodes.filter(v => v.id !== id && v.t != null && v.t <= t0).sort((a, b) => b.t - a.t)[0]; const a = nodes.find(v => v.id === id); return prev && a ? [x(prev), y(a)] : null; };
         const edgeTime = e => { const p = st.M.byId.get(e.parent), c = st.M.byId.get(e.child); return st.doc.order === 'time' && p && c && p.t != null && c.t != null ? [['After the parent', span(c.t - p.t)]] : []; };
         const edgeRows = e => [['Born', fmt(e.gained)], ['Died', fmt(e.lost)], ['Shared', fmt(e.shared)], ['Recall suspect', fmt(e.recall_suspect)], ...edgeTime(e)];
         function hoverRib(ev, l) {
@@ -2239,7 +2244,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
                     onHover: c => graphHover(c), under: (c, t) => catUnder(c, t),
                     // what a set of files is made of: of node indexes, of a lens group
                     meta: (idx, what) => fileMetaHtml(st.doc, filesOfNodes(st.doc, idx), what), catMeta: c => catMeta(c),
-                    swapBtn: (parent, v, x, y) => swapBtn(d3.select(parent), v, x, y), swapArrows: (parent, at) => swapArrows(d3.select(parent), at),
+                    moveBtn: (parent, v, x, y) => moveBtn(d3.select(parent), v, x, y), moveArrows: (parent, at, ghost) => moveArrows(d3.select(parent), at, ghost), dateSlot,
                 });
             }
             st.births.draw();
@@ -2504,7 +2509,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
     // its window fit): a column id then names the same node on both pages.
     function tableQs(search) {
         const q = new URLSearchParams(search);
-        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table'); q.delete('bcol'); q.delete('tswap');
+        q.delete('layout'); q.delete('lview'); q.delete('tfield'); q.delete('rhold'); q.delete('rnest'); q.delete('rfocus'); q.delete('rarc'); q.delete('rmin'); q.delete('rlist'); q.delete('rtier'); q.delete('rbundle'); q.delete('tfocus'); q.delete('bgrp'); q.delete('baxis'); q.delete('bsel'); q.delete('table'); q.delete('bcol'); q.delete('tmove');
         if (q.get('order') !== 'lineage') q.delete('order');
         if (!q.has('col_open')) q.set('col_open', '[]');
         return q;

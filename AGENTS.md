@@ -194,13 +194,17 @@ allowed), scored on the N-way rows the two share (`row_similarity`, Jaccard), no
 many-to-many candidates and scored files sharing a handful of rows near 1, and a node under `TIME_FLOOR` (0.05) to every earlier one starts its own root, so the doc can be a forest
 (`buildModel` walks every root). `tfield` = `first_seen` (default), `last_seen` or `entry_date`, read off the live file
 metas in the route (`_lineage_times`, the cached doc has no dates; a node takes its earliest file, latest for
-`last_seen`); undated nodes rank last. Nodes get `t`, `rank` and `time_inversion` (a later file is more than
-`INVERSION_GAP` closer than the parent: the date is probably late; drawn as a warning; `time_closer` names that later
-node). `tswap=a,b;c,d` (node id, member file id or md5) swaps two nodes' dates in the answer only, before the tree is
-built (`_swap_times`; stored dates never change); nodes get `t_swapped`. The `⚠ ⇄` / `↺ ⇄` button (`swapBtn`, right of a
-Timeline node, under a Births dot, in a top layer over every ribbon) and the File inspector's Swap dates / Undo swap toggle a
-pair in the page URL's `tswap`; a dashed arc (`swapArrows`) joins each swapped pair; a state bar chip clears them;
-stripped from table links. In `layout()`, `doc.order ===
+`last_seen`); undated nodes rank last. Files of one UTC day are a tie (one build seen on several architectures):
+`time_order(columns, w)` places next the one most similar to what is already placed. Nodes get `t`, `rank`,
+`time_inversion` and `time_move` (`time_moves`): the date is probably late because moving the file to the start of an
+earlier day adds at least `MOVE_GAIN` (0.15) to the tree's total parent similarity (only earlier days: `first_seen` only
+bounds a birth from above; O(n^2), checked against a brute-force re-score in the demo); `{before, gain}`. A child closer
+than its parent is normal divergence and is never flagged. `tmove=a,b;c,d` (node id, member file id or md5) places a at
+the last millisecond of the day before b's, in the answer only (`_move_times`; stored dates never change); a moved node
+gets `t_moved` `{before, t0}`. The `⚠ ←` / `↺` button (`moveBtn`, right of a Timeline node, under a Births dot, in a top
+layer over every ribbon) and the File inspector's Move earlier / Undo move set one move per file in the page URL's
+`tmove`; a dashed arrow (`moveArrows`) runs from a hollow dot at the file's own date to where it is now; a state bar chip
+clears them; stripped from table links. In `layout()`, `doc.order ===
 'time'` sets `n.d` to the date rank (one column per node, `T_GAP` apart), so reuse arcs, slots and anchors are the tree's;
 `timeLanes` puts a parent's first child in its lane when they share at least `LANE_KEEP` (0.5) of the bigger file
 (else it starts a lane of its own) and every other child or root in the free lane nearest it; `timeTicks`

@@ -6905,9 +6905,8 @@ def test_nway_function_meta():
     )
 
 
-def _check_lineage_tswap(base, url):
-    """`tswap` swaps two nodes' dates in the answer only: stored dates stay."""
-    ids = [f"{COLLECTION}:{file_md5}", f"{COLLECTION}:{file_md5_2}"]
+def _check_lineage_tmove(base, url):
+    """`tmove` places a node before another's day in the answer only: stored dates stay."""
     p = {**base, "order": "time", "tfield": "entry_date"}
 
     def get(**extra):
@@ -6916,22 +6915,29 @@ def _check_lineage_tswap(base, url):
         return r.status_code, d, {x["id"]: x for x in d.get("nodes", [])}
 
     _, d0, n0 = get()
-    # by md5: any node id, member file id or md5 names a node
-    code, d1, n1 = get(tswap=f"{file_md5},{file_md5_2}")
+    first, last = sorted(n0, key=lambda k: n0[k]["rank"])[:2]
     check(
-        "nway lineage tswap: the two dates swap, echoed, partners marked",
-        code == 200
-        and set(n0) == set(ids) == set(n1)
-        and (n1[ids[0]]["t"], n1[ids[1]]["t"]) == (n0[ids[1]]["t"], n0[ids[0]]["t"])
-        and d1.get("tswap") == [ids]
-        and (n1[ids[0]]["t_swapped"], n1[ids[1]]["t_swapped"]) == (ids[1], ids[0])
-        and d0.get("tswap") == []
-        and all(x["t_swapped"] is None for x in n0.values()),
-        f"HTTP {code} {str(d1.get('tswap'))} {[(k, x.get('t')) for k, x in n1.items()]}",
+        "nway lineage time: every node has time_move and t_moved keys",
+        n0
+        and all("time_move" in x and x["t_moved"] is None for x in n0.values())
+        and d0.get("tmove") == [],
+        str(list(n0.values())[:1])[:300],
     )
-    check("nway lineage tswap: stored dates unchanged", get()[1] == d0)
-    for bad in (ids[0], f"{ids[0]},{ids[0]}", f"{ids[0]},{'0' * 32}"):
-        check(f"nway lineage tswap: {bad[:20]}... is a 400", get(tswap=bad)[0] == 400)
+    # by md5: any node id, member file id or md5 names a node
+    code, d1, n1 = get(tmove=f"{last.rsplit(':', 1)[-1]},{first}")
+    check(
+        "nway lineage tmove: the moved node ranks first, echoed, own date kept",
+        code == 200
+        and n1[last]["rank"] == 0
+        and n1[last]["t"] < n1[first]["t"]
+        and d1.get("tmove") == [[last, first]]
+        and n1[last]["t_moved"] == {"before": first, "t0": n0[last]["t"]}
+        and n1[first]["t_moved"] is None,
+        f"HTTP {code} {d1.get('tmove')} {[(k, x.get('rank'), x.get('t')) for k, x in n1.items()]}",
+    )
+    check("nway lineage tmove: stored dates unchanged", get()[1] == d0)
+    for bad in (first, f"{first},{first}", f"{first},{'0' * 32}"):
+        check(f"nway lineage tmove: {bad[:20]}... is a 400", get(tmove=bad)[0] == 400)
 
 
 def test_nway_lineage():
@@ -7045,7 +7051,7 @@ def test_nway_lineage():
         check(f"nway lineage time ({tf}): partitions add up", ok is True, str(ok))
     r = requests.get(url, params={**base, "order": "time", "tfield": "x"}, timeout=60)
     check("nway lineage: bad tfield is a 400", r.status_code == 400)
-    _check_lineage_tswap(base, url)
+    _check_lineage_tmove(base, url)
     r = requests.get(url, params={**base, "root": "0" * 32}, timeout=60)
     check("nway lineage: unknown root is a 400", r.status_code == 400)
     r = requests.get(url, params={**base, "order": "tree"}, timeout=60)

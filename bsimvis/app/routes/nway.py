@@ -2092,24 +2092,28 @@ def _lineage_times(doc, r, cols, field):
     return out
 
 
-def _swap_times(cols, raw):
-    """`tswap=a,b;c,d`: swap the two nodes' dates in this answer only (stored dates never change).
+def _move_times(cols, raw):
+    """`tmove=a,b;c,d`: node a placed just before node b's day, in this answer only.
 
-    Each id is a node id, a member file id or an md5. Returns (cols, [[a, b], ...]).
+    a gets the last millisecond of the day before b's (stored dates never
+    change). Each id is a node id, a member file id or an md5. Returns
+    (cols, [[a, b], ...], {a: {"before": b, "t0": a's own date}}).
     """
     ids = {c["id"]: k for k, c in enumerate(cols)}
-    cols, pairs = list(cols), []
+    cols, pairs, moved = list(cols), [], {}
     for part in filter(None, (p.strip() for p in raw.split(";"))):
         ab = [_node_of(cols, x) for x in part.split(",")]
         if len(ab) != 2 or ab[0] == ab[1] or not all(x in ids for x in ab):
-            abort(400, f"tswap: {part!r} is not two different nodes of this lineage")
+            abort(400, f"tmove: {part!r} is not two different nodes of this lineage")
         i, j = ids[ab[0]], ids[ab[1]]
-        cols[i], cols[j] = {**cols[i], "t": cols[j]["t"]}, {
-            **cols[j],
-            "t": cols[i]["t"],
-        }
+        if cols[j]["t"] is None:
+            abort(400, f"tmove: {ab[1]} has no date to move before")
+        t0 = moved.get(ab[0], {}).get("t0", cols[i]["t"])
+        day = nway_lineage_service.DAY_MS
+        cols[i] = {**cols[i], "t": cols[j]["t"] // day * day - 1}
+        moved[ab[0]] = {"before": ab[1], "t0": t0}
         pairs.append(ab)
-    return cols, pairs
+    return cols, pairs, moved
 
 
 def _node_of(cols, raw):
@@ -2343,7 +2347,7 @@ def get_nway_lineage():
         if tfield not in LINEAGE_TIME_FIELDS:
             abort(400, f"tfield must be one of {', '.join(LINEAGE_TIME_FIELDS)}")
         cols = _lineage_times(doc, r, cols, tfield)
-        cols, tswap = _swap_times(cols, request.args.get("tswap", ""))
+        cols, tmove, moved = _move_times(cols, request.args.get("tmove", ""))
     fmeta = doc["fmeta"]
 
     def name_of(fid):
@@ -2369,11 +2373,9 @@ def get_nway_lineage():
     out["columns_mode"] = doc["columns_mode"]
     if order == "time":
         out["tfield"] = tfield
-        out["tswap"] = tswap
+        out["tmove"] = tmove
         for n in out["nodes"]:
-            n["t_swapped"] = next((b for a, b in tswap if a == n["id"]), None) or next(
-                (a for a, b in tswap if b == n["id"]), None
-            )
+            n["t_moved"] = moved.get(n["id"])
     out["min_edge"] = doc["min_edge"]
     out["warnings"] = doc["warnings"]
     # per file metadata (the ring tooltip's distributions); a node's `members` are these ids

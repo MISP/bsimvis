@@ -36,7 +36,7 @@ MICRO = [
     "C0001", "C0002", "C0011", "C0014", "C0003", "C0004", "C0017", "C0018",
     "C0038", "C0042", "C0016", "C0051", "C0052", "C0045", "C0047", "C0050",
     "C0021", "C0026", "C0053", "C0027", "C0031", "C0028", "C0029", "C0030",
-    "C0032", "C0024", "C0025", "C0019", "C0033", "C0034", "C0007",
+    "C0032", "C0024", "C0025", "C0019", "C0033", "C0034",
 ]  # fmt: skip
 ATTACK = [
     "T1498.001", "T1498.002", "T1499", "T1499.002", "T1110.001", "T1046",
@@ -51,7 +51,7 @@ ATTACK = [
 MICRO_BELOW = (
     8  # a group with fewer rows gets micro-behaviours instead of MBC behaviours
 )
-CAPS_V = 3  # bump when the capability prompt or parsing changes: groups are asked again
+CAPS_V = 4  # bump when the capability prompt or parsing changes: groups are asked again
 MATCH = 0.5  # anchor similarity two answers need to be one capability
 IDS_MAX, TRAITS_MAX = 4, 5
 _CAT = None
@@ -138,6 +138,18 @@ def _norm(s):
     return _WS.sub(" ", str(s or "")).strip().lower()
 
 
+# code or a string: a call with its arguments, a path, a format, a flag
+_CODEISH = re.compile(r"[/()%\"'=<>{};:\\+]")
+
+
+def _strong(q):
+    """Whether a quote can back a behaviour or technique. A bare call name
+    ("sendto", or "socket, sendto" off the library-call line) backs a
+    micro-behaviour (C*), which is one call, but not a DoS or a C2 claim: those
+    need the code or string that shows how the call is used."""
+    return bool(_CODEISH.search(q))
+
+
 def _ids(items, allowed, evidence, quotes):
     """The curated ids of a model list whose quote is really in the evidence.
 
@@ -152,6 +164,8 @@ def _ids(items, allowed, evidence, quotes):
         if not m or m.group(1) not in allowed or m.group(1) in out:
             continue
         if len(q) < 4 or q not in ev:
+            continue
+        if not m.group(1).startswith("C") and not _strong(q):
             continue
         out.append(m.group(1))
         quotes[m.group(1)] = str(x.get("quote")).strip()[:120]
@@ -299,11 +313,15 @@ if __name__ == "__main__":
     assert (
         "B0033 Denial of Service" in lines and "T1498.001" in att and "C0001" not in mbc
     )
-    ev = "Library calls: socket, sendto, random\nStrings: /dev/urandom | POST /cdn-cgi/"
+    ev = (
+        "Library calls: socket, sendto, random\nStrings: /dev/urandom | POST /cdn-cgi/\n"
+        "Function 1 code:\nwhile (1) { sendto(fd,buf,len,0,&sa,0x10); }"
+    )
     got = clean(
         {
             "mbc": [
-                {"id": "B0033", "quote": "sendto"},
+                {"id": "B0033", "quote": "sendto(fd,buf,len"},
+                {"id": "B0019", "quote": "socket"},  # a bare call backs no behaviour
                 {"id": "C0001", "quote": "socket"},  # micro id at behaviour level
                 {"id": "B0031", "quote": "domain generation"},  # quote not in evidence
             ],
@@ -317,15 +335,23 @@ if __name__ == "__main__":
         "behaviour",
         ev,
     )
-    assert got["mbc"] == ["B0033"] and got["attack"] == ["T1498.001"], got
-    assert got["traits"] == ["udp flood"] and got["quotes"]["B0033"] == "sendto", got
+    # T1498.001's quote is the bare call name: not enough for a technique
+    assert got["mbc"] == ["B0033"] and got["attack"] == [], got
+    assert (
+        got["traits"] == ["udp flood"] and got["quotes"]["B0033"] == "sendto(fd,buf,len"
+    ), got
+    # ... but a bare call is a micro-behaviour's evidence
+    assert clean({"mbc": [{"id": "C0001", "quote": "socket"}]}, "micro", ev)["mbc"] == [
+        "C0001"
+    ]
+    assert "C0007" not in MICRO
     assert clean({"mbc": [{"id": "B0033", "quote": "sendto"}]}, "micro", ev) is None
     # an echoed id with no quote is not evidence
     assert (
         clean({"mbc": ["C0021 Generate Pseudo-random Sequence"]}, "micro", ev) is None
     )
     # the head of the offered list, in order, is the model copying it
-    head = [{"id": i, "quote": "socket"} for i in BEHAVIOURS[:3]]
+    head = [{"id": i, "quote": "/dev/urandom"} for i in BEHAVIOURS[:3]]
     assert clean({"mbc": head, "traits": ["x"]}, "behaviour", ev)["mbc"] == []
     assert (
         schema("micro")["properties"]["mbc"]["items"]["properties"]["id"]["enum"]

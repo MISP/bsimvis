@@ -467,7 +467,10 @@ class LLMService:
             "2. mbc and attack: ids from the lists below that the evidence shows. For "
             "each id, quote the exact evidence text that shows it (a library call, a "
             "string, a rule finding or a code line, copied as it appears). No quote, "
-            "no id. Library or runtime code gets no id. Most groups have 0 to 2 ids; "
+            "no id. A bare call name (sendto) is enough only for an MBC "
+            "micro-behaviour (C ids); a behaviour or a technique needs the code line "
+            "or string that shows how it is done (socket(2,3,17), /etc/cron.hourly/). "
+            "Library or runtime code gets no id. Most groups have 0 to 2 ids; "
             "never list ids the evidence does not show.\n"
             "Answer with this JSON object only, no other text:\n"
             '{"traits": ["<2 to 5 words>", ...], '

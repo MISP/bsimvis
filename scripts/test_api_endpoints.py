@@ -1865,7 +1865,9 @@ def test_bin_cluster_uuid_history():
         )
         check(
             "slice rows carry the sidecar tags and note count",
-            center.get("user_tags") == ["bookmark"] and center.get("note_count") == 1,
+            center.get("user_tags") == ["bookmark"]
+            and center.get("note_count") == 1
+            and center.get("note_owners") == ["user"],
             json.dumps({k: center.get(k) for k in ("user_tags", "note_count")}),
         )
 

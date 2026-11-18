@@ -1471,6 +1471,7 @@ window.toggleContentExpand = toggleContentExpand;
 window.showNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
 window.showFileNotePanel = function(id, e) { if (typeof showFileNotes === 'function') showFileNotes(id); };
 window.showBinSimNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
+window.showBinClusterNotePanel = function(id, e) { if (typeof showNotes === 'function') showNotes(id); };
 
 // Connect layout updates with SPA navigation. Graph/Notes/AI Insight are
 // global now: navigating to a different page (functions list, cluster view,

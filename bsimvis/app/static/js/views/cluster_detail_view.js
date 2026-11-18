@@ -669,7 +669,7 @@ window.ClusterDetailView = {
                     <div style="margin-top:8px;">This cluster (${Number(h.size || 0).toLocaleString()} files) ${verb}${when ? ` <span class="dim">(rebuild of ${escapeHtml(when)})</span>` : ''}</div>
                     ${rows ? `<table class="table" style="margin-top:12px; width:100%;"><tbody>${rows}</tbody></table>` : ''}
                     <div style="margin-top:12px;">Analyst data kept on this uuid: ${this.dataChips(h.tags, h.notes) || '<span class="dim">none</span>'}
-                        ${(h.notes || []).length ? `<button class="btn-action" onclick="showNotes(${escapeAttr(jsString(h.cluster_key))})"><i class="fa-regular fa-note-sticky"></i> Show notes</button>` : ''}</div>
+                        ${(h.notes || []).length ? EntityRenderer.renderBinClusterNoteButton(h.cluster_key, [...new Set(h.notes.map(n => n.owner || 'user'))], { raw_data: { note_count: h.notes.length } }) : ''}</div>
                 </div>
             </div>`;
         return true;
@@ -702,24 +702,22 @@ window.ClusterDetailView = {
             </div>`;
     },
 
-    /** Cluster notes use the shared notes panel, keyed by the row's `cluster_key`. */
-    openNotes() {
-        const self = this.clusterMapByUuid[this.selectedClusterUuid];
-        if (!self || !self.cluster_key || typeof showNotes !== 'function') return;
-        if (!this._notesHooked) {
-            this._notesHooked = true;
-            window.addEventListener('bsimvis:cluster-note-changed', async (e) => {
-                const c = Object.values(this.clusterMapByUuid).find(x => x.cluster_key === e.detail.key);
-                if (!c) return;
-                const res = await fetch(`/api/notes/bin_cluster/list?cluster_key=${encodeURIComponent(c.cluster_key)}`);
-                c.note_count = ((await res.json()).notes || []).length;
-                const btn = document.getElementById('cluster-notes-btn');
-                if (btn && c.cluster_uuid === this.selectedClusterUuid) {
-                    btn.innerHTML = `<i class="fa-regular fa-note-sticky"></i>${c.note_count ? ` ${c.note_count}` : ''}`;
-                }
-            });
-        }
-        showNotes(self.cluster_key);
+    /** Keep the hero's note button in step with the shared notes panel. */
+    hookNotes() {
+        if (this._notesHooked) return;
+        this._notesHooked = true;
+        window.addEventListener('bsimvis:cluster-note-changed', async (e) => {
+            const c = Object.values(this.clusterMapByUuid).find(x => x.cluster_key === e.detail.key);
+            if (!c) return;
+            const res = await fetch(`/api/notes/bin_cluster/list?cluster_key=${encodeURIComponent(c.cluster_key)}`);
+            const notes = (await res.json()).notes || [];
+            c.note_count = notes.length;
+            c.note_owners = [...new Set(notes.map(n => n.owner || 'user'))].sort();
+            const el = document.getElementById('cluster-notes-btn');
+            if (el && c.cluster_uuid === this.selectedClusterUuid) {
+                el.innerHTML = EntityRenderer.renderBinClusterNoteButton(c.cluster_key, c.note_owners, { raw_data: c });
+            }
+        });
     },
 
     rename() {
@@ -786,7 +784,7 @@ window.ClusterDetailView = {
 
         // Render header immediately
         document.getElementById('cluster-header').innerHTML = this.renderHeader(c);
-        if (this.isBinary) this.loadInherited(c);
+        if (this.isBinary) { this.hookNotes(); this.loadInherited(c); }
         this.renderMedoidCtl();
 
         // Fetch members if not cached
@@ -988,7 +986,7 @@ window.ClusterDetailView = {
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
-                ${this.isBinary && self.cluster_key ? `<button id="cluster-notes-btn" class="btn-action" title="Analyst notes on this cluster" onclick="ClusterDetailView.openNotes()"><i class="fa-regular fa-note-sticky"></i>${self.note_count ? ` ${Number(self.note_count)}` : ''}</button>` : ''}
+                ${this.isBinary && self.cluster_key ? `<span id="cluster-notes-btn" style="display:inline-flex;">${EntityRenderer.renderBinClusterNoteButton(self.cluster_key, self.note_owners || [], { raw_data: self })}</span>` : ''}
                 <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderRuleLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
             <div id="cluster-inherit"></div>

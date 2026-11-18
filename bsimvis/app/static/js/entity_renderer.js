@@ -117,7 +117,8 @@ window.EntityRenderer = {
     noteButtonModes: {
         func: { open: 'showNotePanel', has: 'Notes by', add: 'Add note' },
         file: { open: 'showFileNotePanel', has: 'File notes by', add: 'Add file note' },
-        bin_sim: { open: 'showBinSimNotePanel', has: 'Pair notes by', add: 'Add pair note' }
+        bin_sim: { open: 'showBinSimNotePanel', has: 'Pair notes by', add: 'Add pair note' },
+        bin_cluster: { open: 'showBinClusterNotePanel', has: 'Cluster notes by', add: 'Add cluster note' }
     },
 
     renderNoteButtonFor: function(mode, id, noteOwners = [], options = {}) {
@@ -152,6 +153,11 @@ window.EntityRenderer = {
 
     renderBinSimNoteButton: function(sid, noteOwners = [], options = {}) {
         return this.renderNoteButtonFor('bin_sim', sid, noteOwners, options);
+    },
+
+    /** `key` is the row's `cluster_key` ({coll}:bin_cluster:{algo}:{uuid}). */
+    renderBinClusterNoteButton: function(key, noteOwners = [], options = {}) {
+        return this.renderNoteButtonFor('bin_cluster', key, noteOwners, options);
     },
 
     /**

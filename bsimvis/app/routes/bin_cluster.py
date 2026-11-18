@@ -234,6 +234,7 @@ def _shape_bin_cluster_result(m, parent, child_total):
         "tag_id": m.get("tag_id", m.get("cluster_id")),
         "user_tags": m.get("user_tags", []),
         "note_count": m.get("note_count", 0),
+        "note_owners": m.get("note_owners", []),
         "cluster_key": m.get("cluster_key"),
         **name_fields(m),
         "avg_stability": m.get("avg_stability", 0.0),
@@ -277,7 +278,9 @@ def _attach_user_tags(r, collection, algo, metas):
     notes = r.hmget(f"{collection}:cluster_notes", fields)
     for m, field, raw, raw_notes in zip(metas, fields, tags, notes):
         m["user_tags"] = json.loads(raw) if raw else []
-        m["note_count"] = len(json.loads(raw_notes)) if raw_notes else 0
+        notes = json.loads(raw_notes) if raw_notes else []
+        m["note_count"] = len(notes)
+        m["note_owners"] = sorted({n.get("owner", "user") for n in notes})
         m["cluster_key"] = f"{collection}:{field}"
 
 
@@ -551,8 +554,8 @@ def list_bin_clusters():
             key.decode() if isinstance(key, bytes) else key: value
             for key, value in (r.hgetall(f"{collection}:cluster_tags") or {}).items()
         }
-        note_counts = {
-            key.decode() if isinstance(key, bytes) else key: len(json.loads(value))
+        cluster_notes = {
+            key.decode() if isinstance(key, bytes) else key: json.loads(value)
             for key, value in (r.hgetall(f"{collection}:cluster_notes") or {}).items()
         }
         meta_map = {}
@@ -565,7 +568,9 @@ def list_bin_clusters():
             tag_field = f"bin_cluster:{algo}:{m.get('cluster_uuid')}"
             raw_tags = annotations.get(tag_field)
             m["user_tags"] = json.loads(raw_tags) if raw_tags else []
-            m["note_count"] = note_counts.get(tag_field, 0)
+            notes = cluster_notes.get(tag_field) or []
+            m["note_count"] = len(notes)
+            m["note_owners"] = sorted({n.get("owner", "user") for n in notes})
             m["cluster_key"] = f"{collection}:{tag_field}"
             m["tag_id"] = meta_key[len(meta_prefix) : -len(":meta")]
             cid = str(m.get("cluster_id", ""))
@@ -807,6 +812,7 @@ def list_bin_clusters():
                 "tag_id": m.get("tag_id", m.get("cluster_id")),
                 "user_tags": m.get("user_tags", []),
                 "note_count": m.get("note_count", 0),
+                "note_owners": m.get("note_owners", []),
                 "cluster_key": m.get("cluster_key"),
                 **name_fields(m),
                 "avg_stability": m.get("avg_stability", 0.0),

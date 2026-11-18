@@ -3048,7 +3048,10 @@ class BinSimNwaySemanticsBuild(Resource):
                     description="Cluster axis of the uuids (default nway_sem.axis, code)"
                 ),
                 "force": fields.Boolean(
-                    description="Rebuild unchanged sets and big ones too"
+                    description="Rebuild sets whose files did not change"
+                ),
+                "big": fields.Boolean(
+                    description="Also build sets above nway.auto_build_max_members (long builds)"
                 ),
             },
         )

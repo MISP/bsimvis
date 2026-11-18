@@ -1549,8 +1549,10 @@ def _lane_caps(l, rec, text, name, ev):
     try:
         lvl = capability_service.level(l.get("rows"))
         choices, _, _ = capability_service.prompt_lists(lvl)
-        answer, _ = llm_service.lane_capabilities(text, name, choices)
-        answer = capability_service.clean(answer, lvl)
+        answer, _ = llm_service.lane_capabilities(
+            text, name, choices, capability_service.schema(lvl)
+        )
+        answer = capability_service.clean(answer, lvl, text)
         kv = get_redis()
         evidence = {k: ev.get(k, []) for k in ("tags", "strings", "calls")}
         cap = answer and capability_service.save(
@@ -1726,6 +1728,8 @@ def lane_names(lanes, llm=True):
             if not rec:
                 _remember_llm(l, value)
             continue
+        if l["rows"] < 2:
+            continue  # a 1-row group has nothing in common to name
         with _LANE_LOCK:
             st = _LANE_STATE.get(l["key"])
             if st and st["status"] == "pending" and time.time() - st["at"] < 180:
@@ -1791,7 +1795,10 @@ def _stored_caps(clean, stored):
         kv = get_redis()
         for lid, ids in want.items():
             out[lid] = [
-                {k: c.get(k) for k in ("id", "mbc", "attack", "text", "level")}
+                {
+                    k: c.get(k)
+                    for k in ("id", "mbc", "attack", "traits", "quotes", "level")
+                }
                 for c in map(
                     capability_service.named,
                     capability_service.get_many(kv, clean[lid]["ns"], ids),

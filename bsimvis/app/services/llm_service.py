@@ -448,22 +448,31 @@ class LLMService:
                     return name, None
         return "", error
 
-    def lane_capabilities(self, evidence, name, choices):
-        """MBC / ATT&CK ids and one sentence for an N-way group, from the same
-        evidence text its name came from. `choices` lists the allowed ids, one
-        per line. Returns ({"mbc", "attack", "text"}, error); ids are not
-        checked here (capability_service.clean does)."""
+    def lane_capabilities(self, evidence, name, choices, fmt="json"):
+        """Capability traits and MBC / ATT&CK ids for an N-way group, from the
+        same evidence text its name came from. `choices` lists the allowed ids,
+        one per line; `fmt` is the JSON schema (capability_service.schema).
+        Returns ({"traits", "mbc": [{id, quote}], "attack": [...]}, error); the
+        ids and quotes are checked by capability_service.clean."""
         self._load_config()
         model = config_service.get("llm.lane_model", self.model)
         prompt = (
-            "A group of functions from a malware family was named "
-            f"'{name}'. From the evidence below, list what the code does as "
-            "capability ids chosen only from the lists given. Pick an id only when "
-            "the evidence shows it (library calls, strings, rule findings, code); "
-            "library or runtime code gets the ids of what it implements, or none. "
-            "Then one sentence on what the group does. Answer JSON only: "
-            '{"mbc": [ids], "attack": [ids], "text": "one sentence"}; '
-            "empty lists when nothing fits.\n\n"
+            "Below is the evidence for a group of functions from a malware family "
+            f"(tentative label, may be wrong: '{name}').\n"
+            "1. traits: 1 to 5 short capabilities of this code, 2 to 5 words each, "
+            "for example 'udp flood', 'telnet brute force', 'kill competing bots', "
+            "'cron persistence', 'xor string decryption', 'c library code'. Describe "
+            "only what the evidence shows, never the id lists. Library or runtime "
+            "code (C library, Go runtime, compiler helpers) is one trait saying so.\n"
+            "2. mbc and attack: ids from the lists below that the evidence shows. For "
+            "each id, quote the exact evidence text that shows it (a library call, a "
+            "string, a rule finding or a code line, copied as it appears). No quote, "
+            "no id. Library or runtime code gets no id. Most groups have 0 to 2 ids; "
+            "never list ids the evidence does not show.\n"
+            "Answer with this JSON object only, no other text:\n"
+            '{"traits": ["<2 to 5 words>", ...], '
+            '"mbc": [{"id": "<an id of the MBC list>", "quote": "<evidence text>"}], '
+            '"attack": [{"id": "<an id of the ATT&CK list>", "quote": "<evidence text>"}]}\n\n'
             f"{choices}\n\nEvidence:\n{evidence}"
         )
         try:
@@ -472,11 +481,13 @@ class LLMService:
                 messages=[{"role": "user", "content": prompt}],
                 stream=False,
                 think=False,
-                format="json",
-                options={"num_predict": 200, "temperature": 0},
+                format=fmt,
+                options={"num_predict": 400, "temperature": 0},
             )
             text = response.get("message", {}).get("content", "")
-            return json.loads(text), None
+            # the lane model ignores `format` and fences its JSON: read the object inside
+            start, end = text.find("{"), text.rfind("}")
+            return json.loads(text[start : end + 1]), None
         except Exception as e:
             logging.error(f"LLMService lane_capabilities error: {e}")
             return None, str(e)

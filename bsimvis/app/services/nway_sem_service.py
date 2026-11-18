@@ -297,10 +297,13 @@ def _attach_caps(r, ns, rec, found):
             r, ns, [i for ids in found.values() for i in ids]
         )
     }
-    by_label = {}
+    by_label, by_trait = {}, {}
     for g in rec["groups"]:
         g["caps"] = [
-            {k: caps[i].get(k) for k in ("id", "mbc", "attack", "text", "level")}
+            {
+                k: caps[i].get(k)
+                for k in ("id", "mbc", "attack", "traits", "quotes", "level")
+            }
             for i in found.get(g["gid"], [])
             if i in caps
         ]
@@ -320,7 +323,13 @@ def _attach_caps(r, ns, rec, found):
                     if g["gid"] not in e["groups"]:
                         e["groups"].append(g["gid"])
                         e["rows"] += g.get("rows") or 0
+            for t in c.get("traits") or []:
+                e = by_trait.setdefault(t, {"trait": t, "groups": [], "rows": 0})
+                if g["gid"] not in e["groups"]:
+                    e["groups"].append(g["gid"])
+                    e["rows"] += g.get("rows") or 0
     rec["capabilities"] = sorted(by_label.values(), key=lambda e: -e["rows"])
+    rec["traits"] = sorted(by_trait.values(), key=lambda e: -e["rows"])
     rec["capabilities_pending"] = sum(
         1 for g in rec["groups"] if g.get("name") and not found.get(g["gid"])
     )

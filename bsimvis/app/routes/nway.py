@@ -1298,7 +1298,7 @@ def run_semantics_job(payload, job_service, job_id):
     """Worker side of NWAY_SEM_BUILD: one bin cluster's N-way summary and names.
 
     Skipped when the stored summary already has these member files (unless
-    `force`), and for sets above `nway.auto_build_max_members` unless `force`:
+    `force`), and for sets above `nway.auto_build_max_members` unless `big`:
     those are big builds an analyst asks for. Names come from the registry when
     known, else from the model, waited on."""
     from flask import Flask
@@ -1331,7 +1331,7 @@ def _semantics_job(payload, job_service, job_id):
     if len(md5s) < 2:
         job_service.add_log(job_id, f"cluster {uuid_}: under 2 files, skipped")
         return True
-    if len(md5s) > nway_diff_service.auto_build_max() and not force:
+    if len(md5s) > nway_diff_service.auto_build_max() and not payload.get("big"):
         job_service.add_log(
             job_id, f"cluster {uuid_}: {len(md5s)} files, a big build: skipped"
         )
@@ -1371,7 +1371,9 @@ def _semantics_job(payload, job_service, job_id):
     return True
 
 
-def queue_semantics(collection, uuids=None, top_n=None, force=False, axis=None):
+def queue_semantics(
+    collection, uuids=None, top_n=None, force=False, axis=None, big=False
+):
     """Queues one NWAY_SEM_BUILD per cluster: `uuids`, or the collection's top
     families by activity then size (the overview's ranking) plus every cluster
     that already has a stored summary. -> job ids."""
@@ -1407,7 +1409,12 @@ def queue_semantics(collection, uuids=None, top_n=None, force=False, axis=None):
     js = JobService()
     ids = []
     for u in dict.fromkeys(u for u in uuids if u):
-        payload = {"collection": collection, "cluster_uuid": u, "force": force}
+        payload = {
+            "collection": collection,
+            "cluster_uuid": u,
+            "force": force,
+            "big": big,
+        }
         payload["axis"] = stored_axes.get(u, axis)
         ids.append(js.create_job(JobType.NWAY_SEM_BUILD, payload))
     return ids
@@ -1429,7 +1436,12 @@ def post_nway_semantics_build():
     except (TypeError, ValueError):
         abort(400, "top_n must be an integer")
     ids = queue_semantics(
-        coll, uuids, top_n, bool(body.get("force")), body.get("axis") or None
+        coll,
+        uuids,
+        top_n,
+        bool(body.get("force")),
+        body.get("axis") or None,
+        bool(body.get("big")),
     )
     return {"status": "queued", "jobs": ids, "count": len(ids)}, 202
 

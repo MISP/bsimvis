@@ -1,5 +1,74 @@
 BSimVis is a tool to analyze similarities across a collection of binaries, based on [Ghidra](https://github.com/nationalsecurityagency/ghidra) analyzers and the BSim (Behavioral Similarity) plugin. It provides an API and Web interface to upload large quantities of decompiled binaries and BSim feature vectors to a Kvrocks database for similarity analysis, function diffing, and binary family clustering.
 
+# 1.0.0
+
+This release turns the N-way diff into a family analysis tool, gives file clusters a
+durable identity that analysts can annotate, and reworks navigation around collections.
+
+## N-way diff
+* **Lanes and lenses** : rows are grouped into lanes (the functions a set of files shares),
+  with Core / Common / Rare tiers, nested sub-lanes and regions. Lens tabs switch the grouping
+  between Lanes, Modules, Core, Deltas and Triage. Lanes get LLM names from their strings, calls and
+  tags, and nameless `FUN_` rows are named after a discriminating string.
+* **Column groups** : files with the same shared rows merge into one twin column, files can be
+  grouped by cluster, and columns are ordered so that files of the same lane sit together.
+  Compare groups take several searches and can be sent from the Files page filters.
+* **Lineage page** : the family drawn as a tree of files with gained and lost code, in five
+  views. Tree and Tracks follow one group through the family. Ring shows clusters of files with
+  the modules they share as ribbons. Timeline orders files by first seen date and flags dates
+  that are probably late. Births shows where each group of functions first appears and how it
+  is inherited across forks. Every view shares a group selector, an inspector, and a state bar
+  with Back and Reset, and the N-way table can be shown under the chart.
+* **Large sets** : sets above `nway.auto_build_max_members` files build as a background job
+  with Fast / Balanced / Deep presets and a time estimate, instead of blocking a request.
+* **Code views** : one Code tab (blocks, full function, unified), a CFG strip on a shared row
+  grid, and callers, callees and constants with per-column presence.
+
+## File clusters
+* **Cluster overview** : an Overview tab with shared-code lanes, a lineage preview and metadata
+  distributions, plus a medoid tab and secondary-axis cohesion.
+* **Names, notes and bookmarks that survive rebuilds** : a cluster keeps its uuid when a rebuild
+  gives back the same members. Analyst names, tags, notes and bookmarks stay on it, and a cluster
+  that was merged or split proposes its notes to its successor.
+* **Timeline and relevance** : clusters carry first / last upload and in-the-wild dates
+  (`first_seen` / `last_seen` at upload), and the cluster list sorts by activity and by a
+  family-level relevance score.
+
+## Navigation and collections
+* **Collection overview** : stats, a family map, uploads over time against first and last seen
+  dates, architecture / format / tag mix, and the most active families.
+* **Navigation** : a global menu in the breadcrumb row and a tab strip on every collection and
+  pool page, with counts. Searches are anchored to a collection or pool.
+* **File browser** : files shown as cards, list + detail or table, and drawn as a tree by
+  archive or by cluster. Every paged list has a jump-to-page pager, with a pages-or-scroll
+  setting.
+
+## Analysis
+* **Strings** : Ghidra strings are extracted at analysis, indexed and searchable, with a
+  collection-wide Strings page, a function Strings tab and pivots to function and file search.
+  YARA string hits are mapped to strings.
+* **YARA workbench (experimental)** : a live rule editor at `/yara` that tests a rule against
+  chosen files and reports precision, recall and where each hit lands in functions and
+  strings. It suggests strings from a file set or an N-way family, and can apply a rule as
+  `yara:custom:` file tags.
+* **Function CFG** : a CFG tab on the function view, linked both ways with the code, and Block
+  Diff and CFG Diff tabs in the 2-way diff.
+* **Analyst function names** : a function renamed by an analyst or the LLM shows that name,
+  with its origin, everywhere. LLM name suggestions use the cluster names of stripped callers
+  and callees.
+* **Entry point tag** : the program entry point is tagged `entry:process` (LIEF) and opens from
+  the file view.
+
+## Operations
+* **Docker** : a Dockerfile and compose services for the app and workers (gunicorn, non-root,
+  pinned base image and JDK), with optional Docker datastores for small machines.
+* **Sample download** : download a stored sample as an `infected` password zip.
+* **`scripts/fetch_samples.py`** : pull samples from MalwareBazaar or MWDB by hash list or tag
+  and upload them.
+* **Performance** : large `build_sim` batches split into parallel shard jobs, `redis[hiredis]`
+  for reply parsing, gzip responses, a file search that stops sorting at the requested page,
+  and an overview that serves its cached copy while it refreshes.
+
 # 0.6.0
 
 This release focuses on scan-time triage, function-similarity precision, and maintenance tooling for running collections at scale.

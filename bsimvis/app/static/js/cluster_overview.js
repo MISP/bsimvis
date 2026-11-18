@@ -441,7 +441,7 @@
         const cols = (d.columns || []).map(c => {
             const at = c.id.lastIndexOf(':');
             const coll = c.id.slice(0, at), md5 = c.id.slice(at + 1);
-            return { key: c.id, id: `${coll}:file:${md5}`, coll, md5, label: c.file_name || c.label || md5 };
+            return { key: c.id, id: `${coll}:file:${md5}`, coll, md5, label: c.file_name || c.label || md5, base: c.base };
         });
         const n = cols.length;
         const all = Object.values(d.groups || {}).filter(g => g.kind === 'lane' && g.mask);
@@ -546,8 +546,11 @@
         }
     }
 
-    // URL keys of the Functions tab's Focus; cleared unless the link sets them.
-    const FOCUS_KEYS = ['focus', 'focus_rule', 'side', 'child_presence'];
+    // A lane pivot: the table tracks the lane's rows (Focus stays the user's, in More options).
+    const PIVOT_KEYS = ['track', 'tfocus', 'columns'];
+    // The table's track key of a file mask over this card's columns (lineage order, `base` = default index).
+    // The table opens on file columns too: over twin columns the same lane has another mask.
+    const laneTrack = mask => window.NwayGroups.trackKey(null, `lane:${mask}`, i => (cur.cols[i].base != null ? cur.cols[i].base : i));
 
     window.ClusterOverview = {
         ensureCss: css, // the cov-* cards, reused by the collection overview
@@ -575,25 +578,23 @@
         /** The N-way table on its own page with these controls (`tab` is its All / Core / Partial / Unique). */
         openFunctions(state) {
             const out = { tab: state.tab || 'all' };
-            FOCUS_KEYS.forEach(k => { if (state[k] != null) out[k] = state[k]; });
+            PIVOT_KEYS.forEach(k => { if (state[k] != null) out[k] = state[k]; });
             window.ClusterDetailView.openFunctionsFull(window.event, out);
         },
 
-        /** A lane's functions: Focus on its files, all of them required, none of the rest. */
+        /** A lane's functions: the table with that lane tracked. */
         openLane(id) {
             const g = cur && cur.byId[id];
             if (!g) return this.openFunctions({ tab: 'all' });
-            const ids = cur.cols.filter((_, i) => g.mask[i] === '1').map(c => c.key);
-            // Focus needs a file on each side; a lane in every file is the Core tab.
-            if (ids.length >= cur.n) return this.openFunctions({ tab: 'core' });
-            this.openFunctions({ tab: 'unique', side: 'focus', focus_rule: 'all', focus: ids.join(','), child_presence: '0.05' });
+            this.openFunctions({ tab: 'all', columns: 'files', track: laneTrack(g.mask), tfocus: '1' });
         },
 
-        /** The functions only one file has. */
+        /** The functions only one file has: its one-file lane, tracked. */
         openFile(i) {
             const col = cur && cur.cols[i];
             if (!col || cur.n < 2) return this.openFunctions({ tab: 'unique' });
-            this.openFunctions({ tab: 'unique', side: 'focus', focus_rule: 'any', focus: col.key, child_presence: '0.05' });
+            const mask = cur.cols.map((_, j) => (j === i ? '1' : '0')).join('');
+            this.openFunctions({ tab: 'unique', columns: 'files', track: laneTrack(mask), tfocus: '1' });
         },
     };
 })();

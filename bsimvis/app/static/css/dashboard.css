@@ -2794,7 +2794,8 @@ a.home-card:hover,
 .nway-bar .home-tip::after, .nway-focus .home-tip::after, .nway-tabrow .home-tip::after {
     bottom: auto; top: calc(100% + 8px); left: -8px; transform: none; z-index: 200;
 }
-.nway-focus-body { min-width: 360px; max-width: 520px; }
+/* Focus sits first in the More row: open to the right and stay on screen. */
+.nway-focus-body, .nway-more-row .nway-focus-body { left: 0; right: auto; min-width: min(360px, calc(100vw - 32px)); max-width: min(520px, calc(100vw - 32px)); }
 .nway-focus-body .nway-chips { max-height: 140px; overflow: auto; margin: 0; }
 .nway-cmp-row { display: flex; gap: 6px; margin-bottom: 8px; }
 .nway-cmp-row input { min-width: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary, transparent); color: inherit; font: inherit; }
@@ -3013,7 +3014,7 @@ a.home-card:hover,
 .nway-sech { font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim, #888); }
 .nway-more-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
 .nway-more-row .nway-gcard { margin: 0; flex: 1; }
-.nway-more-row .nway-match-body, .nway-more-row .nway-focus-body { min-width: 0; }
+.nway-more-row .nway-match-body { min-width: 0; }
 .nway-edit.in-more > summary { display: none; }
 .nway-byrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 0 0 8px; padding: 6px 10px; border: 1px dashed var(--border); border-radius: 6px; font-size: 0.82rem; }
 .nway-bvals { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; max-height: 96px; overflow-y: auto; }

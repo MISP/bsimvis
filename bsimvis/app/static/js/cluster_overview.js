@@ -316,7 +316,7 @@
     async function loadLineage(el, v, c) {
         const host = el.querySelector('#cov-lin');
         const uuid = c.cluster_uuid;
-        const qs = new URLSearchParams({ cluster_uuid: uuid, axis: v.axis, columns: 'files', order: 'tree', scope: 'code', tab: 'all', group: 'lane,region' });
+        const qs = new URLSearchParams({ cluster_uuid: uuid, axis: v.axis, columns: 'files', order: 'tree', scope: 'code', tab: 'all', group: 'lane' });
         // the table's group_* tuning (lane tiers, fold, merge), as the lineage page sends it: the Lanes lens matches its tab
         for (const [k, val] of Object.entries(NwayPanel.DEFAULTS)) if (k.startsWith('group_') && val !== '' && val != null) qs.set(k, String(val));
         if (v.params && v.params.pool) qs.set('pool', v.params.pool);

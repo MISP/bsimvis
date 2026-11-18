@@ -34,7 +34,7 @@ window.NwayLineageView = {
         const NL = window.NwayLineage;
         NL.ensureCss();
         // the table's defaults: a value equal to one stays out of the URL, as the table does
-        const D = { q: '', scope: 'code', tab: 'all', group: 'lane,region', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '', table: '', bcol: 'lens', tmove: '' };
+        const D = { q: '', scope: 'code', tab: 'all', group: 'lane', columns: 'twins', track: '', ...(window.NwayPanel ? window.NwayPanel.DEFAULTS : {}), lview: 'tree', tfield: 'first_seen', rnest: '1', rarc: window.NwayRing ? window.NwayRing.RING.ARC_DEFAULT : 'group', rmin: '0.5', rlist: '', rtier: '', rbundle: '', bgrp: 'month', baxis: 'rank', bsel: '', table: '', bcol: 'lens', tmove: '' };
         // rnest, rarc, rmin, rlist, rtier, rbundle: the Ring view's settings (lineage-only keys, like lview); tfield: the Timeline's date;
         // bgrp, baxis, bsel, bcol: the Births view's grouping (file | week | month), axis (rank | cal), selected birth and colour (lens | birth)
         // tmove: the Timeline's moved files (`a,b;c,d` = a placed before b's day), in the answer only, never stored

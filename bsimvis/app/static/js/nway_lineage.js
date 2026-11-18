@@ -48,7 +48,7 @@
     const V = { born: 'var(--lin-born)', died: 'var(--lin-died)', shared: 'var(--lin-grey)', fork: 'var(--lin-grey-d)', slate: 'var(--lin-slate)', slateHi: 'var(--lin-slate-hi)', reuse: 'var(--lin-reuse)' };
     const CAVEAT = 'reuse, independent birth or matcher miss';
     // same as nway_panel.js LENSES (key, label, group preset) and its tab icons
-    const LENSES = [['lanes', 'Lanes', 'lane,region', 'fa-layer-group'], ['modules', 'Modules', 'region,role', 'fa-diagram-project'], ['core', 'Core', 'presence,region', 'fa-bullseye'], ['deltas', 'Deltas', 'delta,region', 'fa-code-compare'], ['triage', 'Triage', 'role,region', 'fa-list-ol']];
+    const LENSES = [['lanes', 'Lanes', 'lane', 'fa-layer-group'], ['modules', 'Modules', 'region,role', 'fa-diagram-project'], ['core', 'Core', 'presence,region', 'fa-bullseye'], ['deltas', 'Deltas', 'delta,region', 'fa-code-compare'], ['triage', 'Triage', 'role,region', 'fa-list-ol']];
     // same as nway_panel.js ROLES; colours as dashboard.css .r-*
     const ROLES = [['orchestrator', 'Orchestrator', 'var(--token-warning)'], ['entry', 'Entry point', 'var(--token-instruction)'], ['logic', 'Logic', 'var(--accent)'], ['compute', 'Compute', 'var(--note-accent)'], ['leaf', 'Leaf helper', 'var(--success)'], ['plumbing', 'Plumbing', 'var(--subtle)'], ['runtime', 'Runtime', 'var(--border)'], ['library', 'Library', 'var(--info)']];
     const BANDS = [['every', 'In every file', 'var(--success)'], ['most', 'Most files (75%+)', 'var(--accent)'], ['some', 'Some files', 'var(--warning, #d97706)'], ['few', 'One or two files', 'var(--token-instruction, #e11d48)']];

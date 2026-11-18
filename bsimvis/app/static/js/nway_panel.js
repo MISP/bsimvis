@@ -40,7 +40,7 @@
         column: '', focus: '', focus_rule: 'any', side: '',
         col_by: '', col_by_multi: '', col_set: '', col_presence: '', cmp: '', col_pick: '', col_rest: '',
         family: '', ignore: '', view: 'functions', cover_min: '', leak_max: '', calls: '', consts: '', feat_min: '', feat_max: '', support_min: '',
-        group: 'lane,region', group_split_min: '', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0.5, group_lane_tier: 0.8, group_lane_fold: 3, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
+        group: 'lane', group_split_min: '', group_axis: '', group_axis_b: '', group_merge: 'name,call', group_min_link: '', group_sort: 'lanes', group_lane_min: '', group_lane_fit: '', group_lane_depth: 1, group_lane_link: 0, group_lane_tier: 0.8, group_lane_fold: 0, lane_names: 'on', group_prefix_min: '', group_tag_depth: '', col_open: '',
         track: '', order: '', lane_graph: '', track_only: '', tfocus: '',
     };
     // State keys that go to the API as query params (empty ones are dropped).
@@ -60,7 +60,7 @@
     ];
     // Row lenses: one question each, as a preset of group levels.
     const LENSES = [
-        ['lanes', 'Lanes', 'lane,region', 'Core, common and rare tiers, then lanes of exactly the same files; a lane above the split threshold is split by region.'],
+        ['lanes', 'Lanes', 'lane', 'Core, common and rare tiers, then lanes of exactly the same files.'],
         ['modules', 'Modules', 'region,role', 'Which subsystems are there? Call-graph regions named by the LLM; a region above the split threshold is split by role.'],
         ['core', 'Core', 'presence,region', 'What do the files share? Bands by how many files hold a row, each with a short summary; a band above the threshold is split by region.'],
         ['deltas', 'Deltas', 'delta,region', 'What changed along the column order? New, added, dropped, rewritten and kept rows, over the columns shown (files or column groups).'],

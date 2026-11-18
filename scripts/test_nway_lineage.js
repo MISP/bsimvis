@@ -83,7 +83,7 @@ assert.strictEqual(ab[0].edge.child, 'c:file:b');
 // --- Lanes lens tiers: lanes by file share (Core >= 90%, Common >= 50%), loose rows by their own tier; Core first in a node; tier bundles
 {
     const d = doc(null);
-    d.group = 'lane,region';
+    d.group = 'lane';
     d.groups = [{ id: 'lane:1111', kind: 'lane', mask: '1111', path: ['lane:1111'] }, { id: 'lane:1100', kind: 'lane', mask: '1100', path: ['lane:1100'] }, { id: 'lane:0010', kind: 'lane', mask: '0010', path: ['lane:0010'] }];
     Object.assign(d.rows, { group: [0, 1, null, 2, null, null], tier: ['core', 'common', 'common', 'rare', 'common', 'rare'] });
     const t = build(d, 'lanes'), C = t.cats('lanes');
@@ -240,7 +240,7 @@ assert.strictEqual(NG.trackKey({ kind: 'region' }, 'region:r2', i => i), 'module
 assert.strictEqual(NG.trackKey({ kind: 'tier' }, 'tier:core', i => i), 'tier:core', 'a tier keeps its group id');
 const grouped = doc([true, true, true, true, true, false]);
 Object.assign(grouped, {
-    group: 'lane,region',
+    group: 'lane',
     groups: [
         { id: 'tier:core', kind: 'tier', label: 'Core', path: ['tier:core'] },
         { id: 'tier:core/lane:1100', kind: 'lane', mask: '1100', path: ['tier:core', 'tier:core/lane:1100'] },

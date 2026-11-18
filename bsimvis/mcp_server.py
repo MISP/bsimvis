@@ -1,4 +1,5 @@
-"""MCP server exposing bsimvis's read-only analysis tools over stdio.
+"""MCP server exposing bsimvis's analysis tools over stdio (read-only, plus
+`llm_tools.WRITE_TOOLS`: notes on file clusters).
 
 Reuses `llm_tools.TOOLS` (schema) and `llm_tools.call_tool` (dispatch) as-is --
 the same tool layer the in-app chat agent already uses via
@@ -46,7 +47,7 @@ async def list_tools() -> list[Tool]:
             description=t["function"]["description"],
             inputSchema=t["function"]["parameters"],
         )
-        for t in llm_tools.TOOLS
+        for t in llm_tools.TOOLS + llm_tools.WRITE_TOOLS
     ]
 
 

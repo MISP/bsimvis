@@ -1751,6 +1751,237 @@ def test_incremental_hierarchical_cluster_equivalence():
                 break
 
 
+def test_bin_cluster_uuid_history():
+    """File cluster notes + bookmarks survive rebuilds: an unchanged cluster
+    keeps its uuid, a merged one leaves a history record whose tags and notes
+    are proposed on (and copied to) its successor."""
+    from bsimvis.app.services.bin_cluster_service import bin_cluster_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" File cluster uuid history", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    algo = "unweighted_cosine"
+    coll = f"uuid_hist_{uuid.uuid4().hex[:8]}"
+    r = get_redis()
+    md5 = lambda n: f"{n:032x}"
+    score_key = f"{coll}:bin_sim:score:{algo}"
+
+    def edge(a, b, score):
+        a, b = sorted((md5(a), md5(b)))
+        r.zadd(score_key, {f"{coll}:bin_sim:{algo}:{a}::{b}": score})
+
+    def clusters():
+        res = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": coll, "limit": 100},
+            label="GET /api/bin_cluster/list (uuid history)",
+        )
+        rows = (res or {}).get("results") or []
+        ns = (res or {}).get("algo")
+        return {
+            frozenset(
+                r.smembers(f"{coll}:bin_cluster:{ns}:{x['cluster_id']}:members")
+            ): x
+            for x in rows
+        }
+
+    def group(ns):
+        return frozenset(f"{coll}:file:{md5(n)}" for n in ns)
+
+    def rebuild():
+        bin_cluster_service.clear_clusters(coll, algo)
+        return bin_cluster_service.run_clustering(coll, algo=algo)
+
+    try:
+        for n in range(12):
+            r.set(
+                f"{coll}:file:{md5(n)}:meta",
+                json.dumps({"md5": md5(n), "file_name": f"f{n}", "function_count": 10}),
+            )
+        groups = (range(0, 4), range(4, 8), range(8, 12))
+        for g in groups:
+            for i in g:
+                for j in g:
+                    if i < j:
+                        edge(i, j, 0.95)
+        rebuild()
+        before = clusters()
+        small = [row for row in before.values() if row["count"] == 4]
+        check(
+            "synthetic file clusters build",
+            len(small) == 3,
+            f"{len(before)} cluster(s): {sorted(row['count'] for row in before.values())}",
+        )
+        if len(small) != 3:
+            return
+        keep, merged = before[group(range(8, 12))], before[group(range(4, 8))]
+        key = merged["cluster_key"]
+        for row, tag in ((keep, "bookmark"), (merged, "bookmark")):
+            test_endpoint(
+                "POST",
+                "/api/tags/add",
+                data={
+                    "collection": coll,
+                    "entity_type": "bin_cluster",
+                    "entity_id": str(row["cluster_id"]),
+                    "tag": tag,
+                },
+                label="POST /api/tags/add (bin_cluster bookmark)",
+            )
+        note = test_endpoint(
+            "POST",
+            "/api/notes/bin_cluster/add",
+            data={"cluster_key": key, "text": "C2 at 1.2.3.4"},
+            label="POST /api/notes/bin_cluster/add",
+        )
+        listed = test_endpoint(
+            "GET",
+            "/api/notes/bin_cluster/list",
+            params={"cluster_key": key},
+            label="GET /api/notes/bin_cluster/list",
+        )
+        check(
+            "cluster note round-trips",
+            note
+            and [n["text"] for n in (listed or {}).get("notes", [])]
+            == ["C2 at 1.2.3.4"],
+        )
+        slice_ = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": coll, "slice": merged["cluster_uuid"]},
+            label="GET /api/bin_cluster/list?slice (tags + notes)",
+        )
+        center = next(
+            (
+                x
+                for x in (slice_ or {}).get("results", [])
+                if x["cluster_uuid"] == merged["cluster_uuid"]
+            ),
+            {},
+        )
+        check(
+            "slice rows carry the sidecar tags and note count",
+            center.get("user_tags") == ["bookmark"] and center.get("note_count") == 1,
+            json.dumps({k: center.get(k) for k in ("user_tags", "note_count")}),
+        )
+
+        rebuild()
+        same = clusters()
+        check(
+            "an unchanged rebuild keeps every uuid",
+            {k: v["cluster_uuid"] for k, v in same.items()}
+            == {k: v["cluster_uuid"] for k, v in before.items()},
+        )
+        check(
+            "bookmarks and notes stay on an unchanged rebuild",
+            all(
+                "bookmark" in same[k]["user_tags"]
+                for k in same
+                if same[k]["cluster_uuid"]
+                in (keep["cluster_uuid"], merged["cluster_uuid"])
+            )
+            and same[group(range(4, 8))]["note_count"] == 1,
+        )
+
+        for i in range(0, 8):  # merge groups 0-3 and 4-7
+            for j in range(0, 8):
+                if i < j:
+                    edge(i, j, 0.95)
+        rebuild()
+        after = clusters()
+        kept = [v for v in after.values() if v["cluster_uuid"] == keep["cluster_uuid"]]
+        check(
+            "an untouched cluster keeps its uuid and bookmark",
+            kept and "bookmark" in kept[0]["user_tags"],
+        )
+        hist = test_endpoint(
+            "GET",
+            "/api/bin_cluster/history",
+            params={"collection": coll, "uuid": merged["cluster_uuid"]},
+            label="GET /api/bin_cluster/history (retired uuid)",
+        )
+        h = (hist or {}).get("history") or {}
+        live = h.get("live") or []
+        check(
+            "a merged cluster's uuid has a history record and a live successor",
+            h.get("kind") == "merged" and live and h.get("tags") == ["bookmark"],
+            json.dumps({k: h.get(k) for k in ("kind", "tags", "live")})[:300],
+        )
+        if not live:
+            return
+        succ = live[0]["uuid"]
+        prop = test_endpoint(
+            "GET",
+            "/api/bin_cluster/history",
+            params={"collection": coll, "uuid": succ},
+            label="GET /api/bin_cluster/history (successor proposals)",
+        )
+        check(
+            "the successor is offered the retired cluster's data",
+            [x["uuid"] for x in (prop or {}).get("inherited", [])]
+            == [merged["cluster_uuid"]],
+        )
+        carry = test_endpoint(
+            "POST",
+            "/api/bin_cluster/history/carry",
+            data={
+                "collection": coll,
+                "from_uuid": merged["cluster_uuid"],
+                "to_uuid": succ,
+            },
+            label="POST /api/bin_cluster/history/carry",
+        )
+        sliced = test_endpoint(
+            "GET",
+            "/api/bin_cluster/list",
+            params={"collection": coll, "slice": succ},
+            label="GET /api/bin_cluster/list?slice (successor)",
+        )
+        moved = [
+            v for v in (sliced or {}).get("results", []) if v["cluster_uuid"] == succ
+        ]
+        check(
+            "carry copies tags and notes onto the successor",
+            (carry or {}).get("added") == {"tags": 1, "notes": 1}
+            and moved
+            and "bookmark" in moved[0]["user_tags"]
+            and moved[0]["note_count"] == 1,
+            json.dumps(
+                {
+                    "added": (carry or {}).get("added"),
+                    "moved": [
+                        {k: m.get(k) for k in ("user_tags", "note_count", "count")}
+                        for m in moved
+                    ],
+                }
+            ),
+        )
+        old_notes = test_endpoint(
+            "GET",
+            "/api/notes/bin_cluster/list",
+            params={"cluster_key": key},
+            label="GET /api/notes/bin_cluster/list (retired uuid keeps its note)",
+        )
+        check(
+            "the retired uuid keeps its own note",
+            len((old_notes or {}).get("notes", [])) == 1,
+        )
+    finally:
+        bin_cluster_service.clear_clusters(coll, algo)
+        for pattern in (f"{coll}:*",):
+            cursor = 0
+            while True:
+                cursor, keys = r.scan(cursor, match=pattern, count=1000)
+                if keys:
+                    r.delete(*keys)
+                if cursor == 0:
+                    break
+
+
 # ---------------------------------------------------------------------------
 # Ghidra language / compiler-spec listing and upload validation
 # ---------------------------------------------------------------------------
@@ -12326,6 +12557,7 @@ if __name__ == "__main__":
         test_cluster_rename,
         test_entrypoint_backfill,
         test_incremental_hierarchical_cluster_equivalence,
+        test_bin_cluster_uuid_history,
         test_function_search_unindexed_cluster,
         test_function_live_discovery,
         test_cluster_response_contract,

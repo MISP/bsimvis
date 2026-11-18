@@ -31,7 +31,8 @@ let entityMode = 'func';
 const NOTE_MODE_INFO = {
     func: { idKey: 'func_id', base: '/api/notes' },
     file: { idKey: 'file_id', base: '/api/notes/file' },
-    bin_sim: { idKey: 'sid', base: '/api/notes/bin_sim' }
+    bin_sim: { idKey: 'sid', base: '/api/notes/bin_sim' },
+    bin_cluster: { idKey: 'cluster_key', base: '/api/notes/bin_cluster' }
 };
 function noteMode() { return NOTE_MODE_INFO[entityMode] || NOTE_MODE_INFO.func; }
 
@@ -54,6 +55,8 @@ function notifyNoteChanged(funcId) {
         if (window.parent?.refreshFileRow) window.parent.refreshFileRow(funcId);
     } else if (entityMode === 'bin_sim') {
         if (window.parent?.refreshBinSimRow) window.parent.refreshBinSimRow(funcId);
+    } else if (entityMode === 'bin_cluster') {
+        window.dispatchEvent(new CustomEvent('bsimvis:cluster-note-changed', { detail: { key: funcId } }));
     }
 }
 
@@ -100,6 +103,7 @@ function getChatScopeCollection() {
 function entityKindFromId(id) {
     id = String(id || '');
     if (id.includes(':bin_sim:')) return 'bin_sim';
+    if (id.includes(':bin_cluster:')) return 'bin_cluster';
     if (id.includes(':file:')) return 'file';
     return 'func';
 }
@@ -890,6 +894,7 @@ function noteScopeLabel(funcId) {
         return names ? `\u00b7 ${names}` : '\u00b7 binary comparison';
     }
     if (entityMode === 'file') return `\u00b7 file ${id.split(':file:')[1] || ''}`;
+    if (entityMode === 'bin_cluster') return `\u00b7 file cluster ${id.split(':').pop()}`;
     return '';
 }
 
@@ -1099,6 +1104,10 @@ async function generateSummary(funcId) {
         if (statusEl) statusEl.innerText = 'Use "Analyze comparison" on the comparison view to generate a pair report note.';
         return;
     }
+    if (entityMode === 'bin_cluster') {
+        if (statusEl) statusEl.innerText = 'Ask a question about this file cluster below.';
+        return;
+    }
     if (statusEl) statusEl.innerText = "Summarizing...";
     const sendBtn = document.getElementById("llm-send-btn");
     const stopBtn = document.getElementById("llm-stop-btn");
@@ -1286,6 +1295,9 @@ function currentFocusContextLine() {
         // binaries and their scores, so let it describe its own focus.
         const ctx = (window.binSimFocusContext || window.parent?.binSimFocusContext)?.(currentNotesFuncId);
         return `(Analyst is currently viewing the binary comparison ${currentNotesFuncId}.${ctx ? ` ${ctx}` : ''} Assume this question refers to that comparison -- the two binaries and how they differ -- unless stated otherwise.)`;
+    }
+    if (entityMode === 'bin_cluster') {
+        return `(Analyst is currently viewing the file cluster ${currentNotesFuncId.split(':').pop()} (cluster_uuid). Assume this question refers to that cluster unless stated otherwise.)`;
     }
     const kind = entityMode === 'file' ? 'file' : 'function';
     return `(Analyst is currently viewing ${kind} ${currentNotesFuncId}. Assume this question refers to it unless stated otherwise.)`;

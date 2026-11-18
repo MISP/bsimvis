@@ -322,6 +322,34 @@ file_note_remove_model = api.model(
     },
 )
 
+bin_cluster_note_add_model = api.model(
+    "BinClusterNoteAdd",
+    {
+        "cluster_key": fields.String(
+            required=True, example="main:bin_cluster:unweighted_cosine:snn:9fed13958836"
+        ),
+        "text": fields.String(required=True, example="Mirai variant with new scanner"),
+        "owner": fields.String(example="user"),
+    },
+)
+
+bin_cluster_note_update_model = api.model(
+    "BinClusterNoteUpdate",
+    {
+        "cluster_key": fields.String(required=True),
+        "note_id": fields.String(required=True, example="uuid"),
+        "text": fields.String(required=True),
+    },
+)
+
+bin_cluster_note_remove_model = api.model(
+    "BinClusterNoteRemove",
+    {
+        "cluster_key": fields.String(required=True),
+        "note_id": fields.String(required=True, example="uuid"),
+    },
+)
+
 bin_sim_note_add_model = api.model(
     "BinSimNoteAdd",
     {
@@ -2546,6 +2574,50 @@ class BinClusterTree(Resource):
         return get_bin_cluster_tree()
 
 
+@ns_bin_cluster.route("/history")
+class BinClusterHistory(Resource):
+    @ns_bin_cluster.doc(
+        params={
+            "collection": "Collection name",
+            "pool": "Pool ID (optional)",
+            "uuid": "Cluster uuid, live or retired",
+            "axis": "Score axis of a live uuid (for `inherited`)",
+            "node_type": "file | container",
+        }
+    )
+    def get(self):
+        """What became of a cluster uuid after a rebuild (successors, kept tags
+        and notes), and the retired clusters a live one may inherit data from."""
+        from bsimvis.app.routes.bin_cluster import get_bin_cluster_history
+
+        return get_bin_cluster_history()
+
+
+@ns_bin_cluster.route("/history/carry")
+class BinClusterHistoryCarry(Resource):
+    @ns_bin_cluster.expect(
+        api.model(
+            "BinClusterHistoryCarry",
+            {
+                "collection": fields.String(required=True),
+                "pool": fields.String(),
+                "axis": fields.String(example="overall"),
+                "node_type": fields.String(example="file"),
+                "from_uuid": fields.String(required=True, example="9fed13958836"),
+                "to_uuid": fields.String(required=True),
+                "tags": fields.Boolean(default=True),
+                "notes": fields.Boolean(default=True),
+                "dismiss": fields.Boolean(default=False),
+            },
+        )
+    )
+    def post(self):
+        """Copy a retired cluster's tags / notes onto a live one, or dismiss."""
+        from bsimvis.app.routes.bin_cluster import carry_bin_cluster_history
+
+        return carry_bin_cluster_history()
+
+
 @ns_bin_cluster.route("/meta")
 class BinClusterMeta(Resource):
     @ns_bin_cluster.expect(
@@ -3432,6 +3504,50 @@ class BinSimNoteList(Resource):
         from bsimvis.app.routes.notes import get_bin_sim_notes
 
         return get_bin_sim_notes()
+
+
+@ns_notes.route("/bin_cluster/add")
+class BinClusterNoteAdd(Resource):
+    @ns_notes.expect(bin_cluster_note_add_model)
+    @ns_notes.response(200, "Success", note_model)
+    def post(self):
+        """Adds a note to a file cluster (kept across rebuilds, see uuid history)."""
+        from bsimvis.app.routes.notes import add_cluster_note
+
+        return add_cluster_note()
+
+
+@ns_notes.route("/bin_cluster/update")
+class BinClusterNoteUpdate(Resource):
+    @ns_notes.expect(bin_cluster_note_update_model)
+    @ns_notes.response(200, "Success", note_model)
+    def put(self):
+        """Updates a file cluster note."""
+        from bsimvis.app.routes.notes import update_cluster_note
+
+        return update_cluster_note()
+
+
+@ns_notes.route("/bin_cluster/remove")
+class BinClusterNoteRemove(Resource):
+    @ns_notes.expect(bin_cluster_note_remove_model)
+    @ns_notes.response(200, "Success")
+    def delete(self):
+        """Removes a file cluster note."""
+        from bsimvis.app.routes.notes import remove_cluster_note
+
+        return remove_cluster_note()
+
+
+@ns_notes.route("/bin_cluster/list")
+class BinClusterNoteList(Resource):
+    @ns_notes.doc(params={"cluster_key": "{collection}:bin_cluster:{algo}:{uuid}"})
+    @ns_notes.response(200, "Success", fields.List(fields.Nested(note_model)))
+    def get(self):
+        """Lists the notes of a file cluster."""
+        from bsimvis.app.routes.notes import get_cluster_notes
+
+        return get_cluster_notes()
 
 
 # --- LLM Namespace ---

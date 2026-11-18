@@ -1223,8 +1223,11 @@ async function startAddTag(event, etype, eid, prefill = '', onAdded = null) {
 function clusterTagContext(etype) {
     if (etype !== 'cluster' && etype !== 'bin_cluster') return {};
     const params = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
+    // No algo = the collection's own (the server resolves it); axis picks the
+    // score axis namespace, whose cluster ids overlap the overall ones.
     return {
-        algo: params.get('algo') || 'unweighted_cosine',
+        algo: params.get('algo') || undefined,
+        axis: params.get('axis') || undefined,
         node_type: params.get('node_type') || 'file'
     };
 }

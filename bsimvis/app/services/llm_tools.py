@@ -397,27 +397,70 @@ def get_file_info(collection, file_md5):
     }
 
 
-def get_cluster_info(collection, cluster_id, algo=None, node_type="file"):
-    """Metadata + member distribution for a binary cluster (name, cohesion,
-    tag_distribution's family/yara/ioc axes, filename distribution,
-    bookmarks/tags already on it).
-
-    node_type must match the one get_file_info reported for the cluster:
-    container clusters are numbered independently of file clusters."""
+def _cluster_ns(collection, algo, node_type, axis="overall"):
     from bsimvis.app.services.collection_config import resolve_collection_algo
 
     algo = resolve_collection_algo(collection, algo)
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    return bin_cluster_ns(algo, node_type == "container")
+
+
+def get_cluster_info(
+    collection, cluster_id=None, algo=None, node_type="file", cluster_uuid=None
+):
+    """Metadata + member distribution for a binary cluster (name, cohesion,
+    tag_distribution's family/yara/ioc axes, filename distribution, the
+    analyst tags / bookmarks and notes on it).
+
+    node_type must match the one get_file_info reported for the cluster:
+    container clusters are numbered independently of file clusters. A
+    `cluster_uuid` a rebuild retired answers its history and successors."""
+    from bsimvis.app.services import cluster_history
+    from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
+
     r = get_redis()
-    raw = r.get(
-        f"{collection}:bin_cluster:{bin_cluster_ns(algo, node_type == 'container')}"
-        f":{cluster_id}:meta"
-    )
+    ns = _cluster_ns(collection, algo, node_type)
+    if not cluster_id and cluster_uuid:
+        cluster_id = resolve_cluster_id_by_uuid(
+            r, collection, ns, cluster_uuid.lower(), meta_prefix="bin_cluster"
+        )
+        if not cluster_id:
+            hist = cluster_history.find(
+                r,
+                collection,
+                cluster_uuid.lower(),
+                lambda axis, nt: _cluster_ns(collection, algo, nt, axis),
+            )
+            if hist:
+                hist.update(
+                    cluster_history.user_data(
+                        r, collection, hist["algo"], cluster_uuid.lower()
+                    )
+                )
+                return {"retired": True, **hist}
+            return {"error": "Cluster not found"}
+    raw = r.get(f"{collection}:bin_cluster:{ns}:{cluster_id}:meta")
     if not raw:
         return {"error": "Cluster not found"}
     meta = json.loads(raw) if not isinstance(raw, dict) else raw
     if isinstance(meta, str):
         meta = json.loads(meta)
+    meta.update(cluster_history.user_data(r, collection, ns, meta.get("cluster_uuid")))
+    meta["cluster_key"] = f"{collection}:bin_cluster:{ns}:{meta.get('cluster_uuid')}"
     return meta
+
+
+def add_cluster_note(collection, cluster_uuid, text, algo=None, node_type="file"):
+    """Write an analyst note on a live file cluster (overall axis)."""
+    from bsimvis.app.services.note_service import note_service
+
+    info = get_cluster_info(
+        collection, algo=algo, node_type=node_type, cluster_uuid=cluster_uuid
+    )
+    if info.get("error") or info.get("retired"):
+        return {"error": "No live cluster with that uuid", "info": info}
+    note = note_service.add_cluster_note(info["cluster_key"], text, owner="llm")
+    return {"status": "success", "note": note} if note else {"error": "Empty note"}
 
 
 def scan_file(path, collections=None, pools=None, scan_all=False, limit=5, timeout=900):
@@ -709,6 +752,10 @@ TOOLS = [
                 "properties": {
                     "collection": {"type": "string"},
                     "cluster_id": {"type": "string"},
+                    "cluster_uuid": {
+                        "type": "string",
+                        "description": "Instead of cluster_id (the id in a cluster URL)",
+                    },
                     "algo": {"type": "string"},
                     "node_type": {
                         "type": "string",
@@ -720,7 +767,7 @@ TOOLS = [
                         ),
                     },
                 },
-                "required": ["collection", "cluster_id"],
+                "required": ["collection"],
             },
         },
     },
@@ -771,6 +818,30 @@ TOOLS = [
     },
 ]
 
+# Write tools: the MCP server exposes them, the in-app chat agent stays read-only.
+WRITE_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "add_cluster_note",
+            "description": (
+                "Write an analyst note (Markdown) on a file cluster, shown in "
+                "the cluster page's Notes panel. Owner is recorded as llm."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "collection": {"type": "string"},
+                    "cluster_uuid": {"type": "string"},
+                    "text": {"type": "string"},
+                    "algo": {"type": "string"},
+                },
+                "required": ["collection", "cluster_uuid", "text"],
+            },
+        },
+    },
+]
+
 DISPATCH = {
     "get_function": lambda a: get_function(a["func_id"]),
     "get_call_graph": lambda a: get_call_graph(a["func_id"]),
@@ -791,9 +862,13 @@ DISPATCH = {
     "get_file_info": lambda a: get_file_info(a["collection"], a["file_md5"]),
     "get_cluster_info": lambda a: get_cluster_info(
         a["collection"],
-        a["cluster_id"],
+        a.get("cluster_id"),
         a.get("algo"),
         a.get("node_type", "file"),
+        a.get("cluster_uuid"),
+    ),
+    "add_cluster_note": lambda a: add_cluster_note(
+        a["collection"], a["cluster_uuid"], a["text"], a.get("algo")
     ),
     "scan_file": lambda a: scan_file(
         a["path"],

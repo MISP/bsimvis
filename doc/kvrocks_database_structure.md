@@ -107,6 +107,10 @@ File-level (binary-to-binary) similarity, derived from shared function clusters.
 | `{coll}:bin_cluster:{algo}:{cid}:direct_members` | **Set** | Direct member file IDs. |
 | `{coll}:bin_cluster:tree:{algo}` | **String** | Serialized binary dendrogram tree. |
 | `{coll}:bin_cluster:tree_links:{algo}` | **String** | Raw parent-child links. |
+| `{coll}:cluster_tags` / `{coll}:cluster_notes` | **Hash** | Analyst tags (bookmarks) / notes of clusters, field `bin_cluster:{algo}:{uuid}` (JSON list). Kept outside the meta so a rebuild never drops them. |
+| `{coll}:bin_cluster:retired:{algo}` | **Hash** | uuid -> snapshot (name, size, member-set hash, 32 anchors) of a cluster a clear / rebuild deleted; consumed by the next build (`cluster_history.carry_uuids`). |
+| `{coll}:bin_cluster:uuid_history:{algo}` | **Hash** | Retired uuid -> `{kind, successors: [{uuid, share, jaccard}], ...}`. Never expires. |
+| `{coll}:bin_cluster:inherit:{algo}` | **Hash** | Live uuid -> retired uuids with analyst data whose files it now holds (the "copy tags & notes here" proposal). |
 
 ---
 

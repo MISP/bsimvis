@@ -26,6 +26,16 @@ def _collection_for(data, etype, entry_id):
     return _collection_of(data)
 
 
+def _tag_algo(collection, etype, data):
+    """A file cluster of a score axis lives in its own `{algo}:{axis}` namespace,
+    and its ids restart at the same base as the overall ones."""
+    algo = resolve_collection_algo(collection, data.get("algo"))
+    axis = (data.get("axis") or "overall").strip().lower()
+    if etype == "bin_cluster" and axis != "overall" and f":{axis}" not in algo:
+        algo = f"{algo}:{axis}"
+    return algo
+
+
 def _tag_strings(ids, tag, add):
     """Strings keep their analyst tags in their own record (string_service)."""
     from bsimvis.app.services import string_service
@@ -80,7 +90,7 @@ def add_tag():
         etype,
         entry_id,
         tag,
-        resolve_collection_algo(collection, data.get("algo")),
+        _tag_algo(collection, etype, data),
         data.get("node_type", "file"),
     )
     if success:
@@ -150,7 +160,7 @@ def remove_tag():
         etype,
         entry_id,
         tag,
-        resolve_collection_algo(collection, data.get("algo")),
+        _tag_algo(collection, etype, data),
         data.get("node_type", "file"),
     )
     if success:

@@ -550,5 +550,64 @@ class NoteService:
         except:
             return []
 
+    # --- Binary cluster notes ---
+    # A rebuild rewrites every cluster meta, so cluster notes live in a
+    # `{collection}:cluster_notes` sidecar under the same field as the tag
+    # sidecar (`bin_cluster:{algo}:{uuid}`). The client passes the
+    # self-qualifying key `{collection}:bin_cluster:{algo}:{uuid}`.
+
+    @staticmethod
+    def split_cluster_key(key):
+        coll, sep, rest = (key or "").partition(":bin_cluster:")
+        if not (coll and sep and rest.rpartition(":")[2]):
+            return None, None
+        return f"{coll}:cluster_notes", f"bin_cluster:{rest}"
+
+    def get_cluster_notes(self, key):
+        hkey, field = self.split_cluster_key(key)
+        if not hkey:
+            return []
+        raw = self.r.hget(hkey, field)
+        return json.loads(raw) if raw else []
+
+    def _write_cluster_notes(self, key, notes):
+        hkey, field = self.split_cluster_key(key)
+        if notes:
+            self.r.hset(hkey, field, json.dumps(notes))
+        else:
+            self.r.hdel(hkey, field)
+
+    # ponytail: read-modify-write without WATCH; analysts rarely race on one cluster.
+    def add_cluster_note(self, key, text, owner="user"):
+        text = (text or "").strip()
+        if not text or not self.split_cluster_key(key)[0]:
+            return None
+        note = {
+            "id": str(uuid.uuid4()),
+            "text": text,
+            "owner": owner,
+            "timestamp": int(time.time() * 1000),
+        }
+        self._write_cluster_notes(key, self.get_cluster_notes(key) + [note])
+        return note
+
+    def update_cluster_note(self, key, note_id, text):
+        notes = self.get_cluster_notes(key)
+        for note in notes:
+            if note["id"] == note_id:
+                note["text"] = text
+                note["timestamp"] = int(time.time() * 1000)
+                self._write_cluster_notes(key, notes)
+                return note
+        return None
+
+    def remove_cluster_note(self, key, note_id):
+        notes = self.get_cluster_notes(key)
+        kept = [n for n in notes if n["id"] != note_id]
+        if len(kept) == len(notes):
+            return False
+        self._write_cluster_notes(key, kept)
+        return True
+
 
 note_service = NoteService()

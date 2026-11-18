@@ -370,6 +370,26 @@ Constants are all in `RING`: `CUT` [0.3, 0.6, 0.85], `DEPTH` 3 (2 above 120 file
 clusters and family ribbons only; the mode is shown in the canvas note). The redraw loop
 stops after 240 frames or 4 s.
 
+## File cluster uuid history, notes and bookmarks
+
+A file cluster's tags (bookmarks are the `bookmark` user tag) and notes live in the
+`{coll}:cluster_tags` / `{coll}:cluster_notes` sidecars under `bin_cluster:{algo}:{uuid}`,
+never on the meta. Cluster rows carry `cluster_key` (`{coll}:bin_cluster:{algo}:{uuid}`),
+the id `/api/notes/bin_cluster/*` and the notes panel take. A score axis cluster is its own
+`{algo}:{axis}` namespace whose ids overlap the overall ones, so tag calls send `axis`.
+
+`services/cluster_history.py` keeps a uuid across rebuilds: `clear_clusters`, an incremental
+retire and a full build that skipped the clear `snapshot` the clusters they delete; the next
+persist (`carry_uuids`, both hierarchical and threshold_uf paths) gives a cluster with the
+same member set its old uuid back and writes a history record (kind reshaped / merged /
+split / dissolved, successors by anchor Jaccard) for the rest. A retired uuid that held
+analyst data is proposed on its best successor (`inherit`); `POST /api/bin_cluster/history/carry`
+copies tags and notes (kept on the old uuid too). The detail view shows a retired uuid's page
+and the proposal banner (`renderRetired` / `loadInherited`). Names already survive by member
+anchors (`ClusterNameKeeper`). MCP: `get_cluster_info` takes `cluster_uuid`, `add_cluster_note`
+is in `llm_tools.WRITE_TOOLS` (MCP only; the in-app agent stays read-only).
+Self-check: `uv run python -I bsimvis/app/services/cluster_history.py`; API: `test_bin_cluster_uuid_history`.
+
 ## Cluster timeline
 
 A binary cluster's meta carries `timeline` (`cluster_utils.timeline_stats`): per member date

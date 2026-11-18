@@ -6,6 +6,7 @@ import heapq
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import sim_edges
+from bsimvis.app.services import cluster_history
 from bsimvis.app.services.cluster_utils import (
     write_tree_links,
     clear_tree_links,
@@ -368,6 +369,18 @@ class BinClusterService:
             import json
 
             old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
+            cluster_history.snapshot(
+                r,
+                collection,
+                algo_ns,
+                old_meta,
+                [
+                    m.decode() if isinstance(m, bytes) else m
+                    for m in r.smembers(
+                        f"{collection}:bin_cluster:{algo_ns}:{stale}:members"
+                    )
+                ],
+            )
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:meta")
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:direct_members")
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:centrality")
@@ -607,6 +620,27 @@ class BinClusterService:
         axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
         prefix = f"{collection}:file:"
         keeper = ClusterNameKeeper(self.r, collection, "bin", algo_ns, cluster_members)
+        labels = list(cluster_members)
+        label_to_uuid = {
+            label: (u.decode() if isinstance(u, bytes) else u)
+            for label, u in zip(labels, r.hmget(uuid_key, labels) if labels else [])
+            if u
+        }
+        cluster_history.carry_uuids(
+            r,
+            collection,
+            algo_ns,
+            {
+                label: [m if m.startswith(prefix) else f"{prefix}{m}" for m in ms]
+                for label, ms in cluster_members.items()
+            },
+            label_to_uuid,
+            log=(
+                (lambda m: job_service.add_log(job_id, m))
+                if job_service and job_id
+                else logging.info
+            ),
+        )
         for label, members in cluster_members.items():
             members = [m if m.startswith(prefix) else f"{prefix}{m}" for m in members]
             pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{label}:members", *members)
@@ -615,13 +649,8 @@ class BinClusterService:
             )
             pipe.sadd(f"{collection}:bin_cluster:list:{algo_ns}", str(label))
 
-            # Ensure UUID
-            c_uuid = r.hget(uuid_key, label)
-            if not c_uuid:
-                c_uuid = uuid.uuid4().hex[:12]
-                r.hset(uuid_key, label, c_uuid)
-            else:
-                c_uuid = c_uuid.decode() if isinstance(c_uuid, bytes) else c_uuid
+            c_uuid = label_to_uuid[label]
+            r.hset(uuid_key, label, c_uuid)
 
             # Build Metadata
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
@@ -1115,10 +1144,9 @@ class BinClusterService:
                     centrality_out=centrality[c],
                 )
 
-            uuids = {
-                c: node_meta.get(c, {}).get("cluster_uuid") or uuid.uuid4().hex[:12]
-                for c in node_members
-            }
+            # New nodes get a uuid in _persist (cluster_history.carry_uuids):
+            # an old one back when their member set is unchanged.
+            uuids = {c: node_meta.get(c, {}).get("cluster_uuid") for c in node_members}
             birth_lambdas, _ = self._tree_lambdas(tree_df)
             bottlenecks = self._bottlenecks(tree_rows, state["mst"])
             results.append(
@@ -1813,8 +1841,9 @@ class BinClusterService:
             else set(only_nodes) & set(cluster_members)
         )
 
-        if label_to_uuid is None:
-            label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
+        label_to_uuid = dict(label_to_uuid or {})
+        if only_nodes is None:  # a full build that skipped CLEAR_BIN_CLUSTER
+            self._snapshot_clusters(collection, algo_ns)
 
         # 5. Calculate Stability
         stabilities = {}
@@ -1875,6 +1904,8 @@ class BinClusterService:
                     retired_member_ids.update(members)
                 raw = r.get(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
                 old_meta = json.loads(raw) if raw else {}
+                if c in retired_nodes:
+                    cluster_history.snapshot(r, collection, algo_ns, old_meta, members)
                 for member in members:
                     if "bin_cluster_id" in file_tag_fields:
                         _unindex_tag(
@@ -1921,6 +1952,27 @@ class BinClusterService:
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:centrality")
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
             pipe.execute()
+
+        cluster_history.carry_uuids(
+            r,
+            collection,
+            algo_ns,
+            cluster_members,
+            label_to_uuid,
+            log=(
+                (lambda m: job_service.add_log(job_id, m))
+                if job_service and job_id
+                else logging.info
+            ),
+        )
+        # A kept uuid usually sits on a new cluster id: refresh the uuid -> cid
+        # lookup now instead of leaving it to resolve_cluster_id_by_uuid's
+        # throttled rescan (an old link would answer "no cluster" meanwhile).
+        if label_to_uuid:
+            r.hset(
+                f"{collection}:bin_cluster:uuid2cid:{algo_ns}",
+                mapping={u: str(c) for c, u in label_to_uuid.items()},
+            )
 
         for c in write_nodes:
             members = cluster_members[c]
@@ -2367,6 +2419,7 @@ class BinClusterService:
                     job_id,
                     f"Cleaning up binary clustering data for {total_clusters} clusters ({algo_ns})...",
                 )
+            self._snapshot_clusters(collection, algo_ns, cluster_ids)
 
             for i, cid in enumerate(cluster_ids):
                 members_key = f"{collection}:bin_cluster:{algo_ns}:{cid}:members"
@@ -2426,6 +2479,34 @@ class BinClusterService:
             job_service.update_progress(job_id, 100)
 
         return True
+
+    def _snapshot_clusters(self, collection, algo_ns, cluster_ids=None):
+        """Snapshot clusters about to be deleted, so the next build can give
+        an unchanged cluster its uuid back (see cluster_history)."""
+        r = self.r
+        if cluster_ids is None:
+            cluster_ids = [
+                v.decode() if isinstance(v, bytes) else v
+                for v in r.smembers(f"{collection}:bin_cluster:list:{algo_ns}")
+            ]
+        prefix = f"{collection}:bin_cluster:{algo_ns}"
+        for i in range(0, len(cluster_ids), 200):
+            chunk = cluster_ids[i : i + 200]
+            pipe = r.pipeline(transaction=False)
+            for cid in chunk:
+                pipe.get(f"{prefix}:{cid}:meta")
+                pipe.smembers(f"{prefix}:{cid}:members")
+            res = pipe.execute()
+            for raw, members in zip(res[::2], res[1::2]):
+                if raw and members:
+                    meta = json.loads(raw)
+                    cluster_history.snapshot(
+                        r,
+                        collection,
+                        algo_ns,
+                        meta,
+                        [m.decode() if isinstance(m, bytes) else m for m in members],
+                    )
 
     def _strip_inferred_tags_meta(self, collection):
         """Drop the `inferred_tags` field from every file it was written on.

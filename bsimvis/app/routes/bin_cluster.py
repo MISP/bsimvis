@@ -233,6 +233,8 @@ def _shape_bin_cluster_result(m, parent, child_total):
         "cluster_name": m.get("cluster_name"),
         "tag_id": m.get("tag_id", m.get("cluster_id")),
         "user_tags": m.get("user_tags", []),
+        "note_count": m.get("note_count", 0),
+        "cluster_key": m.get("cluster_key"),
         **name_fields(m),
         "avg_stability": m.get("avg_stability", 0.0),
         "cohesion_score": m.get("cohesion_score", 0),
@@ -264,6 +266,21 @@ def _shape_bin_cluster_result(m, parent, child_total):
     }
 
 
+def _attach_user_tags(r, collection, algo, metas):
+    """Tags and notes live in the `{collection}:cluster_tags` / `:cluster_notes`
+    sidecars, keyed by uuid, so a rebuild's meta rewrite never drops them."""
+    metas = list(metas)
+    if not metas:
+        return
+    fields = [f"bin_cluster:{algo}:{m.get('cluster_uuid')}" for m in metas]
+    tags = r.hmget(f"{collection}:cluster_tags", fields)
+    notes = r.hmget(f"{collection}:cluster_notes", fields)
+    for m, field, raw, raw_notes in zip(metas, fields, tags, notes):
+        m["user_tags"] = json.loads(raw) if raw else []
+        m["note_count"] = len(json.loads(raw_notes)) if raw_notes else 0
+        m["cluster_key"] = f"{collection}:{field}"
+
+
 def _list_bin_clusters_slice(collection, algo, r):
     """The `slice` fast path for non-pool binary clusters -- see
     cluster.py's _list_clusters_slice / cluster_utils.cluster_tree_slice.
@@ -289,6 +306,7 @@ def _list_bin_clusters_slice(collection, algo, r):
             tree=tree,
         )
         _, counts = tree.info(metas)
+        _attach_user_tags(r, collection, algo, metas.values())
         results = [
             _shape_bin_cluster_result(
                 m, parent_q, counts.get(str(m.get("cluster_id")), 0)
@@ -320,6 +338,7 @@ def _list_bin_clusters_slice(collection, algo, r):
         tree=tree,
     )
     parents, counts = tree.info(metas)
+    _attach_user_tags(r, collection, algo, metas.values())
     results = [
         _shape_bin_cluster_result(
             m,
@@ -532,6 +551,10 @@ def list_bin_clusters():
             key.decode() if isinstance(key, bytes) else key: value
             for key, value in (r.hgetall(f"{collection}:cluster_tags") or {}).items()
         }
+        note_counts = {
+            key.decode() if isinstance(key, bytes) else key: len(json.loads(value))
+            for key, value in (r.hgetall(f"{collection}:cluster_notes") or {}).items()
+        }
         meta_map = {}
         for meta_key, meta in zip(all_meta_keys, raw_metas):
             if not meta:
@@ -542,6 +565,8 @@ def list_bin_clusters():
             tag_field = f"bin_cluster:{algo}:{m.get('cluster_uuid')}"
             raw_tags = annotations.get(tag_field)
             m["user_tags"] = json.loads(raw_tags) if raw_tags else []
+            m["note_count"] = note_counts.get(tag_field, 0)
+            m["cluster_key"] = f"{collection}:{tag_field}"
             m["tag_id"] = meta_key[len(meta_prefix) : -len(":meta")]
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
@@ -781,6 +806,8 @@ def list_bin_clusters():
                 "cluster_name": m.get("cluster_name"),
                 "tag_id": m.get("tag_id", m.get("cluster_id")),
                 "user_tags": m.get("user_tags", []),
+                "note_count": m.get("note_count", 0),
+                "cluster_key": m.get("cluster_key"),
                 **name_fields(m),
                 "avg_stability": m.get("avg_stability", 0.0),
                 "cohesion_score": m.get("cohesion_score", 0),
@@ -1431,3 +1458,70 @@ def backfill_bin_cluster_timeline():
         JobType.BACKFILL_CLUSTER_TIMELINE, {"collection": collection}
     )
     return {"status": "processing", "job_id": job_id}
+
+
+def _history_scope(args):
+    """(key collection, algo_for(axis, node_type)) of a cluster history call."""
+    collection = args.get("collection", "main")
+    pool_id = args.get("pool") or get_pool_id(collection)
+    if pool_id:
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id) or {}
+        algo = pool_service.similarity_algo(pool)
+        return f"global:pool:{pool_id}", lambda axis, node_type: (
+            _pool_bin_cluster_namespace(pool, algo, axis, node_type)[0]
+        )
+    return collection, lambda axis, node_type: bin_cluster_algo(
+        collection, args.get("algo"), axis, node_type
+    )
+
+
+def get_bin_cluster_history():
+    """What became of a file cluster uuid, and what a live one may inherit.
+
+    A dead uuid answers `history`: its kind (reshaped / merged / split /
+    dissolved), its live successors and the tags / notes it still holds.
+    A live uuid answers `inherited`: retired clusters with analyst data whose
+    best successor it is, for the "copy their tags and notes here" proposal."""
+    from bsimvis.app.services import cluster_history
+
+    c_uuid = (request.args.get("uuid") or "").strip().lower()
+    if not c_uuid:
+        return {"error": "uuid required"}, 400
+    r = get_redis()
+    coll, algo_for = _history_scope(request.args)
+    hist = cluster_history.find(r, coll, c_uuid, algo_for)
+    if hist:
+        hist.update(cluster_history.user_data(r, coll, hist["algo"], c_uuid))
+        hist["cluster_key"] = f"{coll}:bin_cluster:{hist['algo']}:{c_uuid}"
+    axis = request.args.get("axis", "overall").strip().lower()
+    node_type = request.args.get("node_type", "file").strip().lower()
+    inherited = cluster_history.inherited(r, coll, algo_for(axis, node_type), c_uuid)
+    return {"uuid": c_uuid, "history": hist, "inherited": inherited}
+
+
+def carry_bin_cluster_history():
+    """Copy a retired cluster's tags / notes onto a live one, or dismiss the
+    proposal. Payload: collection, pool, axis, node_type, from_uuid, to_uuid,
+    tags (default true), notes (default true), dismiss (default false)."""
+    from bsimvis.app.services import cluster_history
+
+    data = request.json or {}
+    src = (data.get("from_uuid") or "").strip().lower()
+    dst = (data.get("to_uuid") or "").strip().lower()
+    if not (src and dst) or src == dst:
+        return {"error": "from_uuid and to_uuid required"}, 400
+    r = get_redis()
+    coll, algo_for = _history_scope(data)
+    algo_ns = algo_for(
+        (data.get("axis") or "overall").strip().lower(),
+        (data.get("node_type") or "file").strip().lower(),
+    )
+    if data.get("dismiss"):
+        cluster_history.dismiss(r, coll, algo_ns, src, dst)
+        return {"status": "success", "added": {"tags": 0, "notes": 0}}
+    added = cluster_history.carry_data(
+        r, coll, algo_ns, src, dst, data.get("tags", True), data.get("notes", True)
+    )
+    return {"status": "success", "added": added}

@@ -425,3 +425,47 @@ def get_bin_sim_notes():
 
     notes = note_service.get_bin_sim_notes(collection, sid)
     return {"status": "success", "notes": notes}
+
+
+# --- Binary cluster notes ---
+# `cluster_key` = `{collection}:bin_cluster:{algo}:{uuid}`, as the cluster list
+# answers it (`{collection}:bin_cluster:{algo}:{cluster_uuid}`).
+
+
+def add_cluster_note():
+    data = request.json or {}
+    key, text = data.get("cluster_key"), data.get("text")
+    if not all([key, text]):
+        return {"error": "Missing parameters"}, 400
+    note = note_service.add_cluster_note(key, text, data.get("owner", "user"))
+    if note:
+        return {"status": "success", "note": note}
+    return {"error": "Invalid cluster_key"}, 400
+
+
+def update_cluster_note():
+    data = request.json or {}
+    key, note_id, text = data.get("cluster_key"), data.get("note_id"), data.get("text")
+    if not all([key, note_id, text]):
+        return {"error": "Missing parameters"}, 400
+    note = note_service.update_cluster_note(key, note_id, text)
+    if note:
+        return {"status": "success", "note": note}
+    return {"error": "Note not found"}, 404
+
+
+def remove_cluster_note():
+    data = request.json or {}
+    key, note_id = data.get("cluster_key"), data.get("note_id")
+    if not all([key, note_id]):
+        return {"error": "Missing parameters"}, 400
+    if note_service.remove_cluster_note(key, note_id):
+        return {"status": "success"}
+    return {"error": "Note not found"}, 404
+
+
+def get_cluster_notes():
+    key = request.args.get("cluster_key")
+    if not note_service.split_cluster_key(key)[0]:
+        return {"error": "Missing or invalid cluster_key"}, 400
+    return {"status": "success", "notes": note_service.get_cluster_notes(key)}

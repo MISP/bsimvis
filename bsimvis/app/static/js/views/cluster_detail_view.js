@@ -416,7 +416,9 @@ window.ClusterDetailView = {
 
             const self = this.clusterMapById[centerId];
             if (!self) {
-                container.innerHTML = `<div style="padding:30px; color:var(--dim);">No cluster matching <code>${escapeHtml(uuid)}</code>.</div>`;
+                if (!this.isBinary || !(await this.renderRetired(container, uuid))) {
+                    container.innerHTML = `<div style="padding:30px; color:var(--dim);">No cluster matching <code>${escapeHtml(uuid)}</code>.</div>`;
+                }
                 return;
             }
 
@@ -599,6 +601,127 @@ window.ClusterDetailView = {
     },
 
     // The cluster the page is centred on, renamed through the shared dashboard call.
+    // --- uuid history: a rebuild that changed a cluster retires its uuid ---
+
+    historyQs(extra) {
+        const q = new URLSearchParams({ collection: this.collection || '', axis: this.axis || 'overall', node_type: this.nodeType || 'file', ...extra });
+        if (this.params && this.params.pool) q.set('pool', this.params.pool);
+        return q.toString();
+    },
+
+    clusterHref(uuid, axis, nodeType) {
+        const segs = ['files', 'clusters', uuid];
+        const q = new URLSearchParams();
+        if (axis && axis !== 'overall') q.set('axis', axis);
+        if (nodeType && nodeType !== 'file') q.set('node_type', nodeType);
+        const base = (window.Nav && window.getRoutingState)
+            ? window.Nav.buildUIUrl(window.getRoutingState().collection || '', segs)
+            : `/collections/${encodeURIComponent(this.collection || '')}/files/clusters/${encodeURIComponent(uuid)}`;
+        return base + (q.toString() ? '?' + q : '');
+    },
+
+    dataChips(tags, notes) {
+        const chips = (tags || []).map(t => `<span class="badge">${escapeHtml(t)}</span>`).join(' ');
+        const n = (notes || []).length;
+        return `${chips}${n ? ` <span class="badge"><i class="fa-regular fa-note-sticky"></i> ${n} note${n > 1 ? 's' : ''}</span>` : ''}`;
+    },
+
+    async carry(fromUuid, toUuid, ctx, btn, dismiss = false) {
+        if (btn) btn.disabled = true;
+        const res = await fetch('/api/bin_cluster/history/carry', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collection: this.collection, pool: this.params && this.params.pool, axis: ctx.axis, node_type: ctx.node_type, from_uuid: fromUuid, to_uuid: toUuid, dismiss })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { if (btn) btn.disabled = false; return showToast(body.error || 'Copy failed', 'error'); }
+        if (!dismiss) showToast(`Copied ${body.added.tags} tag(s) and ${body.added.notes} note(s)`, 'success');
+        return body;
+    },
+
+    /** Page for a uuid a rebuild retired: where its files went, and the tags and
+     * notes it still holds (they are never moved without the analyst). */
+    async renderRetired(container, uuid) {
+        let h;
+        try {
+            h = (await (await fetch(`/api/bin_cluster/history?${this.historyQs({ uuid })}`)).json()).history;
+        } catch (e) { return false; }
+        if (!h) return false;
+        this._retired = h;
+        const when = h.at ? new Date(h.at).toLocaleString() : '';
+        const verb = {
+            reshaped: 'was rebuilt with slightly different files as',
+            merged: 'was merged into a larger cluster',
+            split: 'was split; its files are now mostly in',
+            dissolved: 'dissolved: its files no longer form a cluster.',
+        }[h.kind] || 'was replaced by';
+        const rows = (h.live || []).map(sx => `
+            <tr>
+                <td><a href="${escapeAttr(this.clusterHref(sx.uuid, h.axis, h.node_type))}" class="mono">${escapeHtml(sx.uuid)}</a></td>
+                <td>${Number(sx.size || 0).toLocaleString()} files</td>
+                <td>${Math.round((sx.share || 0) * 100)}% of the old files</td>
+                <td>${(h.tags || []).length || (h.notes || []).length ? `<button class="btn-action" onclick="ClusterDetailView.carry(${escapeAttr(jsString(h.uuid))}, ${escapeAttr(jsString(sx.uuid))}, ClusterDetailView._retired, this)">Copy tags &amp; notes here</button>` : ''}</td>
+            </tr>`).join('');
+        container.innerHTML = `
+            <div style="padding:30px; max-width:900px;">
+                <div style="background:var(--card-bg); border:1px solid var(--border); border-left:4px solid #e6db74; border-radius:8px; padding:16px 20px;">
+                    <div style="font-size:1.1rem; font-weight:bold;"><i class="fa-solid fa-clock-rotate-left" style="color:#e6db74;"></i>
+                        ${escapeHtml(h.name || 'Cluster')} <span class="mono dim" style="font-size:0.8rem;">${escapeHtml(h.uuid)}</span></div>
+                    <div style="margin-top:8px;">This cluster (${Number(h.size || 0).toLocaleString()} files) ${verb}${when ? ` <span class="dim">(rebuild of ${escapeHtml(when)})</span>` : ''}</div>
+                    ${rows ? `<table class="table" style="margin-top:12px; width:100%;"><tbody>${rows}</tbody></table>` : ''}
+                    <div style="margin-top:12px;">Analyst data kept on this uuid: ${this.dataChips(h.tags, h.notes) || '<span class="dim">none</span>'}
+                        ${(h.notes || []).length ? `<button class="btn-action" onclick="showNotes(${escapeAttr(jsString(h.cluster_key))})"><i class="fa-regular fa-note-sticky"></i> Show notes</button>` : ''}</div>
+                </div>
+            </div>`;
+        return true;
+    },
+
+    /** Retired clusters with analyst data whose files now sit mostly here:
+     * propose to copy their tags and notes. */
+    async loadInherited(c) {
+        const el = document.getElementById('cluster-inherit');
+        if (!el || !c.cluster_uuid) return;
+        let items = [];
+        try {
+            items = (await (await fetch(`/api/bin_cluster/history?${this.historyQs({ uuid: c.cluster_uuid })}`)).json()).inherited || [];
+        } catch (e) { return; }
+        if (c.cluster_uuid !== this.selectedClusterUuid || !items.length) { el.innerHTML = ''; return; }
+        const ctx = { axis: this.axis, node_type: this.nodeType || 'file' };
+        this._inheritCtx = ctx;
+        el.innerHTML = `
+            <div style="margin-top:10px; padding:10px 14px; border:1px solid var(--border); border-left:4px solid #e6db74; border-radius:6px; font-size:0.85rem;">
+                <div><i class="fa-solid fa-code-merge" style="color:#e6db74;"></i> A rebuild ${items.length > 1 ? `retired ${items.length} clusters` : 'retired a cluster'} with analyst data whose files are now mostly here:</div>
+                ${items.map(it => `
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;" data-from="${escapeAttr(it.uuid)}">
+                    <a href="${escapeAttr(this.clusterHref(it.uuid, this.axis, this.nodeType))}">${escapeHtml(it.name || it.uuid)}</a>
+                    <span class="dim">${escapeHtml(it.kind || '')}${it.size ? ` · ${Number(it.size).toLocaleString()} files` : ''}</span>
+                    ${this.dataChips(it.tags, it.notes)}
+                    ${it.custom_name ? `<span class="dim">named by an analyst</span>` : ''}
+                    <button class="btn-action" onclick="ClusterDetailView.carry(${escapeAttr(jsString(it.uuid))}, ${escapeAttr(jsString(c.cluster_uuid))}, ClusterDetailView._inheritCtx, this).then(b => b && location.reload())">Copy tags &amp; notes here</button>
+                    <button class="btn-action" title="Keep them on the old uuid only" onclick="ClusterDetailView.carry(${escapeAttr(jsString(it.uuid))}, ${escapeAttr(jsString(c.cluster_uuid))}, ClusterDetailView._inheritCtx, this, true).then(b => b && this.parentElement.remove())">Dismiss</button>
+                </div>`).join('')}
+            </div>`;
+    },
+
+    /** Cluster notes use the shared notes panel, keyed by the row's `cluster_key`. */
+    openNotes() {
+        const self = this.clusterMapByUuid[this.selectedClusterUuid];
+        if (!self || !self.cluster_key || typeof showNotes !== 'function') return;
+        if (!this._notesHooked) {
+            this._notesHooked = true;
+            window.addEventListener('bsimvis:cluster-note-changed', async (e) => {
+                const c = Object.values(this.clusterMapByUuid).find(x => x.cluster_key === e.detail.key);
+                if (!c) return;
+                const res = await fetch(`/api/notes/bin_cluster/list?cluster_key=${encodeURIComponent(c.cluster_key)}`);
+                c.note_count = ((await res.json()).notes || []).length;
+                const btn = document.getElementById('cluster-notes-btn');
+                if (btn && c.cluster_uuid === this.selectedClusterUuid) {
+                    btn.innerHTML = `<i class="fa-regular fa-note-sticky"></i>${c.note_count ? ` ${c.note_count}` : ''}`;
+                }
+            });
+        }
+        showNotes(self.cluster_key);
+    },
+
     rename() {
         const self = this.clusterMapByUuid[this.selectedClusterUuid];
         if (!self) return;
@@ -663,6 +786,7 @@ window.ClusterDetailView = {
 
         // Render header immediately
         document.getElementById('cluster-header').innerHTML = this.renderHeader(c);
+        if (this.isBinary) this.loadInherited(c);
         this.renderMedoidCtl();
 
         // Fetch members if not cached
@@ -864,8 +988,10 @@ window.ClusterDetailView = {
                 <span class="badge">${this.isBinary ? this.axis : 'function'}</span>
                 <span class="hero-mini"><span>${Number(self.count || 0).toLocaleString()} members</span></span>
                 ${EntityRenderer.renderTag(this.isBinary ? 'bin_cluster' : 'cluster', self.tag_id || self.cluster_id, [], self.user_tags || [])}
+                ${this.isBinary && self.cluster_key ? `<button id="cluster-notes-btn" class="btn-action" title="Analyst notes on this cluster" onclick="ClusterDetailView.openNotes()"><i class="fa-regular fa-note-sticky"></i>${self.note_count ? ` ${Number(self.note_count)}` : ''}</button>` : ''}
                 <span style="margin-left:auto; display:flex; gap:6px; align-items:center;">${this.renderMemberListLink(self)}${this.renderNdiffLink(self)}${this.renderRuleLink(self)}${this.renderSimilaritiesLink(self)}<button class="hero-handle" onclick="ClusterDetailView.toggleHero()" title="Fold / unfold the details (folds by itself while you scroll a table)"><i class="fa-solid fa-chevron-up"></i></button></span>
             </div>
+            <div id="cluster-inherit"></div>
             <div class="hero-fold"><div class="hero-fold-in">
             <div class="mono dim" style="font-size:0.72rem; margin-top:6px;">
                 ${escapeHtml(self.cluster_uuid || '')}

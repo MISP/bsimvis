@@ -12,6 +12,7 @@ Kvrocks keys, `ns` as in nway_sem_service:
   {ns}:idx:capability:label:{mbc|attack id}  set   capability ids
 """
 
+import hashlib
 import json
 import re
 import os
@@ -51,7 +52,7 @@ ATTACK = [
 MICRO_BELOW = (
     8  # a group with fewer rows gets micro-behaviours instead of MBC behaviours
 )
-CAPS_V = 4  # bump when the capability prompt or parsing changes: groups are asked again
+CAPS_V = 5  # bump when the capability prompt or parsing changes: groups are asked again
 MATCH = 0.5  # anchor similarity two answers need to be one capability
 IDS_MAX, TRAITS_MAX = 4, 5
 _CAT = None
@@ -299,6 +300,432 @@ def search(r, ns, label=None, limit=200):
     return [named(c) for c in get_many(r, ns, ids[:limit])], len(ids)
 
 
+# --- Analyst capabilities (plan G) ------------------------------------------
+# A capability the analyst owns: a free-text name, optional MBC / ATT&CK ids and
+# typed evidence pointers. The definition is global (like YARA rules), evidence
+# is per collection (or pool), keyed on md5:addr so it survives every rebuild.
+#   global:capability:{uuid}           str   definition JSON (name, description, mbc, attack, in, history)
+#   global:capabilities                zset  uuid -> updated (ms)
+#   global:idx:capability:label:{id}   set   uuids per MBC / ATT&CK id
+#   {ns}:capability:{uuid}:ev          hash  evidence item id -> JSON
+#   {ns}:capabilities:in               set   uuids accepted in this namespace
+#   {ns}:idx:capability:file:{md5}     set   uuids with a pointer into that file
+
+EV_TYPES = ("functions", "group", "string", "yara", "rulezet", "capa")
+EV_FIDS_MAX = 500
+NAME_MAX, DESC_MAX, HISTORY_MAX = 120, 1000, 50
+_FID = re.compile(r"^[0-9a-f]{32}:[^:\s]{1,32}$")
+_TEXT = {
+    "why": 300,
+    "label": 120,
+    "name_id": 64,
+    "rule_uuid": 64,
+    "value": 200,
+    "rule": 120,
+}
+
+
+def _gkey(uid):
+    return f"global:capability:{uid}"
+
+
+def _ekey(ns, uid):
+    return f"{ns}:capability:{uid}:ev"
+
+
+def check_ids(ids, kind):
+    """Catalog ids of one kind (mbc | attack), deduped; an unknown id raises."""
+    if ids is None:
+        return []
+    if not isinstance(ids, list):
+        raise ValueError(f"{kind} must be a list of ids")
+    cat = catalog()[kind]
+    out = list(dict.fromkeys(str(i).strip().upper() for i in ids if str(i).strip()))
+    bad = [i for i in out if i not in cat]
+    if bad:
+        raise ValueError(f"unknown {kind} id: {bad[0][:20]}")
+    return out
+
+
+def _fid_list(v, what):
+    if v is None:
+        return []
+    if not isinstance(v, list) or not all(isinstance(f, str) for f in v):
+        raise ValueError(f"{what} must be a list of md5:addr")
+    out = list(dict.fromkeys(nway_sem_service.short(f).lower() for f in v))
+    bad = [f for f in out if not _FID.match(f)]
+    if bad:
+        raise ValueError(f"{what}: not md5:addr: {bad[0][:80]}")
+    if len(out) > EV_FIDS_MAX:
+        raise ValueError(f"{what}: at most {EV_FIDS_MAX} per item")
+    return out
+
+
+def clean_item(it):
+    """One evidence pointer, checked and trimmed, with a content id (the same
+    pointer added twice is one item)."""
+    if not isinstance(it, dict) or it.get("type") not in EV_TYPES:
+        raise ValueError(f"evidence type must be one of {', '.join(EV_TYPES)}")
+    t = it["type"]
+    out = {"type": t}
+    fids = _fid_list(it.get("fids"), "fids")
+    anchors = _fid_list(it.get("anchors"), "anchors")
+    for k, n in _TEXT.items():
+        v = it.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = (v.strip() if k == "value" else " ".join(v.split()))[:n]
+    if fids:
+        out["fids"] = fids
+    if t == "functions" and not fids:
+        raise ValueError("a functions item needs fids")
+    if t == "group":
+        if not anchors:
+            raise ValueError("a group item needs its anchors")
+        out["anchors"] = anchors[: nway_sem_service.K]
+    if t == "string" and "value" not in out:
+        raise ValueError("a string item needs its value")
+    if t in ("yara", "rulezet", "capa") and "rule" not in out:
+        raise ValueError(f"a {t} item needs its rule")
+    if isinstance(it.get("v"), int):
+        out["v"] = it["v"]
+    out["src"] = "llm" if it.get("src") == "llm" else "user"
+    key = [t, out.get("fids"), out.get("anchors"), out.get("value"), out.get("rule")]
+    out["id"] = hashlib.sha1(json.dumps(key).encode()).hexdigest()[:12]
+    return out
+
+
+def md5s_of(items):
+    """Files the pointers land in (a group's anchors stand for its files)."""
+    return {
+        f.split(":")[0]
+        for it in items
+        for f in (it.get("fids") or []) + (it.get("anchors") or [])
+    }
+
+
+def _missing_fids(r, ns, items):
+    """Function pointers with no function meta in collection `ns` (pools: none checked)."""
+    if not ns or ns.startswith("global:"):
+        return []
+    fids = sorted({f for it in items for f in it.get("fids") or []})
+    if not fids:
+        return []
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.exists(f"{ns}:func:{f}:meta")
+    return [f for f, ok in zip(fids, pipe.execute()) if not ok]
+
+
+def _loads(v):
+    return json.loads(_decode(v)) if v else None
+
+
+def put(r, ns, data, owner="user", replace=True):
+    """Creates or updates one capability in `ns`. `replace` (the editor) sets the
+    ids and this namespace's evidence to what is given; otherwise (accept onto an
+    existing capability) ids and evidence are added. Returns (definition, evidence)."""
+    from redis.exceptions import WatchError
+
+    if not ns:
+        raise ValueError("collection or pool is required")
+    uid = data.get("uuid") or None
+    name = " ".join(str(data.get("name") or "").split())[:NAME_MAX]
+    if not uid and not name:
+        raise ValueError("name is required")
+    desc = data.get("description")
+    mbc = check_ids(data.get("mbc"), "mbc")
+    att = check_ids(data.get("attack"), "attack")
+    ev = data.get("evidence") or []
+    if not isinstance(ev, list):
+        raise ValueError("evidence must be a list")
+    items = {i["id"]: i for i in map(clean_item, ev)}
+    missing = _missing_fids(r, ns, list(items.values()))
+    if missing:
+        raise ValueError(f"no such function in {ns}: {missing[0]}")
+    owner = str(owner or "user")[:40]
+    uid = uid or uuid.uuid4().hex
+    gk, ek = _gkey(uid), _ekey(ns, uid)
+    for _ in range(8):
+        with r.pipeline() as p:
+            try:
+                p.watch(gk, ek)
+                old = _loads(p.get(gk))
+                if data.get("uuid") and not old:
+                    raise LookupError(f"no capability {uid}")
+                old_ev = {
+                    _decode(k): json.loads(_decode(v)) for k, v in p.hgetall(ek).items()
+                }
+                now = int(time.time() * 1000)
+                rec = dict(
+                    old or {"uuid": uid, "created": now, "user": owner, "history": []}
+                )
+                if name and name != rec.get("name"):
+                    if rec.get("name"):
+                        rec["history"] = (rec.get("history") or []) + [
+                            {
+                                "at": now,
+                                "user": owner,
+                                "op": "rename",
+                                "from": rec["name"],
+                            }
+                        ]
+                    rec["name"] = name
+                if isinstance(desc, str):
+                    rec["description"] = desc.strip()[:DESC_MAX]
+                old_labels = set(labels(rec))
+                if replace:
+                    rec["mbc"], rec["attack"] = mbc, att
+                    new_ev = items
+                else:
+                    rec["mbc"] = list(dict.fromkeys((rec.get("mbc") or []) + mbc))
+                    rec["attack"] = list(dict.fromkeys((rec.get("attack") or []) + att))
+                    new_ev = {**old_ev, **items}
+                rec["history"] = (rec.get("history") or [])[-HISTORY_MAX:]
+                rec["in"] = sorted(set(rec.get("in") or []) | {ns})
+                rec["updated"] = now
+                gone = md5s_of(old_ev.values()) - md5s_of(new_ev.values())
+                p.multi()
+                p.set(gk, json.dumps(rec))
+                p.zadd("global:capabilities", {uid: now})
+                for i in old_labels - set(labels(rec)):
+                    p.srem(f"global:idx:capability:label:{i}", uid)
+                for i in labels(rec):
+                    p.sadd(f"global:idx:capability:label:{i}", uid)
+                if replace:
+                    p.delete(ek)
+                if new_ev:
+                    p.hset(ek, mapping={k: json.dumps(v) for k, v in new_ev.items()})
+                p.sadd(f"{ns}:capabilities:in", uid)
+                for m in gone:
+                    p.srem(f"{ns}:idx:capability:file:{m}", uid)
+                for m in md5s_of(new_ev.values()):
+                    p.sadd(f"{ns}:idx:capability:file:{m}", uid)
+                p.execute()
+                return rec, list(new_ev.values())
+            except WatchError:
+                continue
+    raise RuntimeError("capability is being edited elsewhere, try again")
+
+
+def remove(r, ns, uid):
+    """Drops a capability's evidence in `ns`; the definition goes with its last namespace."""
+    from redis.exceptions import WatchError
+
+    gk, ek = _gkey(uid), _ekey(ns, uid)
+    for _ in range(8):
+        with r.pipeline() as p:
+            try:
+                p.watch(gk, ek)
+                rec = _loads(p.get(gk))
+                if not rec:
+                    return False
+                old_ev = [json.loads(_decode(v)) for v in p.hgetall(ek).values()]
+                rec["in"] = [x for x in rec.get("in") or [] if x != ns]
+                p.multi()
+                p.delete(ek)
+                p.srem(f"{ns}:capabilities:in", uid)
+                for m in md5s_of(old_ev):
+                    p.srem(f"{ns}:idx:capability:file:{m}", uid)
+                if rec["in"]:
+                    p.set(gk, json.dumps(rec))
+                else:
+                    p.delete(gk)
+                    p.zrem("global:capabilities", uid)
+                    for i in labels(rec):
+                        p.srem(f"global:idx:capability:label:{i}", uid)
+                p.execute()
+                return True
+            except WatchError:
+                continue
+    raise RuntimeError("capability is being edited elsewhere, try again")
+
+
+def names_of(rec):
+    """{id: catalog name} for a definition's ids."""
+    cat = catalog()
+    return {
+        i: (cat[k].get(i) or {}).get("name")
+        for k in ("mbc", "attack")
+        for i in rec.get(k) or []
+    }
+
+
+def listing(r, ns, uid=None, label=None, q=None, md5s=None):
+    """Capabilities accepted in `ns`, newest first, each with its evidence there and
+    the files it points into (only `md5s` when given: a cluster's files)."""
+    ids = {_decode(x) for x in r.smembers(f"{ns}:capabilities:in")}
+    if uid:
+        ids &= {uid}
+    if label:
+        ids &= {_decode(x) for x in r.smembers(f"global:idx:capability:label:{label}")}
+    if md5s is not None:
+        pipe = r.pipeline(transaction=False)
+        for m in md5s:
+            pipe.smembers(f"{ns}:idx:capability:file:{m}")
+        ids &= {_decode(x) for s in pipe.execute() for x in s}
+    ids = sorted(ids)
+    if not ids:
+        return []
+    pipe = r.pipeline(transaction=False)
+    for i in ids:
+        pipe.get(_gkey(i))
+        pipe.hgetall(_ekey(ns, i))
+    res = pipe.execute()
+    out, ql = [], (q or "").lower().strip()
+    for k in range(len(ids)):
+        rec = _loads(res[2 * k])
+        if not rec or (ql and ql not in rec.get("name", "").lower()):
+            continue
+        ev = [json.loads(_decode(v)) for v in (res[2 * k + 1] or {}).values()]
+        files = md5s_of(ev)
+        if md5s is not None:
+            files &= set(md5s)
+        out.append(
+            {**rec, "evidence": ev, "files": sorted(files), "names": names_of(rec)}
+        )
+    return sorted(out, key=lambda c: -c.get("updated", 0))
+
+
+# --- Suggestions (model output, never stored in Kvrocks) ---------------------
+# capsugg:{ns}:{gkey}          queue Redis, JSON list, SUGG_TTL
+# capsugg:{ns}:{gkey}:pending  queue Redis, set while a group is being asked
+SUGG_TTL = 30 * 86400
+SUGG_MAX, ACCEPTED_MAX = 3, 40
+# words a suggested name may use without a pointer that holds them
+GENERIC = set(
+    "udp tcp syn ack http https dns icmp gre vse stomp raw flood ddos dos attack "
+    "telnet ssh ftp smb brute force credential scanner scanning scan exploit "
+    "persistence cron init rc.d systemd killer kill process watchdog disable "
+    "string strings decryption encryption decode encoding xor rc4 chacha aes "
+    "c2 command control communication beacon download downloader upload proxy "
+    "socks library runtime libc code helper helpers memory network socket "
+    "random generation config configuration table setup main loop handler "
+    "self delete daemon fork anti debug analysis obfuscation miner mining "
+    "server client service bot bots competing game port router device iot web "
+    "remote local file files shell reverse bind packet packets payload via and "
+    "the for with from over".split()
+)
+
+
+def gkey(name_id, anchors):
+    """Cache key of a group: its name record id, else its anchors."""
+    if name_id:
+        return name_id
+    return "a" + hashlib.sha1(",".join(anchors or []).encode()).hexdigest()[:16]
+
+
+def accepted_lines(r, ns):
+    """(prompt lines, {code: uuid}) of the accepted capabilities the model may attach to."""
+    caps = listing(r, ns)[:ACCEPTED_MAX]
+    lines, amap = [], {}
+    for n, c in enumerate(caps, 1):
+        code = f"A{n}"
+        amap[code] = c["uuid"]
+        ids = " ".join((c.get("mbc") or []) + (c.get("attack") or []))
+        lines.append(f"{code} {c['name']}" + (f" [{ids}]" if ids else ""))
+    return "\n".join(lines), amap
+
+
+def _holders(items, needle):
+    n = _norm(needle)
+    return [
+        it["fid"]
+        for it in items
+        if n
+        and n
+        in _norm(
+            " ".join(
+                it.get("strings", [])
+                + it.get("calls", [])
+                + it.get("findings", [])
+                + [it.get("snippet") or ""]
+            )
+        )
+    ]
+
+
+def unbacked(name, text):
+    """Words of a suggested name that are neither generic nor in the evidence."""
+    ev = _norm(text)
+    words = re.findall(r"[a-z0-9][a-z0-9.\-]{2,}", name.lower())
+    return [w for w in words if w not in GENERIC and w not in ev]
+
+
+def build_suggestions(answer, lvl, text, items, group, amap):
+    """The model's answer as suggestions shaped like capabilities: name, ids (the
+    quote rules of `clean`), attach_to, and evidence pointers resolved against the
+    evidence items (the group itself, the functions holding a quote or a cited
+    string, those strings, the rule findings quoted)."""
+    out = []
+    raw = (answer or {}).get("suggestions") if isinstance(answer, dict) else None
+    for s in (raw if isinstance(raw, list) else [])[:SUGG_MAX]:
+        if not isinstance(s, dict):
+            continue
+        name = " ".join(str(s.get("name") or "").split())[:NAME_MAX]
+        attach = amap.get(str(s.get("attach") or "").strip().upper())
+        if not name and not attach:
+            continue
+        ids = clean(
+            {"mbc": s.get("mbc"), "attack": s.get("attack"), "traits": [name]},
+            lvl,
+            text,
+        ) or {"mbc": [], "attack": [], "quotes": {}}
+        ev = [dict(group)]
+        fids = []
+        for q in ids["quotes"].values():
+            fids += _holders(items, q)
+        for v in s.get("strings") or []:
+            if isinstance(v, str) and (h := _holders(items, v)):
+                ev.append({"type": "string", "value": v.strip()[:200], "fids": h})
+                fids += h
+        for it in items:
+            for f in it.get("findings") or []:
+                if any(_norm(f) in _norm(q) for q in ids["quotes"].values()):
+                    kind = "yara" if "yara" in f.lower() else "capa"
+                    ev.append({"type": kind, "rule": f[:120], "fids": [it["fid"]]})
+        if fids:
+            ev.append({"type": "functions", "fids": list(dict.fromkeys(fids))})
+        for e in ev:
+            e["src"] = "llm"
+        ev = list({i["id"]: i for i in map(clean_item, ev)}.values())
+        why = " ".join(str(s.get("why") or "").split())[:300]
+        out.append(
+            {
+                "name": name,
+                "attach_to": attach,
+                "mbc": ids["mbc"],
+                "attack": ids["attack"],
+                "quotes": ids["quotes"],
+                "why": why,
+                "evidence": ev,
+                "unbacked": unbacked(name, text) if name else [],
+                "group": group.get("name_id") or group.get("label"),
+            }
+        )
+    return out
+
+
+def cache_put(red, ns, key, sugg):
+    red.set(
+        f"capsugg:{ns}:{key}",
+        json.dumps({"v": CAPS_V, "at": int(time.time() * 1000), "suggestions": sugg}),
+        ex=SUGG_TTL,
+    )
+    red.delete(f"capsugg:{ns}:{key}:pending")
+
+
+def cache_get(red, ns, keys):
+    """{key: {suggestions, at} | None} and the keys still being asked."""
+    keys = list(dict.fromkeys(keys))
+    if not keys:
+        return {}, []
+    vals = red.mget([f"capsugg:{ns}:{k}" for k in keys])
+    pend = red.mget([f"capsugg:{ns}:{k}:pending" for k in keys])
+    got = {k: _loads(v) for k, v in zip(keys, vals)}
+    got = {k: (v if v and v.get("v") == CAPS_V else None) for k, v in got.items()}
+    return got, [k for k, p in zip(keys, pend) if p and not got[k]]
+
+
 if __name__ == "__main__":
     b, m, a = BEHAVIOURS, MICRO, ATTACK
     cat = catalog()
@@ -396,4 +823,65 @@ if __name__ == "__main__":
     assert c["id"] != a["id"]
     found, n = search(r, "c", "B0033")
     assert n == 2 and found[0]["mbc"][0]["name"] == "Denial of Service", found
+    # analyst capabilities: pointers are checked, trimmed and deduped by content
+    m5 = "a" * 32
+    it = clean_item(
+        {"type": "functions", "fids": [f"c:func:{m5}:00401000", f"{m5}:00401000"]}
+    )
+    assert it["fids"] == [f"{m5}:00401000"] and it["src"] == "user", it
+    same = {"type": "functions", "fids": [f"{m5}:00401000"], "why": " x  y "}
+    assert clean_item(same)["id"] == it["id"] and clean_item(same)["why"] == "x y"
+    for bad in (
+        {"type": "nope"},
+        {"type": "functions"},
+        {"type": "functions", "fids": ["not-a-fid"]},
+        {"type": "group", "fids": [f"{m5}:1"]},
+        {"type": "string"},
+        {"type": "yara", "fids": [f"{m5}:1"]},
+    ):
+        try:
+            clean_item(bad)
+            raise AssertionError(bad)
+        except ValueError:
+            pass
+    g = clean_item(
+        {"type": "group", "anchors": [f"{m5}:{i}" for i in range(30)], "label": "F"}
+    )
+    assert len(g["anchors"]) == nway_sem_service.K and md5s_of([g, it]) == {m5}
+    assert check_ids(["b0033", "B0033"], "mbc") == ["B0033"]
+    try:
+        check_ids(["T9999"], "attack")
+        raise AssertionError("unknown id")
+    except ValueError:
+        pass
+    # suggestions: quotes resolve to the functions and strings holding them
+    f1, f2 = f"{m5}:00401000", f"{m5}:00402000"
+    items = [
+        {"fid": f1, "strings": ["minecraft"], "calls": ["sendto"], "findings": [],
+         "snippet": "while (1) { sendto(fd,buf,len,0,&sa,0x10); }"},
+        {"fid": f2, "strings": ["/proc/net/tcp"], "calls": [], "findings": [], "snippet": ""},
+    ]  # fmt: skip
+    ev_text = "Strings: minecraft | /proc/net/tcp\n" + items[0]["snippet"]
+    grp = {"type": "group", "anchors": [f1, f2], "label": "Attack floods"}
+    ans = {
+        "suggestions": [
+            {"name": "Minecraft server flood", "mbc": [{"id": "B0033", "quote": "sendto(fd,buf,len"}],
+             "strings": ["minecraft", "not in evidence"], "why": "flood loop"},
+            {"attach": "a1", "name": ""},
+            {"attach": "A9", "name": ""},  # unknown code, no name: dropped
+        ]
+    }  # fmt: skip
+    sg = build_suggestions(ans, "behaviour", ev_text, items, grp, {"A1": "u1"})
+    assert len(sg) == 2 and sg[1]["attach_to"] == "u1", sg
+    s0 = sg[0]
+    assert s0["mbc"] == ["B0033"] and s0["unbacked"] == [], s0
+    kinds = {e["type"]: e for e in s0["evidence"]}
+    assert (
+        kinds["functions"]["fids"] == [f1] and kinds["string"]["value"] == "minecraft"
+    )
+    assert kinds["group"]["label"] == "Attack floods" and all(
+        e["src"] == "llm" for e in s0["evidence"]
+    )
+    assert unbacked("Fortnite server flood", ev_text) == ["fortnite"]
+    assert gkey("n1", []) == "n1" and gkey(None, [f1]).startswith("a")
     print("ok")

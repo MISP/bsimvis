@@ -129,6 +129,22 @@ Rule registry: `global:yara_rule:{uuid}` (+ `:v:{n}`, `:tags`) and `global:yara_
 file tags. rulezet-editor is AGPL and is *fetched* by `scripts/fetch_vendor_assets.sh`
 (pinned sha), never committed; the view falls back to a textarea without it.
 
+## Capabilities (experimental)
+
+Plan G (`doc/internal/plan_g_capability_workbench.md`). A capability is analyst-owned: a
+free-text name, optional MBC / ATT&CK ids, and evidence pointers (functions `md5:addr`,
+an N-way group's anchors, a string, a yara / rulezet / capa rule hit). The definition is
+global (`global:capability:{uuid}`), evidence per collection; the store is the "Analyst
+capabilities" half of `capability_service.py`, the routes `routes/capabilities.py`
+(`/api/capability/*`). Never write function tags for it: a tag write bumps `tags_rev`.
+The model only *suggests* (`build_suggestions`, `capsugg:` in the queue Redis): on the
+groups the analyst selects (`POST /api/capability/suggest`), and as a silent pre-cache in
+`_lane_caps` (lane naming, `NWAY_SEM_BUILD`). Nothing reaches Kvrocks before Accept.
+UI: the cluster Capabilities tab (`cluster_capabilities.js`, groups | suggestions +
+accepted), the shared editor and bottom dock tray (`capability_tray.js`, fed by the
+right-click "Capability" entry), and the N-way table's "Select groups" mode and
+suggestions drawer (`nway_panel.js`). Every surface carries the Experimental badge.
+
 ## Pools
 
 A pool (`pool_service.py`, `routes/pools.py`) is a named union of collections with its
@@ -479,6 +495,8 @@ job keys.
 | `nway:depth:{set}` | **String** | The `pair_k` a large set was last asked to build at (fast / balanced / deep; 0 = every pair), so every `/nway` call without `pair_k` reads that build or re-attaches to its job. 7 day TTL. |
 | `nway:titles:{sha1}` | **String** | LLM titles of an N-way row's reference blocks (JSON), 30 day TTL. Written by a background thread in the app, never by a job. |
 | `nway:lane:{sha1}` | **String** | LLM name of a lane by its prompt content (JSON `{name, tags, strings, calls}`), 30 day TTL. Also written through to the Kvrocks name registry (`{ns}:nway_names`), which outlives it. |
+| `nway:lane:{sha1}` | **String** | An LLM lane name and the evidence it came from, keyed by its prompt item. 30 day TTL. |
+| `capsugg:{ns}:{key}` / `capsugg:{ns}:{key}:pending` | **String** | Capability suggestions of one N-way group (`key` = its name record id, else `a`+anchor hash; JSON with `v` = `CAPS_V`), and the flag while it is being asked. 30 day / 10 min TTL. |
 | `nway:colset:{sha1}` | **String** | Saved N-way compare: the members and column groups that `POST /api/bin_sim/nway/columns` resolved from file queries (JSON), read back by `col_set`. 1 h TTL. |
 
 ## Worktree testing

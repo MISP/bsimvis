@@ -195,6 +195,17 @@
                 });
                 if (this.state.track) this._paintTrack();
             });
+            // capabilities (experimental): select mode, the suggestions drawer, header badges
+            this.el.addEventListener('click', e => {
+                const t = e.target.closest('[data-capsel],[data-capg],[data-cap-sugg]');
+                if (!t) return;
+                e.stopPropagation();
+                if (t.dataset.capsel !== undefined) { this._capSelect(!this._capSel); return; }
+                if (t.dataset.capg) { const p = this._capPick || (this._capPick = new Set()); t.checked ? p.add(t.dataset.capg) : p.delete(t.dataset.capg); this._capBar(); return; }
+                e.preventDefault();
+                this._capDrawer([t.dataset.capSugg], false);
+            }, true);
+            document.addEventListener('capabilities:changed', () => { if (this.el.isConnected) { this._capsSig = ''; this._loadCaps(); } });
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('click', e => {
                 const x = e.target.closest('[data-note-x]');
@@ -2793,7 +2804,87 @@
 
         // The shared group header pieces (nway_groups.js), with this table's naming state.
         _ns() {
-            return { names: this._laneNames || {}, evid: this._laneEvid || {}, busy: this._lnBusy, done: this._lnDone, off: this.state.lane_names === 'off' || this.data.llm_names === false };
+            return { names: this._laneNames || {}, evid: this._laneEvid || {}, busy: this._lnBusy, done: this._lnDone, off: this.state.lane_names === 'off' || this.data.llm_names === false, caps: this._caps || null };
+        }
+
+        // ---- capabilities (experimental): only on a cluster's N-way (its stored set) ----
+        _capCtx() {
+            const s = this.source || {};
+            return s.cluster_uuid && !s.pool ? { collection: s.collection, pool: null, cluster_uuid: s.cluster_uuid } : null;
+        }
+
+        // Accepted capabilities and cached suggestions per group id, painted on the lane headers.
+        async _loadCaps() {
+            const ctx = this._capCtx();
+            if (!ctx || !window.ClusterCapabilities) return;
+            const sig = `${ctx.collection}|${ctx.cluster_uuid}`;
+            if (this._capsSig === sig) return;
+            this._capsSig = sig;
+            try {
+                const [s, a] = await Promise.all([ClusterCapabilities.fetchSugg(ctx), ClusterCapabilities.fetchAccepted(ctx)]);
+                if (this._capsSig !== sig) return;
+                const gidOf = {}, sugg = {}, acc = {};
+                ((s && s.groups) || []).forEach(g => {
+                    if (g.name_id) gidOf[g.name_id] = g.gid;
+                    if ((g.suggestions || []).length) sugg[g.gid] = g.suggestions.length;
+                });
+                ((a && a.capabilities) || []).forEach(c => (c.evidence || []).forEach(e => {
+                    const gid = e.type === 'group' && gidOf[e.name_id];
+                    if (gid && !(acc[gid] || []).includes(c.name)) (acc[gid] = acc[gid] || []).push(c.name);
+                }));
+                this._caps = { acc, sugg };
+                const groups = (this.data && this.data.groups) || {};
+                this.el.querySelectorAll('[data-lev]').forEach(el => { const g = groups[el.dataset.lev]; if (g) el.innerHTML = this._laneEv(g); });
+            } catch (e) { this._caps = null; }
+        }
+
+        _capSelect(on) {
+            this._capSel = on;
+            this._capPick = new Set();
+            if (on && !this._capEsc) {
+                this._capEsc = e => { if (e.key === 'Escape' && this._capSel && !e.target.closest('input,textarea')) this._capSelect(false); };
+                document.addEventListener('keydown', this._capEsc);
+            }
+            this.render();
+            this._capBar();
+        }
+
+        _capBar() {
+            let bar = document.getElementById('cap-selbar');
+            if (!this._capSel) { if (bar) bar.remove(); return; }
+            if (!bar) {
+                bar = document.createElement('div');
+                bar.id = 'cap-selbar';
+                bar.style.cssText = 'position:fixed; left:50%; transform:translateX(-50%); bottom:calc(var(--cap-tray-h, 0px) + 12px); z-index:9001; display:flex; gap:8px; align-items:center; padding:6px 12px; border:1px solid var(--accent); border-radius:6px; background:var(--card-bg); box-shadow:0 8px 20px rgb(0 0 0 / .35); font-size:0.8rem;';
+                document.body.appendChild(bar);
+            }
+            const n = (this._capPick || new Set()).size;
+            bar.innerHTML = `${CapEditor.EXP}<span>${n} group${n === 1 ? '' : 's'} selected</span>
+                <button type="button" class="cap-btn pri" data-go ${n ? '' : 'disabled'}>Suggest capabilities</button>
+                <button type="button" class="cap-btn" data-done>Done</button>`;
+            bar.querySelector('[data-go]').onclick = () => this._capDrawer([...this._capPick], true);
+            bar.querySelector('[data-done]').onclick = () => this._capSelect(false);
+        }
+
+        // The suggestions drawer: the Capabilities tab's right pane, for `gids`; `ask` starts Suggest.
+        _capDrawer(gids, ask) {
+            const ctx = this._capCtx();
+            if (!ctx || !gids.length) return;
+            CapEditor.ensureCss();
+            let d = document.getElementById('cap-drawer');
+            if (!d) {
+                d = document.createElement('aside');
+                d.id = 'cap-drawer';
+                d.setAttribute('aria-label', 'Capability suggestions');
+                d.style.cssText = 'position:fixed; top:56px; right:0; bottom:var(--cap-tray-h, 0px); width:min(440px, 100%); z-index:8999; background:var(--card-bg); border-left:1px solid var(--border); box-shadow:-12px 0 24px rgb(0 0 0 / .3); display:flex; flex-direction:column;';
+                document.body.appendChild(d);
+            }
+            d.innerHTML = `<div style="display:flex; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border);"><b>Capabilities</b>${CapEditor.EXP}<span class="dim" style="font-size:0.75rem;">${gids.length} group${gids.length === 1 ? '' : 's'}</span>
+                <button type="button" class="cap-btn" style="margin-left:auto;" data-x aria-label="Close">Close</button></div>
+                <div style="overflow:auto; padding:10px 12px; flex:1;" id="cap-drawer-body"></div>`;
+            d.querySelector('[data-x]').onclick = () => d.remove();
+            const pane = ClusterCapabilities.suggestPane(d.querySelector('#cap-drawer-body'), ctx, { only: gids });
+            if (ask) pane.suggest(gids, false).catch(e => { if (window.showToast) showToast(`Suggest failed: ${e.message}`, 'error'); });
         }
         _laneName(g) { return NG.laneName(g, this._ns()); }
         _laneFallback(g) { return NG.laneFallback(g, this._ns()); }
@@ -2804,6 +2895,7 @@
 
         // Names for the lane groups on screen: asked in the background, cached by the server, shown when ready.
         async _nameLanes() {
+            this._loadCaps();
             const d = this.data, groups = d && this.state.lane_names !== 'off' ? Object.values(d.groups || {}) : [];
             // real file counts: in a grouped-columns table a mask bit is a column group, not a file
             const nFiles = d ? (d.file_columns || d.columns.filter(c => !c.kind)).length : 0;
@@ -2921,7 +3013,7 @@
             const trk = `<button type="button" class="nway-gtrk" data-trk="${escapeAttr(this._trackKey(g.id))}" title="Track this group across the lineage: light its rows and the columns that hold them" aria-label="Track this group"><i class="fa-solid fa-crosshairs"></i></button>`;
             const diff = g.kind === 'same' && g.fids?.length >= 2
                 ? `<button class="nway-gchip ev-n nway-merge-diff${Number(g.cohesion) < 0.5 ? ' lowc' : ''}" data-merge-diff="${escapeAttr(g.id)}" title="N-way diff of all ${g.fids.length} functions in this merge" aria-label="N-way diff of all ${g.fids.length} functions in this merge, ${pct(g.cohesion)} cohesion">${pct(g.cohesion)}</button>` : '';
-            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${hs.span}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><span class="nway-gt" data-gmask="${escapeAttr(files)}">${g.kind === 'same' ? '' : chevBtn}${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}${trk}<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff + trk}</span>${same ? '' : `<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span>`}${peek}${g.kind === 'lane' || (g.kind === 'region' && !g.label) ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${hs.cells}${sq}</tr>`;
+            return `<tr class="nway-grow d${depth} k-${escapeAttr(g.kind || 'tag')}${closed ? '' : ' gopen'} ${g.kind === 'tier' || g.kind === 'fold' ? '' : this._ratioCls((g.fcover || files).split('1').length - 1)}" style="--lane-c:${g.kind === 'lane' ? escapeAttr(this._laneColor(g) || 'var(--border)') : 'var(--border)'}" data-gtoggle="${escapeAttr(g.id)}"><td colspan="${hs.span}"><div class="nway-gh" style="padding-left:${10 + depth * 20}px"><span class="nway-gt" data-gmask="${escapeAttr(files)}">${this._capSel && NG.CAP_KINDS.has(g.kind) ? `<input type="checkbox" data-capg="${escapeAttr(g.id)}" ${(this._capPick || new Set()).has(g.id) ? 'checked' : ''} aria-label="Select this group for capability suggestions" style="margin-right:6px;">` : ''}${g.kind === 'same' ? '' : chevBtn}${same ? `<span class="nway-gsig">${sameSig}${sameVers}<div class="nway-gmeta">${diff}${trk}<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span></div></span>` : title + diff + trk}</span>${same ? '' : `<span class="nway-gst">${stat}</span><span class="nway-gnote">${note}</span>`}${peek}${g.kind === 'lane' || (g.kind === 'region' && !g.label) ? `<div class="nway-lev" data-lev="${escapeAttr(g.id)}">${this._laneEv(g)}</div>` : ''}</div></td>${hs.cells}${sq}</tr>`;
         }
 
         // Rows, with a header printed whenever a row's group path leaves the one printed last.
@@ -2981,12 +3073,13 @@
             const back = this.backHref ? `<a class="bsim-tab nway-lens-lineage" href="${escapeAttr(this.backHref())}" onclick="try{sessionStorage.setItem('nway.heroAnim','1')}catch(err){}Nav.openPath(this.href, event)" title="Back to the N-way table, with the same filters, lens and track"><i class="fa-solid fa-table"></i> Table</a>` : '';
             const lineage = this.lean ? back : `<button type="button" role="tab" class="bsim-tab nway-lens-lineage" data-lineage title="The lineage of these files, on its own page: who inherited what from whom, and code reused outside the tree path."><i class="fa-solid fa-sitemap"></i> Lineage</button>`;
             if (this.state.view === 'strings') return `<div class="bsim-tabbar nway-lenses" role="tablist">${lineage}</div>`;
+            const capSel = this._capCtx() && window.CapEditor && !this.lean ? `<button type="button" class="bsim-tab${this._capSel ? ' active' : ''}" aria-pressed="${!!this._capSel}" data-capsel title="Experimental: select groups, then ask the model for their capabilities (Esc leaves)"><i class="fa-solid fa-flask"></i> Select groups</button>` : '';
             const cur = this.state.group || '';
             const icons = { modules: 'fa-diagram-project', core: 'fa-bullseye', deltas: 'fa-code-compare', lanes: 'fa-layer-group', triage: 'fa-list-ol' };
             const tabs = LENSES.map(([k, label, group, tip]) => `<button type="button" role="tab" class="bsim-tab${cur === group ? ' active' : ''}" aria-selected="${cur === group}" data-lens="${k}" title="${escapeAttr(tip)}"><i class="fa-solid ${icons[k]}"></i> ${escapeHtml(label)}</button>`).join('');
             // any other nesting is the Custom tab; clicking it opens the Group by controls under More options
             const custom = LENSES.some(l => l[2] === cur) ? '' : `<button type="button" role="tab" class="bsim-tab active" aria-selected="true" data-more-toggle title="Rows grouped by hand (${escapeAttr(cur || 'no grouping')}). Click for the Group by controls."><i class="fa-solid fa-sliders"></i> Custom</button>`;
-            return `<div class="bsim-tabbar nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}${lineage}</div>`;
+            return `<div class="bsim-tabbar nway-lenses" role="tablist" aria-label="Row lens">${tabs}${custom}${this._tip('Each lens answers one question with at most two group levels. Group by, under More options, still nests by hand.')}${lineage}${capSel}</div>`;
         }
 
         _roleMix(roles) { return NG.roleMix(roles); }

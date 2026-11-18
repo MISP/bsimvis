@@ -64,6 +64,10 @@ ns_yara = Namespace("yara", description="Live YARA rule workbench")
 ns_strings = Namespace(
     "strings", description="Strings extracted by Ghidra: per file, per function, pivot"
 )
+ns_capability = Namespace(
+    "capability",
+    description="Experimental: analyst capabilities (free-text name, MBC / ATT&CK ids, evidence)",
+)
 
 api.add_namespace(ns_index)
 api.add_namespace(ns_jobs)
@@ -89,6 +93,7 @@ api.add_namespace(ns_scan)
 api.add_namespace(ns_strings)
 api.add_namespace(ns_nway)
 api.add_namespace(ns_yara)
+api.add_namespace(ns_capability)
 
 # --- Models & Examples ---
 
@@ -4897,3 +4902,139 @@ class YaraRun(Resource):
     def get(self, run_id):
         """Progress and exact metrics of a sweep / apply."""
         return _yara("get_run", run_id)
+
+
+# --- Capabilities (experimental, plan G) ---
+
+_CAP_NS = {"collection": "Collection", "pool": "Pool ID"}
+_cap_item = ns_capability.model(
+    "CapabilityItem",
+    {
+        "uuid": fields.String(description="Existing capability (attach / edit)"),
+        "name": fields.String(description="Free-text name, required to create"),
+        "description": fields.String(),
+        "mbc": fields.List(fields.String, description="MBC ids (B0033, C0001...)"),
+        "attack": fields.List(fields.String, description="ATT&CK ids (T1498.001...)"),
+        "evidence": fields.List(
+            fields.Raw,
+            description="Pointers: {type: functions|group|string|yara|rulezet|capa, fids: [md5:addr], anchors, value, rule, rule_uuid, v, label, name_id, why, src}",
+        ),
+    },
+)
+
+
+@ns_capability.route("/list")
+class CapabilityList(Resource):
+    @ns_capability.doc(
+        params={
+            **_CAP_NS,
+            "cluster_uuid": "Only capabilities pointing into this bin cluster's files (its stored N-way set)",
+            "id": "Only capabilities carrying this MBC / ATT&CK id",
+            "q": "Name contains",
+            "uuid": "One capability",
+        }
+    )
+    def get(self):
+        """Capabilities accepted in a collection / pool, with their evidence there."""
+        from bsimvis.app.routes.capabilities import get_list
+
+        return get_list()
+
+
+@ns_capability.route("/accept")
+class CapabilityAccept(Resource):
+    @ns_capability.doc(
+        body=ns_capability.model(
+            "CapabilityAccept",
+            {
+                "collection": fields.String(),
+                "pool": fields.String(),
+                "owner": fields.String(),
+                "items": fields.List(fields.Nested(_cap_item)),
+            },
+        )
+    )
+    def post(self):
+        """Accepts 1-50 capabilities; an item with `uuid` adds its ids and evidence to it."""
+        from bsimvis.app.routes.capabilities import post_accept
+
+        return post_accept()
+
+
+@ns_capability.route("/save")
+class CapabilitySave(Resource):
+    @ns_capability.doc(
+        body=ns_capability.model(
+            "CapabilitySave",
+            {
+                "collection": fields.String(),
+                "pool": fields.String(),
+                "owner": fields.String(),
+                "capability": fields.Nested(_cap_item),
+            },
+        )
+    )
+    def post(self):
+        """Saves one capability from the editor: ids and this namespace's evidence replaced."""
+        from bsimvis.app.routes.capabilities import post_save
+
+        return post_save()
+
+
+@ns_capability.route("/suggest")
+class CapabilitySuggest(Resource):
+    @ns_capability.doc(
+        body=ns_capability.model(
+            "CapabilitySuggest",
+            {
+                "collection": fields.String(required=True),
+                "cluster_uuid": fields.String(required=True),
+                "groups": fields.List(
+                    fields.String,
+                    description="Group gids or name ids of the stored set",
+                ),
+                "refresh": fields.Boolean(description="Ask again even when cached"),
+            },
+        )
+    )
+    def post(self):
+        """Model suggestions for selected groups: cached, or started in the background."""
+        from bsimvis.app.routes.capabilities import post_suggest
+
+        return post_suggest()
+
+
+@ns_capability.route("/suggestions")
+class CapabilitySuggestions(Resource):
+    @ns_capability.doc(
+        params={
+            **_CAP_NS,
+            "cluster_uuid": "Bin cluster with a stored N-way set",
+            "groups": "Comma list of gids / name ids (empty = every group)",
+        }
+    )
+    def get(self):
+        """Cached suggestions per group, and the groups still being asked (`pending`)."""
+        from bsimvis.app.routes.capabilities import get_suggestions
+
+        return get_suggestions()
+
+
+@ns_capability.route("/catalog")
+class CapabilityCatalog(Resource):
+    @ns_capability.doc(params={"q": "Id or name contains"})
+    def get(self):
+        """MBC / ATT&CK ids for the editor's picker (at most 40)."""
+        from bsimvis.app.routes.capabilities import get_catalog
+
+        return get_catalog()
+
+
+@ns_capability.route("/<string:uid>")
+class CapabilityOne(Resource):
+    @ns_capability.doc(params=_CAP_NS)
+    def delete(self, uid):
+        """Drops a capability's evidence here; the definition goes with its last collection."""
+        from bsimvis.app.routes.capabilities import delete_one
+
+        return delete_one(uid)

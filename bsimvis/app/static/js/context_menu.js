@@ -289,6 +289,7 @@
                     ${tagsSubmenuHtml}
                 </div>
             </div>`;
+            if (window.CapTray) html += window.CapTray.menuHtml(resolvedType, norm);
 
             // Active tags inline card list (stays under Tags Trigger row)
             const allTags = [...(userTags || [])].filter(t => t !== 'bookmark' && t !== 'ignore' && t && t.trim());

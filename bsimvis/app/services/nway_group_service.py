@@ -1618,39 +1618,93 @@ def _name_lane(l, red):
         _lane_caps(l, rec, text, name, {**value, "items": ev["items"]})
 
 
-def _lane_caps(l, rec, text, name, ev):
-    """Worker: the group's MBC / ATT&CK capabilities, from the evidence its name
-    came from, kept as a capability record linked to the name record. An empty
-    answer is kept too (`caps: []`), so a group is asked once."""
+def suggest_capabilities(l, name, text, ev, name_id=None):
+    """The model's capability suggestions for one group, cached in the queue
+    Redis (`capsugg:`) for the analyst to review; nothing goes to Kvrocks."""
     from bsimvis.app.services import capability_service
     from bsimvis.app.services.llm_service import llm_service
+    from bsimvis.app.services.redis_client import get_queue_redis, get_redis
+
+    lvl = capability_service.level(l.get("rows"))
+    choices, _, _ = capability_service.prompt_lists(lvl)
+    accepted, amap = capability_service.accepted_lines(get_redis(), l["ns"])
+    answer, _ = llm_service.capability_suggestions(text, name, choices, accepted)
+    group = {
+        "type": "group",
+        "anchors": l["anchors"],
+        "label": name or "group",
+        **({"name_id": name_id} if name_id else {}),
+    }
+    sugg = capability_service.build_suggestions(
+        answer, lvl, text, ev.get("items") or [], group, amap
+    )
+    key = capability_service.gkey(name_id, l["anchors"])
+    capability_service.cache_put(get_queue_redis(), l["ns"], key, sugg)
+    return sugg
+
+
+def _suggest_one(l, name, name_id, key):
+    """Worker: one group's suggestions, asked by the analyst."""
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    try:
+        text, ev = _lane_evidence(l)
+        suggest_capabilities(l, name, text, ev, name_id)
+    except Exception as e:
+        logging.warning(f"capability suggestions failed: {e}")
+        get_queue_redis().delete(f"capsugg:{l['ns']}:{key}:pending")
+
+
+def request_suggestions(ns, coll, groups, total):
+    """Queues the analyst's Suggest on the lane pool for stored set groups
+    ({kind, anchors, rows, files, tags, name, name_id}); returns their cache keys.
+    A group already being asked is not queued twice."""
+    global _LANE_POOL
+    from concurrent.futures import ThreadPoolExecutor
+
+    from bsimvis.app.services import capability_service
+    from bsimvis.app.services.config_service import config_service
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    red, keys = get_queue_redis(), []
+    if not _LANE_POOL:
+        workers = int(config_service.get("llm.lane_parallel", 4))
+        _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
+    for g in groups:
+        key = capability_service.gkey(g.get("name_id"), g["anchors"])
+        keys.append(key)
+        if not red.set(f"capsugg:{ns}:{key}:pending", 1, nx=True, ex=600):
+            continue
+        l = {
+            "ns": ns,
+            "gkind": g.get("kind"),
+            "anchors": g["anchors"],
+            "rows": int(g.get("rows") or 0),
+            "files": int(g.get("files") or 0),
+            "total": total,
+            "tags": g.get("tags") or [],
+            "sample": [],
+            "fids": [f"{coll}:func:{a}" for a in g["anchors"]],
+        }
+        _LANE_POOL.submit(_suggest_one, l, g.get("name") or "", g.get("name_id"), key)
+    return keys
+
+
+def _lane_caps(l, rec, text, name, ev):
+    """Worker: pre-caches the group's capability suggestions from the evidence its
+    name came from, and marks the group asked at this CAPS_V."""
+    from bsimvis.app.services import capability_service
     from bsimvis.app.services.redis_client import get_redis
 
     if not capability_service.enabled():
         return
     try:
-        lvl = capability_service.level(l.get("rows"))
-        choices, _, _ = capability_service.prompt_lists(lvl)
-        answer, _ = llm_service.lane_capabilities(
-            text, name, choices, capability_service.schema(lvl)
-        )
-        answer = capability_service.clean(answer, lvl, text)
-        kv = get_redis()
-        evidence = {k: ev.get(k, []) for k in ("tags", "strings", "calls")}
-        cap = answer and capability_service.save(
-            kv, l["ns"], l["anchors"], answer, lvl, group=rec["id"], evidence=evidence
-        )
-        # the newest answer replaces the group's older ones
-        caps = [cap["id"]] if cap else []
-        for old in rec.get("caps") or []:
-            if old not in caps:
-                capability_service.unlink(kv, l["ns"], old, rec["id"])
+        suggest_capabilities(l, name, text, ev, rec["id"])
         nway_sem_service.remember(
-            kv,
+            get_redis(),
             l["ns"],
             l["gkind"],
             l["anchors"],
-            caps=caps,
             caps_v=capability_service.CAPS_V,
         )
     except Exception as e:

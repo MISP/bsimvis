@@ -357,7 +357,7 @@ window.ClusterDetailView = {
                         <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
-                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-capabilities" onclick="ClusterDetailView.switchTab('capabilities')" title="What the code does: MBC / ATT&amp;CK ids the model read from each N-way group, and the groups' names">Capabilities</button>` : ''}
+                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-capabilities" onclick="ClusterDetailView.switchTab('capabilities')" title="Experimental: what the code does, as capabilities you accept from the model's suggestions on N-way groups (name, MBC / ATT&amp;CK ids, evidence)">Capabilities <i class="fa-solid fa-flask" style="color:var(--warning, #d97706); font-size:0.7em;"></i></button>` : ''}
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-lineage" onclick="ClusterDetailView.openLineage(event)" title="Who inherited what from whom: the lineage of this cluster's files, on its own page"><i class="fa-solid fa-sitemap"></i> Lineage</button>` : ''}
                     </div>
 

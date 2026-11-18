@@ -8441,6 +8441,207 @@ def test_nway_diff():
             "nway evidence: the text is rendered from the items' snippets",
             next((it["snippet"][:60] for it in _items if it["snippet"]), "") in _ltext,
         )
+    if _sl:
+        # Analyst capabilities (plan G, experimental): store, routes, suggestion cache
+        from bsimvis.app.services import capability_service as _cs
+        from bsimvis.app.services.redis_client import get_queue_redis as _cap_q
+        from bsimvis.app.services.redis_client import get_redis as _cap_r
+
+        _dec = lambda x: x.decode() if isinstance(x, bytes) else x
+        _CB = f"{BASE_URL}/api/capability"
+        _fid = _sl["anchors"][0]
+        _md5 = _fid.split(":")[0]
+        _fidx = f"{COLLECTION}:idx:capability:file:{_md5}"
+
+        def _cap_save(cap):
+            return requests.post(
+                f"{_CB}/save",
+                json={"collection": COLLECTION, "owner": "test", "capability": cap},
+                timeout=30,
+            )
+
+        _fn = lambda f: {"type": "functions", "fids": [f]}
+        _b1 = _cap_save({"name": "x", "evidence": [_fn("0" * 32 + ":1")]})
+        _b2 = _cap_save({"name": "x", "mbc": ["B9999"], "evidence": [_fn(_fid)]})
+        _b3 = _cap_save({"evidence": [_fn(_fid)]})
+        check(
+            "capability save: unknown function, unknown id and no name are 400s",
+            (_b1.status_code, _b2.status_code, _b3.status_code) == (400, 400, 400),
+            f"{_b1.text[:120]} | {_b2.text[:120]} | {_b3.text[:120]}",
+        )
+        _sv = _cap_save(
+            {"name": "Test UDP flood", "mbc": ["B0033"], "evidence": [_fn(_fid)]}
+        )
+        _cap = (_sv.json() if _sv.ok else {}).get("capability") or {}
+        _uid = _cap.get("uuid")
+        check(
+            "capability save: creates one with its pointer and catalog names",
+            bool(_uid)
+            and len(_cap.get("evidence") or []) == 1
+            and (_cap.get("names") or {}).get("B0033") == "Denial of Service",
+            _sv.text[:300],
+        )
+        check(
+            "capability store: the file index holds it",
+            _uid in {_dec(x) for x in _cap_r().smembers(_fidx)},
+        )
+        _ac = requests.post(
+            f"{_CB}/accept",
+            json={
+                "collection": COLLECTION,
+                "items": [
+                    {
+                        "uuid": _uid,
+                        "attack": ["T1498.001"],
+                        "evidence": [
+                            _fn(_fid),
+                            {"type": "string", "value": "udpflood", "src": "llm"},
+                        ],
+                    }
+                ],
+            },
+            timeout=30,
+        )
+        _c2 = ((_ac.json() if _ac.ok else {}).get("capabilities") or [{}])[0]
+        check(
+            "capability accept: an attach adds ids and only new pointers",
+            len(_c2.get("evidence") or []) == 2
+            and _c2.get("mbc") == ["B0033"]
+            and _c2.get("attack") == ["T1498.001"]
+            and any(e.get("src") == "llm" for e in _c2.get("evidence") or []),
+            _ac.text[:300],
+        )
+        _cl1 = requests.get(
+            f"{_CB}/list",
+            params={"collection": COLLECTION, "id": "T1498.001"},
+            timeout=30,
+        ).json()
+        _cl2 = requests.get(
+            f"{_CB}/list",
+            params={"collection": COLLECTION, "q": "no such xyz"},
+            timeout=30,
+        ).json()
+        check(
+            "capability list: id filter finds it, a name filter leaves it out",
+            any(c["uuid"] == _uid for c in _cl1.get("capabilities") or [])
+            and not any(c["uuid"] == _uid for c in _cl2.get("capabilities") or []),
+            str(_cl1)[:300],
+        )
+        _rn = _cap_save(
+            {
+                "uuid": _uid,
+                "name": "Test UDP flood v2",
+                "mbc": ["B0033"],
+                "evidence": [_fn(_fid)],
+            }
+        )
+        _rnc = (_rn.json() if _rn.ok else {}).get("capability") or {}
+        check(
+            "capability save: a full save drops a pointer, a rename keeps history",
+            len(_rnc.get("evidence") or []) == 1
+            and (_rnc.get("history") or [{}])[-1].get("from") == "Test UDP flood",
+            _rn.text[:300],
+        )
+        _ct = requests.get(f"{_CB}/catalog", params={"q": "flood"}, timeout=30).json()
+        _nl = requests.get(
+            f"{_CB}/list",
+            params={"collection": COLLECTION, "cluster_uuid": "no-such-cluster"},
+            timeout=30,
+        ).json()
+        check(
+            "capability catalog: the id picker finds T1498.001",
+            any(x["id"] == "T1498.001" for x in _ct.get("ids") or []),
+        )
+        check(
+            "capability list: a cluster with no stored set says so",
+            _nl.get("no_set") is True,
+            str(_nl)[:200],
+        )
+        # suggestions over the stored lane set, through a test cluster uuid
+        _tcu = "capability-test-cluster"
+        _cap_r().hset(f"{COLLECTION}:nway_sem:by_cluster", _tcu, _sd["set_hash"])
+        try:
+            _s404 = requests.post(
+                f"{_CB}/suggest",
+                json={
+                    "collection": COLLECTION,
+                    "cluster_uuid": "no-such-cluster",
+                    "groups": [_sl_id],
+                },
+                timeout=30,
+            )
+            _s400 = requests.post(
+                f"{_CB}/suggest",
+                json={"collection": COLLECTION, "cluster_uuid": _tcu, "groups": []},
+                timeout=30,
+            )
+            check(
+                "capability suggest: no stored set is a 404, no group a 400",
+                (_s404.status_code, _s400.status_code) == (404, 400),
+                f"{_s404.text[:120]} | {_s400.text[:120]}",
+            )
+            _sq = {"collection": COLLECTION, "cluster_uuid": _tcu, "groups": _sl_id}
+            _sg = requests.get(f"{_CB}/suggestions", params=_sq, timeout=30)
+            _gk = (((_sg.json() if _sg.ok else {}).get("groups") or [{}])[0]).get("key")
+            check(
+                "capability suggestions: the lane comes back with its cache key",
+                bool(_gk),
+                _sg.text[:300],
+            )
+            if _gk:
+                _cap_q().set(
+                    f"capsugg:{COLLECTION}:{_gk}",
+                    json.dumps(
+                        {
+                            "v": _cs.CAPS_V,
+                            "at": 1,
+                            "suggestions": [{"name": "seeded", "evidence": []}],
+                        }
+                    ),
+                    ex=120,
+                )
+                _sg2 = requests.get(f"{_CB}/suggestions", params=_sq, timeout=30).json()
+                check(
+                    "capability suggestions: a cached suggestion is served",
+                    (((_sg2.get("groups") or [{}])[0].get("suggestions")) or [{}])[
+                        0
+                    ].get("name")
+                    == "seeded",
+                    str(_sg2)[:300],
+                )
+                _sp = requests.post(
+                    f"{_CB}/suggest",
+                    json={
+                        "collection": COLLECTION,
+                        "cluster_uuid": _tcu,
+                        "groups": [_sl_id],
+                    },
+                    timeout=30,
+                )
+                check(
+                    "capability suggest: a cached group is answered, not asked again",
+                    _sp.status_code == 200 and not (_sp.json().get("pending")),
+                    _sp.text[:300],
+                )
+                _cap_q().delete(f"capsugg:{COLLECTION}:{_gk}")
+        finally:
+            _cap_r().hdel(f"{COLLECTION}:nway_sem:by_cluster", _tcu)
+        _d1 = requests.delete(
+            f"{_CB}/{_uid}", params={"collection": COLLECTION}, timeout=30
+        )
+        _d2 = requests.delete(
+            f"{_CB}/{_uid}", params={"collection": COLLECTION}, timeout=30
+        )
+        check(
+            "capability delete: drops it, a second delete is a 404",
+            (_d1.status_code, _d2.status_code) == (200, 404),
+            f"{_d1.text[:120]} | {_d2.text[:120]}",
+        )
+        check(
+            "capability store: the file index and definition are gone",
+            _uid not in {_dec(x) for x in _cap_r().smembers(_fidx)}
+            and not _cap_r().exists(f"global:capability:{_uid}"),
+        )
     _, _sdc = _nway(tab="all", scope="code", limit=1000, group="lane")
     check(
         "nway semantics: the table's default scope=code view is saved too",

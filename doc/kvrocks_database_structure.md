@@ -122,8 +122,14 @@ Small, durable layer over the TTL'd N-way docs (`nway_sem_service.py`, `capabili
 | `{ns}:nway_sem:set:{set_hash}` | **JSON** | Summary of one member set (`set_hash` = md5 of ns + sorted member md5s): members, doc key, params, tier row counts, groups (kind, parent, tier, files, rows, tags, anchors, name id). Saved when a lane view opens unfiltered, once per doc. |
 | `{ns}:nway_sem:sets` | **ZSET** | Set hash -> saved at (ms). |
 | `{ns}:nway_sem:by_cluster` | **Hash** | Bin cluster uuid -> set hash. |
-| `{ns}:capabilities` | **Hash** | Capability id -> JSON `{id, mbc, attack, text, anchors, groups, level, evidence, source}`. |
-| `{ns}:idx:capability:label:{id}` | **Set** | Capability ids carrying one MBC or ATT&CK id. |
+| `{ns}:capabilities` | **Hash** | Legacy (plan F, no longer written): model capability id -> JSON `{id, mbc, attack, text, anchors, groups, level, evidence, source}`. Dropped by `scripts/capabilities_old_records.py --delete --yes`. |
+| `{ns}:idx:capability:label:{id}` | **Set** | Legacy (plan F): model capability ids carrying one MBC or ATT&CK id. |
+| `global:capability:{uuid}` | **String** | Analyst capability definition (plan G): `{uuid, name, description, mbc, attack, in: [ns], created, updated, user, history}`. |
+| `global:capabilities` | **ZSET** | Capability uuid -> updated (ms). |
+| `global:idx:capability:label:{id}` | **Set** | Capability uuids carrying one MBC or ATT&CK id. |
+| `{ns}:capability:{uuid}:ev` | **Hash** | Evidence item id (content hash) -> JSON pointer `{type: functions\|group\|string\|yara\|rulezet\|capa, fids: [md5:addr], anchors, value, rule, rule_uuid, v, label, name_id, why, src}`. |
+| `{ns}:capabilities:in` | **Set** | Capability uuids accepted in this namespace. |
+| `{ns}:idx:capability:file:{md5}` | **Set** | Capability uuids with a pointer into that file (a group pointer counts its anchors' files). |
 
 ---
 

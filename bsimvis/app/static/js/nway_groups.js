@@ -195,8 +195,8 @@ window.NwayGroups = (function () {
         const chip = (text, title, cls) => `<span class="nway-gchip${cls ? ` ${cls}` : ''}" title="${escapeAttr(title)}">${escapeHtml(text)}</span>`;
         return (graph ? graphBtn : '') + (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
             + laneTags(g, S).map(tagBadge).join('')
-            + (ev.caps || []).flatMap(c => [...(c.mbc || []), ...(c.attack || [])].map(x => chip(x.id, `${x.name || x.id}: the model read it in "${(c.quotes || {})[x.id] || ''}"`, 'cap'))).join('')
-            + (ev.caps || []).flatMap(c => (c.traits || []).map(t => chip(t, 'A capability the model read in this group\'s functions', 'trait'))).join('')
+            + ((S.caps && S.caps.acc[g.id]) || []).map(n => chip(n, 'A capability an analyst accepted for this group (experimental)', 'cap')).join('')
+            + (S.caps && S.caps.sugg[g.id] ? `<button type="button" class="nway-gchip ev-c" data-cap-sugg="${escapeAttr(g.id)}" title="The model's capability suggestions for this group: review and accept (experimental)"><i class="fa-solid fa-flask"></i> ${Number(S.caps.sugg[g.id])} suggested</button>` : '')
             + (ev.strings || []).map(t => chip(`"${t}"`, 'A string the lane\'s functions use', 'str')).join('');
     }
 
@@ -253,5 +253,7 @@ window.NwayGroups = (function () {
         return String(gid);
     }
 
-    return { ROLES, BAND_ICONS, shownName, nameable, payload, nameLanes, laneFallback, laneName, renameBtn, bindRename, laneParent, parentChip, laneTags, tagBadge, laneColor, laneEv, roleIcon, roleMix, bandIcon, score, stats, trackKey };
+    // group kinds a capability suggestion can be asked for (the stored set's named kinds)
+    const CAP_KINDS = new Set(['lane', 'region', 'presence', 'delta', 'born']);
+    return { ROLES, BAND_ICONS, CAP_KINDS, shownName, nameable, payload, nameLanes, laneFallback, laneName, renameBtn, bindRename, laneParent, parentChip, laneTags, tagBadge, laneColor, laneEv, roleIcon, roleMix, bandIcon, score, stats, trackKey };
 })();

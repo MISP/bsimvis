@@ -495,6 +495,56 @@ class LLMService:
             logging.error(f"LLMService lane_capabilities error: {e}")
             return None, str(e)
 
+    def capability_suggestions(self, evidence, name, choices, accepted=""):
+        """Capability suggestions for an N-way group: attach to an accepted
+        capability (`accepted`, lines "A1 Name [ids]") or name a new one, with
+        MBC / ATT&CK ids from `choices` and the strings that show it. Returns
+        ({"suggestions": [...]}, error); capability_service.build_suggestions
+        checks quotes and resolves the pointers."""
+        self._load_config()
+        model = config_service.get("llm.lane_model", self.model)
+        known = (
+            "Capabilities the analyst already accepted in this collection:\n"
+            f"{accepted}\n\n"
+            if accepted
+            else ""
+        )
+        prompt = (
+            "Below is the evidence for a group of functions from a malware family "
+            f"(tentative label, may be wrong: '{name}').\n"
+            "Suggest 0 to 3 capabilities of this code.\n"
+            "- If an accepted capability below fits, set attach to its code (A1, A2...) "
+            "and leave name empty. Only propose a new name when none fits.\n"
+            "- A new name is 2 to 5 words, generic unless the evidence names the "
+            "target: 'udp flood', 'telnet brute force', 'kill competing bots'. Use a "
+            "specific word (a game, a product, a port) only when a quoted string holds it.\n"
+            "- mbc and attack: ids from the lists below. For each id, quote the exact "
+            "evidence text that shows it (a code line, a string, a rule finding). No "
+            "quote, no id. Library or runtime code gets no suggestion.\n"
+            "- strings: evidence strings that back the capability, copied exactly.\n"
+            "Answer with this JSON object only, no other text:\n"
+            '{"suggestions": [{"attach": "<A code or empty>", "name": "<2 to 5 words or empty>", '
+            '"mbc": [{"id": "<an id of the MBC list>", "quote": "<evidence text>"}], '
+            '"attack": [{"id": "<an id of the ATT&CK list>", "quote": "<evidence text>"}], '
+            '"strings": ["<evidence string>"], "why": "<one short sentence>"}]}\n\n'
+            f"{known}{choices}\n\nEvidence:\n{evidence}"
+        )
+        try:
+            response = Client(host=self.ollama_url, timeout=180).chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format="json",
+                options={"num_predict": 600, "temperature": 0},
+            )
+            text = response.get("message", {}).get("content", "")
+            start, end = text.find("{"), text.rfind("}")
+            return json.loads(text[start : end + 1]), None
+        except Exception as e:
+            logging.error(f"LLMService capability_suggestions error: {e}")
+            return None, str(e)
+
     def explain_block_change(self, ctx):
         """How one block of the reference function differs in another function.
 

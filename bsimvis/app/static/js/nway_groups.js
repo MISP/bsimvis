@@ -40,6 +40,8 @@ window.NwayGroups = (function () {
     const payload = (g, nFiles, strings) => ({
         id: g.id, files: g.files || g.mask.split('1').length - 1, total: nFiles || g.mask.length, rows: g.rows, sample: g.sample || [], hint: g.hint || '', tags: g.tags || [], fids: g.fids || [], name_fids: g.name_fids || [], tag_rows: g.tag_rows || 0, roles: g.roles || {},
         ...(strings ? { kind: 'string' } : g.kind === 'presence' || g.kind === 'delta' ? { kind: 'summary' } : {}),
+        // the registry identity: a stored or analyst name comes back for these
+        ...(g.ns && (g.anchors || []).length ? { ns: g.ns, gkind: g.kind, anchors: g.anchors } : {}),
     });
     const cache = new Map();
     const keyOf = l => { const { id, rows, ...rest } = l; return JSON.stringify(rest); };
@@ -84,7 +86,71 @@ window.NwayGroups = (function () {
         const name = shownName((S.names || {})[g.id]);
         const wait = S.busy && !name && ((g.sample || []).length || g.hint || (g.tags || []).length || (g.fids || []).length);
         const fb = !name && !wait && !S.off && S.done ? laneFallback(g, S) : '';
-        return `<span class="nway-lname${wait ? ' wait' : ''}${S.off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>`;
+        return `<span class="nway-lname${wait ? ' wait' : ''}${S.off ? ' off' : ''}${fb ? ' fb' : ''}" data-lname="${escapeAttr(g.id)}"${fb ? ' title="The model could not describe this lane; this is what it is made of."' : ''}>${escapeHtml(name || fb)}</span>${renameBtn(g)}`;
+    }
+
+    // A pencil after a group's name: the analyst's name sticks to the group's code (POST /nway/group_name).
+    function renameBtn(g) {
+        if (!g || !g.ns || !(g.anchors || []).length) return '';
+        return `<button type="button" class="nway-lrename" data-lrename="${escapeAttr(g.id)}" title="Rename this group. The name follows its code across rebuilds and other sets of these files; empty clears it." aria-label="Rename group"><i class="fa-solid fa-pen"></i></button>`;
+    }
+
+    // One delegated handler per page: a pencil click edits the name in place, Enter saves, Esc cancels.
+    // groupOf(id) -> the group meta; S is the caller's naming state; after(g, name) repaints.
+    function bindRename(root, groupOf, S, after) {
+        if (!root || root._lrename) return;
+        root._lrename = true;
+        root.addEventListener('click', e => {
+            const btn = e.target.closest('[data-lrename]');
+            if (btn) {
+                e.preventDefault();
+                e.stopPropagation();
+                edit(btn);
+            } else if (e.target.closest('.nway-lrename-in')) e.stopPropagation();
+        }, true);
+        const edit = btn => {
+            const g = groupOf(btn.dataset.lrename);
+            if (!g) return;
+            const st = typeof S === 'function' ? S() : S;
+            const old = shownName((st.names || {})[g.id]) || g.user_name || '';
+            const input = document.createElement('input');
+            input.className = 'nway-lrename-in';
+            input.value = old;
+            input.maxLength = 120;
+            input.setAttribute('aria-label', 'Group name');
+            btn.replaceWith(input);
+            input.focus();
+            input.select();
+            let done = false;
+            const close = async save => {
+                if (done) return;
+                done = true;
+                const name = input.value.trim();
+                if (save && name !== old) {
+                    const scope = g.ns.startsWith('global:pool:') ? { pool: g.ns.slice(12) } : { collection: g.ns };
+                    try {
+                        const res = await fetch('/api/bin_sim/nway/group_name', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...scope, kind: g.kind, anchors: g.anchors, name }) });
+                        const body = res.ok ? await res.json() : null;
+                        if (body) {
+                            const shown = body.name || '';
+                            if (name) g.user_name = name; else delete g.user_name;
+                            if (st.names) st.names[g.id] = shown;
+                            // the content cache would hand the old name back on the next load
+                            const sig = JSON.stringify(g.anchors);
+                            for (const k of [...cache.keys()]) if (k.includes(sig)) cache.delete(k);
+                            after && after(g, shown);
+                        }
+                    } catch (err) { /* keep the old name */ }
+                }
+                input.replaceWith(btn);
+            };
+            input.addEventListener('keydown', ev => {
+                ev.stopPropagation();
+                if (ev.key === 'Enter') close(true);
+                else if (ev.key === 'Escape') close(false);
+            });
+            input.addEventListener('blur', () => close(false));
+        };
     }
 
     // The nearest lane above this one: a sub-lane holds only files that are also in it.
@@ -185,5 +251,5 @@ window.NwayGroups = (function () {
         return String(gid);
     }
 
-    return { ROLES, BAND_ICONS, shownName, nameable, payload, nameLanes, laneFallback, laneName, laneParent, parentChip, laneTags, tagBadge, laneColor, laneEv, roleIcon, roleMix, bandIcon, score, stats, trackKey };
+    return { ROLES, BAND_ICONS, shownName, nameable, payload, nameLanes, laneFallback, laneName, renameBtn, bindRename, laneParent, parentChip, laneTags, tagBadge, laneColor, laneEv, roleIcon, roleMix, bandIcon, score, stats, trackKey };
 })();

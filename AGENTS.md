@@ -294,6 +294,17 @@ files in at least `FILES_FAMILIES` (2) families (the "Other files" family never 
 automatic choice is not written to the URL or remembered. The table's Lineage button (among its controls) opens
 the page in the remembered view; the page's back link always goes to the N-way table (`NwayPanel.tableUrl`).
 
+### N-way semantics (names that survive rebuilds)
+
+`nway_sem_service.py`: `_annotate` gives every named group (lane, region, presence, delta, born) `anchors`, a
+bottom-20 crc32 sketch of its `md5:addr` ids; `/nway` and `/nway/lineage` look them up in the collection's
+`{ns}:nway_names` registry (`attach`: `name_id`, `user_name`, `stored_name`, `ns`). `lane_names` answers stored
+names first (also with no LLM; `sources` = user | llm) and writes every model answer through. `POST
+/nway/group_name` is the analyst's rename (the pencil from `NwayGroups.renameBtn` / `bindRename`); it never loses
+to a model answer. An unfiltered lane view saves the set's summary (`set_hash` on the answer, `GET
+/nway/semantics`). Never key stored semantics on `doc["key"]` or a group id: both change with every rebuild.
+Plan: `doc/internal/plan_f_nway_semantics_overview.md`.
+
 ### Ring view (`lview=ring`)
 
 `static/js/nway_ring.js` (`window.NwayRing`) draws clusters of files as circles, the modules
@@ -467,6 +478,7 @@ job keys.
 | `nway:build_job:{key}` | **String** | That set's last `nway_build` job id, so a reload re-attaches to it. 7 day TTL. |
 | `nway:depth:{set}` | **String** | The `pair_k` a large set was last asked to build at (fast / balanced / deep; 0 = every pair), so every `/nway` call without `pair_k` reads that build or re-attaches to its job. 7 day TTL. |
 | `nway:titles:{sha1}` | **String** | LLM titles of an N-way row's reference blocks (JSON), 30 day TTL. Written by a background thread in the app, never by a job. |
+| `nway:lane:{sha1}` | **String** | LLM name of a lane by its prompt content (JSON `{name, tags, strings, calls}`), 30 day TTL. Also written through to the Kvrocks name registry (`{ns}:nway_names`), which outlives it. |
 | `nway:colset:{sha1}` | **String** | Saved N-way compare: the members and column groups that `POST /api/bin_sim/nway/columns` resolved from file queries (JSON), read back by `col_set`. 1 h TTL. |
 
 ## Worktree testing

@@ -18,6 +18,7 @@ from bsimvis.app.services import (
     nway_lineage_service,
     nway_region_service,
     nway_role_service,
+    nway_sem_service,
 )
 from bsimvis.app.services.nway_diff_service import _DEFAULT_NAME
 from bsimvis.app.services.index_service import normalize_timestamp
@@ -601,7 +602,7 @@ def _page(doc, args, r=None, pool_id=None):
         limit = int(args.get("limit", 100))
     except ValueError:
         abort(400, "offset and limit must be integers")
-    total, shown_groups, note = len(filtered), {}, ""
+    total, shown_groups, note, sem_hash = len(filtered), {}, "", None
     if args.get("group") or args.get("group_merge"):
         # Rows come back in group order; a tag row can repeat under several groups.
         # A closed group is one `{"g", "header": true}` item with no row.
@@ -621,6 +622,11 @@ def _page(doc, args, r=None, pool_id=None):
         needed |= {groups[gid].get("under_id") for gid, _, _ in part if gid in groups}
         shown_groups = {g: m for g, m in groups.items() if g in needed}
         total = len(entries)
+        ns = nway_sem_service.ns_of(args.get("collection"), pool_id)
+        if ns:
+            if offset == 0 and len(filtered) == len(rows):
+                sem_hash = _save_semantics(r, ns, doc, groups, args)
+            nway_sem_service.attach(r, ns, shown_groups)
     else:
         page = filtered[offset : offset + limit] if limit > 0 else filtered[offset:]
     if "1" in (args.get("strings"), args.get("calls"), args.get("consts")):
@@ -656,6 +662,8 @@ def _page(doc, args, r=None, pool_id=None):
         "total": total,
         "groups": shown_groups,
         "group_note": note,
+        # the stored summary of this set (GET /nway/semantics?set_hash=), once saved
+        "set_hash": sem_hash,
         "offset": offset,
         "limit": limit,
         "tab": tab,
@@ -1928,15 +1936,91 @@ def post_nway_lane_names():
     Never waits for the model: `status` is off (no LLM configured), pending
     (poll again), ready or failed; `names` maps lane id to name.
     """
-    if not nway_facets_service.llm_configured():
-        return {"status": "off", "names": {}}
     lanes = (request.get_json(silent=True) or {}).get("lanes")
     if not isinstance(lanes, list) or not all(
         isinstance(l, dict) and {"id", "files", "total", "rows"} <= set(l)
         for l in lanes
     ):
         abort(400, "lanes must be a list of lane groups (id, files, total, rows, ...)")
-    return nway_group_service.lane_names(lanes)
+    # stored names (analyst renames, earlier model answers) come back even with no LLM
+    return nway_group_service.lane_names(
+        lanes, llm=nway_facets_service.llm_configured()
+    )
+
+
+def _save_semantics(r, ns, doc, groups, args):
+    """Keeps the set's summary (nway_sem_service) when a lane view opens unfiltered.
+
+    Once per built doc: the doc key changes with a rebuild, a tag write or new
+    members. Never fails the page."""
+    if "lane" not in (args.get("group") or "").split(","):
+        return None
+    try:
+        members = nway_sem_service.members_of(doc)
+        if nway_sem_service.stored_doc_key(r, ns, members) == doc.get("key"):
+            return nway_sem_service.set_hash(ns, members)
+        nway_sem_service.attach(r, ns, groups)
+        rec = nway_sem_service.summary(
+            doc, groups, args, (args.get("cluster_uuid") or "").strip().lower() or None
+        )
+        return nway_sem_service.save_set(r, ns, rec)
+    except Exception as e:
+        current_app.logger.warning(f"nway semantics: save failed: {e}")
+        return None
+
+
+def post_nway_group_name():
+    """Names an N-way group for good (JSON `{collection|pool, kind, anchors, name}`).
+
+    The name sticks to the group's anchors in the collection's registry, so it
+    comes back after a rebuild and in any set holding that code from the same
+    files. An empty name drops the analyst's name (the model's shows again)."""
+    body = request.get_json(silent=True) or {}
+    ns = nway_sem_service.ns_of(body.get("collection"), body.get("pool"))
+    kind, anchors = body.get("kind"), body.get("anchors")
+    name = body.get("name")
+    if not ns:
+        abort(400, "collection or pool is required")
+    if kind not in nway_sem_service.NAMED_KINDS:
+        abort(400, f"kind must be one of {', '.join(nway_sem_service.NAMED_KINDS)}")
+    if (
+        not isinstance(anchors, list)
+        or not anchors
+        or not all(isinstance(a, str) for a in anchors)
+    ):
+        abort(400, "anchors must be the group's anchor list (from its /nway meta)")
+    if not isinstance(name, str) or len(name) > 120:
+        abort(400, "name must be a string of at most 120 characters")
+    rec = nway_sem_service.remember(
+        get_redis(),
+        ns,
+        kind,
+        anchors[: nway_sem_service.K],
+        user_name=" ".join(name.split()),
+        user=str(body.get("owner") or "user")[:40],
+    )
+    return {
+        "status": "success",
+        "record": rec,
+        "name": nway_sem_service.shown_name(rec),
+    }
+
+
+def get_nway_semantics():
+    """The stored summary of a set (tiers, groups, names), with no N-way build."""
+    ns = nway_sem_service.ns_of(
+        request.args.get("collection"), request.args.get("pool")
+    )
+    if not ns:
+        abort(400, "collection or pool is required")
+    sh = request.args.get("set_hash")
+    cu = (request.args.get("cluster_uuid") or "").strip().lower()
+    if not sh and not cu:
+        abort(400, "set_hash or cluster_uuid is required")
+    rec = nway_sem_service.load_set(get_redis(), ns, sh, cu)
+    if not rec:
+        abort(404, "no stored semantics for this set: open its N-way once")
+    return rec
 
 
 def get_nway_block_explain():
@@ -2277,6 +2361,9 @@ def _lineage_groups(rows, doc, r, args):
             )
     except nway_diff_service.BadParams as e:
         abort(400, str(e))
+    ns = nway_sem_service.ns_of(args.get("collection"), args.get("pool"))
+    if ns:
+        nway_sem_service.attach(r, ns, groups)
     level = mode.split(",")[0]
     kinds = LEVEL_KINDS.get(level, {level})
 

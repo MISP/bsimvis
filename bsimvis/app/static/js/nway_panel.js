@@ -186,6 +186,15 @@
                 if (this._cg) this._cgShow();
             };
             document.addEventListener('function-renamed', this._onRenamed);
+            // the group pencil (nway_groups.js): its name, then every chip that names it
+            NG.bindRename(this.el, id => (this.data && this.data.groups || {})[id], () => ({ names: this._laneNames || (this._laneNames = {}) }), g => {
+                this.el.querySelectorAll('[data-lname]').forEach(el => {
+                    if (el.dataset.lname !== g.id) return;
+                    el.classList.remove('wait', 'fb');
+                    el.textContent = this._shownName(this._laneNames[g.id]) || this._laneFallback(g);
+                });
+                if (this.state.track) this._paintTrack();
+            });
             this.el.addEventListener('click', e => this._onClick(e));
             this.el.addEventListener('click', e => {
                 const x = e.target.closest('[data-note-x]');

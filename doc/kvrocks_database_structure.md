@@ -112,6 +112,19 @@ File-level (binary-to-binary) similarity, derived from shared function clusters.
 | `{coll}:bin_cluster:uuid_history:{algo}` | **Hash** | Retired uuid -> `{kind, successors: [{uuid, share, jaccard}], ...}`. Never expires. |
 | `{coll}:bin_cluster:inherit:{algo}` | **Hash** | Live uuid -> retired uuids with analyst data whose files it now holds (the "copy tags & notes here" proposal). |
 
+### N-way Semantics
+Small, durable layer over the TTL'd N-way docs (`nway_sem_service.py`, `capability_service.py`). A group is recognised by its anchors: the 20 `md5:addr` ids with the lowest crc32 over its functions (bottom-k MinHash); a stored group names a fresh one at a sketch Jaccard >= 0.5, one-to-one. `{ns}` is the collection, or `global:pool:{id}`.
+
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{ns}:nway_names` | **Hash** | Name id -> JSON `{id, kind, anchors, llm: {name, v, tags, strings, calls}, user_name, user, history, caps, rows, files}`. The analyst's `user_name` beats the model's. |
+| `{ns}:nway_names:anchor` | **Hash** | Anchor (`md5:addr`) -> JSON list of name ids holding it. |
+| `{ns}:nway_sem:set:{set_hash}` | **JSON** | Summary of one member set (`set_hash` = md5 of ns + sorted member md5s): members, doc key, params, tier row counts, groups (kind, parent, tier, files, rows, tags, anchors, name id). Saved when a lane view opens unfiltered, once per doc. |
+| `{ns}:nway_sem:sets` | **ZSET** | Set hash -> saved at (ms). |
+| `{ns}:nway_sem:by_cluster` | **Hash** | Bin cluster uuid -> set hash. |
+| `{ns}:capabilities` | **Hash** | Capability id -> JSON `{id, mbc, attack, text, anchors, groups, level, evidence, source}`. |
+| `{ns}:idx:capability:label:{id}` | **Set** | Capability ids carrying one MBC or ATT&CK id. |
+
 ---
 
 Where id1 and id2 are {md5:addr}.

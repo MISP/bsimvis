@@ -8393,6 +8393,89 @@ def test_nway_diff():
             ).status_code
             == 404,
         )
+    # Persistent semantics: lanes carry anchors, a rename sticks to them.
+    _, _sd = _nway(tab="all", scope="all", limit=1000, group="lane")
+    _sl_id, _sl = next(
+        (
+            (g, m)
+            for g, m in ((_sd or {}).get("groups") or {}).items()
+            if m.get("kind") == "lane" and m.get("anchors")
+        ),
+        (None, None),
+    )
+    check(
+        "nway semantics: a lane group carries anchors and its namespace",
+        _sl is not None and _sl.get("ns") == COLLECTION,
+        str(_sl)[:200],
+    )
+    check(
+        "nway semantics: an unfiltered lane view returns its set hash",
+        bool((_sd or {}).get("set_hash")),
+    )
+    if _sl:
+        _nm = "test renamed lane"
+        _gn = f"{BASE_URL}/api/bin_sim/nway/group_name"
+        _body = {"collection": COLLECTION, "kind": "lane", "anchors": _sl["anchors"]}
+        _rn = requests.post(_gn, json={**_body, "name": _nm}, timeout=30)
+        check(
+            "nway group_name: renames a lane",
+            _rn.status_code == 200 and _rn.json().get("name") == _nm,
+            f"HTTP {_rn.status_code}",
+        )
+        _, _sd2 = _nway(tab="all", scope="all", limit=1000, group="lane")
+        check(
+            "nway group_name: the next /nway carries the analyst's name",
+            ((_sd2 or {}).get("groups") or {}).get(_sl_id, {}).get("user_name") == _nm,
+        )
+        _lnr = requests.post(
+            f"{BASE_URL}/api/bin_sim/nway/lane_names",
+            json={
+                "lanes": [
+                    {
+                        "id": _sl_id,
+                        "files": 2,
+                        "total": 2,
+                        "rows": _sl.get("rows") or 1,
+                        "sample": _sl.get("sample") or ["x"],
+                        "ns": COLLECTION,
+                        "gkind": "lane",
+                        "anchors": _sl["anchors"],
+                    }
+                ]
+            },
+            timeout=30,
+        )
+        _lnj = _lnr.json() if _lnr.status_code == 200 else {}
+        check(
+            "nway lane_names: a renamed lane answers its analyst name, LLM or not",
+            (_lnj.get("names") or {}).get(_sl_id) == _nm
+            and (_lnj.get("sources") or {}).get(_sl_id) == "user",
+            str(_lnj)[:200],
+        )
+        if (_sd or {}).get("set_hash"):
+            _sem = requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/semantics",
+                params={"collection": COLLECTION, "set_hash": _sd["set_hash"]},
+                timeout=30,
+            )
+            check(
+                "nway semantics: the stored set names the renamed lane",
+                _sem.status_code == 200
+                and any(g.get("name") == _nm for g in _sem.json().get("groups", [])),
+                f"HTTP {_sem.status_code}",
+            )
+        _clr = requests.post(_gn, json={**_body, "name": ""}, timeout=30)
+        check(
+            "nway group_name: an empty name clears the analyst's name",
+            _clr.status_code == 200 and _clr.json().get("name") != _nm,
+        )
+        check(
+            "nway group_name: an unknown kind is a 400",
+            requests.post(
+                _gn, json={**_body, "kind": "bogus", "name": "x"}, timeout=30
+            ).status_code
+            == 400,
+        )
     _, _lk = _nway(
         tab="all",
         scope="all",

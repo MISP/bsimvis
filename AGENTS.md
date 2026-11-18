@@ -161,10 +161,14 @@ build gate (`args`), and a cluster's default table (`cluster_uuid`: `run_semanti
 which stores the set and its evidence, names groups and pre-asks suggestions). A gate
 build of a cluster's default view runs that step in the same job. `queue_semantics`
 (the tab's "Build N-way", `POST /nway/semantics/build`, and the `[nway_sem] auto`
-warm-up after a clustering) queues `NWAY_BUILD`. The tab's Build N-way shows the N-way page's own
-depth picker (`NwayPanel.buildGate`): `POST /nway/build?default=1&dry=1` (SEM_ARGS under the cluster)
-answers the 428 depths or `ready` with `large`; `default=1` without `dry` builds at the picked depth,
-or, when that table is already built, queues the store/name/suggest step. `_resolve` also matches
+warm-up after a clustering) queues `NWAY_BUILD`. The Capabilities tab has no Build button of its
+own: it shows the N-way page's build block in place (`buildState`, `NwayPanel.buildGate`): the
+depths of a large set not built yet, "built at X depth / Rebuild deeper" for a built one, nothing
+for a small one. `POST /nway/build?default=1&dry=1` (SEM_ARGS under the cluster) answers the 428 or
+`ready` with `large`, and stores the default table's groups when they are missing or an older
+build's (`saved`, as opening the table would); `default=1` without `dry` builds at the picked
+depth, or, when that table is already built, queues the store/name/suggest step. SEM_ARGS carries
+every default the table sends (`twin_depth` 3, not the server's 1), so the job builds that table. `_resolve` also matches
 groups the summary's 400 cap left out, through the evidence hash (`_ev_groups`), and every skipped
 group says why (older build, closest default-build group, or another view). `NWAY_SEM_BUILD` is legacy: never
 create one; the worker still runs those already queued. What runs in the background (Build queued /

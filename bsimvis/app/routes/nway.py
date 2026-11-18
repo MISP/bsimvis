@@ -1236,14 +1236,21 @@ def _post_build(default=False):
     dry = args.pop("dry", None)
     cu = args.get("cluster_uuid")
     try:
-        doc, _, _ = _load_doc()
+        doc, r, pool_id = _load_doc()
         if default and not dry and cu and args.get("collection"):
             # built already: the rest of the Build runs as its own job
             ids = queue_semantics(
                 args["collection"], [cu], force=True, axis=args.get("axis"), big=True
             )
             return {"status": "queued", "id": ids[0]}, 202
-        return {"status": "ready", "large": doc.get("large")}
+        saved = False
+        ns = nway_sem_service.ns_of(args.get("collection"), pool_id)
+        if default and cu and ns:
+            # the default table is built: keep its groups, as opening it would
+            st = nway_sem_service.stored_meta(r, ns, nway_sem_service.members_of(doc))
+            if not (st and st.get("canon") and st.get("doc_key") == doc.get("key")):
+                saved = bool(_page(doc, request.args, r, pool_id).get("set_hash"))
+        return {"status": "ready", "large": doc.get("large"), "saved": saved}
     except _Reply as e:
         body, status = e.args[0]
         if body.get("error") != "needs_build":
@@ -1340,6 +1347,11 @@ SEM_ARGS = {
     "group_lane_link": "0.5",
     "group_lane_tier": "0.8",
     "group_lane_fold": "3",
+    # sent by the table, where the server's own default differs (twin_depth 1)
+    "mode": "stored",
+    "child_presence": "0.5",
+    "twin_depth": "3",
+    "twin_link": "0.5",
     "limit": "0",
 }
 
@@ -2200,13 +2212,6 @@ def post_nway_lane_names():
     )
 
 
-# Defaults the table sends that SEM_ARGS leaves to the server
-_CANON_MORE = {
-    "mode": "stored",
-    "child_presence": "0.5",
-    "twin_depth": "3",
-    "twin_link": "0.5",
-}
 # Table params that reshape rows or groups when set (filters are checked apart)
 _CANON_EMPTY = (
     "min_edge", "column", "focus", "side", "col_by", "col_by_multi", "col_set",
@@ -2230,8 +2235,6 @@ def _canonical(args):
     for k, v in SEM_ARGS.items():
         if k not in ("limit",) and not _same(args.get(k), v):
             return False
-    if any(k in args and not _same(args[k], v) for k, v in _CANON_MORE.items()):
-        return False
     return not any(args.get(k) for k in _CANON_EMPTY)
 
 

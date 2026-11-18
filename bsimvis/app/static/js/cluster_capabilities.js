@@ -82,13 +82,6 @@ window.ClusterCapabilities = (function () {
     const groupName = g => g.name || g.label || g.kind || 'group';
     const idChips = (c, cls = 'id') => [...(c.mbc || []), ...(c.attack || [])].map(i => `<span class="cap-chip ${cls}" title="${escapeAttr((c.names || {})[i] || (c.quotes || {})[i] || '')}">${escapeHtml(i)}</span>`).join('');
 
-    // The same end state as the N-way table's Build: one job builds the cluster's
-    // default table, stores its groups with what the model reads, names them and
-    // pre-asks their capability suggestions.
-    function buildBtn() {
-        return `<button class="btn-code-action cov-btn" style="--c:var(--accent)" title="Build this cluster's N-way table (its default view, as the N-way page's Build does), store its groups, name them and pre-ask their capability suggestions. Suggestions are only ever asked on this build, never on a filtered or re-lensed view. A big cluster is a long build: see Jobs." onclick="ClusterCapabilities.build(event)"><i class="fa-solid fa-hammer"></i> Build N-way</button>`;
-    }
-
     // Groups Suggest left out (not in the default build, or stored before its evidence).
     function warnSkipped(j) {
         const sk = (j && j.skipped) || [];
@@ -118,7 +111,7 @@ window.ClusterCapabilities = (function () {
         el.querySelector('#cov-caps-n').textContent = caps.length ? num(caps.length) : '';
         body.innerHTML = caps.length
             ? caps.slice(0, TOP).map(cp => `<div class="cap-sec"><span class="cap-chip ok" style="white-space:normal;">${escapeHtml(cp.name)}</span><span class="ids" style="display:flex; flex-wrap:wrap; gap:4px;">${idChips(cp)}</span><span class="dim" style="font-size:0.72rem; margin-left:auto;">${num(cp.files.length)} files</span></div>`).join('')
-            : `<div class="dim" style="font-size:0.78rem;">${acc && acc.no_set ? 'No stored N-way set yet: open the Functions tab or press Build N-way.' : 'None accepted yet. Select groups in the Capabilities tab and ask for suggestions, or build one from any function (right click, Capability).'}</div>`;
+            : `<div class="dim" style="font-size:0.78rem;">${acc && acc.no_set ? 'No stored N-way set yet: open the Capabilities or Functions tab.' : 'None accepted yet. Select groups in the Capabilities tab and ask for suggestions, or build one from any function (right click, Capability).'}</div>`;
     }
 
     // ---- the right pane: suggestions, then accepted ----
@@ -307,7 +300,7 @@ window.ClusterCapabilities = (function () {
         el.innerHTML = `<div class="cov" style="padding:4px 2px 20px;">
             <div class="cov-title" style="margin-bottom:8px;"><span class="cov-ico" style="--c:var(--danger, #dc2626)"><i class="fa-solid fa-bolt"></i></span><b>Capabilities</b>${CapEditor.EXP}
                 <i class="fa-solid fa-circle-info cov-info" title="Select N-way groups on the left and press Suggest: the model proposes capabilities with MBC / ATT&CK ids and the functions and strings that show it, read from the cluster's default N-way build (the same functions whichever button asked). Edit, then accept; nothing is kept until you accept it. Build a capability by hand from any function or string (right click, Capability)."></i>
-                <span class="cov-acts">${buildBtn()}<button class="btn-code-action cov-btn" style="--c:var(--accent)" onclick="ClusterDetailView.switchTab('functions')"><i class="fa-solid fa-table"></i> N-way table</button></span></div>
+                <span class="cov-acts"><button class="btn-code-action cov-btn" style="--c:var(--accent)" onclick="ClusterDetailView.switchTab('functions')"><i class="fa-solid fa-table"></i> N-way table</button></span></div>
             <div id="cap-build-host" style="margin-bottom:8px;"></div>
             <div class="cap-split" style="display:grid; grid-template-columns:minmax(0, 300px) minmax(0, 1fr); gap:12px; align-items:start;">
                 <div class="cov-card" style="padding:8px; gap:4px;">
@@ -320,7 +313,7 @@ window.ClusterCapabilities = (function () {
                 </div>
                 <div id="cap-right" style="min-width:0;"></div>
             </div>
-            ${set ? (set.canon ? '' : '<div class="cap-warn" style="margin-top:8px;">These groups come from an older or non-default N-way view: press Build N-way so suggestions read the default build.</div>') : '<div class="dim" style="margin-top:8px;">No stored N-way set for this cluster yet: open its Functions tab once, or press Build N-way.</div>'}
+            ${set ? '' : '<div class="dim" style="margin-top:8px;">No stored N-way set for this cluster yet.</div>'}
         </div>`;
         if (!el.querySelector('#cap-split-css')) el.insertAdjacentHTML('beforeend', '<style id="cap-split-css">@media (max-width: 760px) { .cap-split { grid-template-columns: 1fr !important; } } .cap-gi { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:center; padding:3px 5px; border-radius:3px; cursor:pointer; } .cap-gi .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .cap-gi .bd { display:flex; gap:3px; align-items:center; font-size:0.68rem; white-space:nowrap; }</style>');
         const list = el.querySelector('#cap-glist');
@@ -342,6 +335,7 @@ window.ClusterCapabilities = (function () {
         list.onchange = e => { const g = e.target.dataset.g; if (!g) return; e.target.checked ? sel.add(g) : sel.delete(g); drawGroups(); };
         el.querySelector('#cap-gq').oninput = drawGroups;
         drawGroups();
+        buildState(el.querySelector('#cap-build-host'), v, c);
         // mounted with no stored set too: it shows a queued Build
         const pane = suggestPane(el.querySelector('#cap-right'), ctx, {
             onGroups: s => { stats = s; if (list.isConnected) drawGroups(); },
@@ -357,44 +351,37 @@ window.ClusterCapabilities = (function () {
         el.querySelector('#cap-resug').onclick = ask(true);
     }
 
-    // Build N-way: the N-way page's own build choices (NwayPanel.buildGate, as its
-    // 428 gate and Rebuild deeper) over the cluster's default table; one NWAY_BUILD
-    // job builds it at the picked depth, then stores, names and pre-asks its groups.
-    async function build(ev) {
-        const v = window.ClusterDetailView;
-        const c = v && v.clusterMapByUuid[v.selectedClusterUuid];
-        if (!c) return;
-        if (v.params && v.params.pool) { if (window.showToast) showToast('Open the member collection to build its N-way', 'error'); return; }
-        const btnEl = ev && ev.currentTarget, host = document.getElementById('cap-build-host');
-        if (btnEl) btnEl.disabled = true;
+    // The cluster's default N-way table, as the N-way page shows it (NwayPanel.buildGate):
+    // a large set not built yet offers its depths (Fast / Balanced / Deep); a built
+    // one says its depth and offers Rebuild deeper; a small one needs nothing. One
+    // NWAY_BUILD job builds at the picked depth, then stores, names and pre-asks its
+    // groups. When the table is built but its groups are not stored (or are an older
+    // build's), the probe stores them, as opening the table would, and the tab redraws.
+    async function buildState(host, v, c) {
+        if (!host || !window.NwayPanel || (v.params && v.params.pool)) return;
         const q = new URLSearchParams({ default: '1', collection: v.collection || '', cluster_uuid: c.cluster_uuid });
         if (v.axis) q.set('axis', v.axis);
-        const done = () => {
-            if (btnEl) btnEl.disabled = false;
+        const redraw = () => {
             document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: { collection: v.collection } }));
-            const tab = document.getElementById('cap-build-host');
-            if (tab) renderTab(tab.closest('.cov').parentElement, v);
+            if (host.isConnected) renderTab(host.closest('.cov').parentElement, v);
         };
-        const post = async extra => {
-            const res = await fetch(`/api/bin_sim/nway/build?${q}${extra}`, { method: 'POST' });
-            return [res, await res.json().catch(() => ({}))];
-        };
+        let res, d;
         try {
-            const [res, d] = await post('&dry=1');
-            if (res.status === 428 || d.error === 'needs_build') return NwayPanel.buildGate(host, d, q.toString(), done);
-            if (!res.ok) throw new Error(d.message || d.error || `HTTP ${res.status}`);
-            if (d.large) return NwayPanel.buildGate(host, d.large, q.toString(), done);
-            // a set small enough to build on request has one depth: go
-            const [r2, j] = await post('');
-            if (!r2.ok) throw new Error(j.message || j.error || `HTTP ${r2.status}`);
-            if (window.showToast) window.showToast('Queued: the groups appear here when the job is done (see Jobs).', 'success');
-            document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: { collection: v.collection } }));
-            if (btnEl) btnEl.disabled = false;
-        } catch (e) {
-            if (window.showToast) window.showToast(`Build failed: ${e.message}`, 'error');
-            if (btnEl) btnEl.disabled = false;
-        }
+            res = await fetch(`/api/bin_sim/nway/build?${q}&dry=1`, { method: 'POST' });
+            d = await res.json().catch(() => ({}));
+        } catch (e) { return; }
+        if (!host.isConnected || v.selectedClusterUuid !== c.cluster_uuid) return;
+        if (res.status === 428 || d.error === 'needs_build') return NwayPanel.buildGate(host, d, q.toString(), redraw);
+        if (!res.ok) return;
+        if (d.saved) return redraw();
+        if (!d.large) return;
+        const cur = (d.large.depths || []).find(x => Number(x.pair_k) === Number(d.large.pair_k));
+        host.innerHTML = `<div class="nway-note">Large set built at <b>${escapeHtml(cur ? cur.label : d.large.pair_k ? 'k=' + Number(d.large.pair_k) : 'Deep')}</b> depth. <button type="button" class="btn-action" data-cap-rebuild title="Queue a build at another depth (Fast, Balanced, Deep); picking this depth again names the groups and pre-asks their suggestions"><i class="fa-solid fa-hammer"></i> Rebuild deeper</button><div class="nway-rebuild-host"></div></div>`;
+        host.querySelector('[data-cap-rebuild]').onclick = e => {
+            e.currentTarget.hidden = true;
+            NwayPanel.buildGate(host.querySelector('.nway-rebuild-host'), d.large, q.toString(), redraw);
+        };
     }
 
-    return { card, loadCard, renderTab, build, suggestPane, fetchSet, fetchAccepted, fetchSugg, groupStats };
+    return { card, loadCard, renderTab, suggestPane, fetchSet, fetchAccepted, fetchSugg, groupStats };
 })();

@@ -484,7 +484,10 @@ def put(r, ns, data, owner="user", replace=True):
                 p.watch(gk, ek)
                 old = _loads(p.get(gk))
                 if data.get("uuid") and not old:
-                    raise LookupError(f"no capability {uid}")
+                    raise LookupError(
+                        f"no capability {uid}: it was removed. Reload the suggestions, "
+                        "or give it a name to create a new capability"
+                    )
                 old_ev = {
                     _decode(k): json.loads(_decode(v)) for k, v in p.hgetall(ek).items()
                 }
@@ -648,7 +651,8 @@ def gkey(name_id, anchors):
 
 
 def accepted_lines(r, ns):
-    """(prompt lines, {code: uuid}) of the accepted capabilities the model may attach to."""
+    """(prompt lines, {code: uuid}, {uuid: name}) of the accepted capabilities the
+    model may attach to."""
     caps = listing(r, ns)[:ACCEPTED_MAX]
     lines, amap = [], {}
     for n, c in enumerate(caps, 1):
@@ -656,7 +660,26 @@ def accepted_lines(r, ns):
         amap[code] = c["uuid"]
         ids = " ".join((c.get("mbc") or []) + (c.get("attack") or []))
         lines.append(f"{code} {c['name']}" + (f" [{ids}]" if ids else ""))
-    return "\n".join(lines), amap
+    return "\n".join(lines), amap, {c["uuid"]: c["name"] for c in caps}
+
+
+def retarget(sugg, caps):
+    """Attach suggestions whose capability is gone (removed after the answer was
+    cached): onto the accepted one (`caps`, from `listing`) with the same name,
+    else a new capability named after it, flagged `attach_gone` (with no name
+    when the cached answer did not keep the target's name)."""
+    have = {c["uuid"] for c in caps}
+    by_name = {_nname(c.get("name")): c["uuid"] for c in caps}
+    for s in sugg or []:
+        if not s.get("attach_to") or s["attach_to"] in have:
+            continue
+        s["attach_to"] = (
+            by_name.get(_nname(s.get("attach_name"))) if s.get("attach_name") else None
+        )
+        if not s["attach_to"]:
+            s["attach_gone"] = True
+            s["name"] = s.get("name") or s.get("attach_name") or ""
+    return sugg
 
 
 def _holders(items, needle):
@@ -684,7 +707,9 @@ def unbacked(name, text):
     return [w for w in words if w not in GENERIC and w not in ev]
 
 
-def build_suggestions(answer, lvl, text, items, group, amap, rows=None, row_names=None):
+def build_suggestions(
+    answer, lvl, text, items, group, amap, rows=None, row_names=None, attach_names=None
+):
     """The model's answer as suggestions shaped like capabilities: name, ids (the
     quote rules of `clean`), attach_to, and evidence pointers resolved against the
     evidence items (the group itself, the functions holding a quote or a cited
@@ -735,6 +760,8 @@ def build_suggestions(answer, lvl, text, items, group, amap, rows=None, row_name
             {
                 "name": name,
                 "attach_to": attach,
+                # kept so a removed target can be found again by name (`retarget`)
+                "attach_name": (attach_names or {}).get(attach),
                 "mbc": ids["mbc"],
                 "attack": ids["attack"],
                 "quotes": ids["quotes"],
@@ -1116,4 +1143,21 @@ if __name__ == "__main__":
     run_done(q, "c", "suggest", "n1")
     q.kv["capsugg:c:run"]["build:cu1"] = json.dumps({"at": 0, "ttl": 1})
     assert running(q, "c", {m5}, "cu1") == [] and len(q.kv["capsugg:c:run"]) == 1
+    # an attach whose capability was removed: same name, else a new one
+    gone = [
+        {"attach_to": "old1", "attach_name": "Sandbox  evasion", "name": ""},
+        {"attach_to": "old2", "attach_name": "gone too", "name": ""},
+        {"attach_to": "old3", "name": ""},
+        {"attach_to": "u9", "name": ""},
+    ]
+    retarget(
+        gone, [{"uuid": "u8", "name": "sandbox evasion"}, {"uuid": "u9", "name": "x"}]
+    )
+    assert [s["attach_to"] for s in gone] == ["u8", None, None, "u9"], gone
+    assert gone[1]["attach_gone"] and gone[1]["name"] == "gone too"
+    assert (
+        gone[2]["attach_gone"]
+        and gone[2]["name"] == ""
+        and "attach_gone" not in gone[0]
+    )
     print("ok")

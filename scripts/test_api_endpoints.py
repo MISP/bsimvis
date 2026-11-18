@@ -8690,6 +8690,32 @@ def test_nway_diff():
                     and _sb.status_code == 400,
                     f"{_sw.text[:200]} | {_sb.text[:120]}",
                 )
+                # an attach whose capability was removed turns into a new one, named after it
+                _ck = f"capsugg:{COLLECTION}:{_gk}"
+                _craw = _cap_q().get(_ck)
+                _gone = {"attach_to": "f" * 32, "attach_name": "removed target", "name": "", "evidence": []}  # fmt: skip
+                _cap_q().set(_ck, json.dumps({"v": _cs.CAPS_V, "at": 1, "suggestions": [_gone]}), ex=120)  # fmt: skip
+                try:
+                    _sgg = requests.get(
+                        f"{_CB}/suggestions", params=_sq, timeout=30
+                    ).json()
+                finally:
+                    _cap_q().set(_ck, _craw, ex=120)
+                _s0 = ((_sgg.get("groups") or [{}])[0].get("suggestions") or [{}])[0]
+                _ga = requests.post(
+                    f"{_CB}/accept",
+                    json={"collection": COLLECTION, "items": [{"uuid": "f" * 32, "name": ""}]},
+                    timeout=30,
+                )  # fmt: skip
+                check(
+                    "capability suggestions: an attach to a removed capability is a new one named after it",
+                    _s0.get("attach_to") is None
+                    and _s0.get("attach_gone") is True
+                    and _s0.get("name") == "removed target"
+                    and _ga.status_code == 404
+                    and "was removed" in _ga.text,
+                    f"{str(_s0)[:200]} | {_ga.text[:160]}",
+                )
                 # a group past the summary's cap is still found, through the stored evidence
                 _skey = f"{COLLECTION}:nway_sem:set:{_sd['set_hash']}"
                 _sraw = _cap_r().get(_skey)

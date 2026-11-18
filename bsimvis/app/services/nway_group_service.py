@@ -1658,7 +1658,7 @@ def _suggest(l, name, text, ev, name_id, key):
 
     lvl = capability_service.level(l.get("rows"))
     choices, _, _ = capability_service.prompt_lists(lvl)
-    accepted, amap = capability_service.accepted_lines(get_redis(), l["ns"])
+    accepted, amap, anames = capability_service.accepted_lines(get_redis(), l["ns"])
     answer, _ = llm_service.capability_suggestions(text, name, choices, accepted)
     group = {
         "type": "group",
@@ -1680,6 +1680,7 @@ def _suggest(l, name, text, ev, name_id, key):
         amap,
         rows=l.get("fid_rows"),
         row_names=l.get("fid_names"),
+        attach_names=anames,
     )
     capability_service.cache_put(get_queue_redis(), l["ns"], key, sugg, l["anchors"])
     return sugg

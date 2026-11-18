@@ -273,7 +273,9 @@ def _answer(red, ns, groups):
         acc = capability_service.accepted_for_group(
             caps, g.get("name_id"), g["anchors"]
         )
-        sugg = (got.get(g["key"]) or {}).get("suggestions")
+        sugg = capability_service.retarget(
+            (got.get(g["key"]) or {}).get("suggestions"), caps
+        )
         for s in sugg or []:
             s["accepted"] = capability_service.covered_by(s, acc)
         out.append(

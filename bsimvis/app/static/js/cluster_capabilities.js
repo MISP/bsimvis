@@ -51,12 +51,16 @@ window.ClusterCapabilities = (function () {
         return j;
     }
 
+    // One card per suggestion: its attach target, else its name; one whose target was
+    // removed and that has no name is its group's own card.
+    const suggKey = (x, g) => x.attach_to ? `a:${x.attach_to}` : x.name ? `n:${norm(x.name)}` : x.attach_gone ? `gone:${g.key}` : '';
+
     // Per group id, and per `n:<name id>` (the key that survives a rebuild): accepted
     // capability names and the suggestions no accepted one covers.
     function groupStats(sugg) {
         const out = {};
         ((sugg && sugg.groups) || []).forEach(g => {
-            const open = new Set((g.suggestions || []).filter(s => !s.accepted).map(s => s.attach_to ? `a:${s.attach_to}` : `n:${norm(s.name)}`));
+            const open = new Set((g.suggestions || []).filter(s => !s.accepted).map(s => suggKey(s, g)).filter(Boolean));
             const st = { acc: (g.accepted || []).map(c => c.name), sugg: open.size };
             if (!g.earlier) out[g.gid] = st;
             if (!g.name_id) return;
@@ -139,13 +143,13 @@ window.ClusterCapabilities = (function () {
                 const byKey = new Map();
                 shown.forEach(g => (g.suggestions || []).forEach(x => {
                     if (x.accepted) return;
-                    const key = x.attach_to ? `a:${x.attach_to}` : `n:${norm(x.name)}`;
-                    if (!key.slice(2) || st.dismissed.has(key)) return;
+                    const key = suggKey(x, g);
+                    if (!key || st.dismissed.has(key)) return;
                     let c = byKey.get(key);
                     if (!c) {
                         const keep = st.cards.find(o => o.id === key);
                         // the suggestion's sentence becomes the capability's description
-                        c = keep && st.open === key ? keep : { id: key, groups: [], draft: { name: x.name, attach_to: x.attach_to, description: x.why || '', mbc: [], attack: [], evidence: [], unbacked: [], why: x.why, quotes: {}, collection: ctx.collection, pool: ctx.pool, cluster_uuid: ctx.cluster_uuid, names: {} } };
+                        c = keep && st.open === key ? keep : { id: key, groups: [], draft: { name: x.name, attach_to: x.attach_to, attach_gone: !!x.attach_gone, description: x.why || '', mbc: [], attack: [], evidence: [], unbacked: [], why: x.why, quotes: {}, collection: ctx.collection, pool: ctx.pool, cluster_uuid: ctx.cluster_uuid, names: {} } };
                         c.groups = [];
                         byKey.set(key, c);
                     }
@@ -184,7 +188,7 @@ window.ClusterCapabilities = (function () {
                     <button type="button" class="cap-btn" data-dismiss title="Hide it (it can come back on a later Suggest or reload)">Dismiss</button>
                     <button type="button" class="cap-btn ok" data-accept>Accept</button></span></div>
                 ${open ? '' : `<div class="ids">${idChips(d, 'sug')}</div>`}
-                <div class="meta">from ${escapeHtml(from.slice(0, 3).join(', '))}${from.length > 3 ? ` +${from.length - 3}` : ''} · ${num(d.evidence.length)} pointers${d.why ? ` · ${escapeHtml(d.why)}` : ''}${d.unbacked.length ? ` · <span class="cap-warn">no pointer holds: ${escapeHtml(d.unbacked.join(', '))}</span>` : ''}</div>
+                <div class="meta">from ${escapeHtml(from.slice(0, 3).join(', '))}${from.length > 3 ? ` +${from.length - 3}` : ''} · ${num(d.evidence.length)} pointers${d.why ? ` · ${escapeHtml(d.why)}` : ''}${d.unbacked.length ? ` · <span class="cap-warn">no pointer holds: ${escapeHtml(d.unbacked.join(', '))}</span>` : ''}${d.attach_gone ? ` · <span class="cap-warn">the capability it added to was removed: ${d.name ? 'accepting creates it again' : 'give it a name (Edit) to create one, or add it to another from the tray'}</span>` : ''}</div>
                 ${open ? '<div data-ed></div>' : ''}</div>`;
         }
 

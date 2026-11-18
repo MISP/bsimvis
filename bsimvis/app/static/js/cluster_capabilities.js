@@ -308,6 +308,7 @@ window.ClusterCapabilities = (function () {
             <div class="cov-title" style="margin-bottom:8px;"><span class="cov-ico" style="--c:var(--danger, #dc2626)"><i class="fa-solid fa-bolt"></i></span><b>Capabilities</b>${CapEditor.EXP}
                 <i class="fa-solid fa-circle-info cov-info" title="Select N-way groups on the left and press Suggest: the model proposes capabilities with MBC / ATT&CK ids and the functions and strings that show it, read from the cluster's default N-way build (the same functions whichever button asked). Edit, then accept; nothing is kept until you accept it. Build a capability by hand from any function or string (right click, Capability)."></i>
                 <span class="cov-acts">${buildBtn()}<button class="btn-code-action cov-btn" style="--c:var(--accent)" onclick="ClusterDetailView.switchTab('functions')"><i class="fa-solid fa-table"></i> N-way table</button></span></div>
+            <div id="cap-build-host" style="margin-bottom:8px;"></div>
             <div class="cap-split" style="display:grid; grid-template-columns:minmax(0, 300px) minmax(0, 1fr); gap:12px; align-items:start;">
                 <div class="cov-card" style="padding:8px; gap:4px;">
                     <input id="cap-gq" aria-label="Search groups" placeholder="Search ${num(groups.length)} groups" style="background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px 7px; min-width:0;">
@@ -356,20 +357,39 @@ window.ClusterCapabilities = (function () {
         el.querySelector('#cap-resug').onclick = ask(true);
     }
 
+    // Build N-way: the N-way page's own build choices (NwayPanel.buildGate, as its
+    // 428 gate and Rebuild deeper) over the cluster's default table; one NWAY_BUILD
+    // job builds it at the picked depth, then stores, names and pre-asks its groups.
     async function build(ev) {
         const v = window.ClusterDetailView;
         const c = v && v.clusterMapByUuid[v.selectedClusterUuid];
         if (!c) return;
-        const btnEl = ev && ev.currentTarget;
+        if (v.params && v.params.pool) { if (window.showToast) showToast('Open the member collection to build its N-way', 'error'); return; }
+        const btnEl = ev && ev.currentTarget, host = document.getElementById('cap-build-host');
         if (btnEl) btnEl.disabled = true;
-        const body = { cluster_uuids: [c.cluster_uuid], axis: v.axis, force: true, big: true };
-        if (v.params && v.params.pool) body.pool = v.params.pool; else body.collection = v.collection;
+        const q = new URLSearchParams({ default: '1', collection: v.collection || '', cluster_uuid: c.cluster_uuid });
+        if (v.axis) q.set('axis', v.axis);
+        const done = () => {
+            if (btnEl) btnEl.disabled = false;
+            document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: { collection: v.collection } }));
+            const tab = document.getElementById('cap-build-host');
+            if (tab) renderTab(tab.closest('.cov').parentElement, v);
+        };
+        const post = async extra => {
+            const res = await fetch(`/api/bin_sim/nway/build?${q}${extra}`, { method: 'POST' });
+            return [res, await res.json().catch(() => ({}))];
+        };
         try {
-            const res = await fetch('/api/bin_sim/nway/semantics/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            const out = await res.json();
-            if (!res.ok) throw new Error(out.message || out.error || `HTTP ${res.status}`);
+            const [res, d] = await post('&dry=1');
+            if (res.status === 428 || d.error === 'needs_build') return NwayPanel.buildGate(host, d, q.toString(), done);
+            if (!res.ok) throw new Error(d.message || d.error || `HTTP ${res.status}`);
+            if (d.large) return NwayPanel.buildGate(host, d.large, q.toString(), done);
+            // a set small enough to build on request has one depth: go
+            const [r2, j] = await post('');
+            if (!r2.ok) throw new Error(j.message || j.error || `HTTP ${r2.status}`);
             if (window.showToast) window.showToast('Queued: the groups appear here when the job is done (see Jobs).', 'success');
-            document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: body }));
+            document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: { collection: v.collection } }));
+            if (btnEl) btnEl.disabled = false;
         } catch (e) {
             if (window.showToast) window.showToast(`Build failed: ${e.message}`, 'error');
             if (btnEl) btnEl.disabled = false;

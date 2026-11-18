@@ -8684,9 +8684,39 @@ def test_nway_diff():
                     "capability suggest: a view's group is the stored one, an unknown one is skipped, a bad one is a 400",
                     [g.get("key") for g in _swj.get("groups") or []] == [_gk]
                     and [x.get("group") for x in _swj.get("skipped") or []] == ["alien"]
+                    and "default N-way table"
+                    in (_swj.get("skipped") or [{}])[0].get("reason", "")
                     and not _swj.get("pending")
                     and _sb.status_code == 400,
                     f"{_sw.text[:200]} | {_sb.text[:120]}",
+                )
+                # a group past the summary's cap is still found, through the stored evidence
+                _skey = f"{COLLECTION}:nway_sem:set:{_sd['set_hash']}"
+                _sraw = _cap_r().get(_skey)
+                _srec = json.loads(_sraw)
+                _cap_r().set(
+                    _skey,
+                    json.dumps(
+                        {
+                            **_srec,
+                            "groups": [
+                                g for g in _srec["groups"] if g["gid"] != _sl_id
+                            ],
+                        }
+                    ),
+                )
+                try:
+                    _sw2 = requests.post(
+                        f"{_CB}/suggest",
+                        json={"collection": COLLECTION, "cluster_uuid": _tcu, "groups": [_whole], "ask": False},
+                        timeout=30,
+                    ).json()  # fmt: skip
+                finally:
+                    _cap_r().set(_skey, _sraw)
+                check(
+                    "capability suggest: a group the summary does not list resolves through the stored evidence",
+                    len(_sw2.get("groups") or []) == 1 and not _sw2.get("skipped"),
+                    str(_sw2)[:300],
                 )
                 # accepting it for the lane marks the suggestion covered and the lane verified
                 _grp_ev = {
@@ -8933,6 +8963,20 @@ def test_nway_diff():
                 f"{BASE_URL}/api/bin_sim/nway/semantics/build", json={}, timeout=30
             ).status_code
             == 400,
+        )
+        # the tab's Build N-way: the default table's build choices, nothing queued
+        _dr = requests.post(
+            f"{BASE_URL}/api/bin_sim/nway/build",
+            params={"collection": COLLECTION, "md5s": f"{file_md5},{file_md5_2}", "default": 1, "dry": 1},
+            timeout=60,
+        )  # fmt: skip
+        check(
+            "nway build: default=1&dry=1 answers a small set ready, with no large-set depths",
+            _dr.status_code == 200
+            and _dr.json().get("status") == "ready"
+            and "large" in _dr.json()
+            and _dr.json()["large"] is None,
+            _dr.text[:200],
         )
         check(
             "nway capabilities: no collection is a 400",

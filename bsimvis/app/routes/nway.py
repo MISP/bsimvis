@@ -1212,20 +1212,46 @@ def _build_job(key):
 
 
 def post_nway_build():
-    """Queue the NWAY_BUILD job of a large set (same params as `/nway`)."""
+    """Queue the NWAY_BUILD job of a large set (same params as `/nway`).
+
+    `default=1`: a cluster's default table (SEM_ARGS under the request's params),
+    the Capabilities tab's Build N-way, with the same depth choices as the N-way
+    page. Once that table is built (or when it already is), the same job stores
+    its groups, names them and pre-asks their suggestions. `dry=1`: queue nothing;
+    answer the 428 (depths, the live job) or `ready` with `large` (the built depth
+    and the others)."""
+    a = request.args.to_dict()
+    if a.pop("default", None):
+        q = {**{k: v for k, v in SEM_ARGS.items() if k != "limit"}, **a}
+        with current_app.test_request_context(query_string=q, method="POST"):
+            return _post_build(default=True)
+    return _post_build()
+
+
+def _post_build(default=False):
     from bsimvis.app.routes.bin_sim import job_service
     from bsimvis.app.services.job_service import JobType
 
+    args = request.args.to_dict()
+    dry = args.pop("dry", None)
+    cu = args.get("cluster_uuid")
     try:
-        _load_doc()
-        return {"status": "ready"}
+        doc, _, _ = _load_doc()
+        if default and not dry and cu and args.get("collection"):
+            # built already: the rest of the Build runs as its own job
+            ids = queue_semantics(
+                args["collection"], [cu], force=True, axis=args.get("axis"), big=True
+            )
+            return {"status": "queued", "id": ids[0]}, 202
+        return {"status": "ready", "large": doc.get("large")}
     except _Reply as e:
         body, status = e.args[0]
         if body.get("error") != "needs_build":
             return body, status
     if body["job"]:
-        return {"status": "queued", **body["job"]}
-    args = request.args.to_dict()
+        return (body, status) if dry else {"status": "queued", **body["job"]}
+    if dry:
+        return body, status
     # one progress id per set, so a reload re-attaches to the running build
     args["progress_id"] = hashlib.md5(body["key"].encode()).hexdigest()[:20]
     payload = {
@@ -1245,6 +1271,12 @@ def post_nway_build():
     )
     get_queue_redis().delete(f"nway:cancel:{args['progress_id']}")
     job_service.enqueue_job(jid)
+    if cu and args.get("collection") and not args.get("pool") and _canonical(args):
+        # shown on the cluster's Capabilities pane until the job takes it
+        capability_service.run_mark(
+            get_queue_redis(), args["collection"], "build", cu, "Build queued",
+            cluster=cu, job=jid,
+        )  # fmt: skip
     return {
         "status": "queued",
         "id": jid,

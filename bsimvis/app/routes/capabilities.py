@@ -126,41 +126,94 @@ def _keyed(groups):
     ]
 
 
-def _resolve(rec, wanted):
+def _ev_groups(r, ns, rec):
+    """Groups of the stored default build that only its evidence hash holds: the
+    summary keeps the biggest SET_GROUPS_MAX, the evidence every nameable one."""
+    if not rec.get("set_hash"):
+        return []
+    have = {g["gid"] for g in rec["groups"]}
+    out = []
+    for gid, v in r.hgetall(f"{ns}:nway_sem:ev:{rec['set_hash']}").items():
+        gid, e = capability_service._decode(gid), json.loads(
+            capability_service._decode(v)
+        )
+        if gid not in have and e.get("anchors"):
+            out.append({"gid": gid, "kind": e.get("gkind"), "anchors": e["anchors"]})
+    names = nway_sem_service.lookup(
+        r,
+        ns,
+        [{"id": g["gid"], "kind": g["kind"], "anchors": g["anchors"]} for g in out],
+    )
+    for g in out:
+        n = names.get(g["gid"])
+        g["name_id"], g["name"] = n and n["id"], nway_sem_service.shown_name(n)
+    return _keyed(out)
+
+
+def _resolve(r, ns, rec, wanted):
     """The stored default-build groups for `wanted`: gids or name ids of the set,
     or groups of any N-way view (`{gid, name_id, anchors, name}`), matched by name
     id, else by anchors (>= MATCH). Suggestions are only asked on those, never on
-    a filtered or re-lensed view's smaller group. -> (groups, skipped)."""
-    stored = _keyed(rec["groups"])
-    by_gid = {g["gid"]: g for g in stored}
-    by_nid = {g["name_id"]: g for g in stored if g.get("name_id")}
+    a filtered or re-lensed view's smaller group. -> (groups, skipped), each
+    skipped one with the reason it could not be matched."""
+    pool = _keyed(rec["groups"])
+    more = None  # the evidence-only groups, read when the summary has no match
     out, skipped = {}, []
     for w in wanted:
-        if isinstance(w, str):
-            g, label = by_gid.get(w) or by_nid.get(w), w
-        elif isinstance(w, dict):
+        if not isinstance(w, (str, dict)):
+            abort(400, "each group is a gid, a name id or a group object")
+        anchors = []
+        if isinstance(w, dict):
             try:
                 anchors = capability_service._fid_list(w.get("anchors"), "anchors")
             except ValueError as e:
                 abort(400, str(e))
-            label = str(w.get("name") or w.get("gid") or "group")[:120]
-            g = by_nid.get(w.get("name_id"))
-            if not g and anchors:
-                best = max(
-                    stored,
-                    key=lambda x: nway_sem_service.similarity(x["anchors"], anchors),
-                    default=None,
-                )
-                sim = best and nway_sem_service.similarity(best["anchors"], anchors)
-                g = best if sim and sim >= capability_service.MATCH else None
-        else:
-            abort(400, "each group is a gid, a name id or a group object")
+        label = str(
+            w if isinstance(w, str) else w.get("name") or w.get("gid") or "group"
+        )[:120]
+        nid = w if isinstance(w, str) else w.get("name_id")
+        g, best, sim = None, None, 0.0
+        for tries in (0, 1):
+            if tries:
+                if more is None:
+                    more = _ev_groups(r, ns, rec)
+                cand = more
+            else:
+                cand = pool
+            g = next(
+                (
+                    x
+                    for x in cand
+                    if (isinstance(w, str) and x["gid"] == w)
+                    or (nid and x.get("name_id") == nid)
+                ),
+                None,
+            )
+            for x in [] if g or not anchors else cand:
+                s = nway_sem_service.similarity(x["anchors"], anchors)
+                if s > sim:
+                    best, sim = x, s
+            if g or sim >= capability_service.MATCH:
+                g = g or best
+                break
         if g:
             out[g["key"]] = g
-        else:
-            skipped.append(
-                {"group": label, "reason": "not in the cluster's table build"}
+            continue
+        if not rec.get("canon"):
+            why = "the saved N-way is an older or non-default build: press Build N-way"
+        elif best is not None and sim > 0:
+            why = (
+                f"not in the cluster's default N-way table (closest: \"{best.get('name') or best['gid']}\", "
+                f"{round(sim * 100)}% the same functions). This view differs from the default "
+                "table (another lens, a filter, other columns or another build depth)"
             )
+        else:
+            why = (
+                "not in the cluster's default N-way table. This view differs from it (another "
+                "lens, a filter, other columns or another build depth), or its files changed "
+                "since the last Build N-way"
+            )
+        skipped.append({"group": label, "reason": why})
     return list(out.values()), skipped
 
 
@@ -195,8 +248,18 @@ def _earlier(red, ns, rec):
     names = nway_sem_service._records(
         get_redis(), ns, [g["name_id"] for g in out if g["name_id"]]
     )
+    # a group of the current build the summary does not list is not "earlier"
+    cur = set()
+    if out and rec.get("set_hash"):
+        cur = set(
+            map(
+                capability_service._decode,
+                get_redis().hkeys(f"{ns}:nway_sem:ev:{rec['set_hash']}"),
+            )
+        )
     for g in out:
         g["name"] = nway_sem_service.shown_name(names.get(g["name_id"])) or g["name"]
+        g["earlier"] = g["src_gid"] not in cur
     return out
 
 
@@ -275,7 +338,7 @@ def post_suggest():
     if not capability_service.enabled():
         abort(409, "capabilities are disabled ([capabilities] enabled = false)")
     rec = _set_groups(r, ns, body.get("cluster_uuid"))
-    groups, skipped = _resolve(rec, wanted)
+    groups, skipped = _resolve(r, ns, rec, wanted)
     red = get_queue_redis()
     if body.get("ask") is False:
         return {**_answer(red, ns, groups), "skipped": skipped}

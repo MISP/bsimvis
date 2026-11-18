@@ -3203,6 +3203,8 @@ class BinSimNwayBuild(Resource):
         params={
             "md5s": "Same file set / scope params as /nway (cluster_uuid, collection, pool, mode, min_edge, ...)",
             "pair_k": "Build depth: one of the `depths` the 428 answer lists (fast = nway.pair_k, balanced = 64, deep = 0, every pair). It sticks to the set: later calls without pair_k read this build",
+            "default": "1: the cluster's default table (cluster_uuid, collection): the job also stores its groups, names them and pre-asks capability suggestions, even when the table is already built",
+            "dry": "1: queue nothing; answer the 428 (depths, live job) or ready with `large` (built depth, depths)",
         }
     )
     def post(self):

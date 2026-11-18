@@ -161,7 +161,12 @@ build gate (`args`), and a cluster's default table (`cluster_uuid`: `run_semanti
 which stores the set and its evidence, names groups and pre-asks suggestions). A gate
 build of a cluster's default view runs that step in the same job. `queue_semantics`
 (the tab's "Build N-way", `POST /nway/semantics/build`, and the `[nway_sem] auto`
-warm-up after a clustering) queues `NWAY_BUILD`. `NWAY_SEM_BUILD` is legacy: never
+warm-up after a clustering) queues `NWAY_BUILD`. The tab's Build N-way shows the N-way page's own
+depth picker (`NwayPanel.buildGate`): `POST /nway/build?default=1&dry=1` (SEM_ARGS under the cluster)
+answers the 428 depths or `ready` with `large`; `default=1` without `dry` builds at the picked depth,
+or, when that table is already built, queues the store/name/suggest step. `_resolve` also matches
+groups the summary's 400 cap left out, through the evidence hash (`_ev_groups`), and every skipped
+group says why (older build, closest default-build group, or another view). `NWAY_SEM_BUILD` is legacy: never
 create one; the worker still runs those already queued. What runs in the background (Build queued /
 running, naming, suggesting) is marked in `capsugg:{ns}:run` (`run_mark` / `run_done` /
 `running`) and shown on the pane (`running` on `GET /api/capability/suggestions`).

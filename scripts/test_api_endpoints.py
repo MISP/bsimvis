@@ -3647,7 +3647,13 @@ def run_all_tests():
         str(capa_rec)[:200],
     )
 
-    yara_tags = [t for t in (all_tags or {}) if str(t).startswith("yara:")]
+    # Scan-time yara tags only: the vocabulary keeps a workbench rule's old
+    # `yara:custom:` name after a rename, and test_yara_editor checks those.
+    yara_tags = [
+        t
+        for t in (all_tags or {})
+        if str(t).startswith("yara:") and not str(t).startswith("yara:custom:")
+    ]
     if yara_tags:
         prov = test_endpoint(
             "GET",
@@ -11101,6 +11107,11 @@ def test_pool_collection_equivalence():
                     )
                 )
                 out["sample_functions"] = samples
+            # The two ingestion layouts create different batch UUIDs.
+            out["batch_uuid_distribution"] = sorted(
+                (row["count"], row["percent"])
+                for row in out.get("batch_uuid_distribution", [])
+            )
             return out
 
         def clusters_of(list_key, member_fmt, meta_fmt):
@@ -11138,7 +11149,13 @@ def test_pool_collection_equivalence():
         check(
             "equivalence: function cluster metadata matches",
             not meta_mismatch,
-            f"{len(meta_mismatch)} mismatch(es)",
+            f"{len(meta_mismatch)} mismatch(es)"
+            + "".join(
+                f"; {f}: {str(s_clusters[k].get(f))[:160]} != {str(p_clusters[k].get(f))[:160]}"
+                for k in meta_mismatch[:1]
+                for f in sorted(set(s_clusters[k]) | set(p_clusters[k]))
+                if s_clusters[k].get(f) != p_clusters[k].get(f)
+            ),
         )
 
         # ── 5. binary clusters: membership + metadata ────────────────────────
@@ -11156,16 +11173,17 @@ def test_pool_collection_equivalence():
                     )
                 )
                 meta = norm_meta(_json.loads(r.get(meta_fmt.format(cid=cid)) or "{}"))
-                # The two ingestion layouts create different batch UUIDs.
-                meta["batch_uuid_distribution"] = sorted(
-                    (row["count"], row["percent"])
-                    for row in meta.get("batch_uuid_distribution", [])
-                )
                 # File ids embed the namespace; the fallback name embeds one too.
                 for sample in meta.get("sample_members", []):
                     sample["id"] = sample["id"].rsplit(":", 1)[-1]
-                if "cluster_name" in meta:
-                    meta["cluster_name"] = meta["cluster_name"].rsplit(":", 1)[-1]
+                for f in ("cluster_name", "medoid"):
+                    if meta.get(f):
+                        meta[f] = meta[f].rsplit(":", 1)[-1]
+                # Dates are the two ingests' upload times; keep the counts.
+                meta["timeline"] = {
+                    f: (s or {}).get("n")
+                    for f, s in (meta.get("timeline") or {}).items()
+                }
                 out[members] = meta
             return out
 

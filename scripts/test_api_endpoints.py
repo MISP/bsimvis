@@ -8412,6 +8412,35 @@ def test_nway_diff():
         "nway semantics: an unfiltered lane view returns its set hash",
         bool((_sd or {}).get("set_hash")),
     )
+    if _sl:
+        # the evidence the name and capability calls read, one item per function read
+        from bsimvis.app.services.nway_group_service import _lane_evidence
+
+        _ltext, _lev = _lane_evidence(
+            {
+                "tags": [],
+                "sample": [],
+                "rows": 5,
+                "files": 2,
+                "total": 2,
+                "fids": [f"{COLLECTION}:func:{a}" for a in _sl["anchors"]],
+            }
+        )
+        _items = _lev.get("items") or []
+        check(
+            "nway evidence: _lane_evidence returns per-function items",
+            bool(_items)
+            and all(
+                set(it) == {"fid", "strings", "calls", "findings", "snippet"}
+                and it["fid"] in _sl["anchors"]
+                for it in _items
+            ),
+            str(_items)[:300],
+        )
+        check(
+            "nway evidence: the text is rendered from the items' snippets",
+            next((it["snippet"][:60] for it in _items if it["snippet"]), "") in _ltext,
+        )
     _, _sdc = _nway(tab="all", scope="code", limit=1000, group="lane")
     check(
         "nway semantics: the table's default scope=code view is saved too",

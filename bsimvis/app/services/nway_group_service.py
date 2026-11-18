@@ -1308,7 +1308,7 @@ def _annotate(pairs, fmeta):
             heavy = sorted(rows[g["id"]], key=lambda r: -r["weight"])[:LANE_NAME_FIDS]
             g["name_fids"] = [f for r in heavy for f in _fids(r)[:1]]
             found = Counter(t for _, _, r in ranked for t in sorted(set(finds(r))))
-            g["tag_rows"] = sum(hit for hit, _, _ in ranked)
+            g["tag_rows"] = sum(bool(finds(r)) for _, _, r in ranked)
             g["tags"] = [t for t, _ in found.most_common(5)]
         pre = Counter(p[0] + p[1] for k in best if (p := name_prefix(k)))
         if pre:
@@ -1329,15 +1329,67 @@ _NOISE = re.compile(r"\bin_cr\d|\bunaff_cr\d|^\s*\|\s*\(uint\)|^\s*\*/|^\s*[{}]\
 _JUNK_NAME = re.compile(r"^(func_|LAB_|DAT_|FID_conflict:)|\+\d")
 _LIT = re.compile(r'"((?:[^"\\\n]|\\.){4,60})"')
 LANE_NAME_TTL = 30 * 86400
-LANE_PROMPT_V = 10  # bump when the prompt changes, so cached names are redone
+LANE_PROMPT_V = 11  # bump when the prompt changes, so cached names are redone
 LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
 _LANE_POOL = None
 _LANE_STATE = {}  # content key -> {"status": "pending"|"failed", "at": time}
 _LANE_LOCK = threading.Lock()
 
 
+_CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\(")
+_LOOP = re.compile(r"^\s*(while|for|\} while)\b")
+_MACRO = re.compile(r"(S?CARRY|SBORROW|CONCAT|SUB|ZEXT|SEXT|POPCOUNT|LZCOUNT)\d")
+_NOT_CALL = {"if", "while", "for", "switch", "return", "sizeof"}
+# socket(AF_INET, type, protocol), also through a stripped wrapper: FUN_0001755c(2,3,0x11)
+_SOCK = re.compile(r"\b\w+\(\s*2\s*,\s*([123])\s*,\s*(0x[0-9a-f]+|\d+)\s*\)")
+_SOCK_TYPE = {"1": "TCP stream", "2": "UDP datagram", "3": "raw"}
+
+
+def _salient(lines, budget=900, per_call=2):
+    """The signature, then the lines that say what a function does: calls (each
+    callee at most `per_call` times), string literals, XOR and loop heads, in order.
+    A function with few such lines (pure compute) keeps its first 20 lines."""
+    out, seen = [lines[0].strip()], Counter()
+    for x in lines[1:]:
+        # compiler helpers (__modsi3) and decompiler macros (CARRY4, CONCAT44) say nothing
+        calls = [
+            c
+            for c in _CALL.findall(x)
+            if c not in _NOT_CALL and not c.startswith("__") and not _MACRO.match(c)
+        ]
+        if not (calls or '"' in x or "^" in x or _LOOP.match(x)):
+            continue
+        if calls and not '"' in x:
+            seen[calls[0]] += 1
+            if seen[calls[0]] > per_call:
+                continue
+        x = x.strip()[:120]
+        if m := _SOCK.search(x):
+            x += (
+                f" /* {_SOCK_TYPE[m.group(1)]} socket, protocol {int(m.group(2), 0)} */"
+            )
+        out.append(x)
+    if len(out) < 6:
+        return "\n".join(lines[:20])[:budget]
+    return "\n".join(out)[:budget]
+
+
+def _top(counter, n):
+    """The n most common keys; ties by name (call graph sets come back in any order), `_` helpers last."""
+    return [
+        k
+        for k, _ in sorted(
+            counter.items(), key=lambda x: (-x[1], x[0].startswith("_"), x[0])
+        )[:n]
+    ]
+
+
 def _lane_evidence(l):
-    """(text, tags, strings, calls): the text the model names a lane from (platform, names, findings, strings, library calls and callers of its functions, a little decompiled code) and the findings, strings and library calls it saw."""
+    """(text, ev): the text the model names a lane from (platform, names, findings, strings, library calls and callers of its functions, a little decompiled code) and what it saw, `ev` = {tags, strings, calls, items}.
+
+    `items` has one entry per function read, the form the text is rendered from:
+    {fid: "md5:addr", strings, calls, findings, snippet}; a string's holders are the
+    items listing it."""
     from bsimvis.app.routes.llm import get_code_for_llm
     from bsimvis.app.services import llm_tools, string_service
     from bsimvis.app.services.function_service import fetch_function_data
@@ -1354,7 +1406,7 @@ def _lane_evidence(l):
 
     tags = [t for t in dict.fromkeys(map(finding, l["tags"])) if t]
     by_string = l.get("kind") == "string"
-    strings, code = [], []
+    strings, code, items = [], [], []
     big = l["rows"] >= LANE_BROAD_ROWS and not l.get("hint")
     if by_string:
         strings = [" ".join(str(s).split())[:60] for s in l["sample"][:10]]
@@ -1385,15 +1437,18 @@ def _lane_evidence(l):
                 for t in meta.get("tags") or []
                 if t.startswith(("capa:", "yara:")) and (f := finding(t))
             ]
-            n_tag += bool(hits)
-            tags += [t for t in dict.fromkeys(hits) if t not in tags]
             graph = llm_tools.get_call_graph(fid)
-            for c in graph.get("callees") or []:
-                if named(c.get("name")):
-                    (libs if c.get("is_external") else inner)[c["name"]] += 1
-            for c in graph.get("callers") or []:
-                if named(c.get("name")):
-                    callers[c["name"]] += 1
+            ext = [
+                c["name"]
+                for c in graph.get("callees") or []
+                if named(c.get("name")) and c.get("is_external")
+            ]
+            own_calls = [
+                c["name"]
+                for c in graph.get("callees") or []
+                if named(c.get("name")) and not c.get("is_external")
+            ]
+            up = [c["name"] for c in graph.get("callers") or [] if named(c.get("name"))]
             own = [
                 " ".join(str(rec.get("value") or "").split())[:60]
                 for rec in string_service.function_strings(get_redis(), coll, md5, addr)
@@ -1403,11 +1458,8 @@ def _lane_evidence(l):
             # plus the string literals of the code: paths, commands, messages the
             # string table missed
             own += [" ".join(m.split()) for m in _LIT.findall(text)]
-            own = [v for v in dict.fromkeys(own) if len(v) >= 4 and v not in strings]
-            strings += own
-            n_read += 1
-            n_str += bool(own)
-            if len(code) < LANE_CODE_FNS and not big:
+            snippet = ""
+            if sum(bool(x["snippet"]) for x in items) < LANE_CODE_FNS and not big:
                 # the signature and body, without declarations and decompiler noise
                 lines = [
                     x
@@ -1417,10 +1469,34 @@ def _lane_evidence(l):
                     and not _DECL.match(x)
                     and not _NOISE.search(x)
                 ]
-                if lines:
-                    code.append("\n".join(lines[:20])[:900])
+                snippet = _salient(lines) if lines else ""
+            items.append(
+                {
+                    "fid": f"{md5}:{addr}",
+                    "strings": [v for v in dict.fromkeys(own) if len(v) >= 4],
+                    "calls": ext + own_calls,
+                    "findings": list(dict.fromkeys(hits)),
+                    "snippet": snippet,
+                    "_ext": ext,
+                    "_inner": own_calls,
+                    "_callers": up,
+                }
+            )
         except Exception:
             pass
+    # the text, rendered from the items
+    for it in items:
+        n_tag += bool(it["findings"])
+        tags += [t for t in it["findings"] if t not in tags]
+        libs.update(it.pop("_ext"))
+        inner.update(it.pop("_inner"))
+        callers.update(it.pop("_callers"))
+        own = [v for v in it["strings"] if v not in strings]
+        strings += own
+        n_read += 1
+        n_str += bool(own)
+        if it["snippet"]:
+            code.append(it["snippet"])
     sample = list(l["sample"])
     try:
         # a stripped function goes by the name of its cohesive named cluster, as
@@ -1485,11 +1561,11 @@ def _lane_evidence(l):
         )
         out.append(f"{head}: " + ", ".join(sample))
     if libs:
-        out.append("Library calls: " + ", ".join(k for k, _ in libs.most_common(12)))
+        out.append("Library calls: " + ", ".join(_top(libs, 12)))
     if inner:
-        out.append("Named callees: " + ", ".join(k for k, _ in inner.most_common(6)))
+        out.append("Named callees: " + ", ".join(_top(inner, 6)))
     if callers:
-        out.append("Called from: " + ", ".join(k for k, _ in callers.most_common(6)))
+        out.append("Called from: " + ", ".join(_top(callers, 6)))
     if tags:
         # findings are read first, so count them over the whole lane when known
         hit, of = (l["tag_rows"], l["rows"]) if l.get("tag_rows") else (n_tag, n_read)
@@ -1511,17 +1587,23 @@ def _lane_evidence(l):
         )
         out.append(f"{head}: " + " | ".join(strings[:12]))
     out += [f"Function {i + 1} code:\n{c}" for i, c in enumerate(code)]
-    calls = [k for k, _ in libs.most_common(6)]
-    return "\n".join(out)[:3400], tags, strings, calls
+    calls = _top(libs, 6)
+    ev = {"tags": tags, "strings": strings, "calls": calls, "items": items}
+    return "\n".join(out)[:3400], ev
 
 
 def _name_lane(l, red):
     """Worker: name one lane and cache it."""
     from bsimvis.app.services.llm_service import llm_service
 
-    text, tags, strings, calls = _lane_evidence(l)
+    text, ev = _lane_evidence(l)
     name, _ = llm_service.name_lane(text)
-    value = {"name": name, "tags": tags[:4], "strings": strings[:4], "calls": calls}
+    value = {
+        "name": name,
+        "tags": ev["tags"][:4],
+        "strings": ev["strings"][:4],
+        "calls": ev["calls"],
+    }
     with _LANE_LOCK:
         if name:
             try:
@@ -1533,7 +1615,7 @@ def _name_lane(l, red):
             _LANE_STATE[l["key"]] = {"status": "failed", "at": time.time()}
     rec = name and _remember_llm(l, value)
     if rec:
-        _lane_caps(l, rec, text, name, value)
+        _lane_caps(l, rec, text, name, {**value, "items": ev["items"]})
 
 
 def _lane_caps(l, rec, text, name, ev):
@@ -1585,9 +1667,9 @@ def _caps_v():
 def _caps_only(l, rec):
     """Worker: capabilities of a group named before they existed."""
     try:
-        text, tags, strings, calls = _lane_evidence(l)
+        text, ev = _lane_evidence(l)
         name = nway_sem_service.shown_name(rec) or ""
-        ev = {"tags": tags[:4], "strings": strings[:4], "calls": calls}
+        ev = {**ev, "tags": ev["tags"][:4], "strings": ev["strings"][:4]}
         _lane_caps(l, rec, text, name, ev)
     finally:
         with _LANE_LOCK:
@@ -2471,6 +2553,28 @@ def demo():
     assert nt[0][0]["hint"] == "attack_*" and "main" in nt[0][0]["sample"], nt[0][0]
     assert "powershell" not in nt[0][0]["sample"], nt[0][0]
     assert nt[0][0]["tag_rows"] == 1 and len(nt[0][0]["name_fids"]) == 5, nt[0][0]
+    # salient snippet: a flood whose first lines are rand() keeps its socket / send loop
+    flood = (
+        ["void FUN_00013db4(int param_1)"]
+        + ["  uVar1 = rand();"] * 18
+        + [
+            "  iVar2 = socket(2,2,0);",
+            "  connect(iVar2,&local_30,0x10);",
+            "  do {",
+            '    send(iVar2,"M-SEARCH * HTTP/1.1",0x5e,0x4000);',
+            "  } while( true );",
+        ]
+    )
+    sal = _salient(flood)
+    assert sal.count("rand()") == 2 and "UDP datagram socket" in sal, sal
+    assert "connect(" in sal and "M-SEARCH" in sal and "do {" not in sal, sal
+    # a stripped socket wrapper is decoded too
+    assert "raw socket, protocol 17" in _salient(
+        ["void f(void)", "  FUN_0001755c(2,3,0x11);"] + [f"  g{i}();" for i in range(5)]
+    )
+    # pure compute (an XOR decoder) has few such lines: it keeps its first 20 lines
+    xor = ["void dec(char *p)", "  int i;", "  i = 0;", "  p[i] = p[i] ^ 0x22;"]
+    assert _salient(xor) == "\n".join(xor), _salient(xor)
     print("nway_group_service demo ok")
 
 

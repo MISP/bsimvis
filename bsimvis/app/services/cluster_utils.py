@@ -776,9 +776,13 @@ def bin_cluster_name_fields(namer, members, parent, tag_distribution, fallback):
         auto, basis = namer.name(known, parent or None)
     if not auto:
         auto, basis = fallback, []
-    tag = _tag_distribution_label(
-        (tag_distribution or {}).get("user"), USER_TAG_NAME_MIN
-    )
+    # a bookmark marks files to come back to; it names no family
+    user = [
+        n
+        for n in (tag_distribution or {}).get("user") or []
+        if (n.get("tag_id") or "").rsplit(":", 1)[-1] != "bookmark"
+    ]
+    tag = _tag_distribution_label(user, USER_TAG_NAME_MIN)
     d = (
         {"name": tag, "source": "tag", "basis": ["tag"]}
         if tag
@@ -1997,10 +2001,11 @@ def demo():
     col = "C"
     r = FakeRedis(
         {
-            f"{col}:bin_cluster:unweighted_cosine:{label}:meta": json.dumps(
+            # the namespace follows the configured engine (`:snn` by default)
+            f"{col}:bin_cluster:{bin_cluster_ns('unweighted_cosine', False)}:{label}:meta": json.dumps(
                 {"cluster_uuid": "aaaa", "cluster_name": "elf-cluster"}
             ),
-            f"{col}:bin_cluster:unweighted_cosine:container:{label}:meta": json.dumps(
+            f"{col}:bin_cluster:{bin_cluster_ns('unweighted_cosine', True)}:{label}:meta": json.dumps(
                 {"cluster_uuid": "bbbb", "cluster_name": "zip-cluster"}
             ),
         }
@@ -2012,7 +2017,7 @@ def demo():
     assert per_entry == [["bbbb"], ["aaaa"], []], per_entry
     assert metas["bbbb"]["cluster_name"] == "zip-cluster", metas
     assert metas["aaaa"]["cluster_name"] == "elf-cluster", metas
-    assert bin_cluster_ns("x", True) == "x:container"
+    assert bin_cluster_ns("x", True) == bin_cluster_ns("x", False) + ":container"
 
     # Analyst names survive a rebuild: matched by anchors, closest size wins.
     class NameRedis:
@@ -2250,6 +2255,12 @@ def demo():
         ["tag"],
     )
     assert f["auto_name"].startswith("Mirai") and f["name_default"]["source"] == "tag"
+    # a bookmark never names a cluster, however many members carry it
+    bm = {"user": [{"tag_id": "user:bookmark", "coverage": 1.0, "count": 9}]}
+    f = bin_cluster_name_fields(namer, sh4, coll, bm, "fb")
+    assert f["name_source"] == "auto" and f["cluster_name"].startswith("Mirai"), f
+    bm["user"].append({"tag_id": "user:mine", "coverage": 0.5, "count": 2})
+    assert bin_cluster_name_fields(namer, sh4, coll, bm, "fb")["cluster_name"] == "mine"
     f = bin_cluster_name_fields(namer, [{}, {}], None, None, "fb")
     assert (f["cluster_name"], f["name_source"]) == ("fb", "auto"), f
     m = {**f, "cluster_name": "X", "is_custom_name": True, "name_source": "analyst"}

@@ -3845,8 +3845,14 @@ window.addEventListener('load', () => {
     // `.nway-build-status` host: the main footer and the N-way table footer.
     let nwayBuilds = [];
     window.renderNwayBuildStatus = (jobs) => {
-        if (jobs) nwayBuilds = jobs.filter(j => j.type === 'nway_build');
+        if (jobs) nwayBuilds = jobs.filter(j => j.type === 'nway_build' || j.type === 'nway_sem_build');
         document.querySelectorAll('.nway-build-status').forEach(el => {
+            // a clustering's warm-up queues dozens: one summary chip past three
+            if (nwayBuilds.length > 3) {
+                const run = nwayBuilds.filter(j => j.status === 'running').length;
+                el.innerHTML = `<a class="table-footer-badge" href="/jobs" title="N-way builds: default tables of clusters (groups, names, capability suggestions) and large sets"><i class="fa-solid ${run ? 'fa-circle-notch fa-spin' : 'fa-clock'}"></i> N-way builds: ${run} running · ${nwayBuilds.length - run} queued</a>`;
+                return;
+            }
             el.innerHTML = nwayBuilds.map(j => {
                 const run = j.status === 'running';
                 return `<span class="table-footer-badge" style="cursor:pointer;" title="N-way build job ${escapeAttr(j.id)} (click for details)" onclick="window.showJobDetails && window.showJobDetails(${escapeAttr(JSON.stringify(j.id))})"><i class="fa-solid ${run ? 'fa-circle-notch fa-spin' : 'fa-clock'}"></i> N-way build ${run ? `${Number(j.progress) || 0}%` : 'queued'}</span>`;

@@ -1055,15 +1055,11 @@ class Worker:
                 job_id=job_id,
             )
 
-        elif jtype == JobType.NWAY_BUILD.value:
+        elif jtype in (JobType.NWAY_BUILD.value, JobType.NWAY_SEM_BUILD.value):
+            # NWAY_SEM_BUILD: jobs queued before the merge, same handler
             from bsimvis.app.routes.nway import run_build_job
 
             return run_build_job(payload, self.job_service, job_id)
-
-        elif jtype == JobType.NWAY_SEM_BUILD.value:
-            from bsimvis.app.routes.nway import run_semantics_job
-
-            return run_semantics_job(payload, self.job_service, job_id)
 
         elif jtype == JobType.SEARCH_CLASSIFY.value:
             from bsimvis.app.services.search_service import search_service

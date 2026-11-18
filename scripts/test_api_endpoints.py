@@ -8916,6 +8916,11 @@ def test_nway_diff():
                 _st == "completed",
                 f"status {_st}",
             )
+            check(
+                "nway semantics/build: it is the one N-way Build job (nway_build)",
+                _jb.get("type") == "nway_build",
+                str(_jb.get("type")),
+            )
             # the job runs outside the app: every request.args read needs its context
             check(
                 "nway semantics/build: the job reads the cluster inside a request context",

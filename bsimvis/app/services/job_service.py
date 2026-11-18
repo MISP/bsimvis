@@ -58,6 +58,7 @@ class JobType(Enum):
     SCAN = "scan"
     SCAN_CONTAINER = "scan_container"
     NWAY_BUILD = "nway_build"
+    # legacy: merged into NWAY_BUILD, still run for jobs already queued; never create
     NWAY_SEM_BUILD = "nway_sem_build"
     YARA_RULE_RUN = "yara_rule_run"
 

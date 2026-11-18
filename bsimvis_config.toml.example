@@ -186,8 +186,9 @@ pair_random = 4
     prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
 
 [nway_sem]
-    # After a bin clustering of this axis, queue NWAY_SEM_BUILD for the top families
-    # (activity, then size: the overview's order) and every set already stored.
+    # After a bin clustering of this axis, queue the N-way Build (NWAY_BUILD) of the
+    # default table for the top families (activity, then size: the overview's order)
+    # and every set already stored: groups named, capability suggestions pre-asked.
     auto = true
     axis = "code"
     top_n = 50

@@ -1,5 +1,8 @@
 # Plan G: capability workbench
 
+> Since 2026-11-18, `NWAY_SEM_BUILD` is merged into `NWAY_BUILD` (one N-way Build; see the
+> AGENTS.md Capabilities section). Mentions below are historical.
+
 Status: design agreed on 2026-11-18. Nothing is built yet. UI sketches the user picked from:
 https://claude.ai/artifact/K8GYtLGi6THYrid74wAhnZ (private).
 

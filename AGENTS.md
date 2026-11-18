@@ -139,7 +139,7 @@ capabilities" half of `capability_service.py`, the routes `routes/capabilities.p
 (`/api/capability/*`). Never write function tags for it: a tag write bumps `tags_rev`.
 The model only *suggests* (`build_suggestions`, `capsugg:` in the queue Redis): on the
 groups the analyst selects (`POST /api/capability/suggest`), and as a silent pre-cache in
-`_lane_caps` (lane naming, `NWAY_SEM_BUILD`). Nothing reaches Kvrocks before Accept.
+`_lane_caps` (lane naming in the N-way Build). Nothing reaches Kvrocks before Accept.
 Every source ends in `nway_group_service.suggest_capabilities`, which caches the answer
 and indexes it by the files of the group's anchors (`capsugg:{ns}:f:{md5}`): the tab
 lists every suggestion on the cluster's files, also those whose group the stored set no
@@ -153,11 +153,16 @@ naming payload, plus `fid_rows` / `fid_names`, each read function's N-way row as
 copies). Suggest (tab or drawer) resolves its groups onto the stored ones (`_resolve`:
 name id, else anchors >= MATCH; the rest come back in `skipped`) and reads that stored
 evidence through `_clean_lane`, the cleaning naming uses, so it reads exactly what the
-Build's pre-cache read. The pre-cache runs only in `NWAY_SEM_BUILD` (`lane_names(...,
+Build's pre-cache read. The pre-cache runs only in the N-way Build (`lane_names(...,
 caps=True)`), never from an opened table. A suggestion's functions pointer lists its
-functions as rows (`rows` / `row_names`, under the group's `label`). The N-way page's
-Build (`NWAY_BUILD`) of a cluster's default view queues `NWAY_SEM_BUILD` after it; the
-tab's "Build N-way" is that job. What runs in the background (Build queued /
+functions as rows (`rows` / `row_names`, under the group's `label`).
+**One N-way Build job.** `NWAY_BUILD` (`run_build_job`) is the only build: a large set's
+build gate (`args`), and a cluster's default table (`cluster_uuid`: `run_semantics_job`,
+which stores the set and its evidence, names groups and pre-asks suggestions). A gate
+build of a cluster's default view runs that step in the same job. `queue_semantics`
+(the tab's "Build N-way", `POST /nway/semantics/build`, and the `[nway_sem] auto`
+warm-up after a clustering) queues `NWAY_BUILD`. `NWAY_SEM_BUILD` is legacy: never
+create one; the worker still runs those already queued. What runs in the background (Build queued /
 running, naming, suggesting) is marked in `capsugg:{ns}:run` (`run_mark` / `run_done` /
 `running`) and shown on the pane (`running` on `GET /api/capability/suggestions`).
 UI: the cluster Capabilities tab (`cluster_capabilities.js`, groups | suggestions +

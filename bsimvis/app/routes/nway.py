@@ -1253,8 +1253,17 @@ def post_nway_build():
 
 
 def run_build_job(payload, job_service, job_id):
-    """Worker side of NWAY_BUILD: compute the doc once, `compute` keeps it in Redis."""
+    """Worker side of NWAY_BUILD, the one N-way Build. Two payloads:
+
+    - `args` (the build gate of a large set): compute the doc once, `compute`
+      keeps it in Redis; when those args are a cluster's default view, go on to
+      `run_semantics_job` in the same job.
+    - `cluster_uuid` (Build N-way of a cluster, the warm-up after a clustering):
+      `run_semantics_job` straight away, which builds the default table itself."""
     from flask import Flask
+
+    if "args" not in payload:
+        return run_semantics_job(payload, job_service, job_id)
 
     def progress(frac, label):
         if job_service.is_cancelled(job_id):
@@ -1274,19 +1283,14 @@ def run_build_job(payload, job_service, job_id):
     finally:
         # the doc now lives in Redis; the worker has no use for its copy
         nway_diff_service.invalidate()
-    # one Build: a cluster's default table also gets its stored groups, names and
-    # capability suggestions (the semantics job reads the doc just cached)
+    # a cluster's default table also gets its stored groups, names and capability
+    # suggestions, reading the doc just cached
     a = payload["args"]
     if a.get("cluster_uuid") and a.get("collection") and not a.get("pool"):
         if _canonical(a):
-            ids = queue_semantics(
-                a["collection"],
-                [a["cluster_uuid"]],
-                force=True,
-                axis=a.get("axis"),
-                big=True,
-            )
-            job_service.add_log(job_id, f"queued its N-way semantics: {ids}")
+            sem = {"collection": a["collection"], "cluster_uuid": a["cluster_uuid"]}
+            sem.update(force=True, big=True, axis=a.get("axis"))
+            return run_semantics_job(sem, job_service, job_id)
     return True
 
 
@@ -1309,7 +1313,8 @@ SEM_ARGS = {
 
 
 def run_semantics_job(payload, job_service, job_id):
-    """Worker side of NWAY_SEM_BUILD: one bin cluster's N-way summary and names.
+    """A cluster's default N-way table (part of NWAY_BUILD): build it, store its set
+    summary and evidence, name its groups and pre-ask their capability suggestions.
 
     Skipped when the stored summary already has these member files (unless
     `force`), and for sets above `nway.auto_build_max_members` unless `big`:
@@ -1404,7 +1409,7 @@ def _semantics_job(payload, job_service, job_id):
 def queue_semantics(
     collection, uuids=None, top_n=None, force=False, axis=None, big=False
 ):
-    """Queues one NWAY_SEM_BUILD per cluster: `uuids`, or the collection's top
+    """Queues one NWAY_BUILD of the default table per cluster: `uuids`, or the collection's top
     families by activity then size (the overview's ranking) plus every cluster
     that already has a stored summary. -> job ids."""
     from flask import Flask
@@ -1446,7 +1451,7 @@ def queue_semantics(
             "big": big,
         }
         payload["axis"] = stored_axes.get(u, axis)
-        ids.append(js.create_job(JobType.NWAY_SEM_BUILD, payload))
+        ids.append(js.create_job(JobType.NWAY_BUILD, payload))
         capability_service.run_mark(
             get_queue_redis(),
             collection,
@@ -2334,7 +2339,10 @@ def get_nway_semantics():
         abort(400, "set_hash or cluster_uuid is required")
     rec = nway_sem_service.load_set(get_redis(), ns, sh, cu)
     if not rec:
-        abort(404, "no stored semantics for this set: open its N-way once")
+        abort(
+            404,
+            "no saved N-way for this set: open its N-way table once, or Build N-way",
+        )
     return rec
 
 

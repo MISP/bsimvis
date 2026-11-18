@@ -3062,7 +3062,7 @@ class BinSimNwaySemanticsBuild(Resource):
         )
     )
     def post(self):
-        """Queues NWAY_SEM_BUILD jobs: stored N-way summaries, names and capabilities per cluster."""
+        """Queues the N-way Build (NWAY_BUILD) of clusters' default tables: stored groups, names and capability suggestions."""
         from bsimvis.app.routes.nway import post_nway_semantics_build
 
         return post_nway_semantics_build()

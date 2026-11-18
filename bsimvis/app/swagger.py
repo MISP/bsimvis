@@ -995,6 +995,7 @@ class FileSearchByCluster(Resource):
             "cluster_sort": "relevance (default), size or cohesion",
             "cluster": "Cluster id: page through its own files (offset/limit count files)",
             "unclustered": "1: page through the matching files that are in no shown cluster",
+            "no_containers": "1 (with unclustered): leave out container files (archives)",
             "cluster_min_members": "Smallest cluster shown (default 3)",
             "cluster_min_cohesion": "Lowest cohesion shown (default 0.1)",
             "cluster_jump": "A nested cluster must be this much tighter than its parent (default 0.1)",

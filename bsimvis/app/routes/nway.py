@@ -1303,6 +1303,17 @@ def run_semantics_job(payload, job_service, job_id):
     known, else from the model, waited on."""
     from flask import Flask
 
+    args = {
+        **SEM_ARGS,
+        "collection": payload["collection"],
+        "cluster_uuid": payload["cluster_uuid"],
+    }
+    # the cluster lookup and the build both read request.args
+    with Flask(__name__).test_request_context(query_string=args):
+        return _semantics_job(payload, job_service, job_id)
+
+
+def _semantics_job(payload, job_service, job_id):
     coll, uuid_ = payload["collection"], payload["cluster_uuid"]
     force = bool(payload.get("force"))
     r = get_redis()
@@ -1325,14 +1336,12 @@ def run_semantics_job(payload, job_service, job_id):
     if old and old.get("members") == md5s and not force:
         job_service.add_log(job_id, f"cluster {uuid_}: same files as stored, skipped")
         return True
-    args = {**SEM_ARGS, "collection": coll, "cluster_uuid": uuid_}
     job_service.add_log(
         job_id, f"N-way semantics of cluster {uuid_} ({len(md5s)} files)"
     )
     try:
-        with Flask(__name__).test_request_context(query_string=args):
-            doc, r, pool_id = _load_doc(build=True)
-            page = _page(doc, request.args, r, pool_id)
+        doc, r, pool_id = _load_doc(build=True)
+        page = _page(doc, request.args, r, pool_id)
         n_files = len(doc.get("file_columns") or doc["columns"])
         lanes = [
             nway_group_service.naming_payload(g, n_files)

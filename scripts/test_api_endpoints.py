@@ -8498,21 +8498,29 @@ def test_nway_diff():
             f"HTTP {_sb.status_code}",
         )
         if _sbj.get("jobs"):
-            _st = None
+            _st, _jb = None, {}
             for _ in range(60):
-                _st = (
+                _jb = (
                     requests.get(
                         f"{BASE_URL}/api/jobs/{_sbj['jobs'][0]}", timeout=10
                     ).json()
                     or {}
-                ).get("status")
+                )
+                _st = _jb.get("status")
                 if _st in ("completed", "failed"):
                     break
                 time.sleep(1)
+            _logs = " ".join(map(str, _jb.get("logs") or []))
             check(
                 "nway semantics/build: an unknown cluster completes as a skip",
                 _st == "completed",
                 f"status {_st}",
+            )
+            # the job runs outside the app: every request.args read needs its context
+            check(
+                "nway semantics/build: the job reads the cluster inside a request context",
+                "request context" not in _logs and "HTTP request" not in _logs,
+                _logs[-300:],
             )
         check(
             "nway semantics/build: no collection is a 400",

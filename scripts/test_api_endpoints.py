@@ -8393,8 +8393,11 @@ def test_nway_diff():
             ).status_code
             == 404,
         )
-    # Persistent semantics: lanes carry anchors, a rename sticks to them.
-    _, _sd = _nway(tab="all", scope="all", limit=1000, group="lane")
+    # Persistent semantics: lanes carry anchors, a rename sticks to them. Only the
+    # table's default view (SEM_ARGS) is stored.
+    from bsimvis.app.routes.nway import SEM_ARGS as _SEM
+
+    _, _sd = _nway(**{**_SEM, "limit": 1000})
     _sl_id, _sl = next(
         (
             (g, m)
@@ -8412,6 +8415,19 @@ def test_nway_diff():
         "nway semantics: an unfiltered lane view returns its set hash",
         bool((_sd or {}).get("set_hash")),
     )
+    if _sl and (_sd or {}).get("set_hash"):
+        from bsimvis.app.services.redis_client import get_redis as _sem_r
+
+        _evr = _sem_r().hget(f"{COLLECTION}:nway_sem:ev:{_sd['set_hash']}", _sl_id)
+        _evj = json.loads(_evr) if _evr else {}
+        _fr = _evj.get("fid_rows") or {}
+        check(
+            "nway semantics: the default build keeps each group's evidence and read functions' rows",
+            bool(_evj.get("fids"))
+            and bool(_fr)
+            and all(isinstance(v, list) and k in v for k, v in _fr.items()),
+            str(_evj)[:300],
+        )
     if _sl:
         # the evidence the name and capability calls read, one item per function read
         from bsimvis.app.services.nway_group_service import _lane_evidence
@@ -8649,11 +8665,13 @@ def test_nway_diff():
                 )
                 _cs.run_done(_cap_q(), COLLECTION, "build", _tcu)
                 _cap_q().delete(f"capsugg:{COLLECTION}:{_ek}")
-                # an N-way view's group sent whole, read only; a bad one is a 400
+                # an N-way view's group goes onto the stored default-build group; one
+                # the build does not hold is skipped, a bad one is a 400
                 _whole = {"gid": "lane:other-build", "anchors": _sl["anchors"], "kind": "lane"}  # fmt: skip
+                _alien = {"gid": "lane:x", "anchors": [f"{'e' * 32}:{i}" for i in range(5)], "name": "alien"}  # fmt: skip
                 _sw = requests.post(
                     f"{_CB}/suggest",
-                    json={"collection": COLLECTION, "cluster_uuid": _tcu, "groups": [_whole], "ask": False},
+                    json={"collection": COLLECTION, "cluster_uuid": _tcu, "groups": [_whole, _alien], "ask": False},
                     timeout=30,
                 )  # fmt: skip
                 _sb = requests.post(
@@ -8663,9 +8681,9 @@ def test_nway_diff():
                 )  # fmt: skip
                 _swj = _sw.json() if _sw.ok else {}
                 check(
-                    "capability suggest: a whole group is keyed by its anchors, a bad one is a 400",
-                    [g.get("key") for g in _swj.get("groups") or []]
-                    == [_cs.gkey(None, _sl["anchors"])]
+                    "capability suggest: a view's group is the stored one, an unknown one is skipped, a bad one is a 400",
+                    [g.get("key") for g in _swj.get("groups") or []] == [_gk]
+                    and [x.get("group") for x in _swj.get("skipped") or []] == ["alien"]
                     and not _swj.get("pending")
                     and _sb.status_code == 400,
                     f"{_sw.text[:200]} | {_sb.text[:120]}",
@@ -8777,10 +8795,19 @@ def test_nway_diff():
             _uid not in {_dec(x) for x in _cap_r().smembers(_fidx)}
             and not _cap_r().exists(f"global:capability:{_uid}"),
         )
-    _, _sdc = _nway(tab="all", scope="code", limit=1000, group="lane")
+    _, _sdc = _nway(tab="all", scope="all", limit=1000, group="lane")
+    _sdm = requests.get(
+        f"{BASE_URL}/api/bin_sim/nway/semantics",
+        params={"collection": COLLECTION, "set_hash": (_sd or {}).get("set_hash")},
+        timeout=30,
+    )
+    _sdm = _sdm.json() if _sdm.status_code == 200 else {}
     check(
-        "nway semantics: the table's default scope=code view is saved too",
-        bool((_sdc or {}).get("set_hash")),
+        "nway semantics: another view answers the stored hash and never replaces the default build",
+        (_sdc or {}).get("set_hash") == (_sd or {}).get("set_hash")
+        and _sdm.get("canon") is True
+        and (_sdm.get("params") or {}).get("scope") == "code",
+        str(_sdm)[:200],
     )
     if _sl:
         _nm = "test renamed lane"
@@ -8792,7 +8819,7 @@ def test_nway_diff():
             _rn.status_code == 200 and _rn.json().get("name") == _nm,
             f"HTTP {_rn.status_code}",
         )
-        _, _sd2 = _nway(tab="all", scope="all", limit=1000, group="lane")
+        _, _sd2 = _nway(**{**_SEM, "limit": 1000})
         check(
             "nway group_name: the next /nway carries the analyst's name",
             ((_sd2 or {}).get("groups") or {}).get(_sl_id, {}).get("user_name") == _nm,

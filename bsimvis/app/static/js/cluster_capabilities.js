@@ -82,8 +82,19 @@ window.ClusterCapabilities = (function () {
     const groupName = g => g.name || g.label || g.kind || 'group';
     const idChips = (c, cls = 'id') => [...(c.mbc || []), ...(c.attack || [])].map(i => `<span class="cap-chip ${cls}" title="${escapeAttr((c.names || {})[i] || (c.quotes || {})[i] || '')}">${escapeHtml(i)}</span>`).join('');
 
+    // The same end state as the N-way table's Build: one job builds the cluster's
+    // default table, stores its groups with what the model reads, names them and
+    // pre-asks their capability suggestions.
     function buildBtn() {
-        return `<button class="btn-code-action cov-btn" style="--c:var(--accent)" title="Queue the stored N-way summary, names and suggestions of this cluster (a big cluster is a long build)" onclick="ClusterCapabilities.build(event)"><i class="fa-solid fa-play"></i> Build</button>`;
+        return `<button class="btn-code-action cov-btn" style="--c:var(--accent)" title="Build this cluster's N-way table (its default view, as the N-way page's Build does), store its groups, name them and pre-ask their capability suggestions. Suggestions are only ever asked on this build, never on a filtered or re-lensed view. A big cluster is a long build: see Jobs." onclick="ClusterCapabilities.build(event)"><i class="fa-solid fa-hammer"></i> Build N-way</button>`;
+    }
+
+    // Groups Suggest left out (not in the default build, or stored before its evidence).
+    function warnSkipped(j) {
+        const sk = (j && j.skipped) || [];
+        if (!sk.length || !window.showToast) return;
+        const names = sk.slice(0, 3).map(x => `${x.group}: ${x.reason}`).join('; ');
+        showToast(`${sk.length} group${sk.length > 1 ? 's' : ''} not asked. ${names}${sk.length > 3 ? ' …' : ''}`, 'warning');
     }
 
     // ---- the overview card: accepted capabilities ----
@@ -107,7 +118,7 @@ window.ClusterCapabilities = (function () {
         el.querySelector('#cov-caps-n').textContent = caps.length ? num(caps.length) : '';
         body.innerHTML = caps.length
             ? caps.slice(0, TOP).map(cp => `<div class="cap-sec"><span class="cap-chip ok" style="white-space:normal;">${escapeHtml(cp.name)}</span><span class="ids" style="display:flex; flex-wrap:wrap; gap:4px;">${idChips(cp)}</span><span class="dim" style="font-size:0.72rem; margin-left:auto;">${num(cp.files.length)} files</span></div>`).join('')
-            : `<div class="dim" style="font-size:0.78rem;">${acc && acc.no_set ? 'No stored N-way set yet: open the Functions tab or Build it.' : 'None accepted yet. Select groups in the Capabilities tab and ask for suggestions, or build one from any function (right click, Capability).'}</div>`;
+            : `<div class="dim" style="font-size:0.78rem;">${acc && acc.no_set ? 'No stored N-way set yet: open the Functions tab or press Build N-way.' : 'None accepted yet. Select groups in the Capabilities tab and ask for suggestions, or build one from any function (right click, Capability).'}</div>`;
     }
 
     // ---- the right pane: suggestions, then accepted ----
@@ -265,14 +276,14 @@ window.ClusterCapabilities = (function () {
         if (opts.groups) {
             // the drawer: its groups' cache keys, then only those
             postSuggest(ctx, opts.groups, false, !!opts.ask)
-                .then(j => { st.only = new Set(((j && j.groups) || []).map(g => g.key)); load(); })
+                .then(j => { warnSkipped(j); st.only = new Set(((j && j.groups) || []).map(g => g.key)); load(); })
                 .catch(e => { el.innerHTML = `<div class="dim" style="padding:10px;">${escapeHtml(e.message)}</div>`; });
         } else load();
         return {
             reload: load,
             // the tab: ask for these groups; the pane keeps listing everything
             async suggest(gids, refresh) {
-                await postSuggest(ctx, gids, refresh);
+                warnSkipped(await postSuggest(ctx, gids, refresh));
                 load();
             },
         };
@@ -295,7 +306,7 @@ window.ClusterCapabilities = (function () {
         let stats = {};
         el.innerHTML = `<div class="cov" style="padding:4px 2px 20px;">
             <div class="cov-title" style="margin-bottom:8px;"><span class="cov-ico" style="--c:var(--danger, #dc2626)"><i class="fa-solid fa-bolt"></i></span><b>Capabilities</b>${CapEditor.EXP}
-                <i class="fa-solid fa-circle-info cov-info" title="Select N-way groups on the left and press Suggest: the model proposes capabilities with MBC / ATT&CK ids and the functions and strings that show it. Edit, then accept; nothing is kept until you accept it. Build a capability by hand from any function or string (right click, Capability)."></i>
+                <i class="fa-solid fa-circle-info cov-info" title="Select N-way groups on the left and press Suggest: the model proposes capabilities with MBC / ATT&CK ids and the functions and strings that show it, read from the cluster's default N-way build (the same functions whichever button asked). Edit, then accept; nothing is kept until you accept it. Build a capability by hand from any function or string (right click, Capability)."></i>
                 <span class="cov-acts">${buildBtn()}<button class="btn-code-action cov-btn" style="--c:var(--accent)" onclick="ClusterDetailView.switchTab('functions')"><i class="fa-solid fa-table"></i> N-way table</button></span></div>
             <div class="cap-split" style="display:grid; grid-template-columns:minmax(0, 300px) minmax(0, 1fr); gap:12px; align-items:start;">
                 <div class="cov-card" style="padding:8px; gap:4px;">
@@ -308,7 +319,7 @@ window.ClusterCapabilities = (function () {
                 </div>
                 <div id="cap-right" style="min-width:0;"></div>
             </div>
-            ${set ? '' : '<div class="dim" style="margin-top:8px;">No stored N-way set for this cluster yet: open its Functions tab once, or Build it.</div>'}
+            ${set ? (set.canon ? '' : '<div class="cap-warn" style="margin-top:8px;">These groups come from an older or non-default N-way view: press Build N-way so suggestions read the default build.</div>') : '<div class="dim" style="margin-top:8px;">No stored N-way set for this cluster yet: open its Functions tab once, or press Build N-way.</div>'}
         </div>`;
         if (!el.querySelector('#cap-split-css')) el.insertAdjacentHTML('beforeend', '<style id="cap-split-css">@media (max-width: 760px) { .cap-split { grid-template-columns: 1fr !important; } } .cap-gi { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:6px; align-items:center; padding:3px 5px; border-radius:3px; cursor:pointer; } .cap-gi .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .cap-gi .bd { display:flex; gap:3px; align-items:center; font-size:0.68rem; white-space:nowrap; }</style>');
         const list = el.querySelector('#cap-glist');

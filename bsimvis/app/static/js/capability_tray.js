@@ -43,7 +43,7 @@
 .cap-fns { display:flex; flex-direction:column; margin:4px 0 2px; border-left:2px solid var(--border); max-height:320px; overflow:auto; }
 .cap-fn { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, auto) 14px; gap:8px; align-items:baseline; padding:2px 6px; cursor:default; font-family:Consolas, monospace; font-size:0.72rem; }
 .cap-fn:hover, .cap-row-h:hover { background:var(--hover); }
-.cap-row-h { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:baseline; padding:2px 6px; font-family:Consolas, monospace; font-size:0.72rem; }
+.cap-row-h { display:grid; grid-template-columns:minmax(0, 1fr) auto auto; gap:8px; align-items:baseline; padding:2px 6px; font-family:Consolas, monospace; font-size:0.72rem; }
 .cap-row-h .cap-evx { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cap-fn .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cap-fn .w { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); }
@@ -73,7 +73,9 @@
 
     function evLabel(e) {
         const n = (e.fids || []).length;
-        if (e.type === 'functions') return `${n} function${n === 1 ? '' : 's'}`;
+        if (e.type === 'functions') return (e.rows || []).length
+            ? `${e.label ? `Functions of ${e.label}` : 'Functions'} · ${e.rows.length} N-way row${e.rows.length === 1 ? '' : 's'} · ${n} cop${n === 1 ? 'y' : 'ies'}`
+            : `${n} function${n === 1 ? '' : 's'}`;
         if (e.type === 'group') return (e.rows || []).length
             ? `N-way group ${e.label || ''} · ${e.rows.length} rows · ${n} functions`
             : `N-way group ${e.label || ''} · ${(e.anchors || []).length} sample functions`;
@@ -106,15 +108,15 @@
             ${rm ? `<span class="cap-x" data-rmfn="${rm}" title="Remove this function">×</span>` : '<span></span>'}</div>`;
     }
 
-    // A group lists its N-way rows (name, copies), each opening on its md5:addr copies;
-    // other pointers list their functions.
+    // A group, and a functions pointer that carries rows, lists its N-way rows (name,
+    // copies), each opening on its md5:addr copies; other pointers list their functions.
     function fnRows(d, e, k, openRows) {
-        if (e.type === 'group' && (e.rows || []).length) {
+        if ((e.type === 'group' || e.type === 'functions') && (e.rows || []).length) {
             return `<div class="cap-fns">${e.rows.map((row, i) => {
                 const key = `${k}:${i}`, open = openRows.has(key);
                 const nm = (e.row_names || [])[i] || (NAMES[`${d.collection}|${row[0]}`] || {}).name || shortFid(row[0]);
                 return `<div class="cap-row-h" data-pf="${escapeAttr(row[0])}"><button type="button" class="cap-evx" data-rowx="${key}" aria-expanded="${open}"><i class="fa-solid fa-chevron-${open ? 'down' : 'right'}"></i> ${escapeHtml(nm)}</button>
-                    <span class="w">${row.length} cop${row.length === 1 ? 'y' : 'ies'}</span></div>
+                    <span class="w">${row.length} cop${row.length === 1 ? 'y' : 'ies'}</span>${e.type === 'functions' ? `<span class="cap-x" data-rmrow="${key}" title="Remove this row">×</span>` : ''}</div>
                     ${open ? `<div class="cap-fns" style="margin-left:14px;">${row.map(f => fnLine(d, f, '')).join('')}</div>` : ''}`;
             }).join('')}</div>`;
         }
@@ -184,7 +186,7 @@
             }
         };
         root.onclick = e => {
-            const t = e.target.closest('[data-rmid],[data-rmev],[data-addid],[data-evx],[data-rmfn],[data-rowx]');
+            const t = e.target.closest('[data-rmid],[data-rmev],[data-addid],[data-evx],[data-rmfn],[data-rowx],[data-rmrow]');
             if (!t) return;
             if (t.dataset.rowx) {
                 const key = t.dataset.rowx;
@@ -216,7 +218,16 @@
                 render();
                 return;
             }
-            if (t.dataset.rmid) { d.mbc = (d.mbc || []).filter(i => i !== t.dataset.rmid); d.attack = (d.attack || []).filter(i => i !== t.dataset.rmid); }
+            if (t.dataset.rmrow) {
+                const [k, i] = t.dataset.rmrow.split(':').map(Number);
+                const ev = d.evidence[k];
+                ev.rows = ev.rows.filter((_, j) => j !== i);
+                ev.row_names = (ev.row_names || []).filter((_, j) => j !== i);
+                ev.fids = ev.rows.flat();
+                openRows.clear();
+                if (!ev.rows.length) { d.evidence.splice(k, 1); open.clear(); }
+            }
+            else if (t.dataset.rmid) { d.mbc = (d.mbc || []).filter(i => i !== t.dataset.rmid); d.attack = (d.attack || []).filter(i => i !== t.dataset.rmid); }
             else if (t.dataset.rmfn) {
                 const [k, i] = t.dataset.rmfn.split(':').map(Number);
                 const ev = d.evidence[k];

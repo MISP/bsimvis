@@ -386,7 +386,13 @@ def clean_item(it):
         raise ValueError(f"evidence type must be one of {', '.join(EV_TYPES)}")
     t = it["type"]
     out = {"type": t}
-    fids = _fid_list(it.get("fids"), "fids") if t != "group" else []
+    # functions listed by their N-way rows: each row = its copies across files
+    frows, fnames = _group_rows(it) if t == "functions" else ([], [])
+    if frows:
+        out["rows"], out["row_names"] = frows, fnames
+        fids = list(dict.fromkeys(f for r in frows for f in r))
+    else:
+        fids = _fid_list(it.get("fids"), "fids") if t != "group" else []
     anchors = _fid_list(it.get("anchors"), "anchors")
     for k, n in _TEXT.items():
         v = it.get(k)
@@ -678,11 +684,14 @@ def unbacked(name, text):
     return [w for w in words if w not in GENERIC and w not in ev]
 
 
-def build_suggestions(answer, lvl, text, items, group, amap):
+def build_suggestions(answer, lvl, text, items, group, amap, rows=None, row_names=None):
     """The model's answer as suggestions shaped like capabilities: name, ids (the
     quote rules of `clean`), attach_to, and evidence pointers resolved against the
     evidence items (the group itself, the functions holding a quote or a cited
-    string, those strings, the rule findings quoted)."""
+    string, those strings, the rule findings quoted). With `rows` ({md5:addr: its
+    N-way row's copies}) the functions pointer lists each one as its row, named by
+    `row_names`, under the group's label."""
+    rows, row_names = rows or {}, row_names or {}
     out = []
     raw = (answer or {}).get("suggestions") if isinstance(answer, dict) else None
     for s in (raw if isinstance(raw, list) else [])[:SUGG_MAX]:
@@ -711,7 +720,13 @@ def build_suggestions(answer, lvl, text, items, group, amap):
                     kind = "yara" if "yara" in f.lower() else "capa"
                     ev.append({"type": kind, "rule": f[:120], "fids": [it["fid"]]})
         if fids:
-            ev.append({"type": "functions", "fids": list(dict.fromkeys(fids))})
+            fids = list(dict.fromkeys(fids))
+            fn = {"type": "functions", "fids": fids, "label": group.get("label")}
+            if any(rows.get(f) for f in fids):
+                # a function with no known row stays, as a row of its one copy
+                fn["rows"] = [rows.get(f) or [f] for f in fids]
+                fn["row_names"] = [row_names.get(f) or "" for f in fids]
+            ev.append(fn)
         for e in ev:
             e["src"] = "llm"
         ev = list({i["id"]: i for i in map(clean_item, ev)}.values())
@@ -1009,6 +1024,15 @@ if __name__ == "__main__":
             {"attach": "A9", "name": ""},  # unknown code, no name: dropped
         ]
     }  # fmt: skip
+    m7 = "c" * 32
+    sgr = build_suggestions(
+        ans, "behaviour", ev_text, items, grp, {"A1": "u1"},
+        rows={f1: [f1, f"{m7}:00501000"]}, row_names={f1: "attack_udp_plain"},
+    )  # fmt: skip
+    fnr = next(e for e in sgr[0]["evidence"] if e["type"] == "functions")
+    assert fnr["rows"] == [[f1, f"{m7}:00501000"]], fnr
+    assert fnr["row_names"] == ["attack_udp_plain"] and fnr["label"] == "Attack floods"
+    assert fnr["fids"] == [f1, f"{m7}:00501000"] and md5s_of([fnr]) == {m5, m7}
     sg = build_suggestions(ans, "behaviour", ev_text, items, grp, {"A1": "u1"})
     assert len(sg) == 2 and sg[1]["attach_to"] == "u1", sg
     s0 = sg[0]

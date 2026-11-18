@@ -144,8 +144,20 @@ Every source ends in `nway_group_service.suggest_capabilities`, which caches the
 and indexes it by the files of the group's anchors (`capsugg:{ns}:f:{md5}`): the tab
 lists every suggestion on the cluster's files, also those whose group the stored set no
 longer holds (`earlier`), so a re-save of the set or another lens never loses one, and
-selecting groups never hides any. The N-way drawer sends its groups whole (anchors),
-never bare ids that may be another build's. What runs in the background (Build queued /
+selecting groups never hides any.
+**One build, one evidence.** Only the table's default view (`SEM_ARGS`, `_canonical` in
+`routes/nway.py`) is stored as a cluster's set (`canon: true`); any other view (lens,
+columns, `min_edge`, filters) only answers the stored hash. Beside the set,
+`{ns}:nway_sem:ev:{hash}` keeps per group what the model reads (`_group_evidence`: the
+naming payload, plus `fid_rows` / `fid_names`, each read function's N-way row as its
+copies). Suggest (tab or drawer) resolves its groups onto the stored ones (`_resolve`:
+name id, else anchors >= MATCH; the rest come back in `skipped`) and reads that stored
+evidence through `_clean_lane`, the cleaning naming uses, so it reads exactly what the
+Build's pre-cache read. The pre-cache runs only in `NWAY_SEM_BUILD` (`lane_names(...,
+caps=True)`), never from an opened table. A suggestion's functions pointer lists its
+functions as rows (`rows` / `row_names`, under the group's `label`). The N-way page's
+Build (`NWAY_BUILD`) of a cluster's default view queues `NWAY_SEM_BUILD` after it; the
+tab's "Build N-way" is that job. What runs in the background (Build queued /
 running, naming, suggesting) is marked in `capsugg:{ns}:run` (`run_mark` / `run_done` /
 `running`) and shown on the pane (`running` on `GET /api/capability/suggestions`).
 UI: the cluster Capabilities tab (`cluster_capabilities.js`, groups | suggestions +

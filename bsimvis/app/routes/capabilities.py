@@ -126,29 +126,42 @@ def _keyed(groups):
     ]
 
 
-def _described(wanted):
-    """Groups an N-way view sent whole (`{gid, anchors, kind, rows, files, tags,
-    name, name_id}`): its anchors say which code it is, whatever set is stored."""
-    out = []
+def _resolve(rec, wanted):
+    """The stored default-build groups for `wanted`: gids or name ids of the set,
+    or groups of any N-way view (`{gid, name_id, anchors, name}`), matched by name
+    id, else by anchors (>= MATCH). Suggestions are only asked on those, never on
+    a filtered or re-lensed view's smaller group. -> (groups, skipped)."""
+    stored = _keyed(rec["groups"])
+    by_gid = {g["gid"]: g for g in stored}
+    by_nid = {g["name_id"]: g for g in stored if g.get("name_id")}
+    out, skipped = {}, []
     for w in wanted:
-        try:
-            ok = capability_service._fid_list(w.get("anchors"), "anchors")
-        except ValueError as e:
-            abort(400, str(e))
-        if not ok or len(ok) > nway_sem_service.K * 3:
-            abort(400, "a group needs its anchors (md5:addr)")
-        # as sent: the cache key is over the anchors the naming path uses
-        anchors = list(w["anchors"])
-        txt = lambda k, n: str(w.get(k) or "")[:n] or None
-        num = lambda k: int(w.get(k) or 0) if str(w.get(k) or 0).isdigit() else 0
-        tags = w.get("tags") if isinstance(w.get("tags"), list) else []
-        g = {"gid": txt("gid", 120), "name_id": txt("name_id", 64)}
-        g.update(kind=txt("kind", 20), name=txt("name", 120), anchors=anchors)
-        g.update(
-            rows=num("rows"), files=num("files"), tags=[str(t)[:80] for t in tags[:5]]
-        )
-        out.append(g)
-    return _keyed(out)
+        if isinstance(w, str):
+            g, label = by_gid.get(w) or by_nid.get(w), w
+        elif isinstance(w, dict):
+            try:
+                anchors = capability_service._fid_list(w.get("anchors"), "anchors")
+            except ValueError as e:
+                abort(400, str(e))
+            label = str(w.get("name") or w.get("gid") or "group")[:120]
+            g = by_nid.get(w.get("name_id"))
+            if not g and anchors:
+                best = max(
+                    stored,
+                    key=lambda x: nway_sem_service.similarity(x["anchors"], anchors),
+                    default=None,
+                )
+                sim = best and nway_sem_service.similarity(best["anchors"], anchors)
+                g = best if sim and sim >= capability_service.MATCH else None
+        else:
+            abort(400, "each group is a gid, a name id or a group object")
+        if g:
+            out[g["key"]] = g
+        else:
+            skipped.append(
+                {"group": label, "reason": "not in the cluster's table build"}
+            )
+    return list(out.values()), skipped
 
 
 def _earlier(red, ns, rec):
@@ -244,8 +257,9 @@ def get_functions():
 
 def post_suggest():
     """Asks the model for capability suggestions on selected groups of a cluster's
-    stored N-way set (`groups`: gids or name ids, or whole groups from an N-way
-    view, see `_described`). Cached ones come back as they are unless `refresh`;
+    stored N-way set (`groups`: gids or name ids, or groups from any N-way view,
+    matched onto the stored set by `_resolve`; `skipped` lists the others).
+    Cached ones come back as they are unless `refresh`;
     the others start in the background (poll suggestions). `ask: false` only
     answers what is cached (the drawer opened from a header badge)."""
     from bsimvis.app.services import nway_group_service
@@ -261,17 +275,26 @@ def post_suggest():
     if not capability_service.enabled():
         abort(409, "capabilities are disabled ([capabilities] enabled = false)")
     rec = _set_groups(r, ns, body.get("cluster_uuid"))
-    groups = _pick(rec, [w for w in wanted if isinstance(w, str)])
-    groups += _described([w for w in wanted if isinstance(w, dict)])
+    groups, skipped = _resolve(rec, wanted)
     red = get_queue_redis()
     if body.get("ask") is False:
-        return _answer(red, ns, groups)
+        return {**_answer(red, ns, groups), "skipped": skipped}
     got, _ = capability_service.cache_get(red, ns, [g["key"] for g in groups])
     todo = [g for g in groups if body.get("refresh") or not got.get(g["key"])]
+    # the model reads what the Build stored for the group, nothing smaller
+    ev = nway_sem_service.load_ev(r, ns, rec.get("set_hash"), [g["gid"] for g in todo])
+    for g in todo:
+        g["ev"] = ev.get(g["gid"])
+    old = [g for g in todo if not g["ev"]]
+    skipped += [
+        {"group": g.get("name") or g["gid"], "reason": "stored before its evidence was kept: Build N-way again"}
+        for g in old
+    ]  # fmt: skip
+    todo = [g for g in todo if g["ev"]]
     if body.get("refresh") and todo:
         red.delete(*[f"capsugg:{ns}:{g['key']}" for g in todo])
-    nway_group_service.request_suggestions(ns, ns, todo, len(rec.get("members") or []))
-    return _answer(red, ns, groups)
+    nway_group_service.request_suggestions(ns, todo)
+    return {**_answer(red, ns, groups), "skipped": skipped}
 
 
 def get_suggestions():
@@ -317,7 +340,10 @@ def get_group_functions():
         abort(400, "gid (or a stored name_id) is required")
     from werkzeug.exceptions import HTTPException
 
-    q = {"collection": ns, "tab": "all", "lane": gid, **(rec.get("params") or {})}
+    # a default-build set is listed with the default table's params, so its gids hold
+    canon = nway_routes.SEM_ARGS if rec.get("canon") else {}
+    q = {**canon, "collection": ns, "tab": "all", "lane": gid}
+    q.update(rec.get("params") or {})
     # the cluster's own table; its stored member files when the cluster is gone or
     # was never one (a set stored from an ad hoc file list)
     tries = [{"cluster_uuid": cu}, {"md5s": ",".join(rec.get("members") or [])}]

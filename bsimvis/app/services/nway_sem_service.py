@@ -13,6 +13,8 @@ Kvrocks keys, `ns` = collection or `global:pool:{id}`:
   {ns}:nway_sem:set:{hash}  str   JSON summary of one member set
   {ns}:nway_sem:sets        zset  set hash -> saved at (ms)
   {ns}:nway_sem:by_cluster  hash  bin cluster uuid -> set hash
+  {ns}:nway_sem:ev:{hash}   hash  gid -> JSON: what the model reads for that group
+                                  (naming payload + each read function's row)
 """
 
 import hashlib
@@ -234,14 +236,23 @@ def summary(doc, groups, params, cluster_uuid=None):
     }
 
 
-def stored_doc_key(r, ns, md5s):
-    """The doc key the stored summary of this member set was built from, or None."""
+def stored_meta(r, ns, md5s):
+    """The stored summary of this member set as saved (no names attached), or None."""
     raw = r.get(f"{ns}:nway_sem:set:{set_hash(ns, md5s)}")
-    return raw and json.loads(_decode(raw)).get("doc_key")
+    return json.loads(_decode(raw)) if raw else None
 
 
-def save_set(r, ns, rec):
-    """Stores one set summary; returns its set hash."""
+def load_ev(r, ns, set_hash_, gids):
+    """{gid: evidence payload} of a stored set's groups (only the default build has them)."""
+    gids = list(dict.fromkeys(gids))
+    if not gids:
+        return {}
+    raw = r.hmget(f"{ns}:nway_sem:ev:{set_hash_}", gids)
+    return {g: json.loads(_decode(v)) for g, v in zip(gids, raw) if v}
+
+
+def save_set(r, ns, rec, ev=None):
+    """Stores one set summary, and `ev` ({gid: evidence}) beside it; returns its set hash."""
     if not ns:
         return None
     h = set_hash(ns, rec["members"])
@@ -249,6 +260,11 @@ def save_set(r, ns, rec):
     now = int(time.time() * 1000)
     pipe = r.pipeline(transaction=False)
     pipe.set(key, json.dumps({**rec, "set_hash": h, "ns": ns, "saved_at": now}))
+    pipe.delete(f"{ns}:nway_sem:ev:{h}")
+    if ev:
+        pipe.hset(
+            f"{ns}:nway_sem:ev:{h}", mapping={g: json.dumps(v) for g, v in ev.items()}
+        )
     pipe.zadd(f"{ns}:nway_sem:sets", {h: now})
     if rec.get("cluster_uuid"):
         pipe.hset(f"{ns}:nway_sem:by_cluster", rec["cluster_uuid"], h)

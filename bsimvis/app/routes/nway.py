@@ -1274,6 +1274,19 @@ def run_build_job(payload, job_service, job_id):
     finally:
         # the doc now lives in Redis; the worker has no use for its copy
         nway_diff_service.invalidate()
+    # one Build: a cluster's default table also gets its stored groups, names and
+    # capability suggestions (the semantics job reads the doc just cached)
+    a = payload["args"]
+    if a.get("cluster_uuid") and a.get("collection") and not a.get("pool"):
+        if _canonical(a):
+            ids = queue_semantics(
+                a["collection"],
+                [a["cluster_uuid"]],
+                force=True,
+                axis=a.get("axis"),
+                big=True,
+            )
+            job_service.add_log(job_id, f"queued its N-way semantics: {ids}")
     return True
 
 
@@ -1344,7 +1357,8 @@ def _semantics_job(payload, job_service, job_id):
         )
         return True
     old = nway_sem_service.load_set(r, ns, cluster_uuid=uuid_)
-    if old and old.get("members") == md5s and not force:
+    # a set stored before the default-build rule (no `canon`) is built again
+    if old and old.get("members") == md5s and old.get("canon") and not force:
         job_service.add_log(job_id, f"cluster {uuid_}: same files as stored, skipped")
         return True
     job_service.add_log(
@@ -1354,15 +1368,24 @@ def _semantics_job(payload, job_service, job_id):
         doc, r, pool_id = _load_doc(build=True)
         page = _page(doc, request.args, r, pool_id)
         n_files = len(doc.get("file_columns") or doc["columns"])
+        groups = page.get("groups") or {}
+        # the stored evidence (what Suggest reads too), else the page's own payload
+        ev = nway_sem_service.load_ev(r, ns, page.get("set_hash"), list(groups))
         lanes = [
-            nway_group_service.naming_payload(g, n_files)
-            for g in (page.get("groups") or {}).values()
+            (
+                {**ev[gid], "id": gid}
+                if gid in ev
+                else nway_group_service.naming_payload(g, n_files)
+            )
+            for gid, g in groups.items()
             if nway_group_service.nameable(g)
         ][: nway_group_service.LANE_NAMES_MAX]
         job_service.update_progress(job_id, 50)
         if lanes:
             out = (
-                nway_group_service.name_now(lanes, wait=int(payload.get("wait", 1200)))
+                nway_group_service.name_now(
+                    lanes, wait=int(payload.get("wait", 1200)), caps=True
+                )
                 if nway_facets_service.llm_configured()
                 else {"names": {}}
             )
@@ -2140,8 +2163,75 @@ def post_nway_lane_names():
     )
 
 
+# Defaults the table sends that SEM_ARGS leaves to the server
+_CANON_MORE = {
+    "mode": "stored",
+    "child_presence": "0.5",
+    "twin_depth": "3",
+    "twin_link": "0.5",
+}
+# Table params that reshape rows or groups when set (filters are checked apart)
+_CANON_EMPTY = (
+    "min_edge", "column", "focus", "side", "col_by", "col_by_multi", "col_set",
+    "col_presence", "cmp", "col_pick", "col_rest", "family", "ignore", "order",
+    "group_split_min", "group_axis", "group_axis_b", "group_min_link",
+    "group_lane_min", "group_lane_fit", "group_prefix_min", "group_tag_depth",
+    "col_open",
+)  # fmt: skip
+
+
+def _same(a, b):
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+def _canonical(args):
+    """True when `args` build the table's default view (SEM_ARGS): the one build
+    whose groups are stored, named and asked for capabilities."""
+    for k, v in SEM_ARGS.items():
+        if k not in ("limit",) and not _same(args.get(k), v):
+            return False
+    if any(k in args and not _same(args[k], v) for k, v in _CANON_MORE.items()):
+        return False
+    return not any(args.get(k) for k in _CANON_EMPTY)
+
+
+def _group_evidence(doc, groups):
+    """{gid: what the model reads for that group} for every nameable group, the
+    same payload naming sends (`naming_payload`), plus `fid_rows` / `fid_names`:
+    each read function's N-way row as its copies across files (md5:addr), and the
+    row's name. A suggestion's evidence functions are listed by those rows."""
+    n_files = len(doc.get("file_columns") or doc["columns"])
+    out = {
+        gid: nway_group_service.naming_payload({**g, "id": gid}, n_files)
+        for gid, g in groups.items()
+        if nway_group_service.nameable(g)
+    }
+    want = {f for p in out.values() for f in p["fids"]}
+    row_of = {}
+    for row in doc["rows"]:
+        fids = [f for f in _row_fids(row) if isinstance(f, str)]
+        for f in fids:
+            if f in want:
+                row_of[f] = ([nway_sem_service.short(x) for x in fids], row.get("name"))
+    for p in out.values():
+        p.pop("id", None)
+        p["fid_rows"] = {
+            nway_sem_service.short(f): row_of[f][0] for f in p["fids"] if f in row_of
+        }
+        p["fid_names"] = {
+            nway_sem_service.short(f): row_of[f][1]
+            for f in p["fids"]
+            if f in row_of and row_of[f][1]
+        }
+    return out
+
+
 def _save_semantics(r, ns, doc, groups, args):
-    """Keeps the set's summary (nway_sem_service) when a lane view opens unfiltered.
+    """Keeps the set's summary (nway_sem_service) when the table's default view
+    (`_canonical`) opens unfiltered; any other view only answers the stored hash.
 
     Once per built doc: the doc key changes with a rebuild, a tag write or new
     members. Never fails the page."""
@@ -2149,13 +2239,18 @@ def _save_semantics(r, ns, doc, groups, args):
         return None
     try:
         members = nway_sem_service.members_of(doc)
-        if nway_sem_service.stored_doc_key(r, ns, members) == doc.get("key"):
+        stored = nway_sem_service.stored_meta(r, ns, members)
+        if not _canonical(args):
+            # another lens, other columns, a lower min_edge: never the stored set
+            return stored and nway_sem_service.set_hash(ns, members)
+        if stored and stored.get("doc_key") == doc.get("key") and stored.get("canon"):
             return nway_sem_service.set_hash(ns, members)
         nway_sem_service.attach(r, ns, groups)
         rec = nway_sem_service.summary(
             doc, groups, args, (args.get("cluster_uuid") or "").strip().lower() or None
         )
-        return nway_sem_service.save_set(r, ns, rec)
+        rec["canon"] = True
+        return nway_sem_service.save_set(r, ns, rec, _group_evidence(doc, groups))
     except Exception as e:
         current_app.logger.warning(f"nway semantics: save failed: {e}")
         return None

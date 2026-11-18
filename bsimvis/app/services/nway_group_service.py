@@ -24,6 +24,7 @@ for. Masks go out as 0/1 strings over the table's columns so JavaScript never
 sees a big int.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -1620,7 +1621,7 @@ def _name_lane(l, red):
         else:
             _LANE_STATE[l["key"]] = {"status": "failed", "at": time.time()}
     rec = name and _remember_llm(l, value)
-    if rec:
+    if rec and l.get("caps"):
         _lane_caps(l, rec, text, name, {**value, "items": ev["items"]})
 
 
@@ -1671,7 +1672,14 @@ def _suggest(l, name, text, ev, name_id, key):
         ),
     }
     sugg = capability_service.build_suggestions(
-        answer, lvl, text, ev.get("items") or [], group, amap
+        answer,
+        lvl,
+        text,
+        ev.get("items") or [],
+        group,
+        amap,
+        rows=l.get("fid_rows"),
+        row_names=l.get("fid_names"),
     )
     capability_service.cache_put(get_queue_redis(), l["ns"], key, sugg, l["anchors"])
     return sugg
@@ -1692,10 +1700,12 @@ def _suggest_one(l, name, name_id, key):
         capability_service.run_done(red, l["ns"], "suggest", key)
 
 
-def request_suggestions(ns, coll, groups, total):
+def request_suggestions(ns, groups):
     """Queues the analyst's Suggest on the lane pool for stored set groups
-    ({kind, anchors, rows, files, tags, name, name_id}); returns their cache keys.
-    A group already being asked is not queued twice."""
+    ({gid, kind, anchors, name, name_id, ev}); returns their cache keys. `ev` is
+    the group's stored evidence (`nway_sem_service.load_ev`), so the model reads
+    exactly what the Build's pre-cache read. A group already being asked is not
+    queued twice."""
     global _LANE_POOL
     from concurrent.futures import ThreadPoolExecutor
 
@@ -1721,18 +1731,13 @@ def request_suggestions(ns, coll, groups, total):
             g.get("name") or g.get("label") or "group",
             g["anchors"],
         )
-        l = {
-            "ns": ns,
-            "gid": g.get("gid"),
-            "gkind": g.get("kind"),
-            "anchors": g["anchors"],
-            "rows": int(g.get("rows") or 0),
-            "files": int(g.get("files") or 0),
-            "total": total,
-            "tags": g.get("tags") or [],
-            "sample": [],
-            "fids": [f"{coll}:func:{a}" for a in g["anchors"]],
-        }
+        l = _clean_lane(
+            {**g["ev"], "id": g.get("gid"), "ns": ns, "gkind": g.get("kind"), "anchors": g["anchors"]}
+        )  # fmt: skip
+        if not l:
+            red.delete(f"capsugg:{ns}:{key}:pending")
+            capability_service.run_done(red, ns, "suggest", key)
+            continue
         _LANE_POOL.submit(_suggest_one, l, g.get("name") or "", g.get("name_id"), key)
     return keys
 
@@ -1808,18 +1813,59 @@ def naming_payload(g, n_files):
     return out
 
 
-def name_now(lanes, wait=1200):
+def name_now(lanes, wait=1200, caps=False):
     """lane_names, waited on: for a job, which has no page to poll for it.
     -> the last answer (status ready, or pending when `wait` seconds ran out)."""
     end = time.time() + wait
     while True:
-        out = lane_names(lanes)
+        out = lane_names(lanes, caps=caps)
         if out["status"] != "pending" or time.time() > end:
             return out
         time.sleep(2)
 
 
-def lane_names(lanes, llm=True):
+def _clean_lane(l):
+    """One lane payload, checked and trimmed: what naming and the capability
+    calls read (`_lane_evidence`), with its content `key`. None when empty."""
+    sample = [str(x)[:80] for x in (l.get("sample") or [])[:10]]
+    hint = str(l.get("hint") or "")[:40]
+    tags = [str(x)[:80] for x in (l.get("tags") or [])[:5]]
+    fids = [str(x) for x in (l.get("fids") or [])[:LANE_FIDS]]
+    name_fids = [str(x) for x in (l.get("name_fids") or [])[:LANE_NAME_FIDS]]
+    tag_rows = int(l.get("tag_rows") or 0)
+    if not (sample or hint or tags or fids):
+        return None
+    item = {
+        "files": int(l["files"]),
+        "total": int(l["total"]),
+        "sample": sample,
+        "hint": hint,
+        "tags": tags,
+        "fids": fids,
+        "name_fids": name_fids,
+        "tag_rows": tag_rows,
+        "roles": {
+            str(k)[:20]: int(v) for k, v in list((l.get("roles") or {}).items())[:10]
+        },
+        "v": LANE_PROMPT_V,
+    }
+    if l.get("kind") in ("string", "summary"):
+        item["kind"] = l["kind"]
+    key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
+    # registry identity and the read functions' rows: not part of the content key,
+    # so cached names stay valid
+    sem = {
+        "ns": l.get("ns") or None,
+        "gkind": str(l.get("gkind") or ""),
+        "anchors": [str(x) for x in (l.get("anchors") or [])[:50]],
+        "fid_rows": l.get("fid_rows") if isinstance(l.get("fid_rows"), dict) else {},
+        "fid_names": l.get("fid_names") if isinstance(l.get("fid_names"), dict) else {},
+        "gid": str(l.get("id") or ""),
+    }
+    return {**item, **sem, "rows": int(l["rows"]), "key": key}
+
+
+def lane_names(lanes, llm=True, caps=False):
     """{'status': off|pending|ready, 'names': {lane id: name}, 'evidence': {lane id: {tags, strings}}} for lane groups.
 
     `lanes` is the lane group meta: id, files, total, rows, sample, hint, tags,
@@ -1827,6 +1873,8 @@ def lane_names(lanes, llm=True):
     are named by a small pool of workers, one short model call each, the
     biggest lane first; the answer lists the names ready so far and stays
     `pending` until every lane has one (or failed). Never waits for the model.
+    `caps` also pre-caches capability suggestions of the named groups: only the
+    N-way semantics job sets it, on the default table build.
     """
     global _LANE_POOL
     import hashlib
@@ -1837,39 +1885,9 @@ def lane_names(lanes, llm=True):
 
     clean = {}
     for l in lanes[:LANE_NAMES_MAX]:
-        sample = [str(x)[:80] for x in (l.get("sample") or [])[:10]]
-        hint = str(l.get("hint") or "")[:40]
-        tags = [str(x)[:80] for x in (l.get("tags") or [])[:5]]
-        fids = [str(x) for x in (l.get("fids") or [])[:LANE_FIDS]]
-        name_fids = [str(x) for x in (l.get("name_fids") or [])[:LANE_NAME_FIDS]]
-        tag_rows = int(l.get("tag_rows") or 0)
-        if not (sample or hint or tags or fids):
-            continue
-        item = {
-            "files": int(l["files"]),
-            "total": int(l["total"]),
-            "sample": sample,
-            "hint": hint,
-            "tags": tags,
-            "fids": fids,
-            "name_fids": name_fids,
-            "tag_rows": tag_rows,
-            "roles": {
-                str(k)[:20]: int(v)
-                for k, v in list((l.get("roles") or {}).items())[:10]
-            },
-            "v": LANE_PROMPT_V,
-        }
-        if l.get("kind") in ("string", "summary"):
-            item["kind"] = l["kind"]
-        key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
-        # registry identity: not part of the content key, so cached names stay valid
-        sem = {
-            "ns": l.get("ns") or None,
-            "gkind": str(l.get("gkind") or ""),
-            "anchors": [str(x) for x in (l.get("anchors") or [])[:50]],
-        }
-        clean[str(l["id"])] = {**item, **sem, "rows": int(l["rows"]), "key": key}
+        c = _clean_lane(l)
+        if c:
+            clean[str(l["id"])] = c
     stored = _stored_names(clean)
     caps = _stored_caps(clean, stored)
     red = get_queue_redis()
@@ -1884,7 +1902,7 @@ def lane_names(lanes, llm=True):
             sources[lid] = "user" if rec.get("user_name") else "llm"
             evidence[lid] = {k: model.get(k, []) for k in ("tags", "strings", "calls")}
             evidence[lid]["caps"] = caps.get(lid, [])
-            if llm and rec.get("caps_v") != _caps_v():
+            if caps and llm and rec.get("caps_v") != _caps_v():
                 with _LANE_LOCK:
                     if f"caps:{rec['id']}" not in _LANE_STATE:
                         _LANE_STATE[f"caps:{rec['id']}"] = {
@@ -1931,7 +1949,7 @@ def lane_names(lanes, llm=True):
         workers = int(config_service.get("llm.lane_parallel", 4))
         _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
     for l in sorted(todo, key=lambda x: x["rows"], reverse=True):
-        _LANE_POOL.submit(_name_lane, l, red)
+        _LANE_POOL.submit(_name_lane, {**l, "caps": caps}, red)
     # names first: the capability calls queue behind them
     for l, rec in caps_todo:
         _LANE_POOL.submit(_caps_only, l, rec)

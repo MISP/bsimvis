@@ -140,6 +140,14 @@ capabilities" half of `capability_service.py`, the routes `routes/capabilities.p
 The model only *suggests* (`build_suggestions`, `capsugg:` in the queue Redis): on the
 groups the analyst selects (`POST /api/capability/suggest`), and as a silent pre-cache in
 `_lane_caps` (lane naming, `NWAY_SEM_BUILD`). Nothing reaches Kvrocks before Accept.
+Every source ends in `nway_group_service.suggest_capabilities`, which caches the answer
+and indexes it by the files of the group's anchors (`capsugg:{ns}:f:{md5}`): the tab
+lists every suggestion on the cluster's files, also those whose group the stored set no
+longer holds (`earlier`), so a re-save of the set or another lens never loses one, and
+selecting groups never hides any. The N-way drawer sends its groups whole (anchors),
+never bare ids that may be another build's. What runs in the background (Build queued /
+running, naming, suggesting) is marked in `capsugg:{ns}:run` (`run_mark` / `run_done` /
+`running`) and shown on the pane (`running` on `GET /api/capability/suggestions`).
 UI: the cluster Capabilities tab (`cluster_capabilities.js`, groups | suggestions +
 accepted), the shared editor and bottom dock tray (`capability_tray.js`, fed by the
 right-click "Capability" entry), and the N-way table's "Select groups" mode and
@@ -497,6 +505,8 @@ job keys.
 | `nway:lane:{sha1}` | **String** | LLM name of a lane by its prompt content (JSON `{name, tags, strings, calls}`), 30 day TTL. Also written through to the Kvrocks name registry (`{ns}:nway_names`), which outlives it. |
 | `nway:lane:{sha1}` | **String** | An LLM lane name and the evidence it came from, keyed by its prompt item. 30 day TTL. |
 | `capsugg:{ns}:{key}` / `capsugg:{ns}:{key}:pending` | **String** | Capability suggestions of one N-way group (`key` = its name record id, else `a`+anchor hash; JSON with `v` = `CAPS_V`), and the flag while it is being asked. 30 day / 10 min TTL. |
+| `capsugg:{ns}:f:{md5}` | **Set** | Suggestion cache keys whose group has an anchor in that file, so a cluster finds them by its files. 30 day TTL, refreshed on write. |
+| `capsugg:{ns}:run` | **Hash** | `{what}:{key}` -> JSON `{what, label, files, cluster, job, at, ttl}`: a background step (`build`, `name`, `suggest`) the capability pane shows. Dropped on read past its own ttl (10 min, a Build 6 h). |
 | `nway:colset:{sha1}` | **String** | Saved N-way compare: the members and column groups that `POST /api/bin_sim/nway/columns` resolved from file queries (JSON), read back by `col_set`. 1 h TTL. |
 
 ## Worktree testing

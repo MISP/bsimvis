@@ -4,7 +4,10 @@
  * Tab layout (two panes): left, the cluster's stored N-way groups by tier with
  * checkboxes and a Suggest bar; right, the model's suggestions for them (cached in
  * the queue Redis, /api/capability/suggest) and the capabilities the analyst
- * accepted (/api/capability/list). A suggestion an accepted capability already
+ * accepted (/api/capability/list). The right pane lists every cached suggestion on
+ * the cluster's files, whichever N-way set or view asked for it (selecting groups
+ * never hides any), and the naming / suggesting / Build steps under way. A
+ * suggestion an accepted capability already
  * covers (same group, same name or attach target) is not offered again; the same
  * suggestion from several groups is one card. Cards expand in place into the shared
  * editor (CapEditor) and are accepted whole, or several at once with the
@@ -38,8 +41,9 @@ window.ClusterCapabilities = (function () {
     const fetchAccepted = ctx => getJson(`/api/capability/list?${qs(ctx)}`);
     const fetchSugg = (ctx, groups) => getJson(`/api/capability/suggestions?${qs(ctx, groups && groups.length ? { groups: groups.join(',') } : {})}`);
 
-    async function postSuggest(ctx, groups, refresh) {
-        const body = { cluster_uuid: ctx.cluster_uuid, groups, refresh: !!refresh };
+    // groups: stored-set gids, or whole groups from an N-way view; ask=false only reads the cache
+    async function postSuggest(ctx, groups, refresh, ask = true) {
+        const body = { cluster_uuid: ctx.cluster_uuid, groups, refresh: !!refresh, ask };
         if (ctx.pool) body.pool = ctx.pool; else body.collection = ctx.collection;
         const res = await fetch('/api/capability/suggest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const j = await res.json().catch(() => ({}));
@@ -47,14 +51,32 @@ window.ClusterCapabilities = (function () {
         return j;
     }
 
-    // Per group id: accepted capability names and the suggestions no accepted one covers.
+    // Per group id, and per `n:<name id>` (the key that survives a rebuild): accepted
+    // capability names and the suggestions no accepted one covers.
     function groupStats(sugg) {
         const out = {};
         ((sugg && sugg.groups) || []).forEach(g => {
             const open = new Set((g.suggestions || []).filter(s => !s.accepted).map(s => s.attach_to ? `a:${s.attach_to}` : `n:${norm(s.name)}`));
-            out[g.gid] = { acc: (g.accepted || []).map(c => c.name), sugg: open.size };
+            const st = { acc: (g.accepted || []).map(c => c.name), sugg: open.size };
+            if (!g.earlier) out[g.gid] = st;
+            if (!g.name_id) return;
+            const o = out[`n:${g.name_id}`];
+            out[`n:${g.name_id}`] = o ? { acc: [...new Set([...o.acc, ...st.acc])], sugg: o.sugg + st.sugg } : st;
         });
         return out;
+    }
+
+    // What runs in the background for this cluster: Build jobs, group names, suggestions.
+    function runLine(run) {
+        if (!run || !run.length) return '';
+        const by = w => run.filter(r => r.what === w);
+        const names = (list, n = 3) => list.slice(0, n).map(r => escapeHtml(r.label || 'group')).join(', ') + (list.length > n ? ` +${list.length - n}` : '');
+        const parts = [];
+        by('build').forEach(r => parts.push(`<a href="/jobs" title="Job ${escapeAttr(r.job || '')}">${escapeHtml(r.label || 'Build')}</a>`));
+        const nm = by('name'), sg = by('suggest');
+        if (nm.length) parts.push(`naming ${num(nm.length)} group${nm.length > 1 ? 's' : ''} <span class="dim">(${names(nm)})</span>`);
+        if (sg.length) parts.push(`suggesting for ${num(sg.length)} group${sg.length > 1 ? 's' : ''} <span class="dim">(${names(sg)})</span>`);
+        return `<div class="cap-sec" role="status" style="font-size:0.75rem; gap:6px; flex-wrap:wrap;"><i class="fa-solid fa-spinner fa-spin"></i><b>In the background:</b> ${parts.join(' · ')}</div>`;
     }
 
     const groupName = g => g.name || g.label || g.kind || 'group';
@@ -89,21 +111,26 @@ window.ClusterCapabilities = (function () {
     }
 
     // ---- the right pane: suggestions, then accepted ----
-    // ctx: {collection, pool, cluster_uuid}; opts.only: gids to show (empty = every
-    // group); opts.onGroups(stats): per-gid {acc, sugg} after each load.
+    // ctx: {collection, pool, cluster_uuid}; opts.groups: show only these groups (the
+    // N-way drawer: stored gids or whole groups), asked first when opts.ask;
+    // opts.onGroups(stats): per-gid {acc, sugg} after each load; opts.onBuilt(): a
+    // Build of this cluster just finished.
     function suggestPane(el, ctx, opts = {}) {
         CapEditor.ensureCss();
-        const st = { cards: [], pending: [], accepted: [], open: null, openAcc: null, sel: new Set(), dismissed: new Set(), timer: null };
+        const st = { cards: [], pending: [], running: [], accepted: [], open: null, openAcc: null, sel: new Set(), dismissed: new Set(), timer: null, only: null };
 
         async function load() {
             try {
                 const [s, a] = await Promise.all([fetchSugg(ctx), fetchAccepted(ctx)]);
                 if (!el.isConnected) return;
-                const only = opts.only && opts.only.length ? new Set(opts.only) : null;
-                const shown = ((s && s.groups) || []).filter(g => !only || only.has(g.gid));
+                const only = st.only;
+                const shown = ((s && s.groups) || []).filter(g => !only || only.has(g.key));
                 const accIds = new Set(shown.flatMap(g => (g.accepted || []).map(c => c.uuid)));
                 st.accepted = ((a && a.capabilities) || []).filter(c => !only || accIds.has(c.uuid));
                 st.pending = ((s && s.pending) || []).filter(k => shown.some(g => g.key === k));
+                const built = st.running.some(r => r.what === 'build');
+                st.running = (s && s.running) || [];
+                if (built && !st.running.some(r => r.what === 'build') && opts.onBuilt) opts.onBuilt();
                 // one card per suggestion, merged over the groups that gave it
                 const byKey = new Map();
                 shown.forEach(g => (g.suggestions || []).forEach(x => {
@@ -134,7 +161,9 @@ window.ClusterCapabilities = (function () {
                 if (opts.onGroups) opts.onGroups(groupStats(s));
                 draw();
                 clearTimeout(st.timer);
-                if (st.pending.length) st.timer = setTimeout(load, 3000);
+                // a queued Build can wait long: poll it slowly
+                const busy = st.pending.length || st.running.some(r => r.what !== 'build');
+                if (busy || st.running.length) st.timer = setTimeout(load, busy ? 3000 : 15000);
             } catch (e) { el.innerHTML = `<div class="dim" style="padding:10px;">${escapeHtml(e.message)}</div>`; }
         }
 
@@ -143,7 +172,7 @@ window.ClusterCapabilities = (function () {
         function suggCard(s) {
             const d = s.draft, open = st.open === s.id;
             const title = d.attach_to && !d.name ? `Add to <span style="color:var(--success)">${escapeHtml(attachName(d.attach_to))}</span>` : escapeHtml(d.name || 'unnamed');
-            const from = s.groups.map(groupName);
+            const from = s.groups.map(g => groupName(g) + (g.earlier ? ' (earlier N-way)' : ''));
             return `<div class="cap-card sug" data-sid="${escapeAttr(s.id)}">
                 <div class="hd"><input type="checkbox" aria-label="Select this suggestion" data-pick ${st.sel.has(s.id) ? 'checked' : ''}>
                     <span class="ttl">${title}</span>
@@ -172,12 +201,13 @@ window.ClusterCapabilities = (function () {
         function draw() {
             const pend = st.pending.length ? `<span class="dim"><i class="fa-solid fa-spinner fa-spin"></i> asking ${num(st.pending.length)} group${st.pending.length > 1 ? 's' : ''}…</span>` : '';
             el.innerHTML = `<div style="display:flex; flex-direction:column; gap:8px; min-width:0;">
+                ${runLine(st.running)}
                 <div class="cap-sec"><b>Suggested</b> <span class="dim">(${num(st.cards.length)})</span> ${pend}
                     <span style="margin-left:auto; display:flex; gap:6px; flex-wrap:wrap;"><button type="button" class="cap-btn" data-all>${st.sel.size === st.cards.length && st.cards.length ? 'Select none' : 'Select all'}</button>
                     <button type="button" class="cap-btn ok" data-acceptsel ${st.sel.size ? '' : 'disabled'}>Accept ${num(st.sel.size)} selected</button></span></div>
                 ${st.cards.map(suggCard).join('') || `<div class="dim" style="font-size:0.78rem;">${st.pending.length ? 'The model is reading the selected groups.' : 'No new suggestion: select groups and press Suggest.'}</div>`}
                 <div class="cap-sec" style="margin-top:6px;"><b>Verified</b> <span class="dim">(${num(st.accepted.length)})</span></div>
-                ${st.accepted.map(accCard).join('') || `<div class="dim" style="font-size:0.78rem;">None accepted ${opts.only && opts.only.length ? 'for these groups' : 'in this cluster'} yet.</div>`}
+                ${st.accepted.map(accCard).join('') || `<div class="dim" style="font-size:0.78rem;">None accepted ${st.only ? 'for these groups' : 'in this cluster'} yet.</div>`}
             </div>`;
             const s = st.cards.find(x => x.id === st.open);
             const slot = s && el.querySelector(`[data-sid="${CSS.escape(s.id)}"] [data-ed]`);
@@ -232,11 +262,16 @@ window.ClusterCapabilities = (function () {
         document.addEventListener('capabilities:changed', onChanged);
 
         el.innerHTML = '<div class="cov-wait"><i class="fa-solid fa-spinner fa-spin"></i> Loading…</div>';
-        load();
+        if (opts.groups) {
+            // the drawer: its groups' cache keys, then only those
+            postSuggest(ctx, opts.groups, false, !!opts.ask)
+                .then(j => { st.only = new Set(((j && j.groups) || []).map(g => g.key)); load(); })
+                .catch(e => { el.innerHTML = `<div class="dim" style="padding:10px;">${escapeHtml(e.message)}</div>`; });
+        } else load();
         return {
             reload: load,
+            // the tab: ask for these groups; the pane keeps listing everything
             async suggest(gids, refresh) {
-                opts.only = gids;
                 await postSuggest(ctx, gids, refresh);
                 load();
             },
@@ -295,7 +330,11 @@ window.ClusterCapabilities = (function () {
         list.onchange = e => { const g = e.target.dataset.g; if (!g) return; e.target.checked ? sel.add(g) : sel.delete(g); drawGroups(); };
         el.querySelector('#cap-gq').oninput = drawGroups;
         drawGroups();
-        const pane = set ? suggestPane(el.querySelector('#cap-right'), ctx, { onGroups: s => { stats = s; if (list.isConnected) drawGroups(); } }) : null;
+        // mounted with no stored set too: it shows a queued Build
+        const pane = suggestPane(el.querySelector('#cap-right'), ctx, {
+            onGroups: s => { stats = s; if (list.isConnected) drawGroups(); },
+            onBuilt: () => { if (el.isConnected && v.selectedClusterUuid === c.cluster_uuid) renderTab(el, v); },
+        });
         const ask = refresh => async ev => {
             const b = ev.currentTarget;
             b.disabled = true;
@@ -319,6 +358,7 @@ window.ClusterCapabilities = (function () {
             const out = await res.json();
             if (!res.ok) throw new Error(out.message || out.error || `HTTP ${res.status}`);
             if (window.showToast) window.showToast('Queued: the groups appear here when the job is done (see Jobs).', 'success');
+            document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: body }));
         } catch (e) {
             if (window.showToast) window.showToast(`Build failed: ${e.message}`, 'error');
             if (btnEl) btnEl.disabled = false;

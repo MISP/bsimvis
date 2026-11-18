@@ -118,6 +118,75 @@ def _pick(rec, wanted):
     return out
 
 
+def _keyed(groups):
+    return [
+        {**g, "key": capability_service.gkey(g.get("name_id"), g["anchors"])}
+        for g in groups
+        if g.get("anchors")
+    ]
+
+
+def _described(wanted):
+    """Groups an N-way view sent whole (`{gid, anchors, kind, rows, files, tags,
+    name, name_id}`): its anchors say which code it is, whatever set is stored."""
+    out = []
+    for w in wanted:
+        try:
+            ok = capability_service._fid_list(w.get("anchors"), "anchors")
+        except ValueError as e:
+            abort(400, str(e))
+        if not ok or len(ok) > nway_sem_service.K * 3:
+            abort(400, "a group needs its anchors (md5:addr)")
+        # as sent: the cache key is over the anchors the naming path uses
+        anchors = list(w["anchors"])
+        txt = lambda k, n: str(w.get(k) or "")[:n] or None
+        num = lambda k: int(w.get(k) or 0) if str(w.get(k) or 0).isdigit() else 0
+        tags = w.get("tags") if isinstance(w.get("tags"), list) else []
+        g = {"gid": txt("gid", 120), "name_id": txt("name_id", 64)}
+        g.update(kind=txt("kind", 20), name=txt("name", 120), anchors=anchors)
+        g.update(
+            rows=num("rows"), files=num("files"), tags=[str(t)[:80] for t in tags[:5]]
+        )
+        out.append(g)
+    return _keyed(out)
+
+
+def _earlier(red, ns, rec):
+    """Cached suggestions on the set's files whose group the stored set no longer
+    holds (an earlier build, another lens, an N-way drawer): one entry each, named
+    after the group pointer they carry."""
+    have = {
+        capability_service.gkey(g.get("name_id"), g["anchors"])
+        for g in _keyed(rec["groups"])
+    }
+    keys = capability_service.keys_for_files(red, ns, rec.get("members") or []) - have
+    got, _ = capability_service.cache_get(red, ns, sorted(keys))
+    out = []
+    for k, doc in got.items():
+        sugg = (doc or {}).get("suggestions") or []
+        ge = next(
+            (
+                e
+                for s in sugg
+                for e in s.get("evidence") or []
+                if e.get("type") == "group"
+            ),
+            None,
+        )
+        if ge and ge.get("anchors"):
+            out.append(
+                {"gid": f"k:{k}", "src_gid": ge.get("gid"), "name_id": ge.get("name_id"),
+                 "name": ge.get("label"), "anchors": ge["anchors"], "key": k, "earlier": True}
+            )  # fmt: skip
+    # a renamed group shows its current name
+    names = nway_sem_service._records(
+        get_redis(), ns, [g["name_id"] for g in out if g["name_id"]]
+    )
+    for g in out:
+        g["name"] = nway_sem_service.shown_name(names.get(g["name_id"])) or g["name"]
+    return out
+
+
 def _answer(red, ns, groups):
     """Each group's cached suggestions and the accepted capabilities that point at
     it; a suggestion that one of them already covers carries `accepted`."""
@@ -134,6 +203,8 @@ def _answer(red, ns, groups):
         out.append(
             {
                 "gid": g.get("gid"),
+                "src_gid": g.get("src_gid"),
+                "earlier": bool(g.get("earlier")),
                 "name_id": g.get("name_id"),
                 "name": g.get("name"),
                 "key": g["key"],
@@ -173,8 +244,10 @@ def get_functions():
 
 def post_suggest():
     """Asks the model for capability suggestions on selected groups of a cluster's
-    stored N-way set (`groups`: gids or name ids). Cached ones come back as they
-    are unless `refresh`; the others start in the background (poll suggestions)."""
+    stored N-way set (`groups`: gids or name ids, or whole groups from an N-way
+    view, see `_described`). Cached ones come back as they are unless `refresh`;
+    the others start in the background (poll suggestions). `ask: false` only
+    answers what is cached (the drawer opened from a header badge)."""
     from bsimvis.app.services import nway_group_service
     from bsimvis.app.services.redis_client import get_queue_redis
 
@@ -188,8 +261,11 @@ def post_suggest():
     if not capability_service.enabled():
         abort(409, "capabilities are disabled ([capabilities] enabled = false)")
     rec = _set_groups(r, ns, body.get("cluster_uuid"))
-    groups = _pick(rec, wanted)
+    groups = _pick(rec, [w for w in wanted if isinstance(w, str)])
+    groups += _described([w for w in wanted if isinstance(w, dict)])
     red = get_queue_redis()
+    if body.get("ask") is False:
+        return _answer(red, ns, groups)
     got, _ = capability_service.cache_get(red, ns, [g["key"] for g in groups])
     todo = [g for g in groups if body.get("refresh") or not got.get(g["key"])]
     if body.get("refresh") and todo:
@@ -199,23 +275,22 @@ def post_suggest():
 
 
 def get_suggestions():
-    """Cached suggestions of a cluster's groups (`groups`: comma list, empty = all)."""
+    """Cached suggestions of a cluster (`groups`: comma list, empty = every group
+    of its stored set plus every cached one on its files), and `running`: the
+    naming, suggesting and Build steps under way on its files."""
     from bsimvis.app.services.redis_client import get_queue_redis
 
     a = request.args
-    ns, r = _ns(a), get_redis()
-    rec = _set_groups(r, ns, a.get("cluster_uuid"))
+    ns, r, red = _ns(a), get_redis(), get_queue_redis()
+    cu = (a.get("cluster_uuid") or "").strip().lower()
+    # no stored set yet: nothing to list, but a queued Build still shows
+    rec = nway_sem_service.load_set(r, ns, None, cu) or {"groups": [], "members": []}
     wanted = [x for x in (a.get("groups") or "").split(",") if x]
     groups = (
-        _pick(rec, wanted)
-        if wanted
-        else [
-            {**g, "key": capability_service.gkey(g.get("name_id"), g["anchors"])}
-            for g in rec["groups"]
-            if g.get("anchors")
-        ]
+        _pick(rec, wanted) if wanted else _keyed(rec["groups"]) + _earlier(red, ns, rec)
     )
-    return _answer(get_queue_redis(), ns, groups)
+    run = capability_service.running(red, ns, set(rec.get("members") or []), cu)
+    return {**_answer(red, ns, groups), "running": run}
 
 
 def get_group_functions():

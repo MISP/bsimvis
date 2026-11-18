@@ -765,13 +765,76 @@ def covered_by(s, acc):
     return None
 
 
-def cache_put(red, ns, key, sugg):
-    red.set(
+def _files(anchors):
+    return sorted(
+        {nway_sem_service.short(a).split(":")[0] for a in anchors or [] if ":" in a}
+    )
+
+
+def cache_put(red, ns, key, sugg, anchors=None):
+    """Caches one group's suggestions, and indexes them by the files of the group's
+    anchors (`capsugg:{ns}:f:{md5}`), so a cluster finds them whatever N-way set
+    it stores later."""
+    pipe = red.pipeline(transaction=False)
+    pipe.set(
         f"capsugg:{ns}:{key}",
         json.dumps({"v": CAPS_V, "at": int(time.time() * 1000), "suggestions": sugg}),
         ex=SUGG_TTL,
     )
-    red.delete(f"capsugg:{ns}:{key}:pending")
+    pipe.delete(f"capsugg:{ns}:{key}:pending")
+    for m in _files(anchors):
+        pipe.sadd(f"capsugg:{ns}:f:{m}", key)
+        pipe.expire(f"capsugg:{ns}:f:{m}", SUGG_TTL)
+    pipe.execute()
+
+
+def keys_for_files(red, ns, md5s):
+    """Cache keys of the suggestions whose group has an anchor in these files."""
+    pipe = red.pipeline(transaction=False)
+    for m in md5s:
+        pipe.smembers(f"capsugg:{ns}:f:{m}")
+    return {_decode(k) for s in pipe.execute() for k in s}
+
+
+# --- Background steps the UI shows (naming, suggesting, a Build job) ----------
+# capsugg:{ns}:run  queue Redis hash, "{what}:{key}" -> JSON; a step past its ttl
+# is a dead thread or a lost job and is dropped on read.
+RUN_TTL, BUILD_TTL = 600, 6 * 3600
+
+
+def run_mark(red, ns, what, key, label, anchors=None, cluster=None, job=None):
+    if not ns:
+        return
+    ttl = BUILD_TTL if what == "build" else RUN_TTL
+    v = {"what": what, "label": label, "files": _files(anchors), "cluster": cluster}
+    v.update(job=job, at=int(time.time()), ttl=ttl)
+    pipe = red.pipeline(transaction=False)
+    pipe.hset(f"capsugg:{ns}:run", f"{what}:{key}", json.dumps(v))
+    pipe.expire(f"capsugg:{ns}:run", BUILD_TTL)
+    pipe.execute()
+
+
+def run_done(red, ns, what, key):
+    if ns:
+        red.hdel(f"capsugg:{ns}:run", f"{what}:{key}")
+
+
+def running(red, ns, md5s=None, cluster=None):
+    """Live background steps of `ns` on these files or this cluster, oldest first."""
+    k, now, out, dead = f"capsugg:{ns}:run", time.time(), [], []
+    for f, v in (red.hgetall(k) or {}).items():
+        v = _loads(v)
+        if not v or now - v.get("at", 0) > v.get("ttl", RUN_TTL):
+            dead.append(f)
+        elif (
+            md5s is None
+            or (cluster and v.get("cluster") == cluster)
+            or set(v.get("files") or []) & md5s
+        ):
+            out.append(v)
+    if dead:
+        red.hdel(k, *dead)
+    return sorted(out, key=lambda v: v["at"])
 
 
 def cache_get(red, ns, keys):
@@ -970,4 +1033,63 @@ if __name__ == "__main__":
     assert covered_by({"name": "udp  flood!"}, mine) == "u1"
     assert covered_by({"attach_to": "u1", "name": ""}, mine) == "u1"
     assert covered_by({"name": "telnet brute force"}, mine) is None
+
+    class _Q:  # queue redis over dicts; a pipeline runs each call at once
+        def __init__(self):
+            self.kv, self.res = {}, []
+
+        def pipeline(self, transaction=False):
+            return self
+
+        def execute(self):
+            out, self.res = self.res, []
+            return out
+
+        def _do(self, v):
+            self.res.append(v)
+            return v
+
+        def set(self, k, v, ex=None):
+            self.kv[k] = v
+
+        def delete(self, *ks):
+            [self.kv.pop(k, None) for k in ks]
+
+        def expire(self, k, s):
+            pass
+
+        def sadd(self, k, v):
+            self.kv.setdefault(k, set()).add(v)
+
+        def smembers(self, k):
+            return self._do(set(self.kv.get(k, ())))
+
+        def mget(self, ks):
+            return [self.kv.get(k) for k in ks]
+
+        def hset(self, k, f, v):
+            self.kv.setdefault(k, {})[f] = v
+
+        def hdel(self, k, *fs):
+            [self.kv.get(k, {}).pop(f, None) for f in fs]
+
+        def hgetall(self, k):
+            return dict(self.kv.get(k, {}))
+
+    q = _Q()
+    # a suggestion is found by the files of its group, whatever set is stored later
+    cache_put(q, "c", "n1", sg, grp["anchors"])
+    assert keys_for_files(q, "c", [m5, m6]) == {"n1"} and not keys_for_files(
+        q, "c", [m6]
+    )
+    got, _ = cache_get(q, "c", ["n1"])
+    assert got["n1"]["suggestions"][0]["name"] == "Minecraft server flood"
+    # background steps: by file or cluster, done ones and dead ones go
+    run_mark(q, "c", "suggest", "n1", "Attack floods", anchors=[f1])
+    run_mark(q, "c", "build", "cu1", "Build", cluster="cu1", job="j1")
+    run_mark(q, "c", "name", "k2", "other", anchors=[f"{m6}:1"])
+    assert [v["what"] for v in running(q, "c", {m5}, "cu1")] == ["suggest", "build"]
+    run_done(q, "c", "suggest", "n1")
+    q.kv["capsugg:c:run"]["build:cu1"] = json.dumps({"at": 0, "ttl": 1})
+    assert running(q, "c", {m5}, "cu1") == [] and len(q.kv["capsugg:c:run"]) == 1
     print("ok")

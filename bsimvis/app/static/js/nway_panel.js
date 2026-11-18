@@ -2859,9 +2859,15 @@
         }
 
         // The suggestions drawer: the Capabilities tab's right pane, for `gids`; `ask` starts Suggest.
+        // The groups go whole (anchors): this view's ids need not be the stored set's.
         _capDrawer(gids, ask) {
             const ctx = this._capCtx();
-            if (!ctx || !gids.length) return;
+            const all = (this.data && this.data.groups) || {};
+            const groups = gids.map(id => all[id]).filter(g => g && (g.anchors || []).length).map(g => ({
+                gid: g.id, name_id: g.name_id || null, anchors: g.anchors, kind: g.kind, rows: g.rows, files: g.files,
+                tags: (g.tags || []).slice(0, 5), name: this._shownName((this._laneNames || {})[g.id]) || g.label || '',
+            }));
+            if (!ctx || !groups.length) return;
             CapEditor.ensureCss();
             let d = document.getElementById('cap-drawer');
             if (!d) {
@@ -2875,8 +2881,7 @@
                 <button type="button" class="cap-btn" style="margin-left:auto;" data-x aria-label="Close">Close</button></div>
                 <div style="overflow:auto; padding:10px 12px; flex:1;" id="cap-drawer-body"></div>`;
             d.querySelector('[data-x]').onclick = () => d.remove();
-            const pane = ClusterCapabilities.suggestPane(d.querySelector('#cap-drawer-body'), ctx, { only: gids });
-            if (ask) pane.suggest(gids, false).catch(e => { if (window.showToast) showToast(`Suggest failed: ${e.message}`, 'error'); });
+            ClusterCapabilities.suggestPane(d.querySelector('#cap-drawer-body'), ctx, { groups, ask });
         }
         _laneName(g) { return NG.laneName(g, this._ns()); }
         _laneFallback(g) { return NG.laneFallback(g, this._ns()); }

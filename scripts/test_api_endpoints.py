@@ -8623,6 +8623,53 @@ def test_nway_diff():
                     _sp.status_code == 200 and not (_sp.json().get("pending")),
                     _sp.text[:300],
                 )
+                # a group the stored set no longer holds: found by its files
+                _ek = "atestearlier00000"
+                _cs.cache_put(
+                    _cap_q(),
+                    COLLECTION,
+                    _ek,
+                    [{"name": "earlier", "evidence": [{"type": "group", "anchors": _sl["anchors"], "label": "old lane"}]}],
+                    _sl["anchors"],
+                )  # fmt: skip
+                _cs.run_mark(_cap_q(), COLLECTION, "build", _tcu, "Build queued", cluster=_tcu, job="t")  # fmt: skip
+                _all = requests.get(
+                    f"{_CB}/suggestions",
+                    params={"collection": COLLECTION, "cluster_uuid": _tcu},
+                    timeout=30,
+                ).json()
+                _eg = [g for g in _all.get("groups") or [] if g.get("key") == _ek]
+                check(
+                    "capability suggestions: an earlier build's group comes back by its files, a Build shows running",
+                    len(_eg) == 1
+                    and _eg[0].get("earlier") is True
+                    and _eg[0].get("name") == "old lane"
+                    and [x.get("what") for x in _all.get("running") or []] == ["build"],
+                    str(_all)[:400],
+                )
+                _cs.run_done(_cap_q(), COLLECTION, "build", _tcu)
+                _cap_q().delete(f"capsugg:{COLLECTION}:{_ek}")
+                # an N-way view's group sent whole, read only; a bad one is a 400
+                _whole = {"gid": "lane:other-build", "anchors": _sl["anchors"], "kind": "lane"}  # fmt: skip
+                _sw = requests.post(
+                    f"{_CB}/suggest",
+                    json={"collection": COLLECTION, "cluster_uuid": _tcu, "groups": [_whole], "ask": False},
+                    timeout=30,
+                )  # fmt: skip
+                _sb = requests.post(
+                    f"{_CB}/suggest",
+                    json={"collection": COLLECTION, "cluster_uuid": _tcu, "groups": [{"anchors": ["nope"]}]},
+                    timeout=30,
+                )  # fmt: skip
+                _swj = _sw.json() if _sw.ok else {}
+                check(
+                    "capability suggest: a whole group is keyed by its anchors, a bad one is a 400",
+                    [g.get("key") for g in _swj.get("groups") or []]
+                    == [_cs.gkey(None, _sl["anchors"])]
+                    and not _swj.get("pending")
+                    and _sb.status_code == 400,
+                    f"{_sw.text[:200]} | {_sb.text[:120]}",
+                )
                 # accepting it for the lane marks the suggestion covered and the lane verified
                 _grp_ev = {
                     "type": "group",

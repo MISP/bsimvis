@@ -1596,8 +1596,14 @@ def _name_lane(l, red):
     """Worker: name one lane and cache it."""
     from bsimvis.app.services.llm_service import llm_service
 
-    text, ev = _lane_evidence(l)
-    name, _ = llm_service.name_lane(text)
+    from bsimvis.app.services import capability_service
+
+    capability_service.run_mark(red, l.get("ns"), "name", l["key"], *_run_args(l))
+    try:
+        text, ev = _lane_evidence(l)
+        name, _ = llm_service.name_lane(text)
+    finally:
+        capability_service.run_done(red, l.get("ns"), "name", l["key"])
     value = {
         "name": name,
         "tags": ev["tags"][:4],
@@ -1618,9 +1624,33 @@ def _name_lane(l, red):
         _lane_caps(l, rec, text, name, {**value, "items": ev["items"]})
 
 
+def _run_args(l, name=None):
+    """(label, anchors) of a group's background step, for capability_service.run_mark."""
+    label = (
+        name
+        or f"{int(l.get('files') or 0)}-file group ({int(l.get('rows') or 0)} functions)"
+    )
+    return label, l.get("anchors")
+
+
 def suggest_capabilities(l, name, text, ev, name_id=None):
     """The model's capability suggestions for one group, cached in the queue
-    Redis (`capsugg:`) for the analyst to review; nothing goes to Kvrocks."""
+    Redis (`capsugg:`) for the analyst to review; nothing goes to Kvrocks.
+    Every source (Suggest, the N-way drawer, Build, a named group's pre-cache)
+    lands here, so the step is shown while it runs (`run_mark`)."""
+    from bsimvis.app.services import capability_service
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    key = capability_service.gkey(name_id, l["anchors"])
+    red = get_queue_redis()
+    capability_service.run_mark(red, l["ns"], "suggest", key, *_run_args(l, name))
+    try:
+        return _suggest(l, name, text, ev, name_id, key)
+    finally:
+        capability_service.run_done(red, l["ns"], "suggest", key)
+
+
+def _suggest(l, name, text, ev, name_id, key):
     from bsimvis.app.services import capability_service
     from bsimvis.app.services.llm_service import llm_service
     from bsimvis.app.services.redis_client import get_queue_redis, get_redis
@@ -1643,13 +1673,13 @@ def suggest_capabilities(l, name, text, ev, name_id=None):
     sugg = capability_service.build_suggestions(
         answer, lvl, text, ev.get("items") or [], group, amap
     )
-    key = capability_service.gkey(name_id, l["anchors"])
-    capability_service.cache_put(get_queue_redis(), l["ns"], key, sugg)
+    capability_service.cache_put(get_queue_redis(), l["ns"], key, sugg, l["anchors"])
     return sugg
 
 
 def _suggest_one(l, name, name_id, key):
     """Worker: one group's suggestions, asked by the analyst."""
+    from bsimvis.app.services import capability_service
     from bsimvis.app.services.redis_client import get_queue_redis
 
     try:
@@ -1657,7 +1687,9 @@ def _suggest_one(l, name, name_id, key):
         suggest_capabilities(l, name, text, ev, name_id)
     except Exception as e:
         logging.warning(f"capability suggestions failed: {e}")
-        get_queue_redis().delete(f"capsugg:{l['ns']}:{key}:pending")
+        red = get_queue_redis()
+        red.delete(f"capsugg:{l['ns']}:{key}:pending")
+        capability_service.run_done(red, l["ns"], "suggest", key)
 
 
 def request_suggestions(ns, coll, groups, total):
@@ -1680,6 +1712,15 @@ def request_suggestions(ns, coll, groups, total):
         keys.append(key)
         if not red.set(f"capsugg:{ns}:{key}:pending", 1, nx=True, ex=600):
             continue
+        # queued behind other model calls: shown from now, not from its turn
+        capability_service.run_mark(
+            red,
+            ns,
+            "suggest",
+            key,
+            g.get("name") or g.get("label") or "group",
+            g["anchors"],
+        )
         l = {
             "ns": ns,
             "gid": g.get("gid"),

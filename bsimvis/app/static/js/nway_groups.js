@@ -191,7 +191,8 @@ window.NwayGroups = (function () {
     // Capabilities (experimental): "N verified" (accepted for this group, names in the
     // title) and "N suggested" (suggestions no accepted one covers); both open the drawer.
     function capChips(g, S) {
-        const c = S.caps && S.caps[g.id];
+        // by name id first: the stored set's gids can be another build's
+        const c = S.caps && ((g.name_id && S.caps[`n:${g.name_id}`]) || S.caps[g.id]);
         if (!c) return '';
         const ok = c.acc.length ? `<button type="button" class="nway-gchip cap" data-cap-sugg="${escapeAttr(g.id)}" title="${escapeAttr(`Verified capabilities of this group: ${c.acc.join(', ')}`)}"><i class="fa-solid fa-circle-check"></i> ${c.acc.length} verified</button>` : '';
         const sug = c.sugg ? `<button type="button" class="nway-gchip ev-c" data-cap-sugg="${escapeAttr(g.id)}" title="The model's capability suggestions for this group: review and accept (experimental)"><i class="fa-solid fa-flask"></i> ${Number(c.sugg)} suggested</button>` : '';

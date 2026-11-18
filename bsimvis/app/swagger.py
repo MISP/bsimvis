@@ -4990,10 +4990,14 @@ class CapabilitySuggest(Resource):
                 "collection": fields.String(required=True),
                 "cluster_uuid": fields.String(required=True),
                 "groups": fields.List(
-                    fields.String,
-                    description="Group gids or name ids of the stored set",
+                    fields.Raw,
+                    description="Group gids or name ids of the stored set, or whole "
+                    "groups from an N-way view ({gid, anchors, kind, rows, files, tags, name, name_id})",
                 ),
                 "refresh": fields.Boolean(description="Ask again even when cached"),
+                "ask": fields.Boolean(
+                    description="false: only answer what is cached (default true)"
+                ),
             },
         )
     )
@@ -5010,11 +5014,12 @@ class CapabilitySuggestions(Resource):
         params={
             **_CAP_NS,
             "cluster_uuid": "Bin cluster with a stored N-way set",
-            "groups": "Comma list of gids / name ids (empty = every group)",
+            "groups": "Comma list of gids / name ids (empty = every group, plus every cached suggestion on the cluster's files)",
         }
     )
     def get(self):
-        """Cached suggestions per group, and the groups still being asked (`pending`)."""
+        """Cached suggestions per group, the groups still being asked (`pending`), and
+        the naming / suggesting / Build steps under way on the cluster (`running`)."""
         from bsimvis.app.routes.capabilities import get_suggestions
 
         return get_suggestions()

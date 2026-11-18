@@ -10,6 +10,7 @@ from flask_restx import abort
 from bsimvis.app.routes._list_query import fnum, in_bounds
 from bsimvis.app.routes.bin_sim import _fids_tags, _fn_haystack
 from bsimvis.app.services import (
+    capability_service,
     nway_column_service,
     nway_diff_service,
     nway_facets_service,
@@ -1312,9 +1313,15 @@ def run_semantics_job(payload, job_service, job_id):
         # a cluster uuid lives in one axis namespace (code by default)
         "axis": payload.get("axis") or config_service.get("nway_sem.axis", "code"),
     }
-    # the cluster lookup and the build both read request.args
-    with Flask(__name__).test_request_context(query_string=args):
-        return _semantics_job(payload, job_service, job_id)
+    cs = capability_service
+    red, ns, cu = get_queue_redis(), payload["collection"], payload["cluster_uuid"]
+    cs.run_mark(red, ns, "build", cu, "Build running", cluster=cu, job=job_id)
+    try:
+        # the cluster lookup and the build both read request.args
+        with Flask(__name__).test_request_context(query_string=args):
+            return _semantics_job(payload, job_service, job_id)
+    finally:
+        cs.run_done(red, ns, "build", cu)
 
 
 def _semantics_job(payload, job_service, job_id):
@@ -1417,6 +1424,15 @@ def queue_semantics(
         }
         payload["axis"] = stored_axes.get(u, axis)
         ids.append(js.create_job(JobType.NWAY_SEM_BUILD, payload))
+        capability_service.run_mark(
+            get_queue_redis(),
+            collection,
+            "build",
+            u,
+            "Build queued",
+            cluster=u,
+            job=ids[-1],
+        )
     return ids
 
 

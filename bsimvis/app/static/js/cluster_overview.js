@@ -558,12 +558,17 @@
             cur = null;
             const fn = v.hasFunctionsTab();
             el.innerHTML = `<div class="cov">
-                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${timelineCard(v, c)}${fn ? functionsCard(c) : ''}</div>
+                <div class="cov-hub">${membersCard(v, c)}${metadataCard(c)}${timelineCard(v, c)}${fn ? functionsCard(c) : ''}${fn && window.ClusterCapabilities ? ClusterCapabilities.card() : ''}</div>
                 ${fn ? `<div class="cov-duo">${lineageCard()}<div id="cov-lanes" style="display:flex; flex-direction:column; gap:14px; min-width:0;"></div></div>
                 <div id="cov-map" style="display:flex; flex-direction:column; gap:14px;"></div>` : ''}
             </div>`;
             if (linInst) { linInst.destroy(); linInst = null; }
-            if (fn) loadLanes(el, v, c).then(() => loadLineage(el, v, c)); // after lanes: same /nway build, so it hits the cache instead of racing it
+            // after lanes: same /nway build, so it hits the cache instead of racing it; that call also saves the
+            // set summary the Capabilities card reads
+            if (fn) loadLanes(el, v, c).then(() => {
+                if (window.ClusterCapabilities) ClusterCapabilities.loadCard(el, v, c);
+                return loadLineage(el, v, c);
+            });
         },
 
         /** Redraw the Timeline card on another date field. */

@@ -275,12 +275,55 @@ def load_set(r, ns, set_hash_=None, cluster_uuid=None):
             for g in rec["groups"]
         ],
     )
+    found = {}
     for g in rec["groups"]:
         n = hits.get(g["gid"]) or names.get(g.get("name_id"))
         g["name"] = shown_name(n)
         g["name_source"] = (n and ("user" if n.get("user_name") else "llm")) or None
         g["name_id"] = n and n["id"]
+        found[g["gid"]] = (n or {}).get("caps") or []
+    _attach_caps(r, ns, rec, found)
     return rec
+
+
+def _attach_caps(r, ns, rec, found):
+    """Each group's capabilities (`caps`), and `capabilities`: one entry per MBC /
+    ATT&CK id over the set, ranked by the rows of the groups holding it."""
+    from bsimvis.app.services import capability_service
+
+    caps = {
+        c["id"]: capability_service.named(c)
+        for c in capability_service.get_many(
+            r, ns, [i for ids in found.values() for i in ids]
+        )
+    }
+    by_label = {}
+    for g in rec["groups"]:
+        g["caps"] = [
+            {k: caps[i].get(k) for k in ("id", "mbc", "attack", "text", "level")}
+            for i in found.get(g["gid"], [])
+            if i in caps
+        ]
+        for c in g["caps"]:
+            for kind in ("mbc", "attack"):
+                for x in c[kind] or []:
+                    e = by_label.setdefault(
+                        x["id"],
+                        {
+                            "id": x["id"],
+                            "name": x["name"],
+                            "kind": kind,
+                            "groups": [],
+                            "rows": 0,
+                        },
+                    )
+                    if g["gid"] not in e["groups"]:
+                        e["groups"].append(g["gid"])
+                        e["rows"] += g.get("rows") or 0
+    rec["capabilities"] = sorted(by_label.values(), key=lambda e: -e["rows"])
+    rec["capabilities_pending"] = sum(
+        1 for g in rec["groups"] if g.get("name") and not found.get(g["gid"])
+    )
 
 
 if __name__ == "__main__":

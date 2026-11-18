@@ -8469,6 +8469,14 @@ def test_nway_diff():
                 and any(g.get("name") == _nm for g in _sem.json().get("groups", [])),
                 f"HTTP {_sem.status_code}",
             )
+            _sj = _sem.json() if _sem.status_code == 200 else {}
+            check(
+                "nway semantics: the set carries its capability roll-up and each group's caps",
+                isinstance(_sj.get("capabilities"), list)
+                and isinstance(_sj.get("capabilities_pending"), int)
+                and all(isinstance(g.get("caps"), list) for g in _sj.get("groups", [])),
+                str(_sj)[:200],
+            )
         _clr = requests.post(_gn, json={**_body, "name": ""}, timeout=30)
         check(
             "nway group_name: an empty name clears the analyst's name",

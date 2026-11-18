@@ -505,6 +505,9 @@ def cluster_bookmarks(r, col, limit=20):
                 "axis": next((a for a in BIN_AXES if a in parts[1:]), "overall"),
                 "node_type": "container" if "container" in parts else "file",
                 "retired": not m,
+                # False: retired before uuid history existed, nothing left to open.
+                "has_history": bool(m)
+                or bool(r.hexists(f"{col}:bin_cluster:uuid_history:{algo}", c_uuid)),
                 "cluster_key": f"{col}:{field}",
                 "note_count": len(mine),
                 "note_owners": sorted({n.get("owner", "user") for n in mine}),

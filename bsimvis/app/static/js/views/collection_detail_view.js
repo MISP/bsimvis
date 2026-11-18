@@ -223,7 +223,7 @@ window.CollectionDetailView = {
         const notes = b.note_count ? EntityRenderer.renderBinClusterNoteButton(b.cluster_key, b.note_owners || [], { raw_data: b }) : '';
         return `<div class="cdo-act">
             <span>${card || ''}</span>
-            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(b.axis))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${b.retired ? ' <span class="dim">retired</span>' : clusterNameSource({ ...b, cluster_id: b.cid }, b.axis)} ${axis}</span>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(b.axis))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${b.retired ? (b.has_history ? ' <span class="dim">retired</span>' : ' <span class="dim" title="Retired by a rebuild before uuid history existed: its files cannot be traced">lost in an older rebuild</span>') : clusterNameSource({ ...b, cluster_id: b.cid }, b.axis)} ${axis}</span>
             <span style="display:inline-flex; gap:6px; align-items:center;">${notes}<span class="mono dim" title="Files">${b.retired ? '' : Number(b.matching || 0).toLocaleString()}</span></span>
         </div>`;
     },

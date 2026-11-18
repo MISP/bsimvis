@@ -705,6 +705,39 @@ def build_suggestions(answer, lvl, text, items, group, amap):
     return out
 
 
+def accepted_for_group(caps, name_id, anchors):
+    """The accepted capabilities (from `listing`) with a group pointer at this group:
+    same name record, or anchors that match it."""
+    out = []
+    for c in caps:
+        for e in c.get("evidence") or []:
+            if e.get("type") != "group":
+                continue
+            if (name_id and e.get("name_id") == name_id) or (
+                anchors
+                and nway_sem_service.similarity(e.get("anchors") or [], anchors)
+                >= MATCH
+            ):
+                out.append(c)
+                break
+    return out
+
+
+def _nname(s):
+    return " ".join(re.findall(r"[a-z0-9]+", str(s or "").lower()))
+
+
+def covered_by(s, acc):
+    """uuid of the accepted capability (of the same group) a suggestion repeats:
+    the one it attaches to, or one with the same name; None when it is new."""
+    for c in acc:
+        if s.get("attach_to") == c["uuid"] or (
+            s.get("name") and _nname(s["name"]) == _nname(c.get("name"))
+        ):
+            return c["uuid"]
+    return None
+
+
 def cache_put(red, ns, key, sugg):
     red.set(
         f"capsugg:{ns}:{key}",
@@ -884,4 +917,15 @@ if __name__ == "__main__":
     )
     assert unbacked("Fortnite server flood", ev_text) == ["fortnite"]
     assert gkey("n1", []) == "n1" and gkey(None, [f1]).startswith("a")
+    # an accepted capability covers the suggestions of its group, by attach or name
+    acc_caps = [
+        {"uuid": "u1", "name": "UDP Flood", "evidence": [dict(grp, name_id="n1")]},
+        {"uuid": "u2", "name": "other", "evidence": [it]},
+    ]
+    mine = accepted_for_group(acc_caps, None, grp["anchors"])
+    assert [c["uuid"] for c in mine] == ["u1"]
+    assert accepted_for_group(acc_caps, "n1", [])[0]["uuid"] == "u1"
+    assert covered_by({"name": "udp  flood!"}, mine) == "u1"
+    assert covered_by({"attach_to": "u1", "name": ""}, mine) == "u1"
+    assert covered_by({"name": "telnet brute force"}, mine) is None
     print("ok")

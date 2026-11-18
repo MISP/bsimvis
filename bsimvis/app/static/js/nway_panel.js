@@ -2821,18 +2821,10 @@
             if (this._capsSig === sig) return;
             this._capsSig = sig;
             try {
-                const [s, a] = await Promise.all([ClusterCapabilities.fetchSugg(ctx), ClusterCapabilities.fetchAccepted(ctx)]);
+                // per group: verified (accepted) names, and suggestions no accepted one covers
+                const s = await ClusterCapabilities.fetchSugg(ctx);
                 if (this._capsSig !== sig) return;
-                const gidOf = {}, sugg = {}, acc = {};
-                ((s && s.groups) || []).forEach(g => {
-                    if (g.name_id) gidOf[g.name_id] = g.gid;
-                    if ((g.suggestions || []).length) sugg[g.gid] = g.suggestions.length;
-                });
-                ((a && a.capabilities) || []).forEach(c => (c.evidence || []).forEach(e => {
-                    const gid = e.type === 'group' && gidOf[e.name_id];
-                    if (gid && !(acc[gid] || []).includes(c.name)) (acc[gid] = acc[gid] || []).push(c.name);
-                }));
-                this._caps = { acc, sugg };
+                this._caps = ClusterCapabilities.groupStats(s);
                 const groups = (this.data && this.data.groups) || {};
                 this.el.querySelectorAll('[data-lev]').forEach(el => { const g = groups[el.dataset.lev]; if (g) el.innerHTML = this._laneEv(g); });
             } catch (e) { this._caps = null; }

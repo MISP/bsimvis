@@ -188,6 +188,16 @@ window.NwayGroups = (function () {
         return t ? window.tagInk(window.getTagMetadata(t).color) : '';
     }
 
+    // Capabilities (experimental): "N verified" (accepted for this group, names in the
+    // title) and "N suggested" (suggestions no accepted one covers); both open the drawer.
+    function capChips(g, S) {
+        const c = S.caps && S.caps[g.id];
+        if (!c) return '';
+        const ok = c.acc.length ? `<button type="button" class="nway-gchip cap" data-cap-sugg="${escapeAttr(g.id)}" title="${escapeAttr(`Verified capabilities of this group: ${c.acc.join(', ')}`)}"><i class="fa-solid fa-circle-check"></i> ${c.acc.length} verified</button>` : '';
+        const sug = c.sugg ? `<button type="button" class="nway-gchip ev-c" data-cap-sugg="${escapeAttr(g.id)}" title="The model's capability suggestions for this group: review and accept (experimental)"><i class="fa-solid fa-flask"></i> ${Number(c.sugg)} suggested</button>` : '';
+        return ok + sug;
+    }
+
     // What backs the name: the shared prefix, findings and a few strings the lane's functions use.
     function laneEv(g, S, graph = true) {
         const ev = (S.evid || {})[g.id] || {};
@@ -195,8 +205,7 @@ window.NwayGroups = (function () {
         const chip = (text, title, cls) => `<span class="nway-gchip${cls ? ` ${cls}` : ''}" title="${escapeAttr(title)}">${escapeHtml(text)}</span>`;
         return (graph ? graphBtn : '') + (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
             + laneTags(g, S).map(tagBadge).join('')
-            + ((S.caps && S.caps.acc[g.id]) || []).map(n => chip(n, 'A capability an analyst accepted for this group (experimental)', 'cap')).join('')
-            + (S.caps && S.caps.sugg[g.id] ? `<button type="button" class="nway-gchip ev-c" data-cap-sugg="${escapeAttr(g.id)}" title="The model's capability suggestions for this group: review and accept (experimental)"><i class="fa-solid fa-flask"></i> ${Number(S.caps.sugg[g.id])} suggested</button>` : '')
+            + capChips(g, S)
             + (ev.strings || []).map(t => chip(`"${t}"`, 'A string the lane\'s functions use', 'str')).join('');
     }
 

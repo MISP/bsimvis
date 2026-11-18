@@ -5020,6 +5020,18 @@ class CapabilitySuggestions(Resource):
         return get_suggestions()
 
 
+@ns_capability.route("/functions")
+class CapabilityFunctions(Resource):
+    @ns_capability.doc(
+        params={**_CAP_NS, "fids": "Comma list of md5:addr (at most 300)"}
+    )
+    def get(self):
+        """Names and files of evidence functions, for the capability evidence lists."""
+        from bsimvis.app.routes.capabilities import get_functions
+
+        return get_functions()
+
+
 @ns_capability.route("/catalog")
 class CapabilityCatalog(Resource):
     @ns_capability.doc(params={"q": "Id or name contains"})

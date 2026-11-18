@@ -8623,7 +8623,41 @@ def test_nway_diff():
                     _sp.status_code == 200 and not (_sp.json().get("pending")),
                     _sp.text[:300],
                 )
+                # accepting it for the lane marks the suggestion covered and the lane verified
+                _grp_ev = {
+                    "type": "group",
+                    "anchors": _sl["anchors"],
+                    "label": "test lane",
+                }
+                _sv2 = _cap_save({"name": "Seeded", "evidence": [_grp_ev]})
+                _uid2 = ((_sv2.json() if _sv2.ok else {}).get("capability") or {}).get(
+                    "uuid"
+                )
+                _sg3 = requests.get(f"{_CB}/suggestions", params=_sq, timeout=30).json()
+                _g3 = (_sg3.get("groups") or [{}])[0]
+                check(
+                    "capability suggestions: a lane's accepted capability covers its suggestion",
+                    bool(_uid2)
+                    and [c.get("uuid") for c in _g3.get("accepted") or []] == [_uid2]
+                    and (_g3.get("suggestions") or [{}])[0].get("accepted") == _uid2,
+                    str(_g3)[:300],
+                )
+                if _uid2:
+                    requests.delete(
+                        f"{_CB}/{_uid2}", params={"collection": COLLECTION}, timeout=30
+                    )
                 _cap_q().delete(f"capsugg:{COLLECTION}:{_gk}")
+            _fl = requests.get(
+                f"{_CB}/functions",
+                params={"collection": COLLECTION, "fids": f"{_fid},{'0' * 32}:1"},
+                timeout=30,
+            ).json()
+            check(
+                "capability functions: names an evidence function, skips an unknown one",
+                [x["fid"] for x in _fl.get("functions") or []] == [_fid]
+                and bool(_fl["functions"][0].get("name")),
+                str(_fl)[:300],
+            )
         finally:
             _cap_r().hdel(f"{COLLECTION}:nway_sem:by_cluster", _tcu)
         _d1 = requests.delete(

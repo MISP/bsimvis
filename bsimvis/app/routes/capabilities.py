@@ -119,21 +119,56 @@ def _pick(rec, wanted):
 
 
 def _answer(red, ns, groups):
+    """Each group's cached suggestions and the accepted capabilities that point at
+    it; a suggestion that one of them already covers carries `accepted`."""
     got, pending = capability_service.cache_get(red, ns, [g["key"] for g in groups])
-    return {
-        "groups": [
+    caps = capability_service.listing(get_redis(), ns)
+    out = []
+    for g in groups:
+        acc = capability_service.accepted_for_group(
+            caps, g.get("name_id"), g["anchors"]
+        )
+        sugg = (got.get(g["key"]) or {}).get("suggestions")
+        for s in sugg or []:
+            s["accepted"] = capability_service.covered_by(s, acc)
+        out.append(
             {
                 "gid": g.get("gid"),
                 "name_id": g.get("name_id"),
                 "name": g.get("name"),
                 "key": g["key"],
-                "suggestions": (got.get(g["key"]) or {}).get("suggestions"),
+                "suggestions": sugg,
                 "at": (got.get(g["key"]) or {}).get("at"),
+                "accepted": [{"uuid": c["uuid"], "name": c["name"]} for c in acc],
             }
-            for g in groups
-        ],
-        "pending": pending,
-    }
+        )
+    return {"groups": out, "pending": pending}
+
+
+def get_functions():
+    """Names and files of up to 300 functions (`fids`: comma list of md5:addr), for
+    the evidence lists."""
+    a = request.args
+    if a.get("pool"):
+        return {"functions": []}
+    ns, r = _ns(a), get_redis()
+    fids = [f for f in (a.get("fids") or "").split(",") if f][:300]
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{ns}:func:{f}:meta")
+    out = []
+    for f, raw in zip(fids, pipe.execute()):
+        m = capability_service._loads(raw) if raw else None
+        m = m[0] if isinstance(m, list) and m else m
+        if isinstance(m, dict):
+            out.append(
+                {
+                    "fid": f,
+                    "name": m.get("function_name"),
+                    "file_name": m.get("file_name"),
+                }
+            )
+    return {"functions": out}
 
 
 def post_suggest():

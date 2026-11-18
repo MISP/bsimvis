@@ -38,6 +38,22 @@
 .cap-ev:hover { background:var(--hover); }
 .cap-ev .w { color:var(--dim); font-size:0.7rem; }
 .cap-warn { color:var(--warning, #d97706); font-size:0.72rem; }
+.cap-evx { all:unset; cursor:pointer; overflow-wrap:anywhere; }
+.cap-evx:hover { color:var(--accent); } .cap-evx:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.cap-fns { display:flex; flex-direction:column; margin:4px 0 2px; border-left:2px solid var(--border); max-height:320px; overflow:auto; }
+.cap-fn { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, auto) 14px; gap:8px; align-items:baseline; padding:2px 6px; cursor:default; font-family:Consolas, monospace; font-size:0.72rem; }
+.cap-fn:hover { background:var(--hover); }
+.cap-fn .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cap-fn .w { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); }
+.cap-card { background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:5px; min-width:0; }
+.cap-card.sug { border-style:dashed; border-color:color-mix(in srgb, var(--info) 60%, transparent); }
+.cap-card.acc { border-color:color-mix(in srgb, var(--success) 55%, transparent); }
+.cap-card .hd { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:8px; align-items:start; }
+.cap-card .ttl { font-weight:600; font-size:0.84rem; overflow-wrap:anywhere; min-width:0; }
+.cap-card .acts { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+.cap-card .meta { color:var(--dim); font-size:0.72rem; overflow-wrap:anywhere; line-height:1.4; }
+.cap-card .ids { display:flex; flex-wrap:wrap; gap:4px; }
+.cap-sec { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:0.8rem; }
 #cap-tray { position:fixed; left:0; right:0; bottom:0; z-index:9000; background:var(--card-bg); border-top:1px solid color-mix(in srgb, var(--success) 60%, transparent); box-shadow:0 -6px 18px rgb(0 0 0 / .3); padding:0 max(12px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(12px, env(safe-area-inset-left, 0px)); }
 #cap-tray .bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:6px 0; font-size:0.8rem; }
 #cap-tray .bar b { max-width:40ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -51,17 +67,45 @@
     }
 
     const shortFid = f => { const [m, a] = String(f).split(':'); return `${(m || '').slice(0, 8)}…:${a || ''}`; };
+    const fnsOf = e => e.fids || e.anchors || [];
 
     function evLabel(e) {
         const n = (e.fids || []).length;
-        if (e.type === 'functions') return `${n} function${n === 1 ? '' : 's'} · ${shortFid(e.fids[0])}${n > 1 ? ' …' : ''}`;
-        if (e.type === 'group') return `group ${e.label || ''} · ${(e.anchors || []).length} anchors`;
+        if (e.type === 'functions') return `${n} function${n === 1 ? '' : 's'}`;
+        if (e.type === 'group') return `group ${e.label || ''} · ${(e.anchors || []).length} sample functions`;
         if (e.type === 'string') return `string "${e.value}"${n ? ` · ${n} fn` : ''}`;
         return `${e.type} ${e.rule}${n ? ` · ${n} fn` : ''}`;
     }
 
+    // Function names for the evidence lists, by collection and md5:addr (fetched in batches).
+    const NAMES = {};
+    async function loadNames(coll, fids) {
+        const miss = [...new Set(fids)].filter(f => !NAMES[`${coll}|${f}`]);
+        for (let i = 0; i < miss.length; i += 300) {
+            const part = miss.slice(i, i + 300);
+            part.forEach(f => { NAMES[`${coll}|${f}`] = { pending: true }; });
+            try {
+                const r = await fetch(`/api/capability/functions?collection=${encodeURIComponent(coll)}&fids=${encodeURIComponent(part.join(','))}`);
+                const j = await r.json();
+                (j.functions || []).forEach(x => { NAMES[`${coll}|${x.fid}`] = x; });
+            } catch (e) { }
+            part.forEach(f => { if (NAMES[`${coll}|${f}`].pending) NAMES[`${coll}|${f}`] = { fid: f }; });
+        }
+    }
+
+    function fnRows(d, e, k) {
+        return `<div class="cap-fns">${fnsOf(e).map((f, i) => {
+            const n = NAMES[`${d.collection}|${f}`] || {};
+            const [, addr] = f.split(':');
+            return `<div class="cap-fn" data-pf="${escapeAttr(f)}">
+                <span class="nm">${n.pending ? '<span class="w">…</span>' : escapeHtml(n.name || shortFid(f))}</span>
+                <span class="w" title="${escapeAttr(f)}">${escapeHtml(n.file_name || f.split(':')[0].slice(0, 8))} · ${escapeHtml(addr || '')}</span>
+                ${e.type === 'group' ? '<span></span>' : `<span class="cap-x" data-rmfn="${k}:${i}" title="Remove this function">×</span>`}</div>`;
+        }).join('')}</div>`;
+    }
+
     // ---- the editor ----
-    function html(d) {
+    function html(d, open = new Set()) {
         const ids = [...(d.mbc || []), ...(d.attack || [])];
         const names = d.names || {};
         return `<div class="cap-ed">
@@ -69,10 +113,13 @@
             ${(d.unbacked || []).length ? `<div class="cap-warn"><i class="fa-solid fa-triangle-exclamation"></i> No pointer holds: ${escapeHtml(d.unbacked.join(', '))}</div>` : ''}
             <div class="cap-row">${ids.map(i => `<span class="cap-chip id" title="${escapeAttr(names[i] || '')}">${escapeHtml(i)} <span style="color:var(--dim)">${escapeHtml((names[i] || '').slice(0, 28))}</span><span class="cap-x" data-rmid="${escapeAttr(i)}" title="Remove">×</span></span>`).join('')}
                 <input class="cap-idq" aria-label="Add an MBC or ATT&CK id" placeholder="+ MBC / ATT&CK id" style="width:150px;"><div class="cap-idres" hidden></div></div>
-            <div class="cap-evl">${(d.evidence || []).map((e, k) => `<div class="cap-ev" ${(e.fids || e.anchors || []).length ? `data-prev="${k}"` : ''}>
+            <div class="cap-evl">${(d.evidence || []).map((e, k) => {
+                const n = fnsOf(e).length, isOpen = open.has(k);
+                return `<div class="cap-ev">
                 <i class="fa-solid ${ICON[e.type] || 'fa-circle'}" style="color:var(--dim); margin-top:3px;"></i>
-                <span style="min-width:0; overflow-wrap:anywhere;">${escapeHtml(evLabel(e))}${e.why ? `<div class="w">${escapeHtml(e.why)}</div>` : ''}${e.src === 'llm' ? ' <span class="w">model</span>' : ''}</span>
-                <span class="cap-x" data-rmev="${k}" title="Remove this pointer">×</span></div>`).join('') || '<div class="w" style="color:var(--dim)">No evidence yet: add functions from any view (right click, Capability).</div>'}</div>
+                <span style="min-width:0; overflow-wrap:anywhere;">${n ? `<button type="button" class="cap-evx" data-evx="${k}" aria-expanded="${isOpen}" title="${isOpen ? 'Hide' : 'Show'} its functions"><i class="fa-solid fa-chevron-${isOpen ? 'down' : 'right'}"></i> ${escapeHtml(evLabel(e))}</button>` : escapeHtml(evLabel(e))}${e.src === 'llm' ? ' <span class="w">model</span>' : ''}${e.why ? `<div class="w">${escapeHtml(e.why)}</div>` : ''}${isOpen ? fnRows(d, e, k) : ''}</span>
+                <span class="cap-x" data-rmev="${k}" title="Remove this pointer">×</span></div>`;
+            }).join('') || '<div class="w" style="color:var(--dim)">No evidence yet: add functions from any view (right click, Capability).</div>'}</div>
             <input class="cap-addfn" aria-label="Add a function by md5:addr" placeholder="+ function md5:addr, Enter">
             <textarea class="cap-desc" rows="2" aria-label="Description" placeholder="Why (optional)" maxlength="1000">${escapeHtml(d.description || '')}</textarea>
         </div>`;
@@ -81,7 +128,8 @@
     // Mounts the editor on `root`, editing `d` in place; `onChange()` after each edit.
     function mount(root, d, onChange = () => {}) {
         ensureCss();
-        const render = () => { root.innerHTML = html(d); };
+        const open = new Set();
+        const render = () => { root.innerHTML = html(d, open); };
         let timer = null;
         render();
         root.oninput = e => {
@@ -104,10 +152,26 @@
             }
         };
         root.onclick = e => {
-            const t = e.target.closest('[data-rmid],[data-rmev],[data-addid]');
+            const t = e.target.closest('[data-rmid],[data-rmev],[data-addid],[data-evx],[data-rmfn]');
             if (!t) return;
+            if (t.dataset.evx) {
+                const k = +t.dataset.evx;
+                if (open.has(k)) open.delete(k);
+                else {
+                    open.add(k);
+                    if (d.collection && !d.pool) loadNames(d.collection, fnsOf(d.evidence[k])).then(() => { if (root.isConnected) render(); });
+                }
+                render();
+                return;
+            }
             if (t.dataset.rmid) { d.mbc = (d.mbc || []).filter(i => i !== t.dataset.rmid); d.attack = (d.attack || []).filter(i => i !== t.dataset.rmid); }
-            else if (t.dataset.rmev) { d.evidence.splice(+t.dataset.rmev, 1); }
+            else if (t.dataset.rmfn) {
+                const [k, i] = t.dataset.rmfn.split(':').map(Number);
+                const ev = d.evidence[k];
+                ev.fids = ev.fids.filter((_, j) => j !== i);
+                if (!ev.fids.length && ev.type === 'functions') { d.evidence.splice(k, 1); open.clear(); }
+            }
+            else if (t.dataset.rmev) { d.evidence.splice(+t.dataset.rmev, 1); open.clear(); }
             else if (t.dataset.addid) {
                 const k = t.dataset.kind === 'mbc' ? 'mbc' : 'attack';
                 d[k] = [...new Set([...(d[k] || []), t.dataset.addid])];
@@ -123,15 +187,16 @@
             d.evidence = [...(d.evidence || []), { type: 'functions', fids: [`${m[1].toLowerCase()}:${m[2]}`], src: 'user' }];
             render(); onChange();
         };
+        // one code preview per listed function
         root.onmouseover = e => {
-            const row = e.target.closest('[data-prev]');
-            const ev = row && d.evidence[+row.dataset.prev];
-            const f = ev && (ev.fids || ev.anchors || [])[0];
-            if (!f || !window.showCodePreview || !d.collection) return;
+            const row = e.target.closest('[data-pf]');
+            const f = row && row.dataset.pf;
+            if (!f || !window.showCodePreview || !d.collection || d.pool) return;
             const [md5, addr] = f.split(':');
-            window.showCodePreview(`${d.collection}:func:${md5}:${addr}`, f, addr, md5, 0, e);
+            const n = NAMES[`${d.collection}|${f}`] || {};
+            window.showCodePreview(`${d.collection}:func:${md5}:${addr}`, n.name || f, addr, md5, 0, e, 0, n.file_name || '');
         };
-        root.onmouseout = e => { if (e.target.closest('[data-prev]') && window.hideCodePreview) window.hideCodePreview(e); };
+        root.onmouseout = e => { if (e.target.closest('[data-pf]') && window.hideCodePreview) window.hideCodePreview(e); };
         return { render, get: () => d };
     }
 

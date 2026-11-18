@@ -1392,9 +1392,7 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             const sw = el('span', { class: 'lin-sw' }), t = el('span', { class: 'lin-nt' }), nm = el('span', { class: 'lin-nn' });
             sw.style.background = tierCss(it.color, it.tier);
             putName(nm, it.label);
-            t.append(nm);
-            if (it.x.g) t.insertAdjacentHTML('beforeend', NG.renameBtn(it.x.g));
-            t.append(el('span', { class: 'lin-ns' }, it.sub));
+            t.append(nm, el('span', { class: 'lin-ns' }, it.sub));
             row.append(chev, sw, t, el('span', { class: 'lin-nc' }, fmt(it.rows.length)));
             chev.addEventListener('click', ev => { ev.stopPropagation(); NAV.open.set(kk, !open); groupList(); });
             row.addEventListener('mouseenter', ev => { navHover(it); navTip(ev, it); });
@@ -1543,8 +1541,6 @@ button.lin-chip{background:transparent;color:inherit;cursor:pointer;font-family:
             if (status === 'off') st.S.off = true;
             relabel();
         }
-        // the pane's group pencil (nway_groups.js): a rename relabels every view, as a model answer does
-        NG.bindRename(side, id => groupMap()[id], () => st.S, () => relabel());
         function relabel() {
             if (!st.L || !st.R || st.dead) return;
             applyTrack(false);

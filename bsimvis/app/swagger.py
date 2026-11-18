@@ -2992,109 +2992,16 @@ class BinSimNwayLaneNames(Resource):
             {
                 "lanes": fields.List(
                     fields.Raw,
-                    description="Lane groups: id, files, total, rows, sample (function names, or string values with kind=string), hint (shared prefix), fids (functions read for evidence), kind (string for a lane of strings), plus ns / gkind / anchors from the group meta to read and keep names in the registry",
+                    description="Lane groups: id, files, total, rows, sample (function names, or string values with kind=string), hint (shared prefix), fids (functions read for evidence), kind (string for a lane of strings)",
                 )
             },
         )
     )
     def post(self):
-        """LLM names of lane groups: stored, cached, or started in the background (status pending, poll again). `sources` says user or llm per lane."""
+        """LLM names of lane groups: cached, or started in the background (status pending, poll again)."""
         from bsimvis.app.routes.nway import post_nway_lane_names
 
         return post_nway_lane_names()
-
-
-@ns_bin_sim.route("/nway/group_name")
-class BinSimNwayGroupName(Resource):
-    @ns_bin_sim.doc(
-        body=ns_bin_sim.model(
-            "NwayGroupName",
-            {
-                "collection": fields.String(description="Collection (or pool)"),
-                "pool": fields.String(description="Pool ID"),
-                "kind": fields.String(
-                    description="Group kind: lane, region, presence, delta or born"
-                ),
-                "anchors": fields.List(
-                    fields.String, description="The group's `anchors` from /nway"
-                ),
-                "name": fields.String(description="New name; empty clears it"),
-                "owner": fields.String(description="Who renamed it"),
-            },
-        )
-    )
-    def post(self):
-        """Renames an N-way group for good: the name follows its code across rebuilds."""
-        from bsimvis.app.routes.nway import post_nway_group_name
-
-        return post_nway_group_name()
-
-
-@ns_bin_sim.route("/nway/semantics/build")
-class BinSimNwaySemanticsBuild(Resource):
-    @ns_bin_sim.doc(
-        body=ns_bin_sim.model(
-            "NwaySemanticsBuild",
-            {
-                "collection": fields.String(required=True, description="Collection"),
-                "cluster_uuids": fields.List(
-                    fields.String,
-                    description="Bin clusters to build; omitted = the top families (activity, then size) plus every stored set",
-                ),
-                "top_n": fields.Integer(
-                    description="How many top families (default nway_sem.top_n, 50)"
-                ),
-                "axis": fields.String(
-                    description="Cluster axis of the uuids (default nway_sem.axis, code)"
-                ),
-                "force": fields.Boolean(
-                    description="Rebuild sets whose files did not change"
-                ),
-                "big": fields.Boolean(
-                    description="Also build sets above nway.auto_build_max_members (long builds)"
-                ),
-            },
-        )
-    )
-    def post(self):
-        """Queues NWAY_SEM_BUILD jobs: stored N-way summaries, names and capabilities per cluster."""
-        from bsimvis.app.routes.nway import post_nway_semantics_build
-
-        return post_nway_semantics_build()
-
-
-@ns_bin_sim.route("/nway/capabilities")
-class BinSimNwayCapabilities(Resource):
-    @ns_bin_sim.doc(
-        params={
-            "collection": "Collection",
-            "pool": "Pool ID",
-            "id": "Only capabilities carrying this MBC or ATT&CK id (B0033, C0001, T1498.001)",
-            "limit": "At most this many (default 200, max 1000)",
-        }
-    )
-    def get(self):
-        """Capabilities the model found in N-way groups (MBC / ATT&CK ids, text, groups)."""
-        from bsimvis.app.routes.nway import get_nway_capabilities
-
-        return get_nway_capabilities()
-
-
-@ns_bin_sim.route("/nway/semantics")
-class BinSimNwaySemantics(Resource):
-    @ns_bin_sim.doc(
-        params={
-            "collection": "Collection",
-            "pool": "Pool ID",
-            "cluster_uuid": "Bin cluster whose set was opened",
-            "set_hash": "Stored set hash (from a previous answer)",
-        }
-    )
-    def get(self):
-        """Stored tiers, groups and names of a set, without building its N-way."""
-        from bsimvis.app.routes.nway import get_nway_semantics
-
-        return get_nway_semantics()
 
 
 @ns_bin_sim.route("/nway/role")

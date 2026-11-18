@@ -357,7 +357,6 @@ window.ClusterDetailView = {
                         <button class="bsim-tab" id="cluster-tab-btn-members" onclick="ClusterDetailView.switchTab('members')">Members</button>
                         <button class="bsim-tab" id="cluster-tab-btn-metadata" onclick="ClusterDetailView.switchTab('metadata')">Metadata</button>
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-functions" onclick="ClusterDetailView.switchTab('functions')">Functions</button>` : ''}
-                        ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-capabilities" onclick="ClusterDetailView.switchTab('capabilities')" title="What the code does: MBC / ATT&amp;CK ids the model read from each N-way group, and the groups' names">Capabilities</button>` : ''}
                         ${this.hasFunctionsTab() ? `<button class="bsim-tab" id="cluster-tab-btn-lineage" onclick="ClusterDetailView.openLineage(event)" title="Who inherited what from whom: the lineage of this cluster's files, on its own page"><i class="fa-solid fa-sitemap"></i> Lineage</button>` : ''}
                     </div>
 
@@ -396,7 +395,6 @@ window.ClusterDetailView = {
                     <div id="cluster-tab-overview" style="display:${this.isBinary ? 'block' : 'none'}; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-metadata" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-functions" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
-                    <div id="cluster-tab-capabilities" style="display:none; flex:1; min-height:0; overflow:auto;"></div>
                     <div id="cluster-tab-medoid" style="display:${this.isBinary ? 'none' : 'flex'}; flex:1; min-height:0; flex-direction:column;"></div>
                 </div>
             </div>
@@ -800,7 +798,6 @@ window.ClusterDetailView = {
         if (this.tab === 'overview') this.renderOverviewTab();
         if (this.tab === 'metadata') this.renderMetadataTab();
         if (this.tab === 'functions') this.renderFunctionsTab();
-        if (this.tab === 'capabilities' && window.ClusterCapabilities) window.ClusterCapabilities.renderTab(document.getElementById('cluster-tab-capabilities'), this);
         if (this.tab === 'medoid') this.renderMedoidTab();
     },
 
@@ -833,7 +830,7 @@ window.ClusterDetailView = {
 
     switchTab(tab) {
         this.tab = tab;
-        ['overview', 'members', 'metadata', 'functions', 'capabilities', 'medoid'].forEach(t => {
+        ['overview', 'members', 'metadata', 'functions', 'medoid'].forEach(t => {
             const btn = document.getElementById(`cluster-tab-btn-${t}`);
             if (!btn) return;
             btn.classList.toggle('active', t === tab);
@@ -847,7 +844,6 @@ window.ClusterDetailView = {
         if (tab === 'overview') this.renderOverviewTab();
         if (tab === 'metadata') this.renderMetadataTab();
         if (tab === 'functions') this.renderFunctionsTab();
-        if (tab === 'capabilities' && window.ClusterCapabilities) window.ClusterCapabilities.renderTab(document.getElementById('cluster-tab-capabilities'), this);
         if (tab === 'medoid') this.renderMedoidTab();
     },
 

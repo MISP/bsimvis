@@ -25,7 +25,6 @@ sees a big int.
 """
 
 import json
-import logging
 import math
 import re
 import threading
@@ -44,11 +43,7 @@ from bsimvis.app.services.nway_diff_service import (
     _decode,
 )
 from bsimvis.app.services.nway_match import PairEdges, concat_edges
-from bsimvis.app.services import (
-    nway_region_service,
-    nway_role_service,
-    nway_sem_service,
-)
+from bsimvis.app.services import nway_region_service, nway_role_service
 from bsimvis.app.services.tag_taxonomy import tag_body, tag_prefixes
 
 MODES = ("tag", "lane", "prefix", "role", "presence", "delta", "region")
@@ -1276,10 +1271,6 @@ def _annotate(pairs, fmeta):
                 best[k] = max(best.get(k, 0), r["weight"])
         g["sample"] = sorted(best, key=best.get, reverse=True)[:10]
         if g["kind"] in ("lane", "region", "presence", "delta", "born"):
-            # what recognises this group after a rebuild (nway_sem_service)
-            g["anchors"] = nway_sem_service.anchors(
-                f for r in rows[g["id"]] for f in _fids(r)
-            )
 
             def finds(r):
                 return [
@@ -1329,7 +1320,6 @@ _NOISE = re.compile(r"\bin_cr\d|\bunaff_cr\d|^\s*\|\s*\(uint\)|^\s*\*/|^\s*[{}]\
 _JUNK_NAME = re.compile(r"^(func_|LAB_|DAT_|FID_conflict:)|\+\d")
 _LIT = re.compile(r'"((?:[^"\\\n]|\\.){4,60})"')
 LANE_NAME_TTL = 30 * 86400
-LANE_PROMPT_V = 10  # bump when the prompt changes, so cached names are redone
 LANE_NAME_RETRY = 120  # seconds before a lane that failed is tried again
 _LANE_POOL = None
 _LANE_STATE = {}  # content key -> {"status": "pending"|"failed", "at": time}
@@ -1521,122 +1511,24 @@ def _name_lane(l, red):
 
     text, tags, strings, calls = _lane_evidence(l)
     name, _ = llm_service.name_lane(text)
-    value = {"name": name, "tags": tags[:4], "strings": strings[:4], "calls": calls}
     with _LANE_LOCK:
         if name:
             try:
+                value = {
+                    "name": name,
+                    "tags": tags[:4],
+                    "strings": strings[:4],
+                    "calls": calls,
+                }
                 red.set(f"nway:lane:{l['key']}", json.dumps(value), ex=LANE_NAME_TTL)
             except Exception:
                 pass
             _LANE_STATE.pop(l["key"], None)
         else:
             _LANE_STATE[l["key"]] = {"status": "failed", "at": time.time()}
-    rec = name and _remember_llm(l, value)
-    if rec:
-        _lane_caps(l, rec, text, name, value)
 
 
-def _lane_caps(l, rec, text, name, ev):
-    """Worker: the group's MBC / ATT&CK capabilities, from the evidence its name
-    came from, kept as a capability record linked to the name record. An empty
-    answer is kept too (`caps: []`), so a group is asked once."""
-    from bsimvis.app.services import capability_service
-    from bsimvis.app.services.llm_service import llm_service
-    from bsimvis.app.services.redis_client import get_redis
-
-    if not capability_service.enabled():
-        return
-    try:
-        lvl = capability_service.level(l.get("rows"))
-        choices, _, _ = capability_service.prompt_lists(lvl)
-        answer, _ = llm_service.lane_capabilities(
-            text, name, choices, capability_service.schema(lvl)
-        )
-        answer = capability_service.clean(answer, lvl, text)
-        kv = get_redis()
-        evidence = {k: ev.get(k, []) for k in ("tags", "strings", "calls")}
-        cap = answer and capability_service.save(
-            kv, l["ns"], l["anchors"], answer, lvl, group=rec["id"], evidence=evidence
-        )
-        # the newest answer replaces the group's older ones
-        caps = [cap["id"]] if cap else []
-        for old in rec.get("caps") or []:
-            if old not in caps:
-                capability_service.unlink(kv, l["ns"], old, rec["id"])
-        nway_sem_service.remember(
-            kv,
-            l["ns"],
-            l["gkind"],
-            l["anchors"],
-            caps=caps,
-            caps_v=capability_service.CAPS_V,
-        )
-    except Exception as e:
-        logging.warning(f"lane capabilities failed: {e}")
-
-
-def _caps_v():
-    """The capability answer version a group needs (None when capabilities are off)."""
-    from bsimvis.app.services import capability_service
-
-    return capability_service.CAPS_V if capability_service.enabled() else None
-
-
-def _caps_only(l, rec):
-    """Worker: capabilities of a group named before they existed."""
-    try:
-        text, tags, strings, calls = _lane_evidence(l)
-        name = nway_sem_service.shown_name(rec) or ""
-        ev = {"tags": tags[:4], "strings": strings[:4], "calls": calls}
-        _lane_caps(l, rec, text, name, ev)
-    finally:
-        with _LANE_LOCK:
-            _LANE_STATE.pop(f"caps:{rec['id']}", None)
-
-
-def nameable(g):
-    """The groups the model names (nway_groups.js `nameable`)."""
-    kind = g.get("kind")
-    return (
-        kind in ("lane", "presence", "delta")
-        or (kind == "region" and not g.get("label"))
-    ) and bool(g.get("sample") or g.get("hint") or g.get("tags") or g.get("fids"))
-
-
-def naming_payload(g, n_files):
-    """One lane of a lane_names request, as nway_groups.js `payload` builds it."""
-    out = {
-        "id": g["id"],
-        "files": g.get("files") or g["mask"].count("1"),
-        "total": n_files or len(g["mask"]),
-        "rows": g.get("rows"),
-        "sample": g.get("sample") or [],
-        "hint": g.get("hint") or "",
-        "tags": g.get("tags") or [],
-        "fids": g.get("fids") or [],
-        "name_fids": g.get("name_fids") or [],
-        "tag_rows": g.get("tag_rows") or 0,
-        "roles": g.get("roles") or {},
-    }
-    if g.get("kind") in ("presence", "delta"):
-        out["kind"] = "summary"
-    if g.get("ns") and g.get("anchors"):
-        out.update(ns=g["ns"], gkind=g["kind"], anchors=g["anchors"])
-    return out
-
-
-def name_now(lanes, wait=1200):
-    """lane_names, waited on: for a job, which has no page to poll for it.
-    -> the last answer (status ready, or pending when `wait` seconds ran out)."""
-    end = time.time() + wait
-    while True:
-        out = lane_names(lanes)
-        if out["status"] != "pending" or time.time() > end:
-            return out
-        time.sleep(2)
-
-
-def lane_names(lanes, llm=True):
+def lane_names(lanes):
     """{'status': off|pending|ready, 'names': {lane id: name}, 'evidence': {lane id: {tags, strings}}} for lane groups.
 
     `lanes` is the lane group meta: id, files, total, rows, sample, hint, tags,
@@ -1675,43 +1567,16 @@ def lane_names(lanes, llm=True):
                 str(k)[:20]: int(v)
                 for k, v in list((l.get("roles") or {}).items())[:10]
             },
-            "v": LANE_PROMPT_V,
+            "v": 10,  # bump when the prompt changes, so cached names are redone
         }
         if l.get("kind") in ("string", "summary"):
             item["kind"] = l["kind"]
         key = hashlib.sha1(json.dumps(item, sort_keys=True).encode()).hexdigest()
-        # registry identity: not part of the content key, so cached names stay valid
-        sem = {
-            "ns": l.get("ns") or None,
-            "gkind": str(l.get("gkind") or ""),
-            "anchors": [str(x) for x in (l.get("anchors") or [])[:50]],
-        }
-        clean[str(l["id"])] = {**item, **sem, "rows": int(l["rows"]), "key": key}
-    stored = _stored_names(clean)
-    caps = _stored_caps(clean, stored)
+        clean[str(l["id"])] = {**item, "rows": int(l["rows"]), "key": key}
     red = get_queue_redis()
-    names, evidence, sources, pending = {}, {}, {}, False
-    todo, caps_todo = [], []
+    names, evidence, pending = {}, {}, False
+    todo = []
     for lid, l in clean.items():
-        rec = stored.get(lid) or {}
-        model = rec.get("llm") or {}
-        current = model.get("name") and model.get("v") == LANE_PROMPT_V
-        if rec.get("user_name") or current:
-            names[lid] = rec.get("user_name") or model["name"]
-            sources[lid] = "user" if rec.get("user_name") else "llm"
-            evidence[lid] = {k: model.get(k, []) for k in ("tags", "strings", "calls")}
-            evidence[lid]["caps"] = caps.get(lid, [])
-            if llm and rec.get("caps_v") != _caps_v():
-                with _LANE_LOCK:
-                    if f"caps:{rec['id']}" not in _LANE_STATE:
-                        _LANE_STATE[f"caps:{rec['id']}"] = {
-                            "status": "pending",
-                            "at": time.time(),
-                        }
-                        caps_todo.append((l, rec))
-            continue
-        if not llm:
-            continue
         try:
             hit = red.get(f"nway:lane:{l['key']}")
         except Exception:
@@ -1719,17 +1584,12 @@ def lane_names(lanes, llm=True):
         if hit:
             value = json.loads(hit)
             names[lid] = value["name"]
-            sources[lid] = "llm"
             evidence[lid] = {
                 "tags": value["tags"],
                 "strings": value["strings"],
                 "calls": value.get("calls", []),
             }
-            if not rec:
-                _remember_llm(l, value)
             continue
-        if l["rows"] < 2:
-            continue  # a 1-row group has nothing in common to name
         with _LANE_LOCK:
             st = _LANE_STATE.get(l["key"])
             if st and st["status"] == "pending" and time.time() - st["at"] < 180:
@@ -1744,90 +1604,16 @@ def lane_names(lanes, llm=True):
                 _LANE_STATE[l["key"]] = {"status": "pending", "at": time.time()}
                 todo.append(l)
                 pending = True
-    if (todo or caps_todo) and not _LANE_POOL:
+    if todo and not _LANE_POOL:
         workers = int(config_service.get("llm.lane_parallel", 4))
         _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
     for l in sorted(todo, key=lambda x: x["rows"], reverse=True):
         _LANE_POOL.submit(_name_lane, l, red)
-    # names first: the capability calls queue behind them
-    for l, rec in caps_todo:
-        _LANE_POOL.submit(_caps_only, l, rec)
     return {
-        "status": ("pending" if pending else "ready") if llm else "off",
+        "status": "pending" if pending else "ready",
         "names": names,
         "evidence": evidence,
-        "sources": sources,
     }
-
-
-def _stored_names(clean):
-    """{lane id: registry record} for the lanes that carry a namespace and anchors."""
-    from bsimvis.app.services.redis_client import get_redis
-
-    by_ns = defaultdict(list)
-    for lid, l in clean.items():
-        if l.get("ns") and l.get("anchors") and l.get("gkind"):
-            by_ns[l["ns"]].append(
-                {"id": lid, "kind": l["gkind"], "anchors": l["anchors"]}
-            )
-    out = {}
-    try:
-        kv = get_redis()
-        for ns, gs in by_ns.items():
-            out.update(nway_sem_service.lookup(kv, ns, gs))
-    except Exception as e:
-        logging.warning(f"lane names: registry lookup failed: {e}")
-    return out
-
-
-def _stored_caps(clean, stored):
-    """{lane id: [{id, mbc: [{id, name}], attack: [...], text}]} of the stored names."""
-    from bsimvis.app.services import capability_service
-    from bsimvis.app.services.redis_client import get_redis
-
-    want = {
-        lid: rec.get("caps") or []
-        for lid, rec in stored.items()
-        if rec.get("caps") and clean.get(lid, {}).get("ns")
-    }
-    out = {}
-    try:
-        kv = get_redis()
-        for lid, ids in want.items():
-            out[lid] = [
-                {
-                    k: c.get(k)
-                    for k in ("id", "mbc", "attack", "traits", "quotes", "level")
-                }
-                for c in map(
-                    capability_service.named,
-                    capability_service.get_many(kv, clean[lid]["ns"], ids),
-                )
-            ]
-    except Exception as e:
-        logging.warning(f"lane names: capability read failed: {e}")
-    return out
-
-
-def _remember_llm(l, value):
-    """Keeps a model's lane name in the registry, so a rebuild finds it again."""
-    from bsimvis.app.services.redis_client import get_redis
-
-    if not (l.get("ns") and l.get("anchors") and l.get("gkind")):
-        return None
-    try:
-        return nway_sem_service.remember(
-            get_redis(),
-            l["ns"],
-            l["gkind"],
-            l["anchors"],
-            llm={**value, "v": LANE_PROMPT_V},
-            rows=l.get("rows"),
-            files=l.get("files"),
-        )
-    except Exception as e:
-        logging.warning(f"lane names: registry write failed: {e}")
-        return None
 
 
 def group_rows(rows, doc, r, mode, params):

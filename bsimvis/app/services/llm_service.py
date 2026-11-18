@@ -448,53 +448,6 @@ class LLMService:
                     return name, None
         return "", error
 
-    def lane_capabilities(self, evidence, name, choices, fmt="json"):
-        """Capability traits and MBC / ATT&CK ids for an N-way group, from the
-        same evidence text its name came from. `choices` lists the allowed ids,
-        one per line; `fmt` is the JSON schema (capability_service.schema).
-        Returns ({"traits", "mbc": [{id, quote}], "attack": [...]}, error); the
-        ids and quotes are checked by capability_service.clean."""
-        self._load_config()
-        model = config_service.get("llm.lane_model", self.model)
-        prompt = (
-            "Below is the evidence for a group of functions from a malware family "
-            f"(tentative label, may be wrong: '{name}').\n"
-            "1. traits: 1 to 5 short capabilities of this code, 2 to 5 words each, "
-            "for example 'udp flood', 'telnet brute force', 'kill competing bots', "
-            "'cron persistence', 'xor string decryption', 'c library code'. Describe "
-            "only what the evidence shows, never the id lists. Library or runtime "
-            "code (C library, Go runtime, compiler helpers) is one trait saying so.\n"
-            "2. mbc and attack: ids from the lists below that the evidence shows. For "
-            "each id, quote the exact evidence text that shows it (a library call, a "
-            "string, a rule finding or a code line, copied as it appears). No quote, "
-            "no id. A bare call name (sendto) is enough only for an MBC "
-            "micro-behaviour (C ids); a behaviour or a technique needs the code line "
-            "or string that shows how it is done (socket(2,3,17), /etc/cron.hourly/). "
-            "Library or runtime code gets no id. Most groups have 0 to 2 ids; "
-            "never list ids the evidence does not show.\n"
-            "Answer with this JSON object only, no other text:\n"
-            '{"traits": ["<2 to 5 words>", ...], '
-            '"mbc": [{"id": "<an id of the MBC list>", "quote": "<evidence text>"}], '
-            '"attack": [{"id": "<an id of the ATT&CK list>", "quote": "<evidence text>"}]}\n\n'
-            f"{choices}\n\nEvidence:\n{evidence}"
-        )
-        try:
-            response = Client(host=self.ollama_url, timeout=180).chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                stream=False,
-                think=False,
-                format=fmt,
-                options={"num_predict": 400, "temperature": 0},
-            )
-            text = response.get("message", {}).get("content", "")
-            # the lane model ignores `format` and fences its JSON: read the object inside
-            start, end = text.find("{"), text.rfind("}")
-            return json.loads(text[start : end + 1]), None
-        except Exception as e:
-            logging.error(f"LLMService lane_capabilities error: {e}")
-            return None, str(e)
-
     def explain_block_change(self, ctx):
         """How one block of the reference function differs in another function.
 

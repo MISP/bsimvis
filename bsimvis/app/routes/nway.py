@@ -1303,10 +1303,14 @@ def run_semantics_job(payload, job_service, job_id):
     known, else from the model, waited on."""
     from flask import Flask
 
+    from bsimvis.app.services.config_service import config_service
+
     args = {
         **SEM_ARGS,
         "collection": payload["collection"],
         "cluster_uuid": payload["cluster_uuid"],
+        # a cluster uuid lives in one axis namespace (code by default)
+        "axis": payload.get("axis") or config_service.get("nway_sem.axis", "code"),
     }
     # the cluster lookup and the build both read request.args
     with Flask(__name__).test_request_context(query_string=args):
@@ -1376,6 +1380,7 @@ def queue_semantics(collection, uuids=None, top_n=None, force=False, axis=None):
     from bsimvis.app.services.config_service import config_service
     from bsimvis.app.services.job_service import JobService, JobType
 
+    stored_axes = {}
     if uuids is None:
         from bsimvis.app.routes.home import get_collection_overview
 
@@ -1390,17 +1395,21 @@ def queue_semantics(collection, uuids=None, top_n=None, force=False, axis=None):
         )
         uuids = [f.get("cluster_uuid") for f in ranked if f.get("cluster_uuid")]
         uuids = list(dict.fromkeys(uuids))[:top_n]
-        stored = get_redis().hkeys(f"{collection}:nway_sem:by_cluster")
-        uuids += [u.decode() if isinstance(u, bytes) else u for u in stored]
+        # a stored set goes back to the axis it was opened on
+        kv = get_redis()
+        dec = lambda v: v.decode() if isinstance(v, bytes) else v
+        for u, h in kv.hgetall(f"{collection}:nway_sem:by_cluster").items():
+            raw = kv.get(f"{collection}:nway_sem:set:{dec(h)}")
+            params = (json.loads(dec(raw)).get("params") or {}) if raw else {}
+            stored_axes.setdefault(dec(u), params.get("axis") or "overall")
+            uuids.append(dec(u))
+    axis = axis or config_service.get("nway_sem.axis", "code")
     js = JobService()
     ids = []
     for u in dict.fromkeys(u for u in uuids if u):
-        ids.append(
-            js.create_job(
-                JobType.NWAY_SEM_BUILD,
-                {"collection": collection, "cluster_uuid": u, "force": force},
-            )
-        )
+        payload = {"collection": collection, "cluster_uuid": u, "force": force}
+        payload["axis"] = stored_axes.get(u, axis)
+        ids.append(js.create_job(JobType.NWAY_SEM_BUILD, payload))
     return ids
 
 
@@ -1419,7 +1428,9 @@ def post_nway_semantics_build():
         top_n = int(body["top_n"]) if body.get("top_n") is not None else None
     except (TypeError, ValueError):
         abort(400, "top_n must be an integer")
-    ids = queue_semantics(coll, uuids, top_n, bool(body.get("force")))
+    ids = queue_semantics(
+        coll, uuids, top_n, bool(body.get("force")), body.get("axis") or None
+    )
     return {"status": "queued", "jobs": ids, "count": len(ids)}, 202
 
 

@@ -3044,6 +3044,9 @@ class BinSimNwaySemanticsBuild(Resource):
                 "top_n": fields.Integer(
                     description="How many top families (default nway_sem.top_n, 50)"
                 ),
+                "axis": fields.String(
+                    description="Cluster axis of the uuids (default nway_sem.axis, code)"
+                ),
                 "force": fields.Boolean(
                     description="Rebuild unchanged sets and big ones too"
                 ),

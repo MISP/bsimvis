@@ -287,12 +287,23 @@ Memory rules for the job:
    `bin_clusters=false`.
 2. Overview snapshot job and key: deferred, see Slice 2.
 3. N-way semantic store: set record, name registry with anchor lookup, inline write on open,
-   LLM write-through, read-before-LLM.
-4. Group rename endpoint and UI (lineage pane and table group headers).
+   LLM write-through, read-before-LLM. Done (`nway_sem_service.py`). Anchors are a bottom-20
+   crc32 sketch, matched at a sketch Jaccard >= 0.5, one stored name per group. The per-set
+   `mask` over sorted members was left out: files and rows per group cover what reads it.
+4. Group rename endpoint and UI (lineage pane and table group headers). Done:
+   `POST /nway/group_name`, pencil in both places.
 5. Capability entity: catalog snapshot in `data/capabilities/`, curated `[capabilities]` list,
-   prompt `v:11`, index, Inspector section.
-6. `NWAY_SEM_BUILD` job with TopN and changed-cluster triggers.
+   index. Done (`capability_service.py`), with two changes from the plan. The capability ids
+   come from a second, short model call after the name, not from the naming prompt: that prompt
+   is tuned against the lane-eval truth set, so it stays at `v:10`. MBC's own ATT&CK mapping
+   was dropped: the STIX bundle holds it only as text in descriptions. The chips show on lane
+   headers; there is no Inspector section yet.
+6. `NWAY_SEM_BUILD` job with TopN and changed-cluster triggers. Done: after a bin clustering
+   of `nway_sem.axis`, the top `nway_sem.top_n` families plus every stored set. A job skips a
+   cluster whose member files equal the stored ones, and sets above
+   `nway.auto_build_max_members` unless `force`. `POST /nway/semantics/build` queues by hand.
 7. Optional: `store_rows` packed row index; BSim discovery anchors for naming across families.
+   Not built.
 
 Each slice gets `./scripts/wt-test.sh --only <area>` with `Failed : 0`, and API checks are added
 to `test_api_endpoints.py`. The test fixture never forms clusters, so the TopN and

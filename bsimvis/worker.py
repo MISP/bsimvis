@@ -356,6 +356,28 @@ class Worker:
                 traceback.print_exc()
                 time.sleep(1)
 
+    def _queue_semantics(self, collection, axis, job_id):
+        """After a bin clustering of the overview's axis: N-way semantics of the
+        top families and of every set already stored (Plan F slice 6). A 10 min
+        latch keeps chunked clusterings from queueing it per chunk."""
+        if not config_service.get("nway_sem.auto", True):
+            return
+        if axis != config_service.get("nway_sem.axis", "code"):
+            return
+        try:
+            if not self.r_queue.set(
+                f"nway_sem:auto:{collection}", job_id, nx=True, ex=600
+            ):
+                return
+            from bsimvis.app.routes.nway import queue_semantics
+
+            ids = queue_semantics(collection, axis=axis)
+            self.job_service.add_log(
+                job_id, f"queued {len(ids)} N-way semantics builds"
+            )
+        except Exception as e:
+            logging.warning(f"nway semantics auto-queue failed: {e}")
+
     def _requeue(self, job_id):
         """Puts a claimed job back on the queue untouched.
 
@@ -879,7 +901,7 @@ class Worker:
             )
             axis = payload.get("axis", "overall")
 
-            return bin_cluster_service.run_clustering(
+            result = bin_cluster_service.run_clustering(
                 collection,
                 algo=algo,
                 min_cluster_size=min_cluster_size,
@@ -892,6 +914,9 @@ class Worker:
                 min_cohesion=min_cohesion,
                 axis=axis,
             )
+            if result:
+                self._queue_semantics(collection, axis, job_id)
+            return result
 
         elif jtype == JobType.CLEAR_BIN_CLUSTER.value:
             axis = payload.get("axis", "overall")
@@ -1034,6 +1059,11 @@ class Worker:
             from bsimvis.app.routes.nway import run_build_job
 
             return run_build_job(payload, self.job_service, job_id)
+
+        elif jtype == JobType.NWAY_SEM_BUILD.value:
+            from bsimvis.app.routes.nway import run_semantics_job
+
+            return run_semantics_job(payload, self.job_service, job_id)
 
         elif jtype == JobType.SEARCH_CLASSIFY.value:
             from bsimvis.app.services.search_service import search_service

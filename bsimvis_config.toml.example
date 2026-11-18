@@ -185,6 +185,25 @@ pair_random = 4
     num_ctx = 65536
     prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
 
+[nway_sem]
+    # After a bin clustering of this axis, queue NWAY_SEM_BUILD for the top families
+    # (activity, then size: the overview's order) and every set already stored.
+    auto = true
+    axis = "code"
+    top_n = 50
+
+[capabilities]
+    # After an N-way group is named, one more model call picks its MBC / ATT&CK ids
+    # (capability_service.py). Ids come only from the lists below; each must exist in
+    # data/capabilities/catalog.json. Leave the lists out to use the built-in ones.
+    enabled = true
+    # A group with fewer rows than this gets MBC micro-behaviours (C*), a bigger one
+    # MBC behaviours (B*, E*, F*) and ATT&CK techniques.
+    micro_below = 8
+    # behaviours = ["B0030", "B0033", ...]
+    # micro = ["C0001", "C0002", ...]
+    # attack = ["T1498.001", "T1110.001", ...]
+
 [ghidra]
     # Absolute JVM heap cap per worker. Each worker runs its own JVM, so keep
     # max_heap_mb * WORKERS_COUNT <= ~60% of host RAM (room for kvrocks + desktop).

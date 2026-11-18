@@ -3029,6 +3029,50 @@ class BinSimNwayGroupName(Resource):
         return post_nway_group_name()
 
 
+@ns_bin_sim.route("/nway/semantics/build")
+class BinSimNwaySemanticsBuild(Resource):
+    @ns_bin_sim.doc(
+        body=ns_bin_sim.model(
+            "NwaySemanticsBuild",
+            {
+                "collection": fields.String(required=True, description="Collection"),
+                "cluster_uuids": fields.List(
+                    fields.String,
+                    description="Bin clusters to build; omitted = the top families (activity, then size) plus every stored set",
+                ),
+                "top_n": fields.Integer(
+                    description="How many top families (default nway_sem.top_n, 50)"
+                ),
+                "force": fields.Boolean(
+                    description="Rebuild unchanged sets and big ones too"
+                ),
+            },
+        )
+    )
+    def post(self):
+        """Queues NWAY_SEM_BUILD jobs: stored N-way summaries, names and capabilities per cluster."""
+        from bsimvis.app.routes.nway import post_nway_semantics_build
+
+        return post_nway_semantics_build()
+
+
+@ns_bin_sim.route("/nway/capabilities")
+class BinSimNwayCapabilities(Resource):
+    @ns_bin_sim.doc(
+        params={
+            "collection": "Collection",
+            "pool": "Pool ID",
+            "id": "Only capabilities carrying this MBC or ATT&CK id (B0033, C0001, T1498.001)",
+            "limit": "At most this many (default 200, max 1000)",
+        }
+    )
+    def get(self):
+        """Capabilities the model found in N-way groups (MBC / ATT&CK ids, text, groups)."""
+        from bsimvis.app.routes.nway import get_nway_capabilities
+
+        return get_nway_capabilities()
+
+
 @ns_bin_sim.route("/nway/semantics")
 class BinSimNwaySemantics(Resource):
     @ns_bin_sim.doc(

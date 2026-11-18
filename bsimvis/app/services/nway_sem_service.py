@@ -223,7 +223,9 @@ def summary(doc, groups, params, cluster_uuid=None):
         "cluster_uuid": cluster_uuid,
         "doc_key": doc.get("key"),
         "params": {
-            k: params.get(k) for k in ("group", "min_edge", "pair_k") if params.get(k)
+            k: params.get(k)
+            for k in ("group", "scope", "min_edge", "pair_k")
+            if params.get(k)
         },
         "rows": len(doc.get("rows") or []),
         "tiers": tiers,

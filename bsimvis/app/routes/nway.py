@@ -624,7 +624,13 @@ def _page(doc, args, r=None, pool_id=None):
         total = len(entries)
         ns = nway_sem_service.ns_of(args.get("collection"), pool_id)
         if ns:
-            if offset == 0 and len(filtered) == len(rows):
+            # unfiltered = only the scope (code by default) took rows out
+            kept = sum(
+                1
+                for row in rows
+                if scope == "all" or row.get("library") == (scope == "library")
+            )
+            if offset == 0 and len(filtered) == kept:
                 sem_hash = _save_semantics(r, ns, doc, groups, args)
             nway_sem_service.attach(r, ns, shown_groups)
     else:
@@ -1268,6 +1274,144 @@ def run_build_job(payload, job_service, job_id):
         # the doc now lives in Redis; the worker has no use for its copy
         nway_diff_service.invalidate()
     return True
+
+
+# The N-way table's default lens (nway_panel.js DEFAULTS): what an analyst opens.
+SEM_ARGS = {
+    "tab": "all",
+    "scope": "code",
+    "k": "2",
+    "core_min": "0.8",
+    "columns": "twins",
+    "group": "lane,region",
+    "group_merge": "name,call",
+    "group_sort": "lanes",
+    "group_lane_depth": "1",
+    "group_lane_link": "0.5",
+    "group_lane_tier": "0.8",
+    "group_lane_fold": "3",
+    "limit": "0",
+}
+
+
+def run_semantics_job(payload, job_service, job_id):
+    """Worker side of NWAY_SEM_BUILD: one bin cluster's N-way summary and names.
+
+    Skipped when the stored summary already has these member files (unless
+    `force`), and for sets above `nway.auto_build_max_members` unless `force`:
+    those are big builds an analyst asks for. Names come from the registry when
+    known, else from the model, waited on."""
+    from flask import Flask
+
+    coll, uuid_ = payload["collection"], payload["cluster_uuid"]
+    force = bool(payload.get("force"))
+    r = get_redis()
+    ns = nway_sem_service.ns_of(coll)
+    try:
+        _, members, _, _ = _cluster_node(r, None, coll, uuid_)
+    except Exception as e:
+        job_service.add_log(job_id, f"cluster {uuid_}: {e}")
+        return True
+    md5s = sorted({m for _, m in members})
+    if len(md5s) < 2:
+        job_service.add_log(job_id, f"cluster {uuid_}: under 2 files, skipped")
+        return True
+    if len(md5s) > nway_diff_service.auto_build_max() and not force:
+        job_service.add_log(
+            job_id, f"cluster {uuid_}: {len(md5s)} files, a big build: skipped"
+        )
+        return True
+    old = nway_sem_service.load_set(r, ns, cluster_uuid=uuid_)
+    if old and old.get("members") == md5s and not force:
+        job_service.add_log(job_id, f"cluster {uuid_}: same files as stored, skipped")
+        return True
+    args = {**SEM_ARGS, "collection": coll, "cluster_uuid": uuid_}
+    job_service.add_log(
+        job_id, f"N-way semantics of cluster {uuid_} ({len(md5s)} files)"
+    )
+    try:
+        with Flask(__name__).test_request_context(query_string=args):
+            doc, r, pool_id = _load_doc(build=True)
+            page = _page(doc, request.args, r, pool_id)
+        n_files = len(doc.get("file_columns") or doc["columns"])
+        lanes = [
+            nway_group_service.naming_payload(g, n_files)
+            for g in (page.get("groups") or {}).values()
+            if nway_group_service.nameable(g)
+        ][: nway_group_service.LANE_NAMES_MAX]
+        job_service.update_progress(job_id, 50)
+        if lanes:
+            out = (
+                nway_group_service.name_now(lanes, wait=int(payload.get("wait", 1200)))
+                if nway_facets_service.llm_configured()
+                else {"names": {}}
+            )
+            job_service.add_log(
+                job_id,
+                f"{len(out['names'])} of {len(lanes)} groups named, set {page.get('set_hash')}",
+            )
+    except _Reply as e:
+        body, status = e.args[0]
+        raise RuntimeError(f"{status}: {body.get('message') or body.get('error')}")
+    finally:
+        nway_diff_service.invalidate()
+    return True
+
+
+def queue_semantics(collection, uuids=None, top_n=None, force=False, axis=None):
+    """Queues one NWAY_SEM_BUILD per cluster: `uuids`, or the collection's top
+    families by activity then size (the overview's ranking) plus every cluster
+    that already has a stored summary. -> job ids."""
+    from flask import Flask
+
+    from bsimvis.app.services.config_service import config_service
+    from bsimvis.app.services.job_service import JobService, JobType
+
+    if uuids is None:
+        from bsimvis.app.routes.home import get_collection_overview
+
+        top_n = int(top_n or config_service.get("nway_sem.top_n", 50))
+        axis = axis or config_service.get("nway_sem.axis", "code")
+        q = {"collection": collection, "axis": axis, "refresh": "true"}
+        with Flask(__name__).test_request_context(query_string=q):
+            ov = get_collection_overview()
+        ov = ov[0] if isinstance(ov, tuple) else ov
+        ranked = list(ov.get("active") or []) + sorted(
+            ov.get("families") or [], key=lambda f: -(f.get("matching") or 0)
+        )
+        uuids = [f.get("cluster_uuid") for f in ranked if f.get("cluster_uuid")]
+        uuids = list(dict.fromkeys(uuids))[:top_n]
+        stored = get_redis().hkeys(f"{collection}:nway_sem:by_cluster")
+        uuids += [u.decode() if isinstance(u, bytes) else u for u in stored]
+    js = JobService()
+    ids = []
+    for u in dict.fromkeys(u for u in uuids if u):
+        ids.append(
+            js.create_job(
+                JobType.NWAY_SEM_BUILD,
+                {"collection": collection, "cluster_uuid": u, "force": force},
+            )
+        )
+    return ids
+
+
+def post_nway_semantics_build():
+    """Queues N-way semantics builds (JSON `{collection, cluster_uuids?, top_n?, force?}`)."""
+    body = request.get_json(silent=True) or {}
+    coll = body.get("collection")
+    if not coll:
+        abort(400, "collection is required")
+    uuids = body.get("cluster_uuids")
+    if uuids is not None and (
+        not isinstance(uuids, list) or not all(isinstance(u, str) for u in uuids)
+    ):
+        abort(400, "cluster_uuids must be a list of cluster uuids")
+    try:
+        top_n = int(body["top_n"]) if body.get("top_n") is not None else None
+    except (TypeError, ValueError):
+        abort(400, "top_n must be an integer")
+    ids = queue_semantics(coll, uuids, top_n, bool(body.get("force")))
+    return {"status": "queued", "jobs": ids, "count": len(ids)}, 202
 
 
 def get_nway_progress():
@@ -2004,6 +2148,34 @@ def post_nway_group_name():
         "record": rec,
         "name": nway_sem_service.shown_name(rec),
     }
+
+
+def get_nway_capabilities():
+    """A collection's capabilities, optionally those with one MBC / ATT&CK id,
+    each with the current names of the groups it was found in."""
+    from bsimvis.app.services import capability_service
+
+    ns = nway_sem_service.ns_of(
+        request.args.get("collection"), request.args.get("pool")
+    )
+    if not ns:
+        abort(400, "collection or pool is required")
+    try:
+        limit = max(1, min(int(request.args.get("limit", 200)), 1000))
+    except ValueError:
+        abort(400, "limit must be an integer")
+    r = get_redis()
+    caps, total = capability_service.search(r, ns, request.args.get("id"), limit)
+    recs = nway_sem_service._records(
+        r, ns, [g for c in caps for g in c.get("groups") or []]
+    )
+    for c in caps:
+        c["groups"] = [
+            {"name_id": g, "name": nway_sem_service.shown_name(recs.get(g))}
+            for g in c.get("groups") or []
+        ]
+        c.pop("anchors", None)
+    return {"capabilities": caps, "total": total}
 
 
 def get_nway_semantics():

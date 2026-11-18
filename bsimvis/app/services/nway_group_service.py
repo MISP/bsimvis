@@ -1521,22 +1521,101 @@ def _name_lane(l, red):
 
     text, tags, strings, calls = _lane_evidence(l)
     name, _ = llm_service.name_lane(text)
+    value = {"name": name, "tags": tags[:4], "strings": strings[:4], "calls": calls}
     with _LANE_LOCK:
         if name:
             try:
-                value = {
-                    "name": name,
-                    "tags": tags[:4],
-                    "strings": strings[:4],
-                    "calls": calls,
-                }
                 red.set(f"nway:lane:{l['key']}", json.dumps(value), ex=LANE_NAME_TTL)
             except Exception:
                 pass
-            _remember_llm(l, value)
             _LANE_STATE.pop(l["key"], None)
         else:
             _LANE_STATE[l["key"]] = {"status": "failed", "at": time.time()}
+    rec = name and _remember_llm(l, value)
+    if rec:
+        _lane_caps(l, rec, text, name, value)
+
+
+def _lane_caps(l, rec, text, name, ev):
+    """Worker: the group's MBC / ATT&CK capabilities, from the evidence its name
+    came from, kept as a capability record linked to the name record. An empty
+    answer is kept too (`caps: []`), so a group is asked once."""
+    from bsimvis.app.services import capability_service
+    from bsimvis.app.services.llm_service import llm_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    if not capability_service.enabled():
+        return
+    try:
+        lvl = capability_service.level(l.get("rows"))
+        choices, _, _ = capability_service.prompt_lists(lvl)
+        answer, _ = llm_service.lane_capabilities(text, name, choices)
+        answer = capability_service.clean(answer, lvl)
+        kv = get_redis()
+        evidence = {k: ev.get(k, []) for k in ("tags", "strings", "calls")}
+        cap = answer and capability_service.save(
+            kv, l["ns"], l["anchors"], answer, lvl, group=rec["id"], evidence=evidence
+        )
+        caps = list(
+            dict.fromkeys((rec.get("caps") or []) + ([cap["id"]] if cap else []))
+        )
+        nway_sem_service.remember(kv, l["ns"], l["gkind"], l["anchors"], caps=caps)
+    except Exception as e:
+        logging.warning(f"lane capabilities failed: {e}")
+
+
+def _caps_only(l, rec):
+    """Worker: capabilities of a group named before they existed."""
+    try:
+        text, tags, strings, calls = _lane_evidence(l)
+        name = nway_sem_service.shown_name(rec) or ""
+        ev = {"tags": tags[:4], "strings": strings[:4], "calls": calls}
+        _lane_caps(l, rec, text, name, ev)
+    finally:
+        with _LANE_LOCK:
+            _LANE_STATE.pop(f"caps:{rec['id']}", None)
+
+
+def nameable(g):
+    """The groups the model names (nway_groups.js `nameable`)."""
+    kind = g.get("kind")
+    return (
+        kind in ("lane", "presence", "delta")
+        or (kind == "region" and not g.get("label"))
+    ) and bool(g.get("sample") or g.get("hint") or g.get("tags") or g.get("fids"))
+
+
+def naming_payload(g, n_files):
+    """One lane of a lane_names request, as nway_groups.js `payload` builds it."""
+    out = {
+        "id": g["id"],
+        "files": g.get("files") or g["mask"].count("1"),
+        "total": n_files or len(g["mask"]),
+        "rows": g.get("rows"),
+        "sample": g.get("sample") or [],
+        "hint": g.get("hint") or "",
+        "tags": g.get("tags") or [],
+        "fids": g.get("fids") or [],
+        "name_fids": g.get("name_fids") or [],
+        "tag_rows": g.get("tag_rows") or 0,
+        "roles": g.get("roles") or {},
+    }
+    if g.get("kind") in ("presence", "delta"):
+        out["kind"] = "summary"
+    if g.get("ns") and g.get("anchors"):
+        out.update(ns=g["ns"], gkind=g["kind"], anchors=g["anchors"])
+    return out
+
+
+def name_now(lanes, wait=1200):
+    """lane_names, waited on: for a job, which has no page to poll for it.
+    -> the last answer (status ready, or pending when `wait` seconds ran out)."""
+    end = time.time() + wait
+    while True:
+        out = lane_names(lanes)
+        if out["status"] != "pending" or time.time() > end:
+            return out
+        time.sleep(2)
 
 
 def lane_names(lanes, llm=True):
@@ -1591,9 +1670,10 @@ def lane_names(lanes, llm=True):
         }
         clean[str(l["id"])] = {**item, **sem, "rows": int(l["rows"]), "key": key}
     stored = _stored_names(clean)
+    caps = _stored_caps(clean, stored)
     red = get_queue_redis()
     names, evidence, sources, pending = {}, {}, {}, False
-    todo = []
+    todo, caps_todo = [], []
     for lid, l in clean.items():
         rec = stored.get(lid) or {}
         model = rec.get("llm") or {}
@@ -1602,6 +1682,15 @@ def lane_names(lanes, llm=True):
             names[lid] = rec.get("user_name") or model["name"]
             sources[lid] = "user" if rec.get("user_name") else "llm"
             evidence[lid] = {k: model.get(k, []) for k in ("tags", "strings", "calls")}
+            evidence[lid]["caps"] = caps.get(lid, [])
+            if llm and "caps" not in rec:
+                with _LANE_LOCK:
+                    if f"caps:{rec['id']}" not in _LANE_STATE:
+                        _LANE_STATE[f"caps:{rec['id']}"] = {
+                            "status": "pending",
+                            "at": time.time(),
+                        }
+                        caps_todo.append((l, rec))
             continue
         if not llm:
             continue
@@ -1635,11 +1724,14 @@ def lane_names(lanes, llm=True):
                 _LANE_STATE[l["key"]] = {"status": "pending", "at": time.time()}
                 todo.append(l)
                 pending = True
-    if todo and not _LANE_POOL:
+    if (todo or caps_todo) and not _LANE_POOL:
         workers = int(config_service.get("llm.lane_parallel", 4))
         _LANE_POOL = ThreadPoolExecutor(max_workers=max(1, workers))
     for l in sorted(todo, key=lambda x: x["rows"], reverse=True):
         _LANE_POOL.submit(_name_lane, l, red)
+    # names first: the capability calls queue behind them
+    for l, rec in caps_todo:
+        _LANE_POOL.submit(_caps_only, l, rec)
     return {
         "status": ("pending" if pending else "ready") if llm else "off",
         "names": names,
@@ -1668,14 +1760,40 @@ def _stored_names(clean):
     return out
 
 
+def _stored_caps(clean, stored):
+    """{lane id: [{id, mbc: [{id, name}], attack: [...], text}]} of the stored names."""
+    from bsimvis.app.services import capability_service
+    from bsimvis.app.services.redis_client import get_redis
+
+    want = {
+        lid: rec.get("caps") or []
+        for lid, rec in stored.items()
+        if rec.get("caps") and clean.get(lid, {}).get("ns")
+    }
+    out = {}
+    try:
+        kv = get_redis()
+        for lid, ids in want.items():
+            out[lid] = [
+                {k: c.get(k) for k in ("id", "mbc", "attack", "text", "level")}
+                for c in map(
+                    capability_service.named,
+                    capability_service.get_many(kv, clean[lid]["ns"], ids),
+                )
+            ]
+    except Exception as e:
+        logging.warning(f"lane names: capability read failed: {e}")
+    return out
+
+
 def _remember_llm(l, value):
     """Keeps a model's lane name in the registry, so a rebuild finds it again."""
     from bsimvis.app.services.redis_client import get_redis
 
     if not (l.get("ns") and l.get("anchors") and l.get("gkind")):
-        return
+        return None
     try:
-        nway_sem_service.remember(
+        return nway_sem_service.remember(
             get_redis(),
             l["ns"],
             l["gkind"],
@@ -1686,6 +1804,7 @@ def _remember_llm(l, value):
         )
     except Exception as e:
         logging.warning(f"lane names: registry write failed: {e}")
+        return None
 
 
 def group_rows(rows, doc, r, mode, params):

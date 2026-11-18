@@ -21,6 +21,7 @@ data-wttest/
 !data/.gitkeep
 !data/test/
 !data/yara_rules/
+!data/capabilities/
 
 # Legacy (remove once migrated)
 data/kvrocks/

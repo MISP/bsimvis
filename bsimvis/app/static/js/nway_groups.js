@@ -195,6 +195,7 @@ window.NwayGroups = (function () {
         const chip = (text, title, cls) => `<span class="nway-gchip${cls ? ` ${cls}` : ''}" title="${escapeAttr(title)}">${escapeHtml(text)}</span>`;
         return (graph ? graphBtn : '') + (g.hint ? chip(g.hint, "Most of this lane's functions share this name prefix") : '')
             + laneTags(g, S).map(tagBadge).join('')
+            + (ev.caps || []).flatMap(c => [...(c.mbc || []), ...(c.attack || [])].map(x => chip(x.id, `${x.name || x.id}: a capability the model read in this group${c.text ? ` (${c.text})` : ''}`, 'cap'))).join('')
             + (ev.strings || []).map(t => chip(`"${t}"`, 'A string the lane\'s functions use', 'str')).join('');
     }
 

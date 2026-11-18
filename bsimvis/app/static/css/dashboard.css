@@ -3326,6 +3326,7 @@ tr:hover .nway-lrename, .lin-nr:hover .nway-lrename, .nway-lrename:focus-visible
 .nway-lev:empty { display: none; }
 .nway-lev .nway-gchip { margin: 0; }
 .nway-gchip.str { font-family: 'Consolas', monospace; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nway-gchip.cap { font-family: 'Consolas', monospace; border-style: dashed; }
 .nway-colgrip { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; }
 .nway-colgrip:hover, .nway-colgrip:active { background: color-mix(in srgb, var(--accent) 50%, transparent); }
 .nway-gchip.sub { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }

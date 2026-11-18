@@ -8412,6 +8412,11 @@ def test_nway_diff():
         "nway semantics: an unfiltered lane view returns its set hash",
         bool((_sd or {}).get("set_hash")),
     )
+    _, _sdc = _nway(tab="all", scope="code", limit=1000, group="lane")
+    check(
+        "nway semantics: the table's default scope=code view is saved too",
+        bool((_sdc or {}).get("set_hash")),
+    )
     if _sl:
         _nm = "test renamed lane"
         _gn = f"{BASE_URL}/api/bin_sim/nway/group_name"
@@ -8468,6 +8473,60 @@ def test_nway_diff():
         check(
             "nway group_name: an empty name clears the analyst's name",
             _clr.status_code == 200 and _clr.json().get("name") != _nm,
+        )
+        _cap = requests.get(
+            f"{BASE_URL}/api/bin_sim/nway/capabilities",
+            params={"collection": COLLECTION, "id": "B0033"},
+            timeout=30,
+        )
+        check(
+            "nway capabilities: answers a list (empty without an LLM)",
+            _cap.status_code == 200
+            and isinstance(_cap.json().get("capabilities"), list)
+            and isinstance(_cap.json().get("total"), int),
+            f"HTTP {_cap.status_code}",
+        )
+        _sb = requests.post(
+            f"{BASE_URL}/api/bin_sim/nway/semantics/build",
+            json={"collection": COLLECTION, "cluster_uuids": ["0" * 12]},
+            timeout=30,
+        )
+        _sbj = _sb.json() if _sb.status_code == 202 else {}
+        check(
+            "nway semantics/build: queues one job per cluster",
+            _sb.status_code == 202 and _sbj.get("count") == 1,
+            f"HTTP {_sb.status_code}",
+        )
+        if _sbj.get("jobs"):
+            _st = None
+            for _ in range(60):
+                _st = (
+                    requests.get(
+                        f"{BASE_URL}/api/jobs/{_sbj['jobs'][0]}", timeout=10
+                    ).json()
+                    or {}
+                ).get("status")
+                if _st in ("completed", "failed"):
+                    break
+                time.sleep(1)
+            check(
+                "nway semantics/build: an unknown cluster completes as a skip",
+                _st == "completed",
+                f"status {_st}",
+            )
+        check(
+            "nway semantics/build: no collection is a 400",
+            requests.post(
+                f"{BASE_URL}/api/bin_sim/nway/semantics/build", json={}, timeout=30
+            ).status_code
+            == 400,
+        )
+        check(
+            "nway capabilities: no collection is a 400",
+            requests.get(
+                f"{BASE_URL}/api/bin_sim/nway/capabilities", timeout=30
+            ).status_code
+            == 400,
         )
         check(
             "nway group_name: an unknown kind is a 400",

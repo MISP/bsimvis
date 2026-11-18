@@ -448,6 +448,39 @@ class LLMService:
                     return name, None
         return "", error
 
+    def lane_capabilities(self, evidence, name, choices):
+        """MBC / ATT&CK ids and one sentence for an N-way group, from the same
+        evidence text its name came from. `choices` lists the allowed ids, one
+        per line. Returns ({"mbc", "attack", "text"}, error); ids are not
+        checked here (capability_service.clean does)."""
+        self._load_config()
+        model = config_service.get("llm.lane_model", self.model)
+        prompt = (
+            "A group of functions from a malware family was named "
+            f"'{name}'. From the evidence below, list what the code does as "
+            "capability ids chosen only from the lists given. Pick an id only when "
+            "the evidence shows it (library calls, strings, rule findings, code); "
+            "library or runtime code gets the ids of what it implements, or none. "
+            "Then one sentence on what the group does. Answer JSON only: "
+            '{"mbc": [ids], "attack": [ids], "text": "one sentence"}; '
+            "empty lists when nothing fits.\n\n"
+            f"{choices}\n\nEvidence:\n{evidence}"
+        )
+        try:
+            response = Client(host=self.ollama_url, timeout=180).chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format="json",
+                options={"num_predict": 200, "temperature": 0},
+            )
+            text = response.get("message", {}).get("content", "")
+            return json.loads(text), None
+        except Exception as e:
+            logging.error(f"LLMService lane_capabilities error: {e}")
+            return None, str(e)
+
     def explain_block_change(self, ctx):
         """How one block of the reference function differs in another function.
 

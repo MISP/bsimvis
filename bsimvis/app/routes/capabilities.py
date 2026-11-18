@@ -218,6 +218,51 @@ def get_suggestions():
     return _answer(get_queue_redis(), ns, groups)
 
 
+def get_group_functions():
+    """Every function of one group of a cluster's stored N-way set, row by row:
+    `rows` = [[md5:addr of each file's copy], ...] and `row_names`. The table is
+    listed with the params the set was stored with (a set too big to build on a
+    request answers 428, as /nway does)."""
+    from flask import current_app
+
+    from bsimvis.app.routes import nway as nway_routes
+
+    a = request.args
+    if a.get("pool"):
+        abort(400, "pools: open the member collection")
+    ns, r = _ns(a), get_redis()
+    cu = (a.get("cluster_uuid") or "").strip().lower()
+    rec = _set_groups(r, ns, cu)
+    gid = a.get("gid")
+    if not gid and a.get("name_id"):
+        gid = next(
+            (g["gid"] for g in rec["groups"] if g.get("name_id") == a["name_id"]), None
+        )
+    if not gid:
+        abort(400, "gid (or a stored name_id) is required")
+    from werkzeug.exceptions import HTTPException
+
+    q = {"collection": ns, "tab": "all", "lane": gid, **(rec.get("params") or {})}
+    # the cluster's own table; its stored member files when the cluster is gone or
+    # was never one (a set stored from an ad hoc file list)
+    tries = [{"cluster_uuid": cu}, {"md5s": ",".join(rec.get("members") or [])}]
+    for k, extra in enumerate(tries):
+        try:
+            with current_app.test_request_context(query_string={**q, **extra}):
+                rows, info = nway_routes._lane_rows(gid)
+            break
+        except HTTPException as e:
+            if k == len(tries) - 1 or e.code not in (400, 404):
+                raise
+    cap = capability_service.GROUP_ROWS_MAX
+    return {
+        "gid": gid,
+        "rows": [[nway_sem_service.short(f) for f in row] for row in rows[:cap]],
+        "row_names": [i.get("name") for i in info[:cap]],
+        "total_rows": len(rows),
+    }
+
+
 def get_catalog():
     """MBC / ATT&CK ids whose id or name holds `q` (the editor's id picker)."""
     q = (request.args.get("q") or "").lower().strip()

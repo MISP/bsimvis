@@ -5032,6 +5032,23 @@ class CapabilityFunctions(Resource):
         return get_functions()
 
 
+@ns_capability.route("/group_functions")
+class CapabilityGroupFunctions(Resource):
+    @ns_capability.doc(
+        params={
+            "collection": "Collection",
+            "cluster_uuid": "Bin cluster with a stored N-way set",
+            "gid": "Group id in that set",
+            "name_id": "Or the group's name record id",
+        }
+    )
+    def get(self):
+        """Every function of an N-way group, row by row (md5:addr per file copy)."""
+        from bsimvis.app.routes.capabilities import get_group_functions
+
+        return get_group_functions()
+
+
 @ns_capability.route("/catalog")
 class CapabilityCatalog(Resource):
     @ns_capability.doc(params={"q": "Id or name contains"})

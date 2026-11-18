@@ -313,12 +313,15 @@ def search(r, ns, label=None, limit=200):
 
 EV_TYPES = ("functions", "group", "string", "yara", "rulezet", "capa")
 EV_FIDS_MAX = 500
+# a group pointer keeps its N-way rows (each row = the matched copies across files)
+GROUP_ROWS_MAX, GROUP_FIDS_MAX = 2000, 20000
 NAME_MAX, DESC_MAX, HISTORY_MAX = 120, 1000, 50
 _FID = re.compile(r"^[0-9a-f]{32}:[^:\s]{1,32}$")
 _TEXT = {
     "why": 300,
     "label": 120,
     "name_id": 64,
+    "gid": 120,
     "rule_uuid": 64,
     "value": 200,
     "rule": 120,
@@ -347,7 +350,7 @@ def check_ids(ids, kind):
     return out
 
 
-def _fid_list(v, what):
+def _fid_list(v, what, cap=EV_FIDS_MAX):
     if v is None:
         return []
     if not isinstance(v, list) or not all(isinstance(f, str) for f in v):
@@ -356,9 +359,24 @@ def _fid_list(v, what):
     bad = [f for f in out if not _FID.match(f)]
     if bad:
         raise ValueError(f"{what}: not md5:addr: {bad[0][:80]}")
-    if len(out) > EV_FIDS_MAX:
-        raise ValueError(f"{what}: at most {EV_FIDS_MAX} per item")
+    if len(out) > cap:
+        raise ValueError(f"{what}: at most {cap} per item")
     return out
+
+
+def _group_rows(it):
+    """A group pointer's rows ([[md5:addr, ...], ...]) and row names, checked."""
+    rows = it.get("rows")
+    if rows is None:
+        return [], []
+    if not isinstance(rows, list) or len(rows) > GROUP_ROWS_MAX:
+        raise ValueError(f"rows must be a list of at most {GROUP_ROWS_MAX} rows")
+    rows = [r for r in (_fid_list(x, "rows", GROUP_FIDS_MAX) for x in rows) if r]
+    if sum(map(len, rows)) > GROUP_FIDS_MAX:
+        raise ValueError(f"rows: at most {GROUP_FIDS_MAX} functions per group")
+    names = it.get("row_names") if isinstance(it.get("row_names"), list) else []
+    names = [str(n or "")[:120] for n in names[: len(rows)]]
+    return rows, names
 
 
 def clean_item(it):
@@ -368,7 +386,7 @@ def clean_item(it):
         raise ValueError(f"evidence type must be one of {', '.join(EV_TYPES)}")
     t = it["type"]
     out = {"type": t}
-    fids = _fid_list(it.get("fids"), "fids")
+    fids = _fid_list(it.get("fids"), "fids") if t != "group" else []
     anchors = _fid_list(it.get("anchors"), "anchors")
     for k, n in _TEXT.items():
         v = it.get(k)
@@ -382,6 +400,10 @@ def clean_item(it):
         if not anchors:
             raise ValueError("a group item needs its anchors")
         out["anchors"] = anchors[: nway_sem_service.K]
+        rows, names = _group_rows(it)
+        if rows:
+            out["rows"], out["row_names"] = rows, names
+            out["fids"] = [f for r in rows for f in r]
     if t == "string" and "value" not in out:
         raise ValueError("a string item needs its value")
     if t in ("yara", "rulezet", "capa") and "rule" not in out:
@@ -389,7 +411,9 @@ def clean_item(it):
     if isinstance(it.get("v"), int):
         out["v"] = it["v"]
     out["src"] = "llm" if it.get("src") == "llm" else "user"
-    key = [t, out.get("fids"), out.get("anchors"), out.get("value"), out.get("rule")]
+    # a group is one pointer whatever rows it carries: its anchors are its identity
+    key = [t, None if t == "group" else out.get("fids")]
+    key += [out.get("anchors"), out.get("value"), out.get("rule")]
     out["id"] = hashlib.sha1(json.dumps(key).encode()).hexdigest()[:12]
     return out
 
@@ -407,7 +431,10 @@ def _missing_fids(r, ns, items):
     """Function pointers with no function meta in collection `ns` (pools: none checked)."""
     if not ns or ns.startswith("global:"):
         return []
-    fids = sorted({f for it in items for f in it.get("fids") or []})
+    # a group's rows are read off the N-way table (/capability/group_functions): format-checked only
+    fids = sorted(
+        {f for it in items if it["type"] != "group" for f in it.get("fids") or []}
+    )
     if not fids:
         return []
     pipe = r.pipeline(transaction=False)
@@ -881,6 +908,21 @@ if __name__ == "__main__":
         {"type": "group", "anchors": [f"{m5}:{i}" for i in range(30)], "label": "F"}
     )
     assert len(g["anchors"]) == nway_sem_service.K and md5s_of([g, it]) == {m5}
+    # a group keeps its N-way rows; it stays one pointer with or without them
+    m6 = "b" * 32
+    gr = clean_item(
+        {
+            "type": "group",
+            "anchors": [f"{m5}:{i}" for i in range(30)],
+            "rows": [[f"{m5}:1", f"{m6}:1"], [f"{m5}:2"], []],
+            "row_names": ["attack_udp", "FUN_2", "extra"],
+            "gid": "lane:0011",
+        }
+    )
+    assert gr["rows"] == [[f"{m5}:1", f"{m6}:1"], [f"{m5}:2"]], gr
+    assert gr["row_names"] == ["attack_udp", "FUN_2"] and gr["gid"] == "lane:0011"
+    assert gr["fids"] == [f"{m5}:1", f"{m6}:1", f"{m5}:2"] and gr["id"] == g["id"]
+    assert md5s_of([gr]) == {m5, m6}
     assert check_ids(["b0033", "B0033"], "mbc") == ["B0033"]
     try:
         check_ids(["T9999"], "attack")

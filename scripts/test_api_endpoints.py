@@ -8658,6 +8658,60 @@ def test_nway_diff():
                 and bool(_fl["functions"][0].get("name")),
                 str(_fl)[:300],
             )
+            # a group pointer keeps every function of the lane, row by row
+            _gf = requests.get(
+                f"{_CB}/group_functions",
+                params={"collection": COLLECTION, "cluster_uuid": _tcu, "gid": _sl_id},
+                timeout=180,
+            )
+            _gfj = _gf.json() if _gf.ok else {}
+            _grows = [[f.lower() for f in row] for row in _gfj.get("rows") or []]
+            check(
+                "capability group_functions: a lane comes back row by row as md5:addr",
+                bool(_grows)
+                and all(len(f.split(":")) == 2 for row in _grows for f in row)
+                and len(_gfj.get("row_names") or []) == len(_grows),
+                _gf.text[:300],
+            )
+            if _grows:
+                _sv3 = _cap_save(
+                    {
+                        "name": "Group rows",
+                        "evidence": [
+                            {
+                                "type": "group",
+                                "anchors": _sl["anchors"],
+                                "gid": _sl_id,
+                                "rows": _grows,
+                                "row_names": _gfj["row_names"],
+                            }
+                        ],
+                    }
+                )
+                _c3 = (_sv3.json() if _sv3.ok else {}).get("capability") or {}
+                _ev3 = (_c3.get("evidence") or [{}])[0]
+                _m3 = {f.split(":")[0] for row in _grows for f in row}
+                check(
+                    "capability save: a group keeps its rows and indexes each file",
+                    _ev3.get("rows") == _grows
+                    and all(
+                        _c3.get("uuid")
+                        in {
+                            _dec(x)
+                            for x in _cap_r().smembers(
+                                f"{COLLECTION}:idx:capability:file:{m}"
+                            )
+                        }
+                        for m in _m3
+                    ),
+                    _sv3.text[:300],
+                )
+                if _c3.get("uuid"):
+                    requests.delete(
+                        f"{_CB}/{_c3['uuid']}",
+                        params={"collection": COLLECTION},
+                        timeout=30,
+                    )
         finally:
             _cap_r().hdel(f"{COLLECTION}:nway_sem:by_cluster", _tcu)
         _d1 = requests.delete(

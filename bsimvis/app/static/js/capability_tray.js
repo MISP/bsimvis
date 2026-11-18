@@ -42,7 +42,9 @@
 .cap-evx:hover { color:var(--accent); } .cap-evx:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
 .cap-fns { display:flex; flex-direction:column; margin:4px 0 2px; border-left:2px solid var(--border); max-height:320px; overflow:auto; }
 .cap-fn { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, auto) 14px; gap:8px; align-items:baseline; padding:2px 6px; cursor:default; font-family:Consolas, monospace; font-size:0.72rem; }
-.cap-fn:hover { background:var(--hover); }
+.cap-fn:hover, .cap-row-h:hover { background:var(--hover); }
+.cap-row-h { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:baseline; padding:2px 6px; font-family:Consolas, monospace; font-size:0.72rem; }
+.cap-row-h .cap-evx { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cap-fn .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cap-fn .w { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); }
 .cap-card { background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:8px 10px; display:flex; flex-direction:column; gap:5px; min-width:0; }
@@ -72,7 +74,9 @@
     function evLabel(e) {
         const n = (e.fids || []).length;
         if (e.type === 'functions') return `${n} function${n === 1 ? '' : 's'}`;
-        if (e.type === 'group') return `group ${e.label || ''} · ${(e.anchors || []).length} sample functions`;
+        if (e.type === 'group') return (e.rows || []).length
+            ? `N-way group ${e.label || ''} · ${e.rows.length} rows · ${n} functions`
+            : `N-way group ${e.label || ''} · ${(e.anchors || []).length} sample functions`;
         if (e.type === 'string') return `string "${e.value}"${n ? ` · ${n} fn` : ''}`;
         return `${e.type} ${e.rule}${n ? ` · ${n} fn` : ''}`;
     }
@@ -93,19 +97,47 @@
         }
     }
 
-    function fnRows(d, e, k) {
-        return `<div class="cap-fns">${fnsOf(e).map((f, i) => {
-            const n = NAMES[`${d.collection}|${f}`] || {};
-            const [, addr] = f.split(':');
-            return `<div class="cap-fn" data-pf="${escapeAttr(f)}">
-                <span class="nm">${n.pending ? '<span class="w">…</span>' : escapeHtml(n.name || shortFid(f))}</span>
-                <span class="w" title="${escapeAttr(f)}">${escapeHtml(n.file_name || f.split(':')[0].slice(0, 8))} · ${escapeHtml(addr || '')}</span>
-                ${e.type === 'group' ? '<span></span>' : `<span class="cap-x" data-rmfn="${k}:${i}" title="Remove this function">×</span>`}</div>`;
-        }).join('')}</div>`;
+    function fnLine(d, f, rm) {
+        const n = NAMES[`${d.collection}|${f}`] || {};
+        const [, addr] = f.split(':');
+        return `<div class="cap-fn" data-pf="${escapeAttr(f)}">
+            <span class="nm">${n.pending ? '<span class="w">…</span>' : escapeHtml(n.name || shortFid(f))}</span>
+            <span class="w" title="${escapeAttr(f)}">${escapeHtml(n.file_name || f.split(':')[0].slice(0, 8))} · ${escapeHtml(addr || '')}</span>
+            ${rm ? `<span class="cap-x" data-rmfn="${rm}" title="Remove this function">×</span>` : '<span></span>'}</div>`;
     }
 
+    // A group lists its N-way rows (name, copies), each opening on its md5:addr copies;
+    // other pointers list their functions.
+    function fnRows(d, e, k, openRows) {
+        if (e.type === 'group' && (e.rows || []).length) {
+            return `<div class="cap-fns">${e.rows.map((row, i) => {
+                const key = `${k}:${i}`, open = openRows.has(key);
+                const nm = (e.row_names || [])[i] || (NAMES[`${d.collection}|${row[0]}`] || {}).name || shortFid(row[0]);
+                return `<div class="cap-row-h" data-pf="${escapeAttr(row[0])}"><button type="button" class="cap-evx" data-rowx="${key}" aria-expanded="${open}"><i class="fa-solid fa-chevron-${open ? 'down' : 'right'}"></i> ${escapeHtml(nm)}</button>
+                    <span class="w">${row.length} cop${row.length === 1 ? 'y' : 'ies'}</span></div>
+                    ${open ? `<div class="cap-fns" style="margin-left:14px;">${row.map(f => fnLine(d, f, '')).join('')}</div>` : ''}`;
+            }).join('')}</div>`;
+        }
+        const note = e.type === 'group' ? `<div class="w" style="padding:2px 6px;">${e._loading ? 'Loading the group\'s rows…' : 'Sample functions only: its rows load from a cluster\'s stored N-way set.'}</div>` : '';
+        return `<div class="cap-fns">${note}${fnsOf(e).map((f, i) => fnLine(d, f, e.type === 'group' ? '' : `${k}:${i}`)).join('')}</div>`;
+    }
+
+    // Fills a group pointer's rows from the cluster's stored N-way set (once).
+    async function fillGroup(d, e) {
+        if (e.type !== 'group' || (e.rows || []).length || !d.cluster_uuid || d.pool || !(e.gid || e.name_id) || e._tried) return;
+        e._tried = true;
+        const q = new URLSearchParams({ collection: d.collection, cluster_uuid: d.cluster_uuid });
+        if (e.gid) q.set('gid', e.gid); else q.set('name_id', e.name_id);
+        try {
+            const r = await fetch(`/api/capability/group_functions?${q}`);
+            const j = await r.json();
+            if (r.ok && (j.rows || []).length) { e.rows = j.rows; e.row_names = j.row_names || []; e.fids = j.rows.flat(); }
+        } catch (err) { }
+    }
+    async function fillGroups(d) { await Promise.all((d.evidence || []).map(e => fillGroup(d, e))); }
+
     // ---- the editor ----
-    function html(d, open = new Set()) {
+    function html(d, open = new Set(), openRows = new Set()) {
         const ids = [...(d.mbc || []), ...(d.attack || [])];
         const names = d.names || {};
         return `<div class="cap-ed">
@@ -117,7 +149,7 @@
                 const n = fnsOf(e).length, isOpen = open.has(k);
                 return `<div class="cap-ev">
                 <i class="fa-solid ${ICON[e.type] || 'fa-circle'}" style="color:var(--dim); margin-top:3px;"></i>
-                <span style="min-width:0; overflow-wrap:anywhere;">${n ? `<button type="button" class="cap-evx" data-evx="${k}" aria-expanded="${isOpen}" title="${isOpen ? 'Hide' : 'Show'} its functions"><i class="fa-solid fa-chevron-${isOpen ? 'down' : 'right'}"></i> ${escapeHtml(evLabel(e))}</button>` : escapeHtml(evLabel(e))}${e.src === 'llm' ? ' <span class="w">model</span>' : ''}${e.why ? `<div class="w">${escapeHtml(e.why)}</div>` : ''}${isOpen ? fnRows(d, e, k) : ''}</span>
+                <span style="min-width:0; overflow-wrap:anywhere;">${n ? `<button type="button" class="cap-evx" data-evx="${k}" aria-expanded="${isOpen}" title="${isOpen ? 'Hide' : 'Show'} its functions"><i class="fa-solid fa-chevron-${isOpen ? 'down' : 'right'}"></i> ${escapeHtml(evLabel(e))}</button>` : escapeHtml(evLabel(e))}${e.src === 'llm' ? ' <span class="w">model</span>' : ''}${e.why ? `<div class="w">${escapeHtml(e.why)}</div>` : ''}${isOpen ? fnRows(d, e, k, openRows) : ''}</span>
                 <span class="cap-x" data-rmev="${k}" title="Remove this pointer">×</span></div>`;
             }).join('') || '<div class="w" style="color:var(--dim)">No evidence yet: add functions from any view (right click, Capability).</div>'}</div>
             <input class="cap-addfn" aria-label="Add a function by md5:addr" placeholder="+ function md5:addr, Enter">
@@ -128,8 +160,8 @@
     // Mounts the editor on `root`, editing `d` in place; `onChange()` after each edit.
     function mount(root, d, onChange = () => {}) {
         ensureCss();
-        const open = new Set();
-        const render = () => { root.innerHTML = html(d, open); };
+        const open = new Set(), openRows = new Set();
+        const render = () => { root.innerHTML = html(d, open, openRows); };
         let timer = null;
         render();
         root.oninput = e => {
@@ -152,14 +184,34 @@
             }
         };
         root.onclick = e => {
-            const t = e.target.closest('[data-rmid],[data-rmev],[data-addid],[data-evx],[data-rmfn]');
+            const t = e.target.closest('[data-rmid],[data-rmev],[data-addid],[data-evx],[data-rmfn],[data-rowx]');
             if (!t) return;
+            if (t.dataset.rowx) {
+                const key = t.dataset.rowx;
+                if (openRows.has(key)) openRows.delete(key);
+                else {
+                    openRows.add(key);
+                    const [k, i] = key.split(':').map(Number);
+                    if (d.collection && !d.pool) loadNames(d.collection, d.evidence[k].rows[i]).then(() => { if (root.isConnected) render(); });
+                }
+                render();
+                return;
+            }
             if (t.dataset.evx) {
-                const k = +t.dataset.evx;
+                const k = +t.dataset.evx, ev = d.evidence[k];
                 if (open.has(k)) open.delete(k);
                 else {
                     open.add(k);
-                    if (d.collection && !d.pool) loadNames(d.collection, fnsOf(d.evidence[k])).then(() => { if (root.isConnected) render(); });
+                    const names = () => {
+                        if (!d.collection || d.pool) return;
+                        // a group names its rows by their first copy; others every function
+                        const fids = (ev.rows || []).length ? ev.rows.map(r => r[0]) : fnsOf(ev);
+                        loadNames(d.collection, fids).then(() => { if (root.isConnected) render(); });
+                    };
+                    if (ev.type === 'group' && !(ev.rows || []).length && !ev._tried) {
+                        ev._loading = true;
+                        fillGroup(d, ev).then(() => { ev._loading = false; onChange(); if (root.isConnected) render(); names(); });
+                    } else names();
                 }
                 render();
                 return;
@@ -202,7 +254,8 @@
 
     // The fields the server takes; a suggestion's extras (quotes, unbacked) stay out.
     function payload(d) {
-        const out = { name: (d.name || '').trim(), description: d.description || '', mbc: d.mbc || [], attack: d.attack || [], evidence: (d.evidence || []).map(({ id, ...e }) => e) };
+        // client-only fields (id is recomputed by the server, _loading / _tried are UI state)
+        const out = { name: (d.name || '').trim(), description: d.description || '', mbc: d.mbc || [], attack: d.attack || [], evidence: (d.evidence || []).map(({ id, _loading, _tried, ...e }) => e) };
         if (d.uuid) out.uuid = d.uuid;
         return out;
     }
@@ -219,6 +272,7 @@
     // Saves a capability draft: the editor's full save for an existing one (or with
     // `replace`), else an accept (create, or attach onto `attach_to`).
     async function accept(d, replace = false) {
+        await fillGroups(d);
         const p = payload(d);
         if (d.attach_to && !d.uuid) { p.uuid = d.attach_to; }
         if (!p.uuid && !p.name) throw new Error('Give the capability a name');
@@ -232,6 +286,7 @@
     async function acceptMany(list) {
         if (!list.length) return null;
         const d0 = list[0];
+        await Promise.all(list.map(fillGroups));
         const items = list.map(d => { const p = payload(d); if (d.attach_to && !d.uuid) p.uuid = d.attach_to; return p; });
         const j = await post('/api/capability/accept', { ...nsBody(d0), items });
         document.dispatchEvent(new CustomEvent('capabilities:changed', { detail: { collection: d0.collection, pool: d0.pool } }));

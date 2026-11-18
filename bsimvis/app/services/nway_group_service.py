@@ -1634,6 +1634,11 @@ def suggest_capabilities(l, name, text, ev, name_id=None):
         "anchors": l["anchors"],
         "label": name or "group",
         **({"name_id": name_id} if name_id else {}),
+        **(
+            {"gid": str(l.get("gid") or l.get("id"))}
+            if l.get("gid") or l.get("id")
+            else {}
+        ),
     }
     sugg = capability_service.build_suggestions(
         answer, lvl, text, ev.get("items") or [], group, amap
@@ -1677,6 +1682,7 @@ def request_suggestions(ns, coll, groups, total):
             continue
         l = {
             "ns": ns,
+            "gid": g.get("gid"),
             "gkind": g.get("kind"),
             "anchors": g["anchors"],
             "rows": int(g.get("rows") or 0),

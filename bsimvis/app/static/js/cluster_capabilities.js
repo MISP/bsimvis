@@ -113,7 +113,8 @@ window.ClusterCapabilities = (function () {
                     let c = byKey.get(key);
                     if (!c) {
                         const keep = st.cards.find(o => o.id === key);
-                        c = keep && st.open === key ? keep : { id: key, groups: [], draft: { name: x.name, attach_to: x.attach_to, mbc: [], attack: [], evidence: [], unbacked: [], why: x.why, quotes: {}, collection: ctx.collection, pool: ctx.pool, names: {} } };
+                        // the suggestion's sentence becomes the capability's description
+                        c = keep && st.open === key ? keep : { id: key, groups: [], draft: { name: x.name, attach_to: x.attach_to, description: x.why || '', mbc: [], attack: [], evidence: [], unbacked: [], why: x.why, quotes: {}, collection: ctx.collection, pool: ctx.pool, cluster_uuid: ctx.cluster_uuid, names: {} } };
                         c.groups = [];
                         byKey.set(key, c);
                     }
@@ -124,6 +125,7 @@ window.ClusterCapabilities = (function () {
                     d.attack = [...new Set([...d.attack, ...(x.attack || [])])];
                     d.unbacked = [...new Set([...d.unbacked, ...(x.unbacked || [])])];
                     d.quotes = { ...d.quotes, ...(x.quotes || {}) };
+                    if (x.why && !d.description.includes(x.why)) d.description = [d.description, x.why].filter(Boolean).join(' ').slice(0, 1000);
                     const seen = new Set(d.evidence.map(e => e.id));
                     (x.evidence || []).forEach(e => { if (!seen.has(e.id)) { d.evidence.push(e); seen.add(e.id); } });
                 }));
@@ -208,7 +210,7 @@ window.ClusterCapabilities = (function () {
             }
             const c = ac && st.accepted.find(x => x.uuid === ac.dataset.uid);
             if (!c) return;
-            const asDraft = () => ({ uuid: c.uuid, name: c.name, description: c.description || '', mbc: [...(c.mbc || [])], attack: [...(c.attack || [])], names: { ...(c.names || {}) }, evidence: JSON.parse(JSON.stringify(c.evidence || [])), collection: ctx.collection, pool: ctx.pool });
+            const asDraft = () => ({ uuid: c.uuid, name: c.name, description: c.description || '', mbc: [...(c.mbc || [])], attack: [...(c.attack || [])], names: { ...(c.names || {}) }, evidence: JSON.parse(JSON.stringify(c.evidence || [])), collection: ctx.collection, pool: ctx.pool, cluster_uuid: ctx.cluster_uuid });
             if (b.hasAttribute('data-aedit')) { st.openAcc = st.openAcc && st.openAcc.uuid === c.uuid ? null : asDraft(); draw(); return; }
             if (b.hasAttribute('data-save') && st.openAcc) {
                 b.disabled = true;

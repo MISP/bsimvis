@@ -4,6 +4,8 @@
   <img src="/img/logo/logo_dark_bg.svg" alt="Repository Logo" width="200"/>
 </p>
 
+![BSimVis preview: collection overview, N-way diff of a family, function detail](img/bsimvis_preview.gif)
+
 BSimVis is a tool to analyze similarities across a collection of binaries, based on [Ghidra](https://github.com/nationalsecurityagency/ghidra) analyzers and the BSim (Behavioral Similarity) plugin. It provides an API and Web interface to upload large quantities of decompiled binaries and BSim feature vectors to a Kvrocks database for similarity analysis, function diffing, and family clustering.
 
 

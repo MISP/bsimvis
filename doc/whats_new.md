@@ -6,8 +6,9 @@ This release turns the N-way diff into a family analysis tool, gives file cluste
 durable identity that analysts can annotate, and reworks navigation around collections.
 
 ## N-way diff
-* **Lanes and lenses** : rows are grouped into lanes (the functions a set of files shares),
-  with Core / Common / Rare tiers, nested sub-lanes and regions. Lens tabs switch the grouping
+* **Lanes and lenses** : rows are grouped into lanes (the functions a set of files shares)
+  under Core / Common / Rare tiers. Nested sub-lanes and a split by region are options in
+  More options. Lens tabs switch the grouping
   between Lanes, Modules, Core, Deltas and Triage. Lanes get LLM names from their strings, calls and
   tags, and nameless `FUN_` rows are named after a discriminating string.
 * **Column groups** : files with the same shared rows merge into one twin column, files can be

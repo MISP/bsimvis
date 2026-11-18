@@ -164,6 +164,12 @@ def search_files_by_cluster():
         cid, rest = request.args.get("cluster"), request.args.get("unclustered")
         if cid or rest:
             ids = loose if rest else set(direct.get(str(cid), ()))
+            if rest and request.args.get("no_containers"):
+                # Containers cluster in their own namespace, so they are always loose here.
+                from bsimvis.app.services.lineage_service import container_md5s
+
+                boxes = {f"{col}:file:{m}" for m in container_md5s(col, r)}
+                ids = set(ids) - boxes
             files, cmap = _page_of(ids, r, col, None, offset, limit)
             return {
                 **out,

@@ -366,6 +366,7 @@ def get_collection_overview():
 
     def build():
         from bsimvis.app.services.cluster_utils import get_cluster_metas
+        from bsimvis.app.services.cluster_display import DEFAULTS as DISPLAY_DEFAULTS
 
         fams = _call(
             search_files_by_cluster, collection=col, axis=axis, limit=40, per_cluster=0
@@ -423,13 +424,19 @@ def get_collection_overview():
         )
         dates = _date_hists(r, col)
         if rare is None:
-            rare = _call(
+            # Rare = in no shown family on this axis; containers never are, so skip them.
+            loose = _call(
                 search_files_by_cluster,
                 collection=col,
                 axis=axis,
                 unclustered=1,
+                no_containers=1,
                 limit=8,
-            ).get("files", [])
+                sort_by="entry_date",
+                sort_order="desc",
+            )
+            rare = loose.get("files", [])
+            loose_total = loose.get("files_total", loose_total)
         return {
             "axis": axis,
             "has_clusters": bool(roots),
@@ -443,6 +450,7 @@ def get_collection_overview():
             "active_days": days,
             "families_untimed": untimed,
             "unclustered_total": loose_total,
+            "rare_min_members": DISPLAY_DEFAULTS["min_members"],
             "recent": recent.get("files", []),
             "rare": rare,
             "uploads": dates["entry_date"],

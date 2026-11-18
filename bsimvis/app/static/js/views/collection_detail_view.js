@@ -361,7 +361,7 @@ window.CollectionDetailView = {
             <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', INFO, 'Files', filesUrl)}</div>
         </div>`;
         const looseCard = `<div class="cov-card cdo-r2">
-            ${this._ovTitle('fa-regular fa-circle', WARN, 'No cluster', 'Files that joined no cluster: the rare ones, worth a look first.', big(ov.unclustered_total))}
+            ${this._ovTitle('fa-regular fa-circle', WARN, `Rare files <span class="dim" style="font-weight:400; font-size:0.75rem;">${escapeHtml(ax)}</span>`, `Files in no family of ${Number(ov.rare_min_members || 3)}+ files on the ${ax} axis, newest first. Archives are left out. A file can still be in a pair, or in a family on another axis.`, big(ov.unclustered_total))}
             ${loading ? sk(8) : ov.has_clusters ? this._ovFileRows(ov.rare || []) : noClusters}
             <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', WARN, 'Files', filesUrl, 'The unclustered files are the last group')}</div>
         </div>`;

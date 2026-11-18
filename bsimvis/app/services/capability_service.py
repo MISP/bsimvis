@@ -13,6 +13,7 @@ Kvrocks keys, `ns` as in nway_sem_service:
 """
 
 import json
+import re
 import os
 import time
 import uuid
@@ -46,6 +47,7 @@ ATTACK = [
     "T1568.002", "T1571", "T1573", "T1595", "T1685",
 ]  # fmt: skip
 MICRO_BELOW = 8  # a group with fewer rows gets micro-behaviours
+CAPS_V = 2  # bump when the capability prompt or parsing changes: groups are asked again
 MATCH = 0.5  # anchor similarity two answers need to be one capability
 _CAT = None
 
@@ -91,18 +93,47 @@ def prompt_lists(lvl):
     return "\n".join(lines), set(mbc), set(a) if lvl != "micro" else set()
 
 
+_ID = re.compile(r"\b([BCEF]\d{4}|T\d{4}(?:\.\d{3})?)\b")
+
+
+def _ids(items, allowed):
+    """The curated ids in a model list: it echoes the list's lines
+    ("C0021 Generate Pseudo-random Sequence"), so only the id token counts."""
+    out = []
+    for x in items if isinstance(items, list) else [items]:
+        m = _ID.search(str(x or ""))
+        if m and m.group(1) in allowed and m.group(1) not in out:
+            out.append(m.group(1))
+    return out[:6]
+
+
 def clean(answer, lvl):
     """Keeps only curated ids of the right level; None when nothing is left."""
     _, mbc, att = prompt_lists(lvl)
     a = answer if isinstance(answer, dict) else {}
     out = {
-        "mbc": [i for i in dict.fromkeys(map(str, a.get("mbc") or [])) if i in mbc][:6],
-        "attack": [
-            i for i in dict.fromkeys(map(str, a.get("attack") or [])) if i in att
-        ][:6],
+        "mbc": _ids(a.get("mbc") or [], mbc),
+        "attack": _ids(a.get("attack") or [], att),
         "text": " ".join(str(a.get("text") or "").split())[:240],
     }
     return out if out["mbc"] or out["attack"] or out["text"] else None
+
+
+def unlink(r, ns, cap_id, group):
+    """Drops `group` from a capability; a capability left with no group goes."""
+    raw = r.hget(f"{ns}:capabilities", cap_id)
+    if not raw:
+        return
+    rec = json.loads(_decode(raw))
+    rec["groups"] = [g for g in rec.get("groups") or [] if g != group]
+    pipe = r.pipeline(transaction=False)
+    if rec["groups"]:
+        pipe.hset(f"{ns}:capabilities", cap_id, json.dumps(rec))
+    else:
+        pipe.hdel(f"{ns}:capabilities", cap_id)
+        for i in labels(rec):
+            pipe.srem(f"{ns}:idx:capability:label:{i}", cap_id)
+    pipe.execute()
 
 
 def labels(rec):
@@ -209,6 +240,16 @@ if __name__ == "__main__":
     )
     assert got == {"mbc": ["B0033"], "attack": ["T1498.001"], "text": "UDP flood"}, got
     assert clean({"mbc": ["B0033"]}, "micro") is None
+    # the model echoes the list lines: the id token is what counts
+    echoed = {
+        "mbc": ["C0021 Generate Pseudo-random Sequence", "C0001: Socket", "x"],
+        "text": "",
+    }
+    assert clean(echoed, "micro")["mbc"] == ["C0021", "C0001"]
+    assert clean({"attack": ["T1071.004 DNS", "T1498.001"]}, "behaviour")["attack"] == [
+        "T1071.004",
+        "T1498.001",
+    ]
 
     class _R:  # the redis calls save / search use, over dicts
         def __init__(self):

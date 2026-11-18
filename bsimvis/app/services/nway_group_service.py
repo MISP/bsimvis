@@ -1556,12 +1556,28 @@ def _lane_caps(l, rec, text, name, ev):
         cap = answer and capability_service.save(
             kv, l["ns"], l["anchors"], answer, lvl, group=rec["id"], evidence=evidence
         )
-        caps = list(
-            dict.fromkeys((rec.get("caps") or []) + ([cap["id"]] if cap else []))
+        # the newest answer replaces the group's older ones
+        caps = [cap["id"]] if cap else []
+        for old in rec.get("caps") or []:
+            if old not in caps:
+                capability_service.unlink(kv, l["ns"], old, rec["id"])
+        nway_sem_service.remember(
+            kv,
+            l["ns"],
+            l["gkind"],
+            l["anchors"],
+            caps=caps,
+            caps_v=capability_service.CAPS_V,
         )
-        nway_sem_service.remember(kv, l["ns"], l["gkind"], l["anchors"], caps=caps)
     except Exception as e:
         logging.warning(f"lane capabilities failed: {e}")
+
+
+def _caps_v():
+    """The capability answer version a group needs (None when capabilities are off)."""
+    from bsimvis.app.services import capability_service
+
+    return capability_service.CAPS_V if capability_service.enabled() else None
 
 
 def _caps_only(l, rec):
@@ -1683,7 +1699,7 @@ def lane_names(lanes, llm=True):
             sources[lid] = "user" if rec.get("user_name") else "llm"
             evidence[lid] = {k: model.get(k, []) for k in ("tags", "strings", "calls")}
             evidence[lid]["caps"] = caps.get(lid, [])
-            if llm and "caps" not in rec:
+            if llm and rec.get("caps_v") != _caps_v():
                 with _LANE_LOCK:
                     if f"caps:{rec['id']}" not in _LANE_STATE:
                         _LANE_STATE[f"caps:{rec['id']}"] = {

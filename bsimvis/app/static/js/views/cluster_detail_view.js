@@ -563,6 +563,8 @@ window.ClusterDetailView = {
                     <span class="bsim-node-label" data-cluster-name="${escapeAttr(c.cluster_uuid || '')}" title="${escapeAttr(c.cluster_name || `Cluster #${c.cluster_id}`)}">
                         ${escapeHtml(c.cluster_name || `Cluster #${c.cluster_id}`)}
                     </span>${this.isBinary ? clusterNameSource(c, this.axis) : ''}
+                    ${(c.user_tags || []).includes('bookmark') ? '<i class="fa-solid fa-bookmark" style="color:#66d9ef; font-size:0.7rem;" title="Bookmarked"></i>' : ''}
+                    ${c.note_count ? `<i class="fa-solid fa-comment" style="color:var(--note-accent, #e6db74); font-size:0.7rem;" title="${Number(c.note_count)} note(s)"></i>` : ''}
                     ${this.cohesionBadge(c)}
                     <span class="bsim-node-count">${Number(c.count || 0).toLocaleString()}</span>
                 </div>

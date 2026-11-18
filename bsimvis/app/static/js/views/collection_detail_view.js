@@ -213,6 +213,21 @@ window.CollectionDetailView = {
         </div>`;
     },
 
+    /** A bookmarked cluster: its own axis (bookmarks span them all), notes on the right. */
+    _ovMarkRow(b) {
+        const uuid = b.cluster_uuid;
+        const name = b.cluster_name || (b.retired ? 'Retired cluster' : `Cluster ${b.cid}`);
+        const card = b.retired ? '<i class="fa-solid fa-clock-rotate-left dim" title="A rebuild retired this uuid: open it to see where its files went"></i>'
+            : renderClusterCards([{ cluster_id: b.cid, cluster_uuid: uuid, cluster_name: b.cluster_name, cohesion_score: b.cohesion_score || 0, member_count: b.matching || 0, axis: b.axis }], true);
+        const axis = b.axis !== this._ovAxis() ? `<span class="cov-arch" title="Score axis of this cluster">${escapeHtml(b.axis)}</span>` : '';
+        const notes = b.note_count ? EntityRenderer.renderBinClusterNoteButton(b.cluster_key, b.note_owners || [], { raw_data: b }) : '';
+        return `<div class="cdo-act">
+            <span>${card || ''}</span>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(b.axis))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${b.retired ? ' <span class="dim">retired</span>' : clusterNameSource({ ...b, cluster_id: b.cid }, b.axis)} ${axis}</span>
+            <span style="display:inline-flex; gap:6px; align-items:center;">${notes}<span class="mono dim" title="Files">${b.retired ? '' : Number(b.matching || 0).toLocaleString()}</span></span>
+        </div>`;
+    },
+
     _ovFileRows(files) {
         const col = this._ovCol;
         if (!files.length) return '<div class="dim" style="font-size:0.78rem;">None.</div>';
@@ -386,6 +401,12 @@ window.CollectionDetailView = {
             ${loading ? sk(7, 18) : (ov.changed || []).length ? `<div class="cov-list">${ov.changed.map(f => this._ovActRow(f, `<span class="dim">${day(f.last_added)}</span>`, `Newest member uploaded on ${day(f.last_added)}, oldest on ${day(f.first_added)}`)).join('')}</div>` : (noDates || noClusters)}
             <div class="cov-foot">${byActivity('last_added')}</div>
         </div>`;
+        const marks = ov.bookmarks || [];
+        const markCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-bookmark', 'var(--accent)', 'Bookmarked clusters', 'File clusters an analyst bookmarked, on every score axis, with their notes. A retired one was changed by a rebuild: open it to see where its files went and copy its notes.', big(ov.bookmarks_total))}
+            ${loading ? sk(7, 18) : marks.length ? `<div class="cov-list">${marks.map(b => this._ovMarkRow(b)).join('')}</div>` : none('No bookmarked cluster. Bookmark one from its page (the bookmark next to its tags).')}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-table-list', 'var(--accent)', 'All bookmarked', `${Nav.buildUIUrl(col, ['files', 'clusters'])}?cluster_tag=bookmark`, 'The clusters table, bookmarked only')}</div>
+        </div>`;
         // filetype strings can be long ("ELF 32-bit LSB executable, ARM, ..."): group on the format word.
         const fmt = {};
         (ov.filetype || []).forEach(x => { const k = String(x.value).split(/[\s,]/)[0] || 'unknown'; fmt[k] = (fmt[k] || 0) + x.count; });
@@ -403,7 +424,7 @@ window.CollectionDetailView = {
             ${this._ovTitle('fa-solid fa-chart-pie', INFO, 'Mix', 'How the files split by architecture and format, and the tags most of them carry.')}
             ${mixBody}
         </div>`;
-        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}<div class="cdo-row3">${activeCard}${changedCard}${seenCard}</div></div>`;
+        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}<div class="cdo-row3">${markCard}${activeCard}${changedCard}${seenCard}</div></div>`;
     },
 
     _OV_CSS: `

@@ -455,7 +455,63 @@ def get_collection_overview():
     key = f"overview:{col}:{axis}"
     if request.args.get("refresh") == "true":
         _CACHE.pop(key, None)
-    return _cached(key, INSIGHTS_TTL, build)
+    out = _cached(key, INSIGHTS_TTL, build)
+    # Outside the cache: a bookmark shows up on the next load, not 2 minutes later.
+    bookmarks, total = cluster_bookmarks(get_redis(), col)
+    return {**out, "bookmarks": bookmarks, "bookmarks_total": total}
+
+
+BOOKMARK_TAGS = ("bookmark", "user:bookmark")
+
+
+def cluster_bookmarks(r, col, limit=20):
+    """Bookmarked file clusters of every axis, from the tag sidecar, with their
+    notes. A uuid a rebuild retired stays listed (`retired`): its page shows
+    where the files went."""
+    from bsimvis.app.services.cluster_utils import (
+        get_cluster_metas,
+        resolve_cluster_id_by_uuid,
+    )
+
+    s = lambda v: v.decode() if isinstance(v, bytes) else v
+    notes = {
+        s(k): json.loads(v)
+        for k, v in (r.hgetall(f"{col}:cluster_notes") or {}).items()
+    }
+    out = []
+    for field, raw in (r.hgetall(f"{col}:cluster_tags") or {}).items():
+        field = s(field)
+        if not field.startswith("bin_cluster:"):
+            continue
+        if not set(json.loads(raw) or []) & set(BOOKMARK_TAGS):
+            continue
+        algo, _, c_uuid = field[len("bin_cluster:") :].rpartition(":")
+        cid = resolve_cluster_id_by_uuid(r, col, algo, c_uuid, "bin_cluster")
+        m = (
+            get_cluster_metas(r, col, algo, [cid], "bin_cluster").get(str(cid))
+            if cid
+            else None
+        ) or {}
+        parts = algo.split(":")
+        mine = notes.get(field) or []
+        out.append(
+            {
+                "cid": cid,
+                "cluster_uuid": c_uuid,
+                "cluster_name": m.get("cluster_name"),
+                **name_fields(m),
+                "cohesion_score": m.get("cohesion_score") or 0,
+                "matching": m.get("member_count") or 0,
+                "axis": next((a for a in BIN_AXES if a in parts[1:]), "overall"),
+                "node_type": "container" if "container" in parts else "file",
+                "retired": not m,
+                "cluster_key": f"{col}:{field}",
+                "note_count": len(mine),
+                "note_owners": sorted({n.get("owner", "user") for n in mine}),
+            }
+        )
+    out.sort(key=lambda b: (b["retired"], -b["matching"]))
+    return out[:limit], len(out)
 
 
 # --- Unified search -------------------------------------------------------

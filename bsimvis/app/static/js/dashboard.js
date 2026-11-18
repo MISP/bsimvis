@@ -4237,6 +4237,7 @@ function renderBinClusters(items) {
                     <div style="display:flex; align-items:center; gap:8px;">
                         <span id="name-display-bin-${escapeAttr(c.cluster_id)}" style="cursor:pointer; font-weight:bold;">${escapeHtml(displayName)}</span>${nameSrc}
                         <button class="btn-action" title="Rename" onclick="renameBinCluster(${escapeAttr(jsString(c.cluster_id))}, ${escapeAttr(jsString(c.cluster_name || ''))})"><i class="fa-solid fa-pen"></i></button>
+                        ${c.cluster_key ? EntityRenderer.renderBinClusterNoteButton(c.cluster_key, c.note_owners || [], { raw_data: c }) : ''}
                     </div>
                     <div class="dim" style="font-size:0.65rem; display:flex; flex-direction:column; gap:2px;">
                         ${(() => {

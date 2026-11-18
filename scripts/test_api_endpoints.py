@@ -1972,6 +1972,26 @@ def test_bin_cluster_uuid_history():
             "the retired uuid keeps its own note",
             len((old_notes or {}).get("notes", [])) == 1,
         )
+        ov = test_endpoint(
+            "GET",
+            "/api/index/collection/overview",
+            params={"collection": coll, "axis": "overall"},
+            label="GET /api/index/collection/overview (bookmarks card)",
+        )
+        marks = {b["cluster_uuid"]: b for b in (ov or {}).get("bookmarks", [])}
+        check(
+            "overview lists bookmarked clusters, live and retired, with their notes",
+            marks.get(keep["cluster_uuid"], {}).get("retired") is False
+            and marks.get(merged["cluster_uuid"], {}).get("retired") is True
+            and marks.get(succ, {}).get("note_count") == 1
+            and (ov or {}).get("bookmarks_total") == 3,
+            json.dumps(
+                {
+                    u: {k: b.get(k) for k in ("retired", "note_count")}
+                    for u, b in marks.items()
+                }
+            ),
+        )
     finally:
         bin_cluster_service.clear_clusters(coll, algo)
         for pattern in (f"{coll}:*",):

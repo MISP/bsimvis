@@ -453,8 +453,9 @@ def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order, slice_end=None):
 
     Numeric fields rank off their ZSET; text fields rank off their tag-bucket
     registry. Anything else has no index to order by and falls back to arbitrary
-    set order. ponytail: walks the full ZSET/registry once (O(N)); fine at current
-    sizes, switch to per-id pipelined ZSCORE if the index dwarfs the candidate set.
+    set order. With `slice_end`, both walks stop once the first `slice_end` are
+    ordered and the rest is left out. ponytail: a sparse candidate set still walks
+    most of the index; switch to per-id pipelined ZSCORE if that gets slow.
     """
     desc = sort_order == "desc"
 
@@ -465,13 +466,27 @@ def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order, slice_end=None):
         return list(doc_ids)
 
     zset_key = f"{collection}:idx:file:{sort_by}"
-    ranked = r.zrange(zset_key, 0, -1, desc=desc)
-    ranked = [d.decode() if isinstance(d, bytes) else str(d) for d in ranked]
-
     candidates = set(doc_ids)
-    ordered = [d for d in ranked if d in candidates]
+    ordered, seen = [], set()
+    # Growing pages instead of one ZRANGE 0 -1: the full read was ~2.3 s of a 3 s
+    # "8 newest files" request on a live 1.2k-file collection during a build.
+    start, step = 0, (max(256, 4 * slice_end) if slice_end else -1)
+    while True:
+        chunk = r.zrange(
+            zset_key, start, start + step - 1 if step > 0 else -1, desc=desc
+        )
+        for d in chunk:
+            d = d.decode() if isinstance(d, bytes) else str(d)
+            if d in candidates and d not in seen:
+                seen.add(d)
+                ordered.append(d)
+        if step < 0 or len(chunk) < step or len(ordered) >= slice_end:
+            break
+        start, step = start + step, step * 2
+    if slice_end and len(ordered) >= slice_end:
+        return ordered
     # Candidates missing from the ZSET (no score) go last, arbitrary order.
-    ordered.extend(candidates - set(ordered))
+    ordered.extend(candidates - seen)
     return ordered
 
 

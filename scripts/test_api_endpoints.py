@@ -5673,6 +5673,19 @@ def _sweep_sorts(spec, ns, label):
             all(a <= b for a, b in zip(a_keys, a_keys[1:])),
             f"{[row.get(row_field) for row in asc][:5]}",
         )
+        # sort_doc_ids stops its index walk at offset + limit: a small page deep
+        # in the list must hold the same keys as that slice of the big page.
+        if spec["name"] == "files":
+            page, _ = _search(
+                spec["path"],
+                dict(base, sort_by=field, sort_order="desc", limit=1, offset=1),
+                spec["key"],
+            )
+            check(
+                f"{label}: {spec['name']} sort_by={field} offset page matches",
+                [_sort_key(row.get(row_field)) for row in page] == d_keys[1:2],
+                f"{[row.get(row_field) for row in page]} vs {d_keys[1:2]}",
+            )
 
 
 def _json_ids(rows):

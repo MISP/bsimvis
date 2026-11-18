@@ -7,6 +7,7 @@ request context so the existing `request.args` parsing is reused verbatim.
 
 import json
 import logging
+import threading
 import time
 from urllib.parse import quote
 
@@ -20,19 +21,57 @@ from bsimvis.app.services.tag_service import tag_service
 job_service = JobService()
 
 # ponytail: process-local dict cache, no eviction (a handful of keys).
-# Swap for redis if the API ever runs multi-process and staleness matters.
-_CACHE = {}
+# Swap for a stored snapshot if the API ever runs multi-process or a build
+# passes ~3 s (doc/internal/plan_f_nway_semantics_overview.md, slice 2).
+_CACHE = {}  # key -> (built_at, value)
+_BUILDS = {}  # key -> Event set when its in-flight build ends
+_LOCK = threading.Lock()
 INSIGHTS_TTL = 120
 
 
+def _build(key, fn):
+    try:
+        val = fn()
+        with _LOCK:
+            _CACHE[key] = (time.time(), val)
+    finally:
+        with _LOCK:
+            _BUILDS.pop(key).set()
+
+
 def _cached(key, ttl, fn):
-    hit = _CACHE.get(key)
-    now = time.time()
-    if hit and now - hit[0] < ttl:
+    """Fresh: served. Stale: served while one background thread rebuilds it.
+    Missing: built here, and callers arriving meanwhile wait for that build
+    instead of starting their own."""
+    with _LOCK:
+        hit = _CACHE.get(key)
+        fresh = hit and time.time() - hit[0] < ttl
+        ev = None if fresh else _BUILDS.get(key)
+        mine = not fresh and ev is None
+        if mine:
+            ev = _BUILDS[key] = threading.Event()
+    if fresh:
         return hit[1]
-    val = fn()
-    _CACHE[key] = (now, val)
-    return val
+    if hit:
+        if mine:
+            app = current_app._get_current_object()
+
+            def refresh():
+                with app.app_context():
+                    try:
+                        _build(key, fn)
+                    except Exception as e:
+                        logging.warning(f"home cache: refresh of {key} failed: {e}")
+
+            threading.Thread(target=refresh, daemon=True).start()
+        return hit[1]
+    if mine:
+        _build(key, fn)
+    else:
+        ev.wait()
+    hit = _CACHE.get(key)
+    # The build we waited on failed: try once ourselves.
+    return hit[1] if hit else fn()
 
 
 def _call(fn, **args):
@@ -419,6 +458,7 @@ def get_collection_overview():
             collection=col,
             limit=8,
             sort_by="entry_date",
+            bin_clusters="false",
             sort_order="desc",
         )
         dates = _date_hists(r, col)
@@ -428,6 +468,7 @@ def get_collection_overview():
                 collection=col,
                 axis=axis,
                 unclustered=1,
+                bin_clusters="false",
                 limit=8,
             ).get("files", [])
         return {

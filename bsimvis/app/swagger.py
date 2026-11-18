@@ -807,6 +807,11 @@ class FileSearch(Resource):
                 "description": "Collection name",
                 "example": "main",
             },
+            "bin_clusters": {
+                "description": "false: rows carry no bin cluster badges and "
+                "bin_cluster_map is empty (skips the cluster meta reads)",
+                "enum": ["true", "false"],
+            },
             "pool": {
                 "description": "Pool ID (targets a cross-collection pool)",
                 "example": "test_pool",

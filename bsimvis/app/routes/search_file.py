@@ -322,7 +322,12 @@ def hydrate_files(r, col, pool_id, paged_ids):
         )
     )
     t3 = t2
-    if any(any(v for v in d["bin_clusters"].values()) for d in raw_files_data):
+    # bin_clusters=false: rows without cluster badges (the overview's file
+    # cards), which skips the meta of every cluster each file sits in.
+    if request.args.get("bin_clusters") == "false":
+        for d in raw_files_data:
+            d["bin_clusters"] = []
+    elif any(any(v for v in d["bin_clusters"].values()) for d in raw_files_data):
         meta_by_uuid, uuids_per_file_by_axis = fetch_bin_cluster_meta_all_axes(
             r,
             col,

@@ -3172,6 +3172,20 @@ def run_all_tests():
         },
         label="GET /api/file/search (sorted)",
     )
+    lite = test_endpoint(
+        "GET",
+        "/api/file/search",
+        params={"collection": COLLECTION, "limit": 5, "bin_clusters": "false"},
+        label="GET /api/file/search?bin_clusters=false",
+    )
+    check(
+        "bin_clusters=false returns rows without cluster badges",
+        isinstance(lite, dict)
+        and lite.get("files")
+        and lite.get("bin_cluster_map") == {}
+        and all(f.get("bin_clusters") == [] for f in lite["files"]),
+        str(lite)[:250],
+    )
     # Plan D5b/Decision 9: inferred_filetype's bucket is gone everywhere
     # (replaced by executable_format_distribution, Decision 5), so it must
     # 400 rather than silently match nothing.

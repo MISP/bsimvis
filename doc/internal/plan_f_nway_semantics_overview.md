@@ -16,8 +16,8 @@ Decisions taken in review:
 
 | Question | Decision |
 |---|---|
-| Overview fix | Fix the wasted reads first, then add a stored snapshot |
-| Snapshot refresh | Follow-up job after build, recluster and upload pipelines |
+| Overview fix | Fix the wasted reads; stored snapshot deferred (decided after the deploy) |
+| Overview cache | Serve stale while one background thread refreshes; single-flight on a miss |
 | Lane identity | Anchors: ~20 function ids (`md5:addr`), matched at >= 50% overlap |
 | Name scope | Per collection (per pool for pools), user renames included |
 | Storage | Kvrocks, new keys (explicitly approved schema change) |
@@ -90,7 +90,23 @@ longer shows up.
 Measure before and after on a test stack with a build running. Slice 2 is only worth doing if
 it is still slow after this.
 
-### Slice 2: stored snapshot
+### Slice 2: background refresh (done), snapshot deferred
+
+After the ZSET fix was deployed, a rebuild took 1.8 s and a cached call 0.06 s, with Recent still
+1.1 s of the rebuild. A snapshot would only remove that 1.8 s, once every 2 minutes. Done
+instead:
+
+- `_cached` (`routes/home.py`) serves a stale value while one background thread rebuilds it.
+  Callers arriving during a miss wait for that one build instead of each starting their own.
+  Only the first request after an app restart waits.
+- `bin_clusters=false` on `/api/file/search`, read in `hydrate_files` so `by_cluster` takes it
+  too. The Recent and Rare cards no longer load the meta of every cluster their files sit in
+  (121 metas for 8 files).
+
+Build the snapshot below only when a rebuild passes ~3 s (re-time at 5k+ files) or the app runs
+more than one process, since the in-process cache is not shared.
+
+Deferred design:
 
 - Key: `{coll}:overview:{axis}` (JSON, Kvrocks), with `built_at` and the display tag it was built
   from.
@@ -267,8 +283,9 @@ Memory rules for the job:
 
 ## Slices, in order
 
-1. Overview read fixes plus single-flight. Measure.
-2. Overview snapshot job and key.
+1. Overview read fixes plus single-flight. Measure. Done: ZSET walk, background refresh,
+   `bin_clusters=false`.
+2. Overview snapshot job and key: deferred, see Slice 2.
 3. N-way semantic store: set record, name registry with anchor lookup, inline write on open,
    LLM write-through, read-before-LLM.
 4. Group rename endpoint and UI (lineage pane and table group headers).

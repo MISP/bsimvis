@@ -1,9 +1,11 @@
 BSimVis is a tool to analyze similarities across a collection of binaries, based on [Ghidra](https://github.com/nationalsecurityagency/ghidra) analyzers and the BSim (Behavioral Similarity) plugin. It provides an API and Web interface to upload large quantities of decompiled binaries and BSim feature vectors to a Kvrocks database for similarity analysis, function diffing, and binary family clustering.
 
-# 1.0.0
+# 1.0
 
-This release turns the N-way diff into a family analysis tool, gives file clusters a
-durable identity that analysts can annotate, and reworks navigation around collections.
+BSimVis is now a malware family analysis tool. Go beyond comparing two samples: analyse an
+entire malware family at once, understand how code is reused across variants, and track how
+capabilities evolve over time. This release also gives file clusters a durable identity that
+analysts can annotate, and reworks navigation around collections.
 
 ## N-way diff
 * **Lanes and lenses** : rows are grouped into lanes (the functions a set of files shares)
@@ -80,7 +82,8 @@ durable identity that analysts can annotate, and reworks navigation around colle
 
 ## Operations
 * **Install** : `./install.sh` creates `.env` and `bsimvis_config.toml` on first run, so there is
-  nothing to copy by hand.
+  nothing to copy by hand. It installs the prebuilt Kvrocks package (sha256-pinned) instead of
+  compiling it.
 * **Disk use** : Kvrocks keeps at most 1 GB / 10 min of old write-ahead logs (`kvrocks.conf`). Its
   defaults kept up to 16 GB for replicas BSimVis does not have, enough to fill a small disk.
 * **Docker** : a Dockerfile and compose services for the app and workers (gunicorn, non-root,
@@ -91,6 +94,8 @@ durable identity that analysts can annotate, and reworks navigation around colle
 * **Performance** : large `build_sim` batches split into parallel shard jobs, `redis[hiredis]`
   for reply parsing, gzip responses, a file search that stops sorting at the requested page,
   and an overview that serves its cached copy while it refreshes.
+* **Security** : dependency bumps for every open Dependabot advisory (black, certifi, mcp, pillow,
+  pyjwt, setuptools, urllib3, werkzeug).
 
 # 0.6.0
 

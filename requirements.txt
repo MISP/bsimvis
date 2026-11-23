@@ -20,7 +20,7 @@ black==26.10.1
     # via bsimvis (pyproject.toml)
 blinker==1.9.0
     # via flask
-brotli==1.2.0
+brotli==1.2.1
     # via flask-compress
 cachetools==7.1.8
     # via pymilvus

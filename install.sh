@@ -5,6 +5,10 @@ set -e
 REDIS_VERSION="7.2.4"
 # Keep in sync with the apache/kvrocks image tag in docker-compose.yml
 KVROCKS_VERSION="2.17.0"
+# Prebuilt amd64 .deb from the Kvrocks maintainers (Apache ships source only).
+# Bump the sha256 with the version: GitHub shows it as the asset's digest.
+KVROCKS_DEB="kvrocks_${KVROCKS_VERSION}-1_amd64.deb"
+KVROCKS_DEB_SHA256="aa7d18c9e5aa3ae4f80ebf413c81b9f8b9602658eb3c39f604362c34f00716e5"
 
 # Directories
 PROJECT_ROOT=$(pwd)
@@ -101,7 +105,15 @@ fi
 echo "--- Installing Kvrocks ---"
 if [ "${DOCKER_DATASTORES}" = "true" ]; then
     echo "Skipping Kvrocks build (DOCKER_DATASTORES=true, runs from docker-compose.yml)"
+elif [ ! -f "${BIN_DIR}/kvrocks" ] && [ "$(uname -m)" = "x86_64" ] && command -v dpkg-deb > /dev/null \
+    && curl -fsSL -o "${SCRATCH_DIR}/${KVROCKS_DEB}" \
+        "https://github.com/RocksLabs/kvrocks-fpm/releases/download/${KVROCKS_VERSION}-1/${KVROCKS_DEB}" \
+    && echo "${KVROCKS_DEB_SHA256}  ${SCRATCH_DIR}/${KVROCKS_DEB}" | sha256sum -c - \
+    && dpkg-deb -x "${SCRATCH_DIR}/${KVROCKS_DEB}" "${SCRATCH_DIR}/kvrocks-deb"; then
+    cp "${SCRATCH_DIR}/kvrocks-deb/usr/bin/kvrocks" "${BIN_DIR}/"
+    echo "Installed prebuilt Kvrocks ${KVROCKS_VERSION} (sha256 verified)"
 elif [ ! -f "${BIN_DIR}/kvrocks" ]; then
+    rm -f "${SCRATCH_DIR}/${KVROCKS_DEB}"
     echo "Building Kvrocks from source..."
     cd "${SCRATCH_DIR}"
     if [ ! -d "kvrocks" ]; then

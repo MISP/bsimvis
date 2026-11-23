@@ -9,6 +9,8 @@ BSimVis is a tool to analyze similarities across a collection of binaries, based
 
 BSimVis uses a custom database because Ghidra's BSim databases don't store decompiled code and other metadata. This alternative BSim database and API provide filtering and visualization of this additional data across multiple binaries at once. It doesn't aim to replace Ghidra's BSim plugin, but to enable more advanced analysis and visualization of the similarities on a large scale (family clustering, etc.).
 
+Version 1.0 makes BSimVis a family analysis tool: compare every sample of a family at once, follow its lineage over time, and see where each piece of code first appeared. See the [changelog](doc/whats_new.md).
+
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="img/bsimvis_preview_dark.gif">
@@ -60,8 +62,25 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 
 # Screenshots
 
+## Collection overview
 
+![Collection overview: family map, families, architecture and tag mix, files over time](img/release-1.0/Overview_collection.png)
 
+## N-way diff
+
+![N-way diff of a Mirai family, Lanes tab, Core tier open](img/release-1.0/nway_lanes.png)
+
+![N-way diff, Rare tier open](img/release-1.0/nway_rare_lanes.png)
+
+## Lineage: timeline and births
+
+![Lineage page, Timeline view by first-seen date](img/release-1.0/lineage_timeline.png)
+
+![Lineage page, Births view: where new code first appears](img/release-1.0/lineage_births.png)
+
+## Function CFG
+
+![Function page, CFG tab with the code of each block](img/release-1.0/function_cfg.png)
 
 ## Web UI Similarity Search Graph view
 

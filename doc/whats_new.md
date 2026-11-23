@@ -60,7 +60,29 @@ durable identity that analysts can annotate, and reworks navigation around colle
 * **Entry point tag** : the program entry point is tagged `entry:process` (LIEF) and opens from
   the file view.
 
+## New defaults
+* **Weighted cosine by default** : function similarity weights BSim features by rarity. On 40
+  Mirai samples of 8 known variants it placed each variant in one cluster more often than
+  `unweighted_cosine` (best-cluster F1 0.88 against 0.75), and the benchmark suite ranks it first
+  for separating projects. It costs about 1.6x the similarity build time of `unweighted_cosine`.
+* **Clustering and similarity follow the production setup** : function clusters by
+  `hierarchical_uf`, file clusters by `hierarchical_snn` (both with a cluster tree, which the
+  overviews and family views need), every match counted in the file score
+  (`unweighted_match`), and leftover functions re-matched down to 0.4 when two files are
+  compared (`discovery`).
+* **FunctionID, boilerplate and YARA on by default** : library and runtime code is tagged on every
+  upload, so file scores and clusters follow the original code. capa and Rulezet stay opt-in.
+* **A collection keeps its algorithm** : the first build locks it, like `min_score`. A collection built
+  before this release keeps the algorithm its edges were built with, so a later change of
+  `similarity.algo` does not empty its similarity views. Change it in the collection params, then rebuild.
+* Existing `bsimvis_config.toml` files are not touched: copy the new keys from
+  `bsimvis_config.toml.example` to adopt them.
+
 ## Operations
+* **Install** : `./install.sh` creates `.env` and `bsimvis_config.toml` on first run, so there is
+  nothing to copy by hand.
+* **Disk use** : Kvrocks keeps at most 1 GB / 10 min of old write-ahead logs (`kvrocks.conf`). Its
+  defaults kept up to 16 GB for replicas BSimVis does not have, enough to fill a small disk.
 * **Docker** : a Dockerfile and compose services for the app and workers (gunicorn, non-root,
   pinned base image and JDK), with optional Docker datastores for small machines.
 * **Sample download** : download a stored sample as an `infected` password zip.

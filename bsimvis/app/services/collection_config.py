@@ -67,8 +67,12 @@ def get_collection_params(collection):
             "unweighted_cosine" if name == "algo" else 0,
         )
         raw = meta.get(name)
+        if raw is None and name == "algo":
+            value = resolve_collection_algo(collection)
+        else:
+            value = _coerce(raw, default) if raw is not None else default
         out[name] = {
-            "value": _coerce(raw, default) if raw is not None else default,
+            "value": value,
             "default": default,
             "locked": raw is not None,
         }
@@ -92,10 +96,40 @@ def set_collection_param(collection, name, value):
     return value
 
 
+def _built_algo(collection, r=None):
+    """The algo a collection's stored function edges were built with, or None.
+
+    Collections built before `algo` was locked have no lock: without this, a
+    change of `similarity.algo` would point them at an algo they never built.
+    The configured default wins when it has edges too.
+    """
+    from bsimvis.similarity import registry
+
+    r = r or get_redis()
+    default = config_service.get("similarity.algo", "unweighted_cosine")
+    names = [default] + [n for n in registry.names(buildable=True) if n != default]
+    pipe = r.pipeline(transaction=False)
+    for n in names:
+        pipe.exists(f"{collection}:sim:score:{n}")
+    return next((n for n, ok in zip(names, pipe.execute()) if ok), None)
+
+
 def resolve_collection_algo(collection, requested=None):
     default = config_service.get("similarity.algo", "unweighted_cosine")
     configured = get_collection_param(collection, "algo", None)
-    return configured or requested or default
+    return configured or _built_algo(collection) or requested or default
+
+
+def lock_collection_algo(collection, requested=None):
+    """Lock the algo on a collection's first build, like min_score / min_features.
+
+    The lock is what that build resolves to (an older collection's built algo,
+    else the request, else the config default); later requests are ignored.
+    Change it with set_collection_param, then rebuild.
+    """
+    algo = resolve_collection_algo(collection, requested)
+    get_redis().hsetnx(_META.format(coll=collection), "algo", algo)
+    return get_collection_param(collection, "algo", algo)
 
 
 SIGNATURE_SETTINGS_FIELD = "signature_settings"
@@ -136,3 +170,51 @@ def assert_signature_settings_match(collection, settings=None):
             f"{recorded:#x}, but {int(settings):#x} is active. Feature hashes from "
             f"different masks are not comparable; re-decompile one of them to compare."
         )
+
+
+def demo():
+    """Algo lock and the fallback for collections built before the lock (no Redis)."""
+
+    class FakeRedis:
+        def __init__(self, keys=()):
+            self.keys, self.h, self.q = set(keys), {}, []
+
+        def hget(self, k, f):
+            return self.h.get(k, {}).get(f)
+
+        def hsetnx(self, k, f, v):
+            self.h.setdefault(k, {}).setdefault(f, v)
+
+        def pipeline(self, transaction=False):
+            return self
+
+        def exists(self, k):
+            self.q.append(k in self.keys)
+
+        def execute(self):
+            out, self.q = self.q, []
+            return out
+
+    global get_redis
+    real, conf = get_redis, config_service.get
+    config_service.get = lambda k, d=None: (
+        "weighted_cosine" if k == "similarity.algo" else d
+    )
+    try:
+        # built before the lock with unweighted_cosine: it keeps that algo
+        fake = FakeRedis({"old:sim:score:unweighted_cosine"})
+        get_redis = lambda: fake
+        assert resolve_collection_algo("old") == "unweighted_cosine"
+        assert lock_collection_algo("old", "jaccard") == "unweighted_cosine"
+        # a new collection locks the default on its first build, then ignores requests
+        assert resolve_collection_algo("new", "jaccard") == "jaccard"
+        assert lock_collection_algo("new") == "weighted_cosine"
+        assert lock_collection_algo("new", "jaccard") == "weighted_cosine"
+        assert resolve_collection_algo("new", "jaccard") == "weighted_cosine"
+    finally:
+        get_redis, config_service.get = real, conf
+    print("collection_config self-check: OK")
+
+
+if __name__ == "__main__":
+    demo()

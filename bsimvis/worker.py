@@ -696,13 +696,15 @@ class Worker:
             )
 
         elif jtype == JobType.BUILD_SIM.value:
-            algo = payload.get(
-                "algo", config_service.get("similarity.algo", "unweighted_cosine")
-            )
             top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
             # Collection-sticky: first build locks these; later payload values ignored
             # so the BSim-vs-hash split (and canonical file score) stays stable.
-            from bsimvis.app.services.collection_config import resolve_and_lock
+            from bsimvis.app.services.collection_config import (
+                lock_collection_algo,
+                resolve_and_lock,
+            )
+
+            algo = lock_collection_algo(collection, payload.get("algo"))
 
             min_score = resolve_and_lock(
                 collection, "min_score", payload.get("min_score")

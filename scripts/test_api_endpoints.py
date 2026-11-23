@@ -77,6 +77,14 @@ def _argv_opt(name):
 # produces — so this shortens iteration on one area, it does not skip fixtures.
 ONLY = _argv_opt("--only")
 
+
+def _suite_algo():
+    """The similarity algo the stack under test builds with: its config default."""
+    from bsimvis.app.services.config_service import config_service
+
+    return config_service.get("similarity.algo", "unweighted_cosine")
+
+
 # Populated after upload
 pipeline_id = None
 file_md5 = None
@@ -563,7 +571,7 @@ def test_cluster_tags():
         port=int(os.getenv("KVROCKS_PORT", "6666")),
         decode_responses=True,
     )
-    algo = "unweighted_cosine"
+    algo = _suite_algo()
     bin_engine = config_service.get("clustering.bin_engine", "hierarchical_snn")
     bin_algo = f"{algo}:snn" if bin_engine == "hierarchical_snn" else algo
     pool_bin_style = bin_engine in ("hierarchical_uf", "hierarchical_snn")
@@ -947,7 +955,7 @@ def test_function_live_discovery():
 
     r = get_redis()
     coll = f"live_disc_{uuid.uuid4().hex[:8]}"
-    algo = "unweighted_cosine"
+    algo = "unweighted_cosine"  # the fixture's scores are unweighted arithmetic
     r.hset(
         f"global:collection:{coll}:meta",
         mapping={"algo": algo, "min_features": 5, "min_score": 0.9},
@@ -1657,7 +1665,7 @@ def test_incremental_hierarchical_cluster_equivalence():
     from bsimvis.app.services.cluster_service import cluster_service
     from bsimvis.app.services.redis_client import get_redis
 
-    algo = "unweighted_cosine"
+    algo = _suite_algo()
     collection = f"incremental_cluster_{uuid.uuid4().hex[:8]}"
     batch_1, batch_2 = "batch-1", "batch-2"
     r = get_redis()
@@ -1762,7 +1770,7 @@ def test_bin_cluster_uuid_history():
     print(_color(" File cluster uuid history", BOLD))
     print(_color(f"{'='*60}", CYAN))
 
-    algo = "unweighted_cosine"
+    algo = _suite_algo()
     coll = f"uuid_hist_{uuid.uuid4().hex[:8]}"
     r = get_redis()
     md5 = lambda n: f"{n:032x}"
@@ -4113,6 +4121,14 @@ def run_all_tests():
         {"value", "default", "locked"} <= set(original.keys()),
         f"min_features={original}",
     )
+    # The first build locks the algo, so a later change of similarity.algo
+    # cannot point this collection at edges it never built.
+    algo_p = ((params_body or {}).get("params") or {}).get("algo") or {}
+    check(
+        "the first similarity build locks the collection's algo",
+        algo_p.get("locked") is True and bool(algo_p.get("value")),
+        f"algo={algo_p}",
+    )
 
     set_body = test_endpoint(
         "POST",
@@ -6146,7 +6162,7 @@ def test_search_filters_and_sorting():
             built = test_endpoint(
                 "POST",
                 "/api/bin_sim/build",
-                data={"collection": COLLECTION, "algo": "unweighted_cosine"},
+                data={"collection": COLLECTION, "algo": _suite_algo()},
                 label="POST /api/bin_sim/build (collection)",
             )
             if isinstance(built, dict) and built.get("job_id"):
@@ -6191,7 +6207,7 @@ def test_search_filters_and_sorting():
         if pool_sim:
             check(
                 "pool response reports its configured algorithm",
-                pool_sim.get("algo") == "unweighted_cosine",
+                pool_sim.get("algo") == _suite_algo(),
             )
 
         # ── Tag AFTER both builds ─────────────────────────────────────────
@@ -6243,7 +6259,7 @@ def test_search_filters_and_sorting():
             reindexed = test_endpoint(
                 "POST",
                 "/api/bin_sim/reindex",
-                data={"pool_id": FILTER_POOL_ID, "algo": "unweighted_cosine"},
+                data={"pool_id": FILTER_POOL_ID, "algo": _suite_algo()},
                 label="POST /api/bin_sim/reindex (pool)",
             )
             if isinstance(reindexed, dict) and reindexed.get("job_id"):
@@ -7374,7 +7390,8 @@ def _check_lineage_rows(base, url, tree):
         n > 0 and all(len(rows.get(k) or []) == n for k in keys + ("match",)),
         str({k: len(rows.get(k) or []) for k in keys})[:200],
     )
-    _, every = _nway(tab="all", scope="all", limit=1)
+    # the lineage defaults to scope=code (library rows are not a node's code)
+    _, every = _nway(tab="all", scope=base.get("scope", "code"), limit=1)
     check(
         "nway lineage rows: n is every row of the set (the tree ignores filters)",
         every and n == every["total"],
@@ -8855,7 +8872,7 @@ def test_nway_cluster_entry():
         port=int(os.getenv("KVROCKS_PORT", "6666")),
         decode_responses=True,
     )
-    algo = "unweighted_cosine"
+    algo = _suite_algo()
     if config_service.get("clustering.bin_engine", "hierarchical_snn") == (
         "hierarchical_snn"
     ):
@@ -8872,8 +8889,11 @@ def test_nway_cluster_entry():
         f"nwc3{tag}": ({f1}, f"nwq{tag}"),
     }
     links_key = f"{COLLECTION}:bin_cluster:tree_links:{algo}"
+    # the build lists every cluster here; the list route only scans when it is empty
+    list_key = f"{COLLECTION}:bin_cluster:list:{algo}"
     old_links = r.get(links_key)
     try:
+        r.sadd(list_key, *tree)
         for cid, (members, _) in tree.items():
             r.set(
                 f"{base}:{cid}:meta",
@@ -8895,7 +8915,7 @@ def test_nway_cluster_entry():
             status, body = _nway(
                 md5s=None,
                 cluster_uuid=f"uuid-{uuid_}",
-                algo="unweighted_cosine",
+                algo=_suite_algo(),
                 **params,
             )
             return status, body
@@ -9012,7 +9032,7 @@ def test_nway_cluster_entry():
             "/api/bin_cluster/list",
             params={
                 "collection": COLLECTION,
-                "algo": "unweighted_cosine",
+                "algo": _suite_algo(),
                 "cluster_uuid": f"uuid-{nwp}",
                 "show_members": "true",
             },
@@ -9038,7 +9058,7 @@ def test_nway_cluster_entry():
             "/api/bin_cluster/list",
             params={
                 "collection": COLLECTION,
-                "algo": "unweighted_cosine",
+                "algo": _suite_algo(),
                 "slice": f"uuid-{nwp}",
             },
         )
@@ -9055,7 +9075,7 @@ def test_nway_cluster_entry():
             "/api/bin_cluster/members",
             params={
                 "collection": COLLECTION,
-                "algo": "unweighted_cosine",
+                "algo": _suite_algo(),
                 "cluster_id": nwp,
                 "sort": "centrality",
             },
@@ -9077,7 +9097,7 @@ def test_nway_cluster_entry():
                         "/api/bin_cluster/list",
                         params={
                             "collection": COLLECTION,
-                            "algo": "unweighted_cosine",
+                            "algo": _suite_algo(),
                             "cluster_uuid": f"uuid-nwq{tag}",
                             "show_members": "true",
                         },
@@ -9102,15 +9122,20 @@ def test_nway_cluster_entry():
                 f"{base}:{cid}:centrality",
             )
         r.hdel(f"{base}:uf:uuid", *tree)
+        r.srem(list_key, *tree)
         if old_links is None:
             r.delete(links_key)
         else:
             r.set(links_key, old_links)
 
     check("nway: bad columns is a 400", _nway(columns="nope")[0] == 400)
+    # the pair can form a real cluster (hierarchical_snn does on the fixture)
+    shared = (_nway()[1] or {}).get("shared_cluster")
+    status = _nway(columns="children")[0]
     check(
         "nway: columns=children without a cluster is a 400",
-        _nway(columns="children")[0] == 400,
+        status == (200 if shared else 400),
+        f"HTTP {status}, shared cluster {shared}",
     )
     check(
         "nway: cluster_uuid without collection or pool is a 400",
@@ -9898,13 +9923,13 @@ def test_exact_pair_resplit():
 
     before = {table: _diff_page(file_md5, file_md5_2, table) for table in DIFF_TABLES}
     md5_a, md5_b = sorted((file_md5, file_md5_2))
-    sid = f"{COLLECTION}:bin_sim:unweighted_cosine:{md5_a}::{md5_b}"
+    sid = f"{COLLECTION}:bin_sim:{_suite_algo()}:{md5_a}::{md5_b}"
     started = test_endpoint(
         "POST",
         "/api/bin_sim/resplit",
         data={
             "collection": COLLECTION,
-            "algo": "unweighted_cosine",
+            "algo": _suite_algo(),
             "sid": sid,
         },
         label="POST /api/bin_sim/resplit (exact sid)",
@@ -10212,7 +10237,7 @@ def _check_diff_cache_expiry():
 # ---------------------------------------------------------------------------
 EQ_ARM = "./data/test/v01_arm_x64"
 EQ_LINUX = "./data/test/v01_linux_x64"
-EQ_ALGO = "unweighted_cosine"
+EQ_ALGO = _suite_algo()
 
 
 def _clean_fid(fid):

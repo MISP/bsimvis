@@ -18,38 +18,44 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 # Features
 
 ### Analysis
-- Upload decompiled functions and BSim vectors from Ghidra
-- Similarity search with score filtering across multiple binaries
-- Function diffing based on BSim features
-- BSim feature correlation with decompiled C tokens / Pcode blocks
-- Call graph navigation (callers and callees)
+- Upload binaries, archives or Ghidra projects; headless Ghidra decompiles them and extracts BSim vectors, strings and the control-flow graph
+- Scan mode: compare a sample with every collection without storing it, then commit it if it is worth keeping
+- Function similarity search across binaries (weighted cosine over BSim features by default), with discovery of weaker matches when two files are compared
+- Function and file diffing: code blocks, CFG, callers and callees, strings
+- Library and boilerplate code split from the original code (FunctionID, boilerplate tags), so file scores and clusters follow the malware code
+
+### N-way diff and lineage
+- Compare a whole family at once: functions grouped into lanes (the code a set of files shares) under Core / Common / Rare tiers
+- Lineage page: the family as a tree, a timeline by first-seen date, the births of new code, and a ring of sub-clusters
 
 ### Clustering
-- HDBSCAN-based binary family clustering and interactive file dendrogram visualization
-- Cluster search view with dendrogram and packing diagram
-- Stability and parent cluster filtering
+- Hierarchical file and function clustering (single linkage with a cohesion cut, shared-nearest-neighbour reweighting for files), with family overviews and dendrograms
+- Cluster names, notes and bookmarks that survive rebuilds; cluster timelines and activity ranking
 
 ### Cross-Collection Pools
 - Combine multiple collections into a pool for similarity search and clustering across their union
 - Search endpoints accept a `pool` parameter; per-pool build/cluster jobs with sync-status tracking
 
 ### Search & Filtering
-- Full text search on files and features with sorting, filtering, and pagination
-- Search history and caching
+- Full text search on files, functions and strings with sorting, filtering, and pagination
+- Collection overview: families, uploads over time, architecture and tag mix
+
+### Tagging
+- YARA, capa and Rulezet tags with the rule behind each tag; a YARA workbench (experimental) to write and test rules against stored samples
+- Metadata inferred from neighbour files
 
 ### Web Interface
-- Similarity graph
+- Similarity graph, call graph and CFG views
 - Dynamic window management for multiple code previews
 - Tag management for files, functions, and similarities
-- Quick preview tooltips for clusters and diffs
 - Table selection and copy across all views
 
 ### Analyst Notes & AI Insights
-- Analyst notes system for files and functions
-- LLM assistant for file and function summaries (local or remote via Ollama)
+- Analyst notes and function names for files, functions and clusters
+- LLM assistant for file and function summaries and lane names (local or remote via Ollama)
 
 ### API
-- REST API with Swagger documentation
+- REST API with Swagger documentation, plus an MCP server for AI agents
 - Upload API: processor/compiler config, profiling, batch metadata, and similarity params
 
 # Screenshots
@@ -82,18 +88,14 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Ollama (optional) for LLM analyst insights and function summaries. Can be run locally (default port `11434`) or remotely (configurable via `ollama_url` in `bsimvis_config.toml`).
 # Installation
 
-Copy the example configuration files and customize them:
-
-```bash
-cp .env.example .env
-cp bsimvis_config.toml.example bsimvis_config.toml
-```
-
 Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 
 ```bash
 ./install.sh
 ```
+
+On its first run it creates `.env` and `bsimvis_config.toml` from their `.example` files. The defaults
+work as they are; edit those two files to change ports, worker count or analysis settings.
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
 
@@ -231,24 +233,26 @@ Copy `bsimvis_config.toml.example` and edit to taste. Key sections:
 
 | Key | Default | Description |
 |---|---|---|
-| `algo` | `unweighted_cosine` | Default similarity algorithm |
+| `algo` | `weighted_cosine` | Similarity algorithm. A collection keeps the one of its first build |
 | `top_k` | `1000` | Max neighbours per function |
 | `min_score` | `0.9` | Minimum similarity score |
 | `min_features` | `10` | BSim floor — functions below it are matched by exact FunctionID hash |
+| `unweighted_match` | `true` | Every matched function pair counts as 1.0 in the file score (match coverage) |
+| `discovery` / `discovery_min_score` | `true` / `0.4` | Re-match the functions stored edges left unmatched, down to this score, when scoring two files |
 
 **Clustering** (`[clustering]`):
 
 | Key | Default | Description |
 |---|---|---|
-| `engine` | `threshold_uf` | Function cluster engine: `threshold_uf`, `hierarchical_uf`, or `hdbscan` |
-| `bin_engine` | `threshold_uf` | Binary cluster engine (same choices) |
+| `engine` | `hierarchical_uf` | Function cluster engine: `hierarchical_uf`, `threshold_uf`, or `hdbscan` |
+| `bin_engine` | `hierarchical_snn` | Binary cluster engine: `hierarchical_uf` with shared-nearest-neighbour reweighting, or one of the function engines |
 | `uf_threshold` | `0.98` | Similarity edge threshold for `threshold_uf` / `hierarchical_uf` |
 | `bin_uf_threshold` | `0.1` | Same, for binary clustering |
 | `cohesion_cut` | `0.9` | Minimum cohesion for a cluster to be kept |
 | `idle_debounce_seconds` | `30` | Quiet period after uploads before auto-cluster fires |
 | `lane_stale_seconds` | `1800` | Stale lane timeout (self-heals a crashed worker) |
 
-**Analysis modules** (`[analysis_modules]`): `enabled = []` lists modules that run on every upload by default. Choices: `FunctionID`, `capa`, `yara`, `rulezet`. Override per-request with `--enable`/`--disable` (CLI) or `enable=`/`disable=` (API).
+**Analysis modules** (`[analysis_modules]`): `enabled` lists modules that run on every upload by default (`FunctionID`, `boilerplate` and `yara`; `FunctionID` and `boilerplate` feed the code / library score split). Choices: `FunctionID`, `boilerplate`, `capa`, `yara`, `rulezet`. Override per-request with `--enable`/`--disable` (CLI) or `enable=`/`disable=` (API).
 
 **LLM** (`[llm]`): `ollama_url`, `model`, `prompt`.
 

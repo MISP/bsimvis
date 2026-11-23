@@ -423,16 +423,18 @@ def tag_groups(rows, fmeta, n, sort, axis, axis_b="", depth=2):
         nd = nodes[gid]
         uniq = list({id(r): r for r in nd["rows"]}.values())
         g = _meta(uniq, n)
+        # a sub-tag's id extends its parent's, as a nested lane's does
+        full = f"{ancestors[-1]}/{gid}" if ancestors else gid
         g.update(
-            id=gid,
+            id=full,
             kind="tag",
             label=nd["label"],
-            path=ancestors + [gid],
+            path=ancestors + [full],
             depth=len(ancestors),
         )
         out.append((g, [(r, {"also": also[id(r)]}) for r in nd["own"]]))
         for kid in _order([_summary(nodes[k], n) for k in nd["kids"]], sort):
-            walk(kid["id"], ancestors + [gid])
+            walk(kid["id"], ancestors + [full])
 
     for top in _order([_summary(nodes[g], n) for g in roots], sort):
         walk(top["id"], [])
@@ -1055,6 +1057,10 @@ def _nodes(units, levels, ctx, parent_id, parent_path, carried):
                 [u for u, _ in items], levels[1:], ctx, g["id"], g["path"], extras
             )
             pairs = [(g, [])] + _flat(inner, ctx)
+        if g.get("kind") == "tag" and g.get("depth"):
+            # a sub-tag follows its parent (tag_groups walks depth-first), never ranked among the parent's siblings
+            nodes[-1]["pairs"] += pairs
+            continue
         nodes.append(
             {
                 "container": True,
@@ -2131,8 +2137,26 @@ def demo():
     tree = {
         g["id"]: items for g, items in tag_groups(trows, fmeta, 4, "weight", "yara")
     }
-    assert len(tree["tag:yara:botnet>yara:botnet:mirai"]) == 2
+    assert len(tree["tag:yara:botnet/tag:yara:botnet>yara:botnet:mirai"]) == 2
     assert len(tree["tag:yara:botnet"]) == 0 and len(tree["tag:(no tag)"]) == 1
+    # a sub-tag's id extends its parent's and follows it, even when a sibling tag outranks it
+    fmeta = {"t1": {"tags": ["yara:a"]}, "t2": {"tags": ["yara:b"]}}
+    fmeta["t3"] = {"tags": ["yara:a:c"]}
+    trows = [
+        row(3, w, cells={"A": f, "B": f}) for w, f in ((10, "t1"), (5, "t2"), (4, "t3"))
+    ]
+    tdoc = {"rows": trows, "fmeta": fmeta, "columns": [{"id": "A"}, {"id": "B"}]}
+    _, gs, _ = group_rows(
+        trows, {**tdoc, "key": None}, None, "lane,tag", {"group_axis": "yara"}
+    )
+    assert list(gs) == [
+        "lane:11",
+        "lane:11/tag:yara:a",
+        "lane:11/tag:yara:a/tag:yara:a>yara:a:c",
+        "lane:11/tag:yara:b",
+    ], list(gs)
+    for gid, m in gs.items():
+        assert len(m["path"]) == 1 or gid.startswith(m["path"][-2] + "/"), gid
 
     # open/closed: headers always, rows only for open groups, nothing under a closed parent
     pairs = [

@@ -24,7 +24,10 @@ window.SearchPalette = (function () {
         tags: { label: 'Tags', icon: 'fa-tags', color: '#facc15' }
     };
 
-    let flat = [];      // flattened results, in render order
+    const LIMIT = 5;    // first page per group; "See more" fetches LIMIT more of one kind
+    let flat = [];      // flattened results, in render order ({more: groupIdx} = See more row)
+    let groups = [];    // painted groups: {kind, items, more, loading}
+    let lastQ = '';
     let cursor = 0;
     let seq = 0;        // request sequence, guards out-of-order responses
     let debounce = null;
@@ -80,6 +83,8 @@ window.SearchPalette = (function () {
 
         const mine = ++seq;
         flat = [];
+        groups = [];
+        lastQ = q;
         cursor = 0;
         box.innerHTML = `<div id="palette-groups"></div>
             <div id="palette-status" style="padding:14px 16px; color:var(--dim); font-size:0.8rem;">
@@ -88,9 +93,8 @@ window.SearchPalette = (function () {
         const ctl = new AbortController();
         inflight = ctl;
         try {
-            const scope = scopeColl ? `&collection=${encodeURIComponent(scopeColl)}` : '';
             const res = await fetch(
-                `/api/search/unified/stream?q=${encodeURIComponent(q)}&limit=5${scope}`, { signal: ctl.signal });
+                `/api/search/unified/stream?q=${encodeURIComponent(q)}&limit=${LIMIT}${scopeArg()}`, { signal: ctl.signal });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
@@ -133,19 +137,58 @@ window.SearchPalette = (function () {
         }
     }
 
+    function scopeArg() {
+        return scopeColl ? `&collection=${encodeURIComponent(scopeColl)}` : '';
+    }
+
     /** Appends one streamed group, keeping the current selection where it is. */
     function appendGroup(g) {
-        const groups = document.getElementById('palette-groups');
-        if (!groups || !g.items || !g.items.length) return;
-        const meta = KIND_META[g.kind] || { label: g.kind, icon: 'fa-circle', color: 'var(--accent)' };
-        let html = `<div style="padding:8px 16px 4px; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:${meta.color};">${escapeHtml(meta.label)}</div>`;
-        html += g.items.map(it => {
-            const idx = flat.length;
-            flat.push(it);
-            return rowHtml(it, idx, meta);
+        if (!g.items || !g.items.length) return;
+        groups.push({ kind: g.kind, items: g.items, more: g.items.length >= LIMIT, loading: false });
+        render();
+    }
+
+    /** Repaints every group from `groups`; indices shift when a group grows. */
+    function render() {
+        const box = document.getElementById('palette-groups');
+        if (!box) return;
+        flat = [];
+        box.innerHTML = groups.map((g, gi) => {
+            const meta = KIND_META[g.kind] || { label: g.kind, icon: 'fa-circle', color: 'var(--accent)' };
+            let html = `<div style="padding:8px 16px 4px; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:${meta.color};">${escapeHtml(meta.label)}</div>`;
+            html += g.items.map(it => { flat.push(it); return rowHtml(it, flat.length - 1, meta); }).join('');
+            if (g.more) {
+                flat.push({ more: gi });
+                html += `<div class="palette-row" data-idx="${flat.length - 1}" onmousedown="event.preventDefault()" onclick="SearchPalette.open(${flat.length - 1}, event)"
+                    style="padding:5px 16px 5px 44px; cursor:pointer; font-size:0.75rem; color:var(--dim); border-left:2px solid transparent;">
+                    ${g.loading ? '<i class="fa-solid fa-spinner fa-spin"></i> Loading…' : `<i class="fa-solid fa-angle-down"></i> See more ${escapeHtml(meta.label.toLowerCase())}`}</div>`;
+            }
+            return html;
         }).join('');
-        groups.insertAdjacentHTML('beforeend', html);
         highlight();
+    }
+
+    /** Refetches one kind with a bigger limit (each route pages from 0) and keeps the new tail. */
+    async function loadMore(gi) {
+        const g = groups[gi];
+        if (!g || g.loading) return;
+        const mine = seq, shown = g.items.length, want = shown + LIMIT;
+        g.loading = true;
+        render();
+        try {
+            const res = await fetch(`/api/search/unified?q=${encodeURIComponent(lastQ)}&kind=${encodeURIComponent(g.kind)}&limit=${want}${scopeArg()}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (mine !== seq) return;
+            const all = ((data.groups || []).find(x => x.kind === g.kind) || {}).items || [];
+            g.items = g.items.concat(all.slice(shown));
+            g.more = all.length >= want;
+        } catch (e) {
+            if (mine !== seq) return;
+            g.more = false;
+        }
+        g.loading = false;
+        render();
     }
 
     function rowHtml(it, idx, meta) {
@@ -224,6 +267,7 @@ window.SearchPalette = (function () {
     function open(idx, event) {
         const it = flat[idx];
         if (!it) return;
+        if (it.more !== undefined) { loadMore(it.more); return; }
         close();
         if (event && (event.ctrlKey || event.metaKey)) { window.open(it.url, '_blank'); return; }
         if (window.Nav) Nav.openPath(it.url, null);

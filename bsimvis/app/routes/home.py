@@ -586,7 +586,7 @@ def _search_params():
     return q, limit, scope, scope_total, truncated
 
 
-def _search_groups(q, limit, scope):
+def _search_groups(q, limit, scope, kind=None):
     """Yields one result group at a time, cheapest entity types first.
 
     A generator rather than a list so the streaming endpoint can flush each
@@ -601,7 +601,14 @@ def _search_groups(q, limit, scope):
     from bsimvis.app.routes.search_function import search_functions
     from bsimvis.app.routes.strings import search_strings
 
-    cols = _call(search_collections, q=q, limit=limit).get("collections", [])
+    def want(k):
+        return not kind or kind == k
+
+    cols = (
+        _call(search_collections, q=q, limit=limit).get("collections", [])
+        if want("collections")
+        else []
+    )
     if cols:
         yield _group(
             "collections",
@@ -614,7 +621,7 @@ def _search_groups(q, limit, scope):
             limit,
         )
 
-    pools = _call(list_pools, limit=100000)
+    pools = _call(list_pools, limit=100000) if want("pools") else {}
     pool_items = [
         p
         for p in (pools.get("items") or pools.get("pools") or [])
@@ -634,7 +641,7 @@ def _search_groups(q, limit, scope):
 
     # Tags have no search route: match names straight off the tag index.
     tag_hits = []
-    for name in scope:
+    for name in scope if want("tags") else []:
         for t in tag_service.get_collection_tags(name):
             if q.lower() in t.lower():
                 tag_hits.append({"tag": t, "collection": name})
@@ -771,8 +778,10 @@ def _search_groups(q, limit, scope):
             },
         ),
     ]
-    for kind, fn, key, mapper, *q_param in fans:
-        g = fan(kind, fn, key, mapper, *q_param)
+    for k, fn, key, mapper, *q_param in fans:
+        if not want(k):
+            continue
+        g = fan(k, fn, key, mapper, *q_param)
         if g:
             yield g
 
@@ -781,7 +790,8 @@ def unified_search():
     """Fans a free-text query out over every searchable entity type.
 
     Params: q (required), limit (per type, default 5),
-            collection (repeatable; default = every collection).
+            collection (repeatable; default = every collection),
+            kind (only that group, e.g. to page one kind with a bigger limit).
     """
     q, limit, scope, scope_total, truncated = _search_params()
     if not q:
@@ -792,7 +802,7 @@ def unified_search():
         "scope": len(scope),
         "scope_total": scope_total,
         "truncated": truncated,
-        "groups": list(_search_groups(q, limit, scope)),
+        "groups": list(_search_groups(q, limit, scope, request.args.get("kind"))),
     }
 
 
@@ -817,7 +827,7 @@ def unified_search_stream():
         }
         yield json.dumps(head) + "\n"
         if q:
-            for g in _search_groups(q, limit, scope):
+            for g in _search_groups(q, limit, scope, request.args.get("kind")):
                 yield json.dumps({"type": "group", **g}) + "\n"
         yield json.dumps({"type": "done"}) + "\n"
 

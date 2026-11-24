@@ -1530,6 +1530,7 @@ class SearchUnified(Resource):
             "limit": "Max results per entity type (default: 5)",
             "collection": "Restrict to these collections (repeatable). Default: all",
             "max_collections": "Cap on collections fanned out to (default: unlimited)",
+            "kind": "Only this result group (files, functions, tags, ...)",
         }
     )
     def get(self):
@@ -1547,6 +1548,7 @@ class SearchUnifiedStream(Resource):
             "limit": "Max results per entity type (default: 5)",
             "collection": "Restrict to these collections (repeatable). Default: all",
             "max_collections": "Cap on collections fanned out to (default: unlimited)",
+            "kind": "Only this result group (files, functions, tags, ...)",
         }
     )
     def get(self):

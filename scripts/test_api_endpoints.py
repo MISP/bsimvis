@@ -3103,6 +3103,18 @@ def run_all_tests():
             any(u.endswith(f"/files/{file_md5}") for u in file_urls),
             str(file_urls[:3]),
         )
+        only = test_endpoint(
+            "GET",
+            "/api/search/unified",
+            params={"q": file_md5, "kind": "files", "collection": COLLECTION},
+            label="GET /api/search/unified?kind=files",
+        )
+        only_kinds = [g["kind"] for g in (only or {}).get("groups", [])]
+        check(
+            "unified search kind= returns only that group",
+            only_kinds == ["files"],
+            str(only_kinds),
+        )
     empty = test_endpoint(
         "GET", "/api/search/unified", label="GET /api/search/unified (no query)"
     )

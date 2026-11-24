@@ -734,11 +734,14 @@ def _search_groups(q, limit, scope, kind=None):
         view = _VIEWS.get(kind)
         if view:
             path, param = view
+            # files/functions views parse field terms themselves; the others get the group's own query
+            # The functions view defaults to the code axis (hides library code); the palette searched overall.
+            link_q = q if kind in ("files", "functions") else _group_q(kind, q)
             seen = list(dict.fromkeys(i["_collection"] for i in items[:limit]))
             g["views"] = [
                 {
                     "collection": c,
-                    "url": f"/collections/{quote(c, safe='')}/{path}?{param}={quote(q, safe='')}",
+                    "url": f"/collections/{quote(c, safe='')}/{path}?{param}={quote(link_q, safe='')}{'&score_axis=overall' if path == 'functions' else ''}",
                 }
                 for c in seen
             ]

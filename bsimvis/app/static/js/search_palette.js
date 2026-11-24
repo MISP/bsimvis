@@ -29,6 +29,8 @@ window.SearchPalette = (function () {
     let seq = 0;        // request sequence, guards out-of-order responses
     let debounce = null;
     let inflight = null; // AbortController for the running stream
+    let ctxColl = null;  // collection the palette can scope to (page context)
+    let scopeColl = null; // active scope; null = whole instance
 
     function ensureDom() {
         if (document.getElementById('search-palette')) return;
@@ -39,6 +41,7 @@ window.SearchPalette = (function () {
             <div id="palette-box" style="max-width:720px; margin:8vh auto 0; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
                 <div style="display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--border);">
                     <i class="fa-solid fa-magnifying-glass" style="color:var(--accent);"></i>
+                    <span id="palette-scope" style="display:none; border:1px solid var(--border); border-radius:6px; overflow:hidden; font-size:0.72rem; white-space:nowrap;" title="Tab switches scope"></span>
                     <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
                         placeholder="Search batches, files, functions, clusters, tags, features, collections, pools…"
                         style="flex:1; background:none; border:none; outline:none; color:var(--text); font-size:1rem;">
@@ -55,6 +58,12 @@ window.SearchPalette = (function () {
         const input = el.querySelector('#palette-input');
         input.addEventListener('input', () => schedule(input.value));
         input.addEventListener('keydown', onKey);
+        el.querySelector('#palette-scope').addEventListener('mousedown', (e) => {
+            const b = e.target.closest('button[data-scope]');
+            if (!b) return;
+            e.preventDefault();
+            setScope(b.dataset.scope === 'coll' ? ctxColl : null);
+        });
     }
 
     function schedule(q) {
@@ -79,8 +88,9 @@ window.SearchPalette = (function () {
         const ctl = new AbortController();
         inflight = ctl;
         try {
+            const scope = scopeColl ? `&collection=${encodeURIComponent(scopeColl)}` : '';
             const res = await fetch(
-                `/api/search/unified/stream?q=${encodeURIComponent(q)}&limit=5`, { signal: ctl.signal });
+                `/api/search/unified/stream?q=${encodeURIComponent(q)}&limit=5${scope}`, { signal: ctl.signal });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
@@ -97,7 +107,8 @@ window.SearchPalette = (function () {
                     if (mine !== seq) return;   // a newer query already started
                     let msg;
                     try { msg = JSON.parse(line); } catch (_) { continue; }
-                    if (msg.type === 'group') appendGroup(msg);
+                    // collections / pools are not scoped server-side
+                    if (msg.type === 'group' && !(scopeColl && (msg.kind === 'collections' || msg.kind === 'pools'))) appendGroup(msg);
                 }
             }
         } catch (e) {
@@ -149,9 +160,34 @@ window.SearchPalette = (function () {
     }
 
     function hint() {
+        if (scopeColl) return `<div style="padding:24px; color:var(--dim); font-size:0.85rem;">
+            Type to search in <b>${escapeHtml(scopeColl)}</b> — a filename, an MD5, a function name,
+            a tag or a cluster name. <b>Tab</b> searches the whole instance.</div>`;
         return `<div style="padding:24px; color:var(--dim); font-size:0.85rem;">
             Type to search across the whole instance — a filename, an MD5, a function name,
             a tag, a cluster name, a collection or a pool.</div>`;
+    }
+
+    function renderScope() {
+        const pill = document.getElementById('palette-scope');
+        const input = document.getElementById('palette-input');
+        pill.style.display = ctxColl ? 'inline-flex' : 'none';
+        input.placeholder = scopeColl
+            ? `Search in ${scopeColl}…`
+            : 'Search batches, files, functions, clusters, tags, features, collections, pools…';
+        if (!ctxColl) { pill.innerHTML = ''; return; }
+        const btn = (label, on, val) => `<button type="button" aria-pressed="${on}" data-scope="${val}"
+            style="border:none; padding:3px 9px; cursor:pointer; max-width:180px; overflow:hidden; text-overflow:ellipsis;
+            background:${on ? 'var(--accent)' : 'transparent'}; color:${on ? '#000' : 'var(--dim)'};">${escapeHtml(label)}</button>`;
+        pill.innerHTML = btn(ctxColl, !!scopeColl, 'coll') + btn('All', !scopeColl, 'all');
+    }
+
+    function setScope(coll) {
+        scopeColl = coll;
+        renderScope();
+        const input = document.getElementById('palette-input');
+        input.focus();
+        run(input.value);
     }
 
     function escapeHtml(s) {
@@ -179,6 +215,7 @@ window.SearchPalette = (function () {
         const handled = () => { e.preventDefault(); e.stopPropagation(); };
 
         if (e.key === 'Escape') { handled(); close(); return; }
+        if (e.key === 'Tab' && ctxColl) { handled(); setScope(scopeColl ? null : ctxColl); return; }
         if (e.key === 'ArrowDown') { handled(); if (flat.length) { cursor = (cursor + 1) % flat.length; highlight(); } }
         else if (e.key === 'ArrowUp') { handled(); if (flat.length) { cursor = (cursor - 1 + flat.length) % flat.length; highlight(); } }
         else if (e.key === 'Enter') { handled(); open(cursor, e); }
@@ -193,8 +230,16 @@ window.SearchPalette = (function () {
         else window.location.href = it.url;
     }
 
-    function show(initial) {
+    /** opts.collection scopes to that collection; otherwise the page's collection is offered, global by default. */
+    function show(initial, opts) {
         ensureDom();
+        if (opts && opts.collection) { ctxColl = scopeColl = opts.collection; }
+        else {
+            const m = location.pathname.match(/^\/collections\/([^/]+)/);
+            ctxColl = m ? decodeURIComponent(m[1]) : null;
+            scopeColl = null;
+        }
+        renderScope();
         const el = document.getElementById('search-palette');
         el.style.display = 'block';
         const input = el.querySelector('#palette-input');

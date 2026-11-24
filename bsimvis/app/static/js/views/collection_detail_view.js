@@ -602,6 +602,13 @@ window.CollectionDetailView = {
                 </div>
             </div>
 
+            <div onclick="SearchPalette.show('', { collection: ${escapeAttr(jsString(name))} })" class="home-card is-clickable" style="cursor:text; display:flex; align-items:center; gap:12px; padding:14px 16px;">
+                <i class="fa-solid fa-magnifying-glass" style="color:var(--dim);"></i>
+                <span style="color:var(--dim); flex:1;">Search this collection…</span>
+                <span style="font-size:0.72rem; color:var(--dim); border:1px solid var(--border); border-radius:4px; padding:3px 7px;">Ctrl</span>
+                <span style="font-size:0.72rem; color:var(--dim); border:1px solid var(--border); border-radius:4px; padding:3px 7px;">K</span>
+            </div>
+
             <!-- META ROW -->
             <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
                 <div style="background:var(--card-bg); border:1px solid var(--border); border-radius:8px; padding:12px 18px; font-size:0.8rem; display:flex; align-items:center; gap:8px;">

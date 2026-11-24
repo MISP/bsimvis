@@ -141,10 +141,16 @@ window.SearchPalette = (function () {
         return scopeColl ? `&collection=${encodeURIComponent(scopeColl)}` : '';
     }
 
+    const ORDER = ['binary_clusters', 'files', 'functions', 'function_clusters', 'tags', 'strings',
+        'function_strings', 'batches', 'features', 'collections', 'pools'];
+    const rank = (k) => { const i = ORDER.indexOf(k); return i < 0 ? ORDER.length : i; };
+
     /** Appends one streamed group, keeping the current selection where it is. */
     function appendGroup(g) {
         if (!g.items || !g.items.length) return;
         groups.push({ kind: g.kind, items: g.items, views: g.views || [], more: g.items.length >= LIMIT, loading: false });
+        // Display order, whatever order the stream delivers in (cheap kinds arrive first).
+        groups.sort((x, y) => rank(x.kind) - rank(y.kind));
         render();
     }
 

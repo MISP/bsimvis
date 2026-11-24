@@ -199,20 +199,6 @@ let simSearchRequested = false; // Set to true when user explicitly triggers a s
 let currentFocusId = null;
 let preservedSelection = { start: 0, end: 0 };
 
-function toggleSidebar() {
-    const body = document.body;
-    const isCollapsed = body.classList.toggle('sidebar-collapsed');
-    localStorage.setItem('sidebarCollapsed', isCollapsed);
-    const btn = document.getElementById('sidebar-toggle');
-    btn.innerHTML = isCollapsed ? '⟩' : '⟨';
-
-    // Trigger window resize for D3 plots
-    setTimeout(() => window.dispatchEvent(new Event('resize')), 300);
-
-    // Update header buttons visibility immediately
-    if (window.updateJobStatusIcon) window.updateJobStatusIcon();
-}
-
 function toggleHeader() {
     const body = document.body;
     const isCollapsed = body.classList.toggle('header-collapsed');
@@ -302,16 +288,16 @@ const routes = {
         title: 'Files',
         api: '/api/file/search',
         headers: [
-            { label: 'Filename', width: '17%' },
-            { label: 'MD5 / Arch', width: '11%' },
-            { label: 'Inferred Tags', width: '14%' },
-            { label: 'Batch UUID', width: '9%' },
-            { label: 'Status', width: '7%' },
-            { label: 'Funcs', width: '7%', sort: 'function_count' },
-            { label: 'Notes', width: '3%' },
-            { label: 'Clusters', width: '12%' },
-            { label: 'Entry Date', width: '8%', sort: 'entry_date' },
-            { label: 'Tags', width: '16%' }
+            // File takes what the fixed columns leave. Type, arch, status and
+            // first seen ride in it as a meta line instead of their own columns.
+            { label: 'File', width: 'auto' },
+            { label: 'MD5', width: '118px', extra: true },
+            { label: 'Batch', width: '104px', extra: true },
+            { label: 'Funcs', width: '98px', sort: 'function_count' },
+            { label: 'Clusters', width: '172px' },
+            { label: 'Tags', width: '36%' },
+            { label: 'Notes', width: '96px' },
+            { label: 'Added', width: '104px', sort: 'entry_date' }
         ],
         renderer: renderFiles
     },
@@ -349,6 +335,33 @@ const routes = {
             { label: 'Actions', width: '5%' }
         ],
         renderer: renderGlobalFeatures
+    },
+    'strings': {
+        title: 'Strings',
+        api: '/api/strings/search',
+        headers: [
+            { label: 'Value', width: '40%', sort: 'value' },
+            { label: 'Encoding', width: '9%', sort: 'encoding' },
+            { label: 'Len', width: '6%', sort: 'length' },
+            { label: 'Files', width: '7%', sort: 'files' },
+            { label: 'Funcs', width: '7%', sort: 'functions' },
+            { label: 'Tags', width: '31%' }
+        ],
+        renderer: renderStrings
+    },
+    'file-strings': {
+        title: 'File Strings',
+        api: '/api/strings/file',
+        headers: [
+            { label: 'Address', width: '9%', sort: 'addr' },
+            { label: 'Value', width: '36%', sort: 'value' },
+            { label: 'Encoding', width: '8%', sort: 'encoding' },
+            { label: 'Section', width: '9%', sort: 'section' },
+            { label: 'Len', width: '5%', sort: 'length' },
+            { label: 'Refs', width: '5%', sort: 'refs' },
+            { label: 'Tags', width: '28%' }
+        ],
+        renderer: renderFileStrings
     },
     'function-similarity': {
         title: 'Function similarities',
@@ -416,15 +429,19 @@ const routes = {
         title: 'Binary Clusters',
         api: '/api/bin_cluster/list',
         headers: [
-            { label: 'UUID', sort: 'cluster_uuid', width: '10%' },
-            { label: 'Name', sort: 'cluster_name', width: '16%' },
-            { label: 'Binaries', sort: 'count', width: '12%' },
-            { label: 'Avg Funcs', sort: 'functions', width: '8%' },
-            { label: 'Stability', sort: 'stability', width: '8%' },
-            { label: 'Cohesion', sort: 'cohesion', width: '8%' },
-            { label: 'Created', width: '11%' },
-            { label: 'Tags', width: '14%' },
-            { label: 'Sample Binaries', width: '13%' }
+            { label: 'UUID', sort: 'cluster_uuid', width: '8%' },
+            { label: 'Name', sort: 'cluster_name', width: '11%' },
+            { label: 'Relevance', sort: 'relevance', width: '6%', title: 'log(1 + files) x cohesion / (cohesion + 0.2): same rank as the overview Families' },
+            { label: 'Binaries', sort: 'count', width: '7%' },
+            { label: 'Avg Funcs', sort: 'functions', width: '6%' },
+            { label: 'Stability', sort: 'stability', width: '6%' },
+            { label: 'Cohesion', sort: 'cohesion', width: '7%' },
+            { label: 'First added', sort: 'first_added', width: '7%', title: 'Upload date of the oldest member: when the cluster first appeared' },
+            { label: 'Last added', sort: 'last_added', width: '7%', title: 'Upload date of the newest member: when the cluster last grew' },
+            { label: 'New', sort: 'active', width: '5%', title: 'Members uploaded in the last 30 days, or active_days from the URL (sort: most active first)' },
+            { label: 'Seen', sort: 'last_seen', width: '8%', title: 'First and last time a member was seen in the wild (first_seen / last_seen, when the upload gave them)' },
+            { label: 'Tags', width: '11%' },
+            { label: 'Sample Binaries', width: '11%' }
         ],
         renderer: renderBinClusters
     },
@@ -450,7 +467,9 @@ function clearFilters() {
     const newParams = new URLSearchParams();
 
     // Preserved context keys
-    const preserved = viewKey === 'function-similarity' ? ['view'] : ['algo', 'view'];
+    const preserved = viewKey === 'function-similarity' ? ['view']
+        : viewKey === 'files' ? ['algo', 'view', 'group', 'group_axis', 'group_nodes', 'fold_tag', 'sort_by', 'sort_order']
+        : ['algo', 'view'];
     preserved.forEach(k => {
         if (params.has(k)) newParams.set(k, params.get(k));
     });
@@ -516,6 +535,8 @@ window.ModuleLoader = {
             'search-detail': window.SearchView,
             'scan': window.ScanView,
             'scan-detail': window.ScanView,
+            'nway': window.NwayView,
+            'yara': window.YaraView,
             'bin_sim': {
                 init: (p) => {
                     if (window.renderBinarySimilarityView) {
@@ -636,19 +657,41 @@ function addNotIgnoreFilters() {
     if (added > 0) triggerTagSearch();
 }
 
+// The search box joins the filter-card row when the view has one, so it does
+// not cost a line of its own. refreshData parks it back in the header first,
+// because the card row is rebuilt with innerHTML.
+function placeSearchArea(parkOnly) {
+    const sa = document.getElementById('search-area');
+    if (!sa) return;
+    const home = document.querySelector('.header-top');
+    if (home && sa.parentElement !== home) home.appendChild(sa);
+    if (parkOnly) return;
+    const row = document.querySelector('#grid-header .home-card')?.parentElement;
+    if (row) {
+        row.classList.add('has-search-slot');
+        row.appendChild(sa);
+    }
+}
+
 async function refreshData(appendArg = false, force = false, skipHeader = false) {
+    placeSearchArea(true);
     const myGen = ++_refreshGeneration;
     if (window.updateJobStatusIcon) window.updateJobStatusIcon();
     const append = (appendArg === true);
+    // A filter input's blur (from clicking a link) arms a debounced search
+    // that would navigate back after the new view opens.
+    if (!append && filterDebounceTimer) clearTimeout(filterDebounceTimer);
     const { viewKey, collection, pool, params } = getRoutingState();
 
 
     // Check if we should load a module view
-    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
+    if (['home', 'function', 'file', 'diff', 'call_graph', 'feature', 'bin_sim', 'function_features', 'pool-detail', 'collection-detail', 'search', 'search-detail', 'scan', 'scan-detail', 'nway', 'yara', 'cluster-detail', 'bin-cluster-detail'].includes(viewKey)) {
         const stateParams = Object.fromEntries(params);
         stateParams.collection = collection;
         stateParams.pool = pool;
         stateParams.view = viewKey;
+        // The Refresh button: views with a server-cached call (collection overview) bypass it.
+        if (force) stateParams.force = true;
         if (window.Breadcrumbs) {
             const segments = window.Breadcrumbs.generate({ viewKey, collection, pool, params }, null);
             window.Breadcrumbs.render(segments);
@@ -723,6 +766,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         if (!params.has('axis')) {
             params.set('axis', window.BINSIM_DEFAULT_AXIS);
         }
+        if (!params.has('sort_by')) {
+            params.set('sort_by', 'relevance');
+        }
     } else if (viewKey === 'function-similarity') {
         if (!params.has('min_score')) {
             params.set('min_score', defaultMinScore());
@@ -739,7 +785,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
     if (currentUrlPath !== lastPathName || !append) {
         if (!isSilent) {
-            currentOffset = 0;
+            // Page mode opens a shared link's `offset`; every later navigation is a new filter state.
+            const urlOffset = Number(new URLSearchParams(window.location.search).get('offset')) || 0;
+            currentOffset = (window.Paging.mode() === 'page' && lastPathName === '') ? Math.max(0, urlOffset) : 0;
             isEndOfResults = false;
             // Only clear if switching view types, otherwise just show loader
             if (viewKey !== lastViewPath) {
@@ -931,6 +979,9 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
             const content = `<div class="dim" style="font-size:0.72rem; margin:-4px 0 10px;">Filter functions by scoring axis. Content has no function-level score.</div><div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>`;
             gridHeader.innerHTML = `<div style="padding:24px; border-bottom:1px solid var(--border); background:var(--bg); display:flex; flex-direction:column;"><div style="display:flex; gap:24px; flex-wrap:wrap;">${binSimScoreMetricCardHtml(content)}</div></div>`;
         }
+    } else if (viewKey === 'strings' || viewKey === 'file-strings') {
+        const gridHeader = document.getElementById('grid-header');
+        if (gridHeader) gridHeader.innerHTML = stringsBandHtml(new URLSearchParams(params));
     } else if (viewKey === 'function-similarity') {
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) {
@@ -978,7 +1029,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const gridHeader = document.getElementById('grid-header');
         if (gridHeader) gridHeader.innerHTML = '';
     }
-
+    placeSearchArea();
 
     if (viewKey === 'clusters' || viewKey === 'bin-clusters') {
         const viewMode = params.get('view') || 'table';
@@ -998,7 +1049,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     // Ensure tag metadata is loaded for views that use it (functions, similarities, and files)
-    if (['functions', 'function-similarity', 'binary-similarity', 'files'].includes(viewKey)) {
+    if (['functions', 'function-similarity', 'binary-similarity', 'files', 'strings', 'file-strings'].includes(viewKey)) {
         await fetchTagMetadata(collection);
         if (myGen !== _refreshGeneration) return;
     }
@@ -1021,8 +1072,11 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     // Standard pagination for all search routes
-    const countLimit = parseInt(params.get('limit')) || (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT);
-    if (isSilent && currentOffset > 0) {
+    // The files view groups by cluster by default: its page is root clusters.
+    const clusterMode = viewKey === 'files' && !!window.FileTree && FileTree.mode(params) === 'cluster';
+    const countLimit = parseInt(params.get('limit')) || (clusterMode ? FileTree.CLUSTER_PAGE : (params.get('view') === 'graph' ? DEFAULT_GRAPH_LIMIT : DEFAULT_PAGE_LIMIT));
+    const paged = window.Paging.mode() === 'page';
+    if (isSilent && currentOffset > 0 && !paged) {
         params.set('offset', 0);
         params.set('limit', currentOffset);
     } else {
@@ -1068,6 +1122,7 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
     }
 
     let apiUrl = route.api + (params.toString() ? '?' + params.toString() : '');
+    if (clusterMode) apiUrl = '/api/file/search/by_cluster?' + FileTree.clusterQuery(params);
     // Neighbours of one file, folded into the containers they came from. The
     // faceted pair search this view normally uses is index-backed and cannot
     // group, so grouping is served by the neighbour endpoint instead.
@@ -1093,10 +1148,15 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         }
         const data = await response.json();
         if (myGen !== _refreshGeneration) return;
+        if (clusterMode && data.has_clusters === false) {
+            // Nothing is clustered here: show the archive view instead.
+            FileTree.noClusters(collection);
+            return refreshData(appendArg, force, skipHeader);
+        }
 
         // Extract the list of items based on the API response structure
-        const items = data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || (Array.isArray(data) ? data : []);
-        const total = data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
+        const items = (Array.isArray(data.clusters) && data.clusters) || data.pools || data.items || data.results || data.files || data.functions || data.features || data.pairs || data.collections || data.batches || data.strings || (Array.isArray(data) ? data : []);
+        const total = clusterMode ? (data.roots_total || 0) : data.total !== undefined ? data.total : (data.total_estimated !== undefined ? data.total_estimated : (Array.isArray(data) ? data.length : (items.length || 0)));
 
         const totalEl = document.getElementById('view-total');
         const poolIcon = document.getElementById('pool-warn-icon');
@@ -1121,7 +1181,18 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
         const tbody = document.getElementById('table-body');
         if (!append) tbody.innerHTML = '';
 
-        if (items.length === 0 && !append) {
+        if (viewKey === 'files' && window.FileTree) {
+            // The file browser (file_tree.js) re-draws everything loaded so
+            // far, so a page joins the archives already on screen.
+            const stale = () => myGen !== _refreshGeneration;
+            if (clusterMode) await FileTree.renderClusters(data, { append, params, collection, stale });
+            else await FileTree.render(items, data.bin_cluster_map || {}, {
+                append, params, collection,
+                pool: window.getRoutingState ? window.getRoutingState().pool : null,
+                stale,
+            });
+            if (myGen !== _refreshGeneration) return;
+        } else if (items.length === 0 && !append) {
             const emptyMessage = viewKey === 'functions' && data.message ? data.message : 'No data found';
             tbody.innerHTML = `<tr><td colspan="100" style="text-align:center; padding:40px;">${escapeHtml(emptyMessage)}</td></tr>`;
         } else {
@@ -1139,25 +1210,28 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 
         let count = items.length;
 
+        // Page mode: currentOffset is the first row of the page shown, not a running count.
         if (append) {
             currentOffset += count;
-        } else {
+        } else if (!paged) {
             currentOffset = count;
         }
-        isEndOfResults = currentOffset >= total;
+        isEndOfResults = (paged ? currentOffset + count : currentOffset) >= total;
 
 
         // Update total display with "Shown / Total" format
         if (totalEl) {
             totalEl.style.display = 'inline-block';
-            totalEl.innerText = `${currentOffset.toLocaleString()} / ${total.toLocaleString()}`;
+            const shownTo = paged ? currentOffset + count : currentOffset;
+            totalEl.innerText = `${paged && total ? (currentOffset + 1).toLocaleString() + '\u2013' : ''}${shownTo.toLocaleString()} / ${total.toLocaleString()}`;
         }
         const footerEl = document.getElementById('table-footer');
         if (footerEl) footerEl.style.display = 'flex';
 
         updateFooterMeta(params, data, Math.round(performance.now() - fetchStartedAt));
 
-        renderPagination(viewKey);
+        renderPagination(viewKey, total, count, countLimit);
+        syncOffsetUrl(paged);
     } catch (err) {
         console.error(err);
     } finally {
@@ -1177,12 +1251,15 @@ async function refreshData(appendArg = false, force = false, skipHeader = false)
 const FOOTER_META_SKIP = new Set([
     'collection', 'pool', 'pool_id', 'limit', 'offset', 'page',
     'view', 'group', 'sort', 'sort_by', 'order', 'dir', 'append',
+    'group_axis', 'group_nodes', 'fold_tag',
 ]);
 
 function listFilters(params) {
     const active = [];
+    // A file's strings page carries its md5 in the path, not as a filter.
+    const pathParams = getRoutingState().viewKey === 'file-strings' ? ['md5', 'file_md5', 'md5_a'] : [];
     for (const [k, v] of params.entries()) {
-        if (FOOTER_META_SKIP.has(k) || v === '' || v === null) continue;
+        if (FOOTER_META_SKIP.has(k) || pathParams.includes(k) || v === '' || v === null) continue;
         active.push(`${k} = ${v}`);
     }
     return active;
@@ -1592,6 +1669,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
     const tableWrap = document.getElementById('table-wrap');
     const tableBodyWrap = document.getElementById('table-body-wrap');
     const searchArea = document.getElementById('search-area');
+    if (window.FileTree) FileTree.mount(viewKey === 'files');
 
     // Reset all special view containers and stop active processes
     if (gview) gview.style.display = 'none';
@@ -1690,9 +1768,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
         // Pool searches span collections: append a Collection column, matching
         // the trailing cell renderCollectionCell() emits in the row renderers.
-        const routeHeaders = (pool && !col && COLLECTION_COLUMN_VIEWS.includes(viewKey))
+        const routeHeaders = ((pool && !col && COLLECTION_COLUMN_VIEWS.includes(viewKey))
             ? [...route.headers, { label: 'Collection', width: '8%' }]
-            : route.headers;
+            : route.headers).filter(h => !(h.extra && !showExtraFileCols()));
 
         const savedForRoute = JSON.parse(localStorage.getItem('columnWidths') || '{}')[viewKey];
         const hasSavedWidths = savedForRoute && Object.keys(savedForRoute).length > 0;
@@ -1719,7 +1797,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 const effectiveSortKey = (viewKey === 'binary-similarity' && sortKey === 'score')
                     ? (params.get('sort') || 'score') : sortKey;
                 const icon = (currentSort === effectiveSortKey) ? (currentOrder === 'desc' ? '▼' : '▲') : '↕';
-                headHtml += `<th ${style} class="sortable resizable-th" data-label="${escapeAttr(label)}" data-sort="${escapeAttr(sortKey)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
+                const tip = h.title ? ` title="${escapeAttr(h.title)}"` : '';
+                headHtml += `<th ${style}${tip} class="sortable resizable-th" data-label="${escapeAttr(label)}" data-sort="${escapeAttr(sortKey)}" onclick="toggleSort(${escapeAttr(jsString(sortKey))})">${escapeHtml(label)} <small>${icon}</small>${resizerHtml}</th>`;
             } else {
                 headHtml += `<th ${style} class="resizable-th" data-label="${label}">${label}${resizerHtml}</th>`;
             }
@@ -1762,8 +1841,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
 
     // Always re-render the settings container (view selector pills + limit inputs)
     // so the active pill is correct even when navigating back to the same path.
-    if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
-        const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
+    if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'strings' || path === 'file-strings' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+        const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'strings' || path === 'file-strings' ? 'applyStringsSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch')))))))));
 
         let settingsHtml = '';
         let limitHtml = '';
@@ -1798,6 +1877,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
                             <button class="view-btn ${viewMode === 'hierarchy' ? 'active' : ''}" onclick="switchClusterView('hierarchy')">Graph</button>
                             <button class="view-btn ${viewMode === 'packing' ? 'active' : ''}" onclick="switchClusterView('packing')">Packing</button>
                         </div>`;
+            } else if (path === 'files' && window.FileTree) {
+                settingsHtml += FileTree.toolbarHtml(params);
             } else if (path === 'bin-clusters') {
                 settingsHtml += `
                         <div class="view-toggle">
@@ -1824,8 +1905,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
     }
 
     if (pathChanged) {
-        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
-            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch'))))))));
+        if (path === 'function-similarity' || path === 'functions' || path === 'files' || path === 'clusters' || path === 'bin-clusters' || path === 'features-global' || path === 'strings' || path === 'file-strings' || path === 'binary-similarity' || path === 'jobs' || path === 'collections' || path === 'pools') {
+            const applyFn = path === 'function-similarity' ? 'applySimSearch' : (path === 'functions' ? 'applyAdvancedFuncSearch' : (path === 'files' ? 'applyAdvancedFileSearch' : (path === 'strings' || path === 'file-strings' ? 'applyStringsSearch' : (path === 'features-global' ? 'applyAdvancedFeatureSearch' : (path === 'binary-similarity' ? 'applyBinSimSearch' : (path === 'bin-clusters' ? 'applyBinClusterSearch' : (path === 'clusters' ? 'applyClusterSearch' : (path === 'collections' ? 'applyCollectionSearch' : (path === 'pools' ? 'applyPoolSearch' : 'applyJobSearch')))))))));
 
 
             const p = new URLSearchParams(params);
@@ -1859,33 +1940,24 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         </th>
                         <th></th>`;
                 } else if (path === 'files') {
+                    // Same order as routes.files.headers: the File column carries
+                    // the filters of the fields it now shows (lang, type, status).
                     headHtml += `
-                        <th><input type="text" id="flt-file-name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:4px;">
-                                <input type="text" id="flt-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
-                                <input type="text" id="flt-file-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                            </div>
-                        </th>
-                        <th>
-                            <input type="text" id="flt-file-inf-tags" value="${escapeAttr(p.get('inferred_tags') || '')}" placeholder="Inf.Tags..." title="Namespace-aware inferred tags" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);">
-                        </th>
-                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
-                        <th>
-                            <select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
+                        <th><div class="ft-flt-stack">
+                            <input type="text" id="flt-file-name" placeholder="Name..." value="${escapeAttr(p.get('file_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;">
+                            <div class="ft-flt-pair"><input type="text" id="flt-file-language" placeholder="Lang..." value="${escapeAttr(p.get('language_id') || '')}" onfocus="attachAutocomplete(this, 'file', 'language_id', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><select id="flt-file-status" onchange="applyAdvancedFileSearch()" style="background:var(--window-tray); border:1px solid var(--border); color:var(--text); padding:2px; font-size:0.65rem; border-radius:2px; width:100%; box-sizing:border-box;">
                                 ${['', 'pending', 'analyzing', 'failed', 'analyzed'].map(s => `<option value="${escapeAttr(s)}" ${(p.get('status') || '') === s ? 'selected' : ''}>${s ? s.toUpperCase() : 'All Statuses'}</option>`).join('')}
-                            </select>
-                        </th>
-                        <th>
-                            <div style="display:flex; align-items:center; gap:2px;">
+                            </select></div>
+                            <div class="ft-flt-pair"><input type="text" id="flt-file-inf-tags" value="${escapeAttr(p.get('inferred_tags') || '')}" placeholder="Inf.Tags..." title="Namespace-aware inferred tags" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box; background: rgba(0,255,0,0.03);"><input type="text" id="flt-file-strings" placeholder="Has string..." value="${escapeAttr(p.get('strings') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div>
+                        </div></th>
+${showExtraFileCols() ? `                        <th><input type="text" id="flt-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onfocus="attachAutocomplete(this, 'file', 'file_md5', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>
+                        <th><input type="text" id="flt-file-batch" placeholder="Batch UUID..." value="${escapeAttr(p.get('batch_uuid') || '')}" onfocus="attachAutocomplete(this, 'file', 'batch_uuid', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>` : ''}
+                        <th><div style="display:flex; align-items:center; gap:2px;">
                                 <input type="number" id="flt-file-min-funcs" placeholder="Min..." value="${escapeAttr(p.get('min_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
                                 <span class="dim" style="font-size:0.6rem">-</span>
                                 <input type="number" id="flt-file-max-funcs" placeholder="Max..." value="${escapeAttr(p.get('max_function_count') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 45%; box-sizing: border-box;">
-                            </div>
-                        </th>
-                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
+                            </div></th>
+                        <th><div style="display:flex; flex-direction:column; gap:2px;">
                                 <input type="text" id="flt-file-cluster" placeholder="UUID..." value="${escapeAttr(p.get('bin_cluster_uuid') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <input type="text" id="flt-file-cluster-name" placeholder="Cluster Name..." value="${escapeAttr(p.get('bin_cluster_name') || '')}" onfocus="attachAutocomplete(this, 'file', 'bin_cluster_name', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width: 100%; box-sizing: border-box; font-size:0.6rem;">
                                 <div style="display:flex; align-items:center; gap:2px;">
@@ -1916,15 +1988,13 @@ function updateUI(viewKey, collection, params, route, force = false) {
                                         }).join('');
                                     })()}
                                 </div>
-                            </div>
-                        </th>
-                        <th>
-                            <div style="display:flex; flex-direction:column; gap:2px;">
+                            </div></th>
+                        <th><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                        <th><input type="text" id="flt-file-note-owner" placeholder="Note Owner..." value="${escapeAttr(p.get('note_owner') || '')}" onfocus="attachAutocomplete(this, 'file', 'note_owners', (val) => { this.value = val; applyAdvancedFileSearch(); })" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></th>
+                        <th><div style="display:flex; flex-direction:column; gap:2px;">
                                 <input type="text" id="flt-file-min-date" placeholder="Min Date..." value="${escapeAttr(p.get('min_entry_date') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
                                 <input type="text" id="flt-file-max-date" placeholder="Max Date..." value="${escapeAttr(p.get('max_entry_date') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;">
-                            </div>
-                        </th>
-                        <th><div class="tag-filter-container" id="tag-container-file"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'file')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('file', 'file_tag', val); this.value=''; triggerTagSearch(); })"></div></th>`;
+                            </div></th>`;
                 } else if (path === 'function-similarity' || path === 'functions') {
                     const values = {
                         function_name: p.get(path === 'function-similarity' ? 'name' : 'function_name') || '',
@@ -1936,6 +2006,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                         min_cohesion: p.get('min_cohesion') || '0.5',
                         min_features: p.get('min_features') || '0',
                         note_owner: p.get('note_owner') || '',
+                        strings: p.get('strings') || '',
                     };
                     const input = (id, value, placeholder, field) => FunctionFilters.cell(id, {
                         value, placeholder, onInput: `debouncedSearch(${applyFn})`, onKeydown: `handleFilterKey(event, ${applyFn})`,
@@ -1976,6 +2047,15 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 if (path === 'features-global') {
                     loadFieldCardinalities(col, 'feature', { 'hash': 'flt-feat-hash', 'type': 'flt-feat-type', 'op': 'flt-feat-op' });
                 }
+            } else if (path === 'strings' || path === 'file-strings') {
+                const f = (id, param, ph, type = 'text') => `<th><input type="${type}" id="${id}" placeholder="${ph}" value="${escapeAttr(p.get(param) || '')}" onchange="debouncedSearch(applyStringsSearch)" onkeydown="handleFilterKey(event, applyStringsSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"></th>`;
+                const secF = f('flt-str-section', 'section', 'Section...');
+                const lenF = f('flt-str-minlen', 'min_length', 'Min...', 'number');
+                const tagF = f('flt-str-tag', 'tag', 'Tag...');
+                headHtml += `<tr class="filter-row">${path === 'strings'
+                    ? `<th></th>${secF}${lenF}<th></th><th></th>${tagF}`
+                    : `<th></th><th></th><th></th>${secF}${lenF}<th></th>${tagF}`}</tr>`;
+                thead.innerHTML = headHtml;
             } else if (path === 'clusters') {
                 if (dataTable) dataTable.style.tableLayout = 'fixed';
                 headHtml += `<tr class="filter-row">
@@ -1986,7 +2066,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
                     <th><input type="number" id="flt-cluster-min-features" value="${escapeAttr(p.get('min_features') || '0')}" min="0" title="Min Features" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><input type="number" id="flt-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" title="Min Cohesion" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th></th>
-                    <th><div class="tag-filter-container" id="tag-container-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                    <th><div class="tag-filter-container" id="tag-container-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"><input type="text" class="tag-filter-add" placeholder="+ Inferred" title="Filter on tags inferred from the cluster members" onkeydown="handleTagAdd(event, 'cluster', 'inferred_tag')"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-cluster-func-name" placeholder="Func Name..." value="${escapeAttr(p.get('func_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-func-addr" placeholder="Func Addr..." value="${escapeAttr(p.get('func_addr') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyClusterSearch)" onkeydown="handleFilterKey(event, applyClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -2031,12 +2111,16 @@ function updateUI(viewKey, collection, params, route, force = false) {
                 headHtml += `<tr class="filter-row">
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-uuid" placeholder="UUID..." value="${escapeAttr(p.get('cluster_uuid') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-id" placeholder="ID..." value="${escapeAttr(p.get('cluster_id') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-name" placeholder="Name..." value="${escapeAttr(p.get('cluster_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.65rem; width: 100%; box-sizing: border-box;"><select id="bin-cluster-name-type" style="background:var(--border); color:var(--accent); border:1px solid var(--accent); font-size:0.6rem; border-radius:4px; padding:2px; width:100%; box-sizing:border-box;" onchange="changeBinClusterNameType(this.value)"><option value="file" ${nameType === 'file' ? 'selected' : ''}>Most Common File Name</option><option value="yara" ${nameType === 'yara' ? 'selected' : ''}>Most Common Yara</option></select></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-relevance" value="${escapeAttr(p.get('min_relevance') || '')}" step="0.1" min="0" placeholder="Min" title="Min Relevance" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-relevance" value="${escapeAttr(p.get('max_relevance') || '')}" step="0.1" min="0" placeholder="Max" title="Max Relevance" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-count" value="${escapeAttr(p.get('min_count') || '0')}" min="0" placeholder="Min" title="Min Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-count" value="${escapeAttr(p.get('max_count') || '')}" min="0" placeholder="Max" title="Max Binaries" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
-                    <th></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-avg-funcs" value="${escapeAttr(p.get('min_avg_funcs') || '')}" min="0" placeholder="Min" title="Min Avg Funcs" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-avg-funcs" value="${escapeAttr(p.get('max_avg_funcs') || '')}" min="0" placeholder="Max" title="Max Avg Funcs" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
                     <th><input type="number" id="flt-bin-cluster-min-stability" value="${escapeAttr(p.get('min_stability') || '0')}" step="0.1" min="0" title="Min Stability" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="number" id="flt-bin-cluster-min-cohesion" value="${escapeAttr(p.get('min_cohesion') || '0')}" step="0.1" min="0" max="1" placeholder="Min" title="Min Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"><input type="number" id="flt-bin-cluster-max-cohesion" value="${escapeAttr(p.get('max_cohesion') || '')}" step="0.1" min="0" max="1" placeholder="Max" title="Max Cohesion" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></div></th>
-                    <th></th>
-                    <th><div class="tag-filter-container" id="tag-container-bin-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="date" id="flt-bin-cluster-min-first-added" value="${escapeAttr(p.get('min_first_added') || '')}" title="First added on or after" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="date" id="flt-bin-cluster-max-first-added" value="${escapeAttr(p.get('max_first_added') || '')}" title="First added on or before" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="date" id="flt-bin-cluster-min-last-added" value="${escapeAttr(p.get('min_last_added') || '')}" title="Last added on or after (grew since)" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="date" id="flt-bin-cluster-max-last-added" value="${escapeAttr(p.get('max_last_added') || '')}" title="Last added on or before (quiet since)" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
+                    <th><input type="number" id="flt-bin-cluster-min-new" value="${escapeAttr(p.get('min_new') || '')}" min="0" placeholder="Min" title="Min members uploaded in the last 30 days" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="width:100%; font-size:0.65rem; box-sizing: border-box;"></th>
+                    <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="date" id="flt-bin-cluster-min-last-seen" value="${escapeAttr(p.get('min_last_seen') || '')}" title="Seen in the wild on or after" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"><input type="date" id="flt-bin-cluster-max-first-seen" value="${escapeAttr(p.get('max_first_seen') || '')}" title="First seen in the wild on or before" onchange="debouncedSearch(applyBinClusterSearch)" style="width:100%; font-size:0.6rem; box-sizing: border-box;"></div></th>
+                    <th><div class="tag-filter-container" id="tag-container-bin-cluster"><input type="text" class="tag-filter-add" placeholder="+ Tag" onkeydown="handleTagAdd(event, 'bin-cluster')" onfocus="attachTagAutocomplete(this, (val) => { createTagCard('bin-cluster', 'cluster_tag', val); this.value=''; triggerTagSearch(); })"><input type="text" class="tag-filter-add" placeholder="+ Inferred" title="Filter on tags inferred from the cluster members" onkeydown="handleTagAdd(event, 'bin-cluster', 'inferred_tag')"></div></th>
                     <th><div style="display:flex; flex-direction:column; gap:2px;"><input type="text" id="flt-bin-cluster-file-name" placeholder="File Name..." value="${escapeAttr(p.get('file_name') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"><input type="text" id="flt-bin-cluster-file-md5" placeholder="MD5..." value="${escapeAttr(p.get('file_md5') || '')}" onchange="debouncedSearch(applyBinClusterSearch)" onkeydown="handleFilterKey(event, applyBinClusterSearch)" style="font-size:0.6rem; width: 100%; box-sizing: border-box;"></div></th>
                 </tr>`;
                 thead.innerHTML = headHtml;
@@ -2100,13 +2184,15 @@ function updateUI(viewKey, collection, params, route, force = false) {
             // Search Bar building
             if (searchArea) {
                 if (path === 'files') {
-                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="file-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFileSearch)" onkeydown="handleFilterKey(event, applyAdvancedFileSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFileSearch()" title="Search"></i></div></div>`;
+                    searchArea.innerHTML = `<div class="filter-bar">${window.FileTree ? FileTree.queryBarHtml(p) : ''}${window.NwayCompareDraft ? NwayCompareDraft.buttons() : ''}</div>`;
                 } else if (path === 'functions') {
                     const fileMd5 = p.get('file_md5');
                     const callGraphBtn = fileMd5 ? `<a class="btn-action" onclick="Nav.openPath('/collections/${encodeURIComponent(p.get('collection'))}/files/${encodeURIComponent(fileMd5)}/functions', event, { title: 'Call Graph: ${fileMd5}', type: 'call_graph' })" style="color:var(--accent); margin-left:10px; padding: 6px 12px; border:1px solid var(--accent); border-radius:4px; font-size:0.8rem; cursor:pointer;">View File Call Graph 🕸️</a>` : '';
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="func-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFuncSearch)" onkeydown="handleFilterKey(event, applyAdvancedFuncSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFuncSearch()" title="Search"></i></div>${callGraphBtn}</div></div>`;
                 } else if (path === 'features-global') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="feature-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyAdvancedFeatureSearch)" onkeydown="handleFilterKey(event, applyAdvancedFeatureSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyAdvancedFeatureSearch()" title="Search"></i></div></div></div>`;
+                } else if (path === 'strings' || path === 'file-strings') {
+                    searchArea.innerHTML = `<div class="filter-bar"><div class="search-input-wrapper"><input type="text" id="strings-search-input" placeholder="Search strings (use * for glob)..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applyStringsSearch)" onkeydown="handleFilterKey(event, applyStringsSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applyStringsSearch()" title="Search"></i></div></div>`;
                 } else if (path === 'function-similarity') {
                     searchArea.innerHTML = `<div class="filter-bar" style="gap:20px"><div style="display:flex; gap:10px; align-items:center;"><div class="search-input-wrapper"><input type="text" id="sim-search-input" placeholder="Search by keywords..." autofocus value="${escapeAttr(p.get('q') || '')}" onchange="debouncedSearch(applySimSearch)" onkeydown="handleFilterKey(event, applySimSearch)"><i class="fa-solid fa-magnifying-glass search-icon-btn" onclick="applySimSearch()" title="Search"></i></div></div></div>`;
                 } else if (path === 'clusters') {
@@ -2134,6 +2220,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
         syncInput('file-search-input', 'q');
         syncInput('func-search-input', 'q');
         syncInput('feature-search-input', 'q');
+        syncInput('strings-search-input', 'q');
         syncInput('sim-search-input', 'q');
         syncInput('cluster-search-input', 'q');
         syncInput('bin-cluster-search-input', 'q');
@@ -2150,7 +2237,7 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-file-name', 'file_name'); syncInput('flt-file-md5', 'file_md5'); syncInput('flt-file-language', 'language_id');
             syncInput('flt-file-inf-tags', 'inferred_tags');
             syncInput('flt-file-batch', 'batch_uuid'); syncInput('flt-file-min-funcs', 'min_function_count'); syncInput('flt-file-max-funcs', 'max_function_count');
-            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
+            syncInput('flt-file-note-owner', 'note_owner'); syncInput('flt-file-strings', 'strings'); syncInput('flt-file-cluster', 'bin_cluster_uuid'); syncInput('flt-file-cluster-name', 'bin_cluster_name'); syncInput('flt-file-min-cohesion', 'min_cohesion'); syncInput('flt-file-max-cohesion', 'max_cohesion');
             syncInput('flt-file-min-date', 'min_entry_date'); syncInput('flt-file-max-date', 'max_entry_date');
         } else if (path === 'functions' || path === 'function-similarity') {
             const prefix = path === 'function-similarity' ? 'sim-' : 'flt-func-';
@@ -2163,9 +2250,11 @@ function updateUI(viewKey, collection, params, route, force = false) {
             }
             syncInput('flt-func-name', nameParam); syncInput('flt-func-namespace', 'namespace'); syncInput('flt-func-ret_type', 'return_type'); syncInput('flt-func-address', addrParam);
             syncInput('flt-func-cluster', 'cluster_uuid'); syncInput('flt-func-cluster-name', 'cluster_name'); syncInput('flt-func-min-cohesion', 'min_cohesion');
-            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-min-callers', 'min_callers'); syncInput('flt-func-min-callees', 'min_callees'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-file_name', 'file_name');
+            syncInput('flt-func-min-features', 'min_features'); syncInput('flt-func-min-callers', 'min_callers'); syncInput('flt-func-min-callees', 'min_callees'); syncInput('flt-func-note-owner', 'note_owner'); syncInput('flt-func-strings', 'strings'); syncInput('flt-func-file_name', 'file_name');
             const md5Val = p.get('md5') || p.get('file_md5');
             const md5El = document.getElementById('flt-func-md5'); if (md5El) md5El.value = md5Val || '';
+        } else if (path === 'strings' || path === 'file-strings') {
+            syncInput('flt-str-section', 'section'); syncInput('flt-str-minlen', 'min_length'); syncInput('flt-str-tag', 'tag');
         } else if (path === 'features-global') {
             syncInput('flt-feat-hash', 'hash'); syncInput('flt-feat-type', 'type'); syncInput('flt-feat-op', 'op');
             syncInput('flt-feat-min-tf', 'min_tf_score'); syncInput('flt-feat-max-tf', 'max_tf_score'); syncInput('flt-feat-min-freq', 'min_frequency'); syncInput('flt-feat-max-freq', 'max_frequency');
@@ -2174,8 +2263,9 @@ function updateUI(viewKey, collection, params, route, force = false) {
             syncInput('flt-cluster-func-name', 'func_name'); syncInput('flt-cluster-func-addr', 'func_addr'); syncInput('flt-cluster-file-name', 'file_name');
         } else if (path === 'bin-clusters') {
             syncInput('flt-bin-cluster-uuid', 'cluster_uuid'); syncInput('flt-bin-cluster-id', 'cluster_id'); syncInput('flt-bin-cluster-name', 'cluster_name'); syncSelect('bin-cluster-name-type', 'cluster_name_type', 'file');
-            syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion');
+            syncInput('flt-bin-cluster-min-count', 'min_count'); syncInput('flt-bin-cluster-max-count', 'max_count'); syncInput('flt-bin-cluster-min-stability', 'min_stability'); syncInput('flt-bin-cluster-min-cohesion', 'min_cohesion'); syncInput('flt-bin-cluster-max-cohesion', 'max_cohesion'); syncInput('flt-bin-cluster-min-avg-funcs', 'min_avg_funcs'); syncInput('flt-bin-cluster-max-avg-funcs', 'max_avg_funcs');
             syncInput('flt-bin-cluster-file-name', 'file_name'); syncInput('flt-bin-cluster-file-md5', 'file_md5');
+            BIN_CLUSTER_TIME_FILTERS.forEach(k => syncInput(`flt-bin-cluster-${k.replace(/_/g, '-')}`, k));
         } else if (path === 'collections') {
             const syncDate = (id, paramName) => { const el = document.getElementById(id); if (el) { const ms = p.get(paramName); el.value = ms ? new Date(+ms).toISOString().slice(0, 10) : ''; } };
             syncInput('flt-coll-name', 'name');
@@ -2246,8 +2336,8 @@ function updateUI(viewKey, collection, params, route, force = false) {
             { key: 'func', fields: ['func_tag', 'func_static_tag', 'func_user_tag', 'exclude_func_tag', 'exclude_func_static_tag', 'exclude_func_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
             { key: 'file', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag'] },
             { key: 'bin-sim', fields: ['file_tag', 'file_static_tag', 'file_user_tag', 'exclude_file_tag', 'exclude_file_static_tag', 'exclude_file_user_tag', 'tag', 'static_tag', 'user_tag', 'exclude_tag', 'exclude_static_tag', 'exclude_user_tag'] },
-            { key: "cluster", fields: ["cluster_tag", "exclude_cluster_tag"] },
-            { key: "bin-cluster", fields: ["cluster_tag", "exclude_cluster_tag"] }
+            { key: "cluster", fields: ["cluster_tag", "exclude_cluster_tag", "inferred_tag", "exclude_inferred_tag"] },
+            { key: "bin-cluster", fields: ["cluster_tag", "exclude_cluster_tag", "inferred_tag", "exclude_inferred_tag"] }
         ];
         tagFields.forEach(col => {
             col.fields.forEach(f => {
@@ -2408,7 +2498,9 @@ function applyAdvancedFuncSearch() {
     const minCallersFlt = document.getElementById('flt-func-min-callers')?.value;
     const minCalleesFlt = document.getElementById('flt-func-min-callees')?.value;
     const noteOwnerFlt = document.getElementById('flt-func-note-owner')?.value;
+    const stringsFlt = document.getElementById('flt-func-strings')?.value;
 
+    if (stringsFlt) params.set('strings', stringsFlt); else params.delete('strings');
     if (clusterFlt) params.set('cluster_uuid', clusterFlt); else params.delete('cluster_uuid');
     if (clusterNameFlt) params.set('cluster_name', clusterNameFlt); else params.delete('cluster_name');
     params.set('min_cohesion', minCohesionFlt || '0.5');
@@ -2610,6 +2702,8 @@ function applyAdvancedFileSearch() {
 
     const noteOwnerFlt = document.getElementById('flt-file-note-owner')?.value;
     if (noteOwnerFlt) params.set('note_owner', noteOwnerFlt); else params.delete('note_owner');
+    const stringsFlt = document.getElementById('flt-file-strings')?.value;
+    if (stringsFlt) params.set('strings', stringsFlt); else params.delete('strings');
 
     const countLimit = document.getElementById('sim-limit')?.value;
     params.set('limit', countLimit || DEFAULT_PAGE_LIMIT);
@@ -2716,6 +2810,57 @@ function triggerTagSearch() {
     else if (viewKey === "bin-clusters") debouncedSearch(applyBinClusterSearch);
 }
 
+function applyStringsSearch() {
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
+    const { viewKey, params } = getRoutingState();
+    const set = (name, val) => { if (val && String(val).trim()) params.set(name, String(val).trim()); else params.delete(name); };
+    set('q', document.getElementById('strings-search-input')?.value);
+    set('section', document.getElementById('flt-str-section')?.value);
+    set('min_length', document.getElementById('flt-str-minlen')?.value);
+    set('tag', document.getElementById('flt-str-tag')?.value);
+    params.set('limit', document.getElementById('sim-limit')?.value || DEFAULT_PAGE_LIMIT);
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+window.applyStringsSearch = applyStringsSearch;
+
+// Band pills for the strings views: one URL param per card, same pill look as the other bands.
+const StringsBandCards = [
+    { param: 'encoding', title: 'Encoding', tip: 'How Ghidra decoded the string.', options: [
+        { v: '', label: 'Any', icon: 'fa-solid fa-globe' }, { v: 'ascii', label: 'ASCII', icon: 'fa-solid fa-font' },
+        { v: 'utf-8', label: 'UTF-8', icon: 'fa-solid fa-language' }, { v: 'utf-16', label: 'UTF-16', icon: 'fa-solid fa-language' } ] },
+    { param: 'yara', title: 'YARA', tip: 'Keep only strings a YARA rule matched.', options: [
+        { v: '', label: 'All', icon: 'fa-solid fa-layer-group' }, { v: 'true', label: 'Rule hits', icon: 'fa-solid fa-shield-halved' } ] },
+    { param: 'referenced', title: 'References', tip: 'Whether some function references the string.', options: [
+        { v: '', label: 'All', icon: 'fa-solid fa-layer-group' }, { v: 'true', label: 'Referenced', icon: 'fa-solid fa-code' },
+        { v: 'false', label: 'Unreferenced', icon: 'fa-regular fa-circle' } ] },
+];
+
+function stringsBandHtml(p) {
+    const cards = StringsBandCards.map(c => {
+        const cur = p.get(c.param) || '';
+        const pills = c.options.map(o => `<span class="bsim-tag-pill" style="${binSimPillStyle(o.v === cur)}" onclick="setStringsPill(${escapeAttr(jsString(c.param))}, ${escapeAttr(jsString(o.v))})"><i class="${o.icon}"></i>${o.label}</span>`).join('');
+        return `<div class="home-card" style="padding:16px; min-width:220px;">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:12px;">
+                <h3 style="margin:0; font-size:0.9rem; color:var(--text);">${c.title}</h3>
+                <span class="home-tip" tabindex="0" data-tip="${escapeAttr(c.tip)}"><i class="fa-solid fa-circle-info"></i></span>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px;">${pills}</div>
+        </div>`;
+    }).join('');
+    return `<div style="padding:24px; border-bottom:1px solid var(--border); background:var(--bg); display:flex; flex-direction:column;"><div style="display:flex; gap:24px; flex-wrap:wrap;">${cards}</div></div>`;
+}
+
+function setStringsPill(param, value) {
+    const { viewKey, params } = getRoutingState();
+    if (value) params.set(param, value); else params.delete(param);
+    currentOffset = 0;
+    isEndOfResults = false;
+    navigate(viewKey, params);
+}
+window.setStringsPill = setStringsPill;
+
 function applyAdvancedFeatureSearch() {
     if (filterDebounceTimer) clearTimeout(filterDebounceTimer);
     const { viewKey, params } = getRoutingState();
@@ -2763,7 +2908,7 @@ function createTagCard(columnId, type, value, isExclude = false, literal = true)
 
     card.innerHTML = `
         <span class="btn-card-ex" title="Toggle Exclude" onclick="toggleCardExclude(this)">NOT</span>
-        <span class="tag-text" title="${escapeAttr(value)}">${value}</span>
+        <span class="tag-text" title="${escapeAttr(value)}">${type === 'inferred_tag' ? '≈ ' : ''}${value}</span>
         <span class="btn-card-remove" title="Remove" onclick="this.parentElement.remove(); triggerTagSearch();">×</span>
     `;
 
@@ -2777,23 +2922,64 @@ function toggleCardExclude(btn) {
     triggerTagSearch();
 }
 
-function handleTagAdd(event, columnId) {
+function handleTagAdd(event, columnId, forcedType) {
     if (event.key === 'Enter' || event.key === ',') {
         event.preventDefault();
         const val = event.target.value.replace(',', '').trim();
         if (val) {
             let type = (columnId === "sim" ? "sim_tag" : ((columnId === "cluster" || columnId === "bin-cluster") ? "cluster_tag" : (columnId === "func" ? "func_tag" : "file_tag")));
-            createTagCard(columnId, type, val, false, false);
+            createTagCard(columnId, forcedType || type, val, false, false);
             event.target.value = '';
             triggerTagSearch();
         }
     }
 }
 
-function renderPagination(path) {
+let _pagingObserver = null;
+
+function renderPagination(path, total, count, size) {
     const container = document.getElementById('pagination-container');
+    if (_pagingObserver) _pagingObserver.disconnect();
+    // Page mode: the pager lives in the pinned table footer, next to the "N-M / total" badge.
+    const pager = document.getElementById('view-pager');
+    if (pager) pager.innerHTML = '';
+    if (window.Paging.mode() === 'page') {
+        container.innerHTML = '';
+        pageSize = size;
+        pageTotal = total;
+        if (pager && total > size) {
+            pager.innerHTML = window.Paging.controls({ offset: currentOffset, total, size });
+            window.Paging.bind(pager, () => ({ offset: currentOffset, total: pageTotal, size: pageSize }), gotoOffset);
+        }
+        return;
+    }
     container.innerHTML = (!isEndOfResults) ?
         `<button class="btn-primary" onclick="refreshData(true)">Load More Results</button>` : '';
+    // Scroll mode: the button also fires by itself when it comes into view.
+    if (!isEndOfResults) _pagingObserver = window.Paging.observe(container, () => refreshData(true));
+}
+
+let pageSize = DEFAULT_PAGE_LIMIT;
+let pageTotal = 0;
+
+function gotoOffset(offset) {
+    currentOffset = offset;
+    document.getElementById('table-body').style.opacity = '0.5';
+    const wrap = document.getElementById('table-body-wrap');
+    if (wrap) wrap.scrollTop = 0;
+    refreshData();
+}
+
+// Only page mode puts the offset in the URL, so a page can be shared. The
+// path is remembered so this edit isn't mistaken for a navigation.
+function syncOffsetUrl(paged) {
+    const u = new URL(window.location.href);
+    if (paged && currentOffset) u.searchParams.set('offset', currentOffset);
+    else u.searchParams.delete('offset');
+    const next = u.pathname + u.search;
+    if (next === window.location.pathname + window.location.search) return;
+    history.replaceState(history.state, '', next + u.hash);
+    lastPathName = next;
 }
 
 function copyToClipboard(text, btn) {
@@ -2921,14 +3107,16 @@ function renderTopCorrelations(items, clustersMap = {}, anchorMd5 = null, anchor
             const otherMd5 = isFunc1Anchor ? m2 : m1;
 
             return `
-            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}"
+            <tr class="sim-row" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(pairId)}" data-id1="${escapeAttr(p.id1)}" data-id2="${escapeAttr(p.id2)}" data-algo="${escapeAttr(p.algo)}" data-sid="${escapeAttr(p.sid || '')}"${p.live ? ' data-live="1"' : ''}
                 data-entity-data='${escapeAttr(JSON.stringify(p))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'similarity', this)">
                 <td>
                     <div style="font-size:1.1rem; font-weight:bold; color:var(--success); cursor:pointer;"
                         onclick="openDiffDirectly(${escapeAttr(jsString(p.id1))}, ${escapeAttr(jsString(p.name1 || ''))}, ${escapeAttr(jsString(p.id2))}, ${escapeAttr(jsString(p.name2 || ''))}, event)"
                         title="Run Aligned Diff">${(p.score * 100).toFixed(1)}%</div>
-                    ${EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
+                    ${p.live
+                        ? `<span class="mono" style="display:inline-block; margin-top:3px; font-size:0.65rem; color:var(--warning, #d97706); border:1px dashed currentColor; border-radius:3px; padding:0 4px;" title="Computed live below the stored edges' min score; not saved. Select and save, or right-click.">live</span>`
+                        : EntityRenderer.renderTag('similarity', pairId, tags, user_tags)}
                 </td>
                 <td style="min-width: 300px;">${EntityRenderer.renderFunction(otherData, { hideNote: true })}</td>
                 <td class="sim-cell"><span class="mono" style="color:var(--accent);">@ ${escapeHtml(otherAddr)}</span></td>
@@ -3254,6 +3442,8 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
             url = `/pools/${encodeURIComponent(poolId)}/batches`;
         } else if (viewKey === 'features-global') {
             url = `/pools/${encodeURIComponent(poolId)}/features`;
+        } else if (viewKey === 'file-strings') {
+            url = `/pools/${encodeURIComponent(poolId)}/${col ? `collections/${encodeURIComponent(col)}/` : ''}files/${encodeURIComponent(params.get('md5') || '')}/strings`;
         } else if (viewKey === 'clusters') {
             url = `/pools/${encodeURIComponent(poolId)}/functions/clusters`;
         } else if (viewKey === 'bin-clusters') {
@@ -3279,6 +3469,8 @@ function navigate(viewKey, queryParams = null, collection = null, replace = fals
             url = `/collections/${col}/batches`;
         } else if (viewKey === 'features-global') {
             url = `/collections/${col}/features`;
+        } else if (viewKey === 'file-strings') {
+            url = `/collections/${col}/files/${encodeURIComponent(params.get('md5') || '')}/strings`;
         } else if (viewKey === 'clusters') {
             url = `/collections/${col}/functions/clusters`;
         } else if (viewKey === 'bin-clusters') {
@@ -3393,7 +3585,8 @@ const UIParams = {
     colorByTag: localStorage.getItem('colorByTag') === 'true',
     includeHeaders: localStorage.getItem('includeHeaders') === 'true',
     useFloatingWindows: localStorage.getItem('useFloatingWindows') === null ? false : localStorage.getItem('useFloatingWindows') === 'true',
-    lightTheme: localStorage.getItem('lightTheme') === 'true'
+    lightTheme: localStorage.getItem('lightTheme') === 'true',
+    pagingMode: localStorage.getItem('pagingMode') === 'scroll' ? 'scroll' : 'page'
 };
 window.UIParams = UIParams;
 
@@ -3420,6 +3613,8 @@ function updateUIParams() {
     localStorage.setItem('includeHeaders', UIParams.includeHeaders);
     localStorage.setItem('useFloatingWindows', UIParams.useFloatingWindows);
     localStorage.setItem('lightTheme', UIParams.lightTheme);
+    UIParams.pagingMode = document.getElementById('param-paging-mode').value;
+    localStorage.setItem('pagingMode', UIParams.pagingMode);
 
     // ponytail: light theme toggle action
     if (UIParams.lightTheme) {
@@ -3463,6 +3658,8 @@ function loadUIParams() {
     if (elIncludeHeaders) elIncludeHeaders.checked = UIParams.includeHeaders;
     if (elFloatingWindows) elFloatingWindows.checked = UIParams.useFloatingWindows;
     if (elLightTheme) elLightTheme.checked = UIParams.lightTheme;
+    const elPaging = document.getElementById('param-paging-mode');
+    if (elPaging) elPaging.value = UIParams.pagingMode;
 }
 
 window.addEventListener('load', () => {
@@ -3644,6 +3841,19 @@ window.addEventListener('load', () => {
         }
     };
 
+    // Footer chip of the running/queued N-way builds (NWAY_BUILD jobs), in every
+    // `.nway-build-status` host: the main footer and the N-way table footer.
+    let nwayBuilds = [];
+    window.renderNwayBuildStatus = (jobs) => {
+        if (jobs) nwayBuilds = jobs.filter(j => j.type === 'nway_build');
+        document.querySelectorAll('.nway-build-status').forEach(el => {
+            el.innerHTML = nwayBuilds.map(j => {
+                const run = j.status === 'running';
+                return `<span class="table-footer-badge" style="cursor:pointer;" title="N-way build job ${escapeAttr(j.id)} (click for details)" onclick="window.showJobDetails && window.showJobDetails(${escapeAttr(JSON.stringify(j.id))})"><i class="fa-solid ${run ? 'fa-circle-notch fa-spin' : 'fa-clock'}"></i> N-way build ${run ? `${Number(j.progress) || 0}%` : 'queued'}</span>`;
+            }).join('');
+        });
+    };
+
     let jobStatusInFlight = false;
     window.updateJobStatusIcon = async () => {
         // ponytail: one poll at a time. Without this, a slow /api/jobs/stats lets
@@ -3748,6 +3958,7 @@ window.addEventListener('load', () => {
                     .join(' ');
             };
 
+            window.renderNwayBuildStatus(activeJobList);
             const matchingJob = activeJobList.find(job => isJobInContext(job) && isJobRelevant(job));
             const statusBadge = document.getElementById('view-job-status');
             if (statusBadge) {
@@ -3866,7 +4077,7 @@ function renderClusters(items) {
                 </div>
             </td>
             <td class="dim">${formatDate(c.created_at)}</td>
-            <td>${EntityRenderer.renderTag('cluster', c.tag_id || c.cluster_id, [], c.user_tags || [], { maxTags: 4 })}</td>
+            <td>${EntityRenderer.renderTag('cluster', c.tag_id || c.cluster_id, [...(c.inferred_tags || []), ...(c.file_inferred_tags || [])], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 350px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
@@ -3908,6 +4119,8 @@ function applyClusterSearch() {
 
     params.delete("cluster_tag");
     params.delete("exclude_cluster_tag");
+    params.delete("inferred_tag");
+    params.delete("exclude_inferred_tag");
     document.querySelectorAll("#tag-container-cluster .tag-filter-card").forEach(card => {
         const key = (card.dataset.exclude === "true" ? "exclude_" : "") + card.dataset.type;
         params.append(key, quoteFilterValue(card.dataset.value, card.dataset.literal !== "false"));
@@ -3986,6 +4199,8 @@ function renderBinClusters(items) {
             const topYara = window.topTagLabel && window.topTagLabel(c.tag_distribution, 'yara');
             if (topYara) displayName = topYara;
         }
+        // Where the name came from; a yara display name is not the cluster's name, so no chip.
+        const nameSrc = displayName === c.cluster_name ? clusterNameSource(c, params.get('axis') || window.BINSIM_DEFAULT_AXIS) : '';
 
         // Clusters built before function_count_stats was stored have none: show a dash.
         const fnStats = c.function_count_stats || {};
@@ -4020,8 +4235,9 @@ function renderBinClusters(items) {
             <td>
                 <div style="display:flex; flex-direction:column; gap:4px;">
                     <div style="display:flex; align-items:center; gap:8px;">
-                        <span id="name-display-bin-${escapeAttr(c.cluster_id)}" style="cursor:pointer; font-weight:bold;">${escapeHtml(displayName)}</span>
+                        <span id="name-display-bin-${escapeAttr(c.cluster_id)}" style="cursor:pointer; font-weight:bold;">${escapeHtml(displayName)}</span>${nameSrc}
                         <button class="btn-action" title="Rename" onclick="renameBinCluster(${escapeAttr(jsString(c.cluster_id))}, ${escapeAttr(jsString(c.cluster_name || ''))})"><i class="fa-solid fa-pen"></i></button>
+                        ${c.cluster_key ? EntityRenderer.renderBinClusterNoteButton(c.cluster_key, c.note_owners || [], { raw_data: c }) : ''}
                     </div>
                     <div class="dim" style="font-size:0.65rem; display:flex; flex-direction:column; gap:2px;">
                         ${(() => {
@@ -4042,6 +4258,7 @@ function renderBinClusters(items) {
                     </div>
                 </div>
             </td>
+            <td class="mono" style="font-size:0.75rem;" title="log(1 + files) x cohesion / (cohesion + 0.2): same rank as the overview Families">${(c.relevance || 0).toFixed(2)}</td>
             <td>
                 <div style="display:inline-flex; align-items:center; gap:8px;">
                     <span style="font-weight:bold; min-width: 25px; text-align: right;">${c.count.toLocaleString()}</span>
@@ -4069,8 +4286,11 @@ function renderBinClusters(items) {
                     <span class="dim">${(c.cohesion_score || 0).toFixed(2)}</span>
                 </div>
             </td>
-            <td class="dim">${formatDate(c.created_at)}</td>
-            <td>${EntityRenderer.renderTag('bin_cluster', c.tag_id || c.cluster_id, [], c.user_tags || [], { maxTags: 4 })}</td>
+            <td class="dim mono" style="font-size:0.7rem;">${binClusterDay(c.first_added)}</td>
+            <td class="dim mono" style="font-size:0.7rem;">${binClusterDay(c.last_added)}</td>
+            <td class="mono" style="font-size:0.75rem;${c.new_members ? ' color:var(--success); font-weight:bold;' : ''}" title="Members uploaded in the last ${escapeAttr(getRoutingState().params.get('active_days') || '30')} days">${c.new_members ? `+${Number(c.new_members).toLocaleString()}` : '<span class="dim">0</span>'}</td>
+            <td class="dim mono" style="font-size:0.68rem;" title="First / last seen in the wild">${c.first_seen ? `${binClusterDay(c.first_seen)}<br>${binClusterDay(c.last_seen)}` : '&mdash;'}</td>
+            <td>${EntityRenderer.renderTag('bin_cluster', c.tag_id || c.cluster_id, [...(c.inferred_tags || []), ...(c.file_inferred_tags || [])], c.user_tags || [], { maxTags: 4 })}</td>
             <td style="min-width: 250px;">
                 <div style="display:flex; flex-direction:column; gap:2px; width: 100%;">
                     ${sampleMembersHtml}
@@ -4079,6 +4299,13 @@ function renderBinClusters(items) {
         </tr>
         `;
     }).join('');
+}
+
+// Date and activity filters of the clusters table: input id = `flt-bin-cluster-` + param with dashes.
+const BIN_CLUSTER_TIME_FILTERS = ['min_first_added', 'max_first_added', 'min_last_added', 'max_last_added', 'min_new', 'min_last_seen', 'max_first_seen'];
+
+function binClusterDay(ms) {
+    return ms ? new Date(+ms).toISOString().slice(0, 10) : '&mdash;';
 }
 
 function applyBinClusterSearch() {
@@ -4107,6 +4334,10 @@ function applyBinClusterSearch() {
     const ccountMax = document.getElementById('flt-bin-cluster-max-count')?.value;
     const ccoh = document.getElementById('flt-bin-cluster-min-cohesion')?.value;
     const ccohMax = document.getElementById('flt-bin-cluster-max-cohesion')?.value;
+    const cafMin = document.getElementById('flt-bin-cluster-min-avg-funcs')?.value;
+    const cafMax = document.getElementById('flt-bin-cluster-max-avg-funcs')?.value;
+    const crelMin = document.getElementById('flt-bin-cluster-min-relevance')?.value;
+    const crelMax = document.getElementById('flt-bin-cluster-max-relevance')?.value;
     const fFileName = document.getElementById('flt-bin-cluster-file-name')?.value;
     const fFileMd5 = document.getElementById('flt-bin-cluster-file-md5')?.value;
 
@@ -4118,11 +4349,21 @@ function applyBinClusterSearch() {
     if (ccountMax) params.set('max_count', ccountMax); else params.delete('max_count');
     if (ccoh) params.set('min_cohesion', ccoh); else params.delete('min_cohesion');
     if (ccohMax) params.set('max_cohesion', ccohMax); else params.delete('max_cohesion');
+    if (cafMin) params.set('min_avg_funcs', cafMin); else params.delete('min_avg_funcs');
+    if (cafMax) params.set('max_avg_funcs', cafMax); else params.delete('max_avg_funcs');
+    if (crelMin) params.set('min_relevance', crelMin); else params.delete('min_relevance');
+    if (crelMax) params.set('max_relevance', crelMax); else params.delete('max_relevance');
     if (fFileName) params.set('file_name', fFileName); else params.delete('file_name');
     if (fFileMd5) params.set('file_md5', fFileMd5); else params.delete('file_md5');
+    BIN_CLUSTER_TIME_FILTERS.forEach(k => {
+        const v = document.getElementById(`flt-bin-cluster-${k.replace(/_/g, '-')}`)?.value;
+        if (v) params.set(k, v); else params.delete(k);
+    });
 
     params.delete("cluster_tag");
     params.delete("exclude_cluster_tag");
+    params.delete("inferred_tag");
+    params.delete("exclude_inferred_tag");
     document.querySelectorAll("#tag-container-bin-cluster .tag-filter-card").forEach(card => {
         const key = (card.dataset.exclude === "true" ? "exclude_" : "") + card.dataset.type;
         params.append(key, quoteFilterValue(card.dataset.value, card.dataset.literal !== "false"));
@@ -4146,77 +4387,138 @@ function updateD3ClusterName(cid, newName) {
     });
 }
 
-async function renameBinCluster(clusterId, currentName) {
-    const newName = prompt(`Enter new name for binary cluster ${clusterId}:`, currentName);
-    if (!newName || newName === currentName) return;
-
+// One rename for function and file clusters. `ctx` (all optional) names the cluster
+// when the page URL does not: {uuid, collection, pool, algo, axis, node_type}.
+// An empty name resets the cluster to the name its build gave it.
+async function renameAnyCluster(isBin, clusterId, currentName, ctx = {}) {
     const { collection, params } = getRoutingState();
-    const algo = params.get('algo') || 'unweighted_cosine';
-    const nodeType = params.get('node_type') || 'file';
-
+    const body = {
+        collection: ctx.collection || collection,
+        pool: ctx.pool || undefined,
+        algo: ctx.algo || params.get('algo') || 'unweighted_cosine'
+    };
+    if (isBin) {
+        body.node_type = ctx.node_type || params.get('node_type') || 'file';
+        body.axis = ctx.axis || params.get('axis') || 'overall';
+    }
+    // File clusters: pick the level in the near-identical chain; null = no chain, use the prompt.
+    let pick = isBin && !body.pool ? await pickBinRenameTarget(clusterId, currentName, ctx, body).catch(() => null) : null;
+    if (pick === false) return;
+    if (!pick) {
+        const label = isBin ? 'binary cluster' : 'cluster';
+        const input = prompt(`New name for ${label} ${ctx.uuid || clusterId} (empty = reset):`, currentName);
+        if (input === null) return;
+        pick = { name: input.trim(), id: clusterId, uuid: ctx.uuid || '' };
+        if (pick.name === (currentName || '')) return;
+    }
+    const newName = pick.name;
+    body.cluster_name = newName;
+    if (pick.uuid && !pick.byId) body.cluster_uuid = pick.uuid; else body.cluster_id = pick.id;
     try {
-        const res = await fetch('/api/bin_cluster/meta', {
+        const res = await fetch(isBin ? '/api/bin_cluster/meta' : '/api/cluster/meta', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection, algo, node_type: nodeType, cluster_id: clusterId, cluster_name: newName })
+            body: JSON.stringify(body)
         });
-        const data = await res.json();
-        if (data.status === 'success') {
-            const el = document.getElementById(`name-display-bin-${clusterId}`);
-            if (el) el.innerText = newName;
-            updateD3ClusterName(clusterId, newName);
-            if (typeof showToast === 'function') {
-                showToast(`Binary cluster renamed to ${newName}`, 'success');
-            }
-        } else {
-            if (typeof showToast === 'function') {
-                showToast(`Rename failed: ${data.error}`, 'error');
-            }
-        }
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+        const name = data.cluster_name || newName;
+        // Where the name now comes from: the server's answer, else a typed name is the analyst's.
+        const src = data.name_source ? { name_source: data.name_source, name_basis: data.name_basis, name_ref: data.name_ref, is_custom_name: data.is_custom_name }
+            : { name_source: newName ? 'analyst' : 'auto', is_custom_name: !!newName };
+        document.dispatchEvent(new CustomEvent('cluster-renamed', { detail: { isBin, id: String(pick.id), uuid: pick.uuid || '', name, src } }));
+        if (typeof showToast === 'function') showToast(`Renamed to ${name}`, 'success');
     } catch (err) {
-        if (typeof showToast === 'function') {
-            showToast(`Error renaming binary cluster: ${err}`, 'error');
-        }
+        if (typeof showToast === 'function') showToast(`Rename failed: ${err.message || err}`, 'error');
     }
 }
 
-async function renameCluster(clusterId, currentName) {
-    const newName = prompt(`Enter new name for cluster ${clusterId}:`, currentName);
-    if (!newName || newName === currentName) return;
-
-    const { collection, params } = getRoutingState();
-    const algo = params.get('algo') || 'unweighted_cosine';
-
-    try {
-        const res = await fetch('/api/cluster/meta', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                collection,
-                algo,
-                cluster_id: clusterId,
-                cluster_name: newName
-            })
+// Rename dialog of a file cluster: the name plus the chain of near-identical clusters
+// around it (GET /api/bin_cluster/chain), so the analyst names the right level.
+// -> {name, id, uuid, byId} | false (cancelled) | null (no chain: caller falls back to prompt).
+async function pickBinRenameTarget(clusterId, currentName, ctx, body) {
+    const q = new URLSearchParams({ collection: body.collection, axis: body.axis, node_type: body.node_type, algo: body.algo });
+    if (clusterId != null && clusterId !== '') q.set('cluster_id', clusterId); else if (ctx.uuid) q.set('cluster_uuid', ctx.uuid); else return null;
+    const res = await fetch(`/api/bin_cluster/chain?${q}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error || !(data.chain || []).length) return null;
+    const rows = data.chain;
+    const files = n => `${n} file${n === 1 ? '' : 's'}`;
+    const end = (label, c) => c ? `<div class="bc-end dim">${escapeHtml(label)}: ${escapeHtml(c.cluster_name || `#${c.cluster_id}`)} (${escapeHtml(files(c.member_count))})</div>` : '';
+    const list = rows.map((c, i) => {
+        const d = Number(c.delta) || 0;
+        const coh = c.cohesion_score == null ? '-' : Number(c.cohesion_score).toFixed(2);
+        return `<label class="bc-row${c.clicked ? ' clicked' : ''}">
+            <input type="radio" name="bc-target" value="${i}"${c.clicked ? ' checked' : ''}>
+            <span class="bc-n">${escapeHtml(files(c.member_count))}</span>
+            <span class="bc-d">${c.clicked ? 'this' : escapeHtml((d > 0 ? '+' : '') + d)}</span>
+            <span class="bc-coh" title="Cohesion">${escapeHtml(coh)}</span>
+            <span class="bc-name">${escapeHtml(c.cluster_name || '')}</span>${clusterNameSource(c, body.axis, body.collection)}
+            ${c.shown ? '<i class="fa-solid fa-eye bc-shown" title="Shown in the overview and file search"></i>' : ''}
+        </label>`;
+    }).join('');
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay bc-rename';
+    ov.innerHTML = `<div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="bc-rename-title">
+        <div class="modal-header"><h3 id="bc-rename-title">Rename file cluster</h3><button type="button" class="close-btn" data-act="cancel" aria-label="Close">&times;</button></div>
+        <div class="modal-body">
+            <input type="text" class="bc-input" aria-label="Cluster name" value="${escapeAttr(currentName || '')}" placeholder="Empty = back to the automatic name">
+            <p class="dim bc-help">Pick the level to name. Unnamed clusters of this chain will show the name as inherited (near).</p>
+            ${end('Parent past the chain', data.above)}
+            <div class="bc-chain" role="radiogroup" aria-label="Chain of near-identical clusters">${list}</div>
+            ${(data.below || []).map(c => end('Splits below into', c)).join('')}
+        </div>
+        <div class="modal-footer"><button type="button" class="btn-action" data-act="cancel">Cancel</button><button type="button" class="btn-primary" data-act="ok">Rename</button></div>
+    </div>`;
+    const back = document.activeElement;
+    document.body.appendChild(ov);
+    const input = ov.querySelector('.bc-input');
+    input.focus();
+    input.select();
+    return new Promise(resolve => {
+        const done = v => { ov.remove(); if (back && back.focus) back.focus(); resolve(v); };
+        const submit = () => {
+            const c = rows[Number((ov.querySelector('input[name="bc-target"]:checked') || {}).value) || 0];
+            const name = input.value.trim();
+            const analyst = c.name_source === 'analyst';
+            // Nothing to do: the same analyst name again, or a reset of a name nobody gave.
+            if (analyst ? name === (c.cluster_name || '') : !name) return done(false);
+            done({ name, id: c.cluster_id, uuid: c.cluster_uuid || '', byId: true });
+        };
+        ov.addEventListener('click', e => {
+            const act = e.target.closest('[data-act]');
+            if (e.target === ov || (act && act.dataset.act === 'cancel')) done(false);
+            else if (act && act.dataset.act === 'ok') submit();
         });
-        if (res.ok) {
-            const el = document.getElementById(`name-display-${clusterId}`);
-            if (el) el.innerText = newName;
-            updateD3ClusterName(clusterId, newName);
-            if (typeof showToast === 'function') {
-                showToast(`Cluster renamed to ${newName}`, 'success');
-            }
-        } else {
-            if (typeof showToast === 'function') {
-                showToast("Failed to rename cluster", "error");
-            }
-        }
-    } catch (e) {
-        console.error(e);
-        if (typeof showToast === 'function') {
-            showToast("Error renaming cluster", "error");
-        }
-    }
+        // A near chip opens its source cluster (its own onclick stops propagation): close first.
+        ov.addEventListener('click', e => { if (e.target.closest('.cl-src[role="link"]')) done(false); }, true);
+        ov.addEventListener('keydown', e => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+            else if (e.key === 'Enter' && !e.target.closest('button')) { e.preventDefault(); submit(); }
+        });
+    });
 }
+
+// Every copy of the name on screen is tagged data-cluster-name="<uuid or id>".
+document.addEventListener('cluster-renamed', e => {
+    const { isBin, id, uuid, name, src } = e.detail;
+    document.querySelectorAll('[data-cluster-name]').forEach(el => {
+        const k = el.dataset.clusterName;
+        if (k === uuid || k === id) el.textContent = name;
+    });
+    if (isBin) document.querySelectorAll('[data-cluster-src]').forEach(el => {
+        const u = el.dataset.clusterSrc, i = el.dataset.clusterSrcId;
+        if ((uuid && u === uuid) || (!uuid && i === id)) el.outerHTML = clusterNameSource({ ...src, cluster_name: name, cluster_uuid: u, cluster_id: i }, el.dataset.srcAxis);
+    });
+    const el = document.getElementById(isBin ? `name-display-bin-${id}` : `name-display-${id}`);
+    if (el) el.innerText = name;
+    updateD3ClusterName(id, name);
+    if (uuid) updateD3ClusterName(uuid, name);
+    if (window.ClusterDetailView && ClusterDetailView.onRenamed) ClusterDetailView.onRenamed(uuid || id, name, isBin ? src : null);
+});
+
+const renameBinCluster = (clusterId, currentName, ctx) => renameAnyCluster(true, clusterId, currentName, ctx);
+const renameCluster = (clusterId, currentName, ctx) => renameAnyCluster(false, clusterId, currentName, ctx);
 
 function switchClusterView(mode) {
     const { viewKey, params } = getRoutingState();
@@ -4347,11 +4649,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // [REMOVED: Now handled in previews.js to prevent double-scroll]
 
     // Reducible Panels Initialization
-    if (localStorage.getItem('sidebarCollapsed') === 'true') {
-        document.body.classList.add('sidebar-collapsed');
-        const btn = document.getElementById('sidebar-toggle');
-        if (btn) btn.innerHTML = '⟩';
-    }
     if (localStorage.getItem('headerCollapsed') === 'true') {
         document.body.classList.add('header-collapsed');
         const btn = document.getElementById('collapse-header-btn');
@@ -4418,6 +4715,7 @@ window.applyCollectionSearch = applyCollectionSearch;
 window.applyPoolSearch = applyPoolSearch;
 window.switchClusterView = switchClusterView;
 window.renameCluster = renameCluster;
+window.renameBinCluster = renameBinCluster;
 window.refreshData = refreshData;
 window.clearFilters = clearFilters;
 window.resetColumnWidths = resetColumnWidths;
@@ -4429,7 +4727,6 @@ window.applySearch = applySearch;
 window.switchSimView = switchSimView;
 window.debouncedSearch = debouncedSearch;
 window.handleFilterKey = handleFilterKey;
-window.toggleSidebar = toggleSidebar;
 window.toggleHeader = toggleHeader;
 window.toggleFilters = toggleFilters;
 window.seeSimilarFromCode = seeSimilarFromCode;
@@ -4529,6 +4826,7 @@ const viewMetaData = {
     'files': { name: 'Files', icon: 'fa-file-code' },
     'functions': { name: 'Functions', icon: 'fa-code' },
     'features-global': { name: 'Features', icon: 'fa-fingerprint' },
+    'strings': { name: 'Strings', icon: 'fa-font' },
     'function-similarity': { name: 'Similarities', icon: 'fa-code-compare' },
     'clusters': { name: 'Clusters', icon: 'fa-bullseye' },
     'bin-clusters': { name: 'Bin Clusters', icon: 'fa-bullseye' },
@@ -4602,6 +4900,8 @@ function getFilterSummary(path, params) {
         if (cluster_name) summary.push(`Name: "${cluster_name}"`);
         if (min_count && min_count !== '0') summary.push(`Min Funcs: ${min_count}`);
         if (min_cohesion && min_cohesion !== '0') summary.push(`Cohesion >= ${min_cohesion}`);
+    } else if (path === 'strings') {
+        ['section', 'encoding', 'min_length'].forEach(k => { if (params.get(k)) summary.push(`${k}: ${params.get(k)}`); });
     } else if (path === 'features-global') {
         const hash = params.get('hash');
         const type = params.get('type');

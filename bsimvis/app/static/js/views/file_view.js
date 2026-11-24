@@ -26,7 +26,10 @@ window.FileView = {
         this.clusterFilters = { uuid: '', q: '', minSize: '', minStability: '', minCohesion: '' };
         this.file = null;
         this.funcPage = { total: null, loading: false, reqId: 0 };
+        // Page mode only: a shared link's `offset` opens that page; scroll mode ignores it.
+        this.funcOffset = window.Paging.mode() === 'page' ? Math.max(0, Number(new URLSearchParams(location.search).get('offset')) || 0) : 0;
         this.functionsLoaded = false;
+        this.stringsLoaded = false;
         this.neighborsLoaded = false;
         this.sortState = { col: 'function_name', dir: 1 };
         this.fvScoreAxes = new Set([window.BINSIM_DEFAULT_AXIS || "code"]);
@@ -150,6 +153,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-inferred" onclick="FileView.switchTab('inferred')" style="display:none;">Inferred Metadata (<span id="inferred-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-tags" onclick="FileView.switchTab('tags')">Tags</button>
                     <button class="bsim-tab" id="file-tab-btn-functions" onclick="FileView.switchTab('functions')">Functions (<span id="functions-count">0</span>)</button>
+                    <button class="bsim-tab" id="file-tab-btn-strings" onclick="FileView.switchTab('strings')">Strings</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
@@ -221,6 +225,7 @@ window.FileView = {
                     </div>
                     <div class="card" style="flex:1; min-width:0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
                         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <button class="top-action-btn" id="fv-entry-btn" style="display:none;"><i class="fa-solid fa-location-dot"></i> Entry</button>
                             <div class="view-toggle" style="margin:0; display:flex; align-items:center;">
                                 <span class="bsim-ctl-label">Group by:</span>
                                 <button class="view-btn active" id="fv-group-btn-auto" onclick="FileView.setGroupBy('auto')" title="Group by tag when more than one tag is in scope">Auto</button>
@@ -228,7 +233,7 @@ window.FileView = {
                                 <button class="view-btn" id="fv-group-btn-none" onclick="FileView.setGroupBy('none')" title="One flat list">None</button>
                             </div>
                         </div>
-                        <!-- ponytail: viewport-relative instead of a flex chain; 260px is the title strip + tabbar + card padding above it -->
+                        <!-- fitFunctionsScroll() sets max-height to the room left under the controls, so the column names and filters stay put while the list scrolls -->
                         <div id="file-func-scroll" style="overflow-x: auto; max-height: calc(100vh - 260px); min-height: 300px; overflow-y: auto;">
                             <table class="file-func-table" id="file-func-table">
                                 <thead>
@@ -272,6 +277,19 @@ window.FileView = {
                 </div>
 
                 <!-- Neighbors Tab Panel -->
+                <div id="file-panel-strings" class="file-view-panel" style="display: none;">
+                    <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                        <input type="text" id="file-str-q" placeholder="Filter strings..." onchange="FileView.loadStringsPanel(true)" style="max-width:320px;">
+                        <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                            <table id="file-str-table">
+                                <thead><tr><th>Address</th><th>Value</th><th>Encoding</th><th>Section</th><th>Len</th><th>Refs</th><th>Tags</th></tr></thead>
+                                <tbody id="file-str-body"></tbody>
+                            </table>
+                        </div>
+                        <div id="file-str-note" class="dim" style="font-size:0.75rem;"></div>
+                    </div>
+                </div>
+
                 <div id="file-panel-neighbors" class="file-view-panel" style="display: none;">
                     <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); display: flex; flex-direction: column; gap: 15px;">
                         <div class="filter-bar" style="gap:20px; padding:0;">
@@ -418,19 +436,25 @@ window.FileView = {
                     { maxTags: 3, onOverflow: () => FileView.switchTab('tags') }
                 );
             }
-            document.getElementById('file-actions-container').innerHTML = `
-                <button class="top-action-btn" onclick="openAnalyzeModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
-                    style="color:#ae81ff; border-color:#ae81ff;"
-                    title="Analyze every candidate function of this file with AI">
-                    <i class="fa-solid fa-robot"></i> Analyze file</button>
-                <button class="top-action-btn" onclick="openSearchModal({ scope: 'file', collection: ${escapeAttr(jsString(collection))}, fileMd5: ${escapeAttr(jsString(file.file_md5))} })"
-                    style="color:#60a5fa; border-color:#60a5fa;"
-                    title="Ask AI which functions of this file match a description">
-                    <i class="fa-solid fa-magnifying-glass"></i> AI search</button>
-                <button class="top-action-btn" onclick="window.removeFiles(${escapeAttr(jsString(collection))}, [${escapeAttr(jsString(file.file_md5))}])"
-                    style="color:#f87171; border-color:#f87171;"
-                    title="Remove this file from the collection. Raw sample bytes will be retained.">
-                    <i class="fa-solid fa-trash-can"></i> Remove</button>`;
+            const entryUrl = file.entry_point
+                ? `/collections/${encodeURIComponent(collection)}/files/${file.file_md5}/functions/${file.entry_point}` : '';
+            const entryBtn = document.getElementById('fv-entry-btn');
+            if (entryBtn) {
+                entryBtn.style.display = entryUrl ? '' : 'none';
+                entryBtn.title = entryUrl ? `Open the program entry function at ${file.entry_point}` : '';
+                entryBtn.onclick = (e) => Nav.openPath(entryUrl, e);
+            }
+            const entryLink = entryUrl
+                ? { html: `<a href="${escapeAttr(entryUrl)}" onclick="Nav.openPath(${escapeAttr(jsString(entryUrl))}, event)" style="color:#a6e22e;">${escapeHtml(file.entry_point)}</a>` } : '';
+            const fileScope = `scope: 'file', collection: ${jsString(collection)}, fileMd5: ${jsString(file.file_md5)}`;
+            const downloadUrl = `/api/file/${encodeURIComponent(file.file_md5)}/download?collection=${encodeURIComponent(collection)}`;
+            const downloadBtn = file.is_container ? '' : `<a class="top-action-btn" href="${escapeAttr(downloadUrl)}" download title="Download the sample as a zip encrypted with the password 'infected'" style="text-decoration:none;"><i class="fa-solid fa-download"></i> Download</a>`;
+            document.getElementById('file-actions-container').innerHTML = downloadBtn + UI.MoreMenu.render([
+                { label: 'Analyze file with AI', icon: 'fa-solid fa-robot', tooltip: 'Analyze every candidate function of this file with AI', onClick: `openAnalyzeModal({ ${fileScope} })` },
+                { label: 'AI search', icon: 'fa-solid fa-magnifying-glass', tooltip: 'Ask AI which functions of this file match a description', onClick: `openSearchModal({ ${fileScope} })` },
+                '-',
+                { label: 'Remove file', icon: 'fa-solid fa-trash-can', danger: true, tooltip: 'Remove this file from the collection. Raw sample bytes will be retained.', onClick: `window.removeFiles(${jsString(collection)}, [${jsString(file.file_md5)}])` },
+            ]);
 
             if (window.EntityRenderer) {
                 document.getElementById('file-note-btn-container').innerHTML = window.EntityRenderer.renderFileNoteButton(
@@ -441,6 +465,7 @@ window.FileView = {
             // Render Metadata Table (Reusing comparison table layout and styles)
             const fmt = (v) => {
                 if (v === undefined || v === null || v === '') return '<span style="color:var(--subtle); opacity:0.5;">—</span>';
+                if (v && v.html) return v.html;
                 if (Array.isArray(v)) return v.length ? escapeHtml(v.join(', ')) : '<span style="color:var(--subtle); opacity:0.5;">—</span>';
                 return escapeHtml(String(v));
             };
@@ -457,6 +482,7 @@ window.FileView = {
                 'Batch UUID': 'fa-solid fa-box',
                 'Language': 'fa-solid fa-microchip',
                 'File Type': 'fa-solid fa-file-code',
+                'Entry Point': 'fa-solid fa-location-dot',
                 'Functions': 'fa-solid fa-list-ol',
                 'BSim Features': 'fa-solid fa-dna',
                 'First Seen': 'fa-solid fa-clock',
@@ -481,6 +507,7 @@ window.FileView = {
                 ['Classification', [
                     ['Language', file.language_id || file.language],
                     ['File Type', file.filetype],
+                    ['Entry Point', entryLink],
                 ]],
                 ['Statistics', [
                     ['Functions', file.function_count],
@@ -587,9 +614,9 @@ window.FileView = {
                     const card = window.EntityRenderer
                         ? window.EntityRenderer.renderClusterCard([{ ...cluster, axis: axes[0] || activeAxis }], true, null, { showUuid: true, fullAxisColor: true })
                         : `<span class="mono">${escapeHtml(cluster.cluster_uuid)}</span>`;
-                    return `<tr data-id="${escapeAttr(cluster.cluster_uuid)}" data-entity-data='${escapeAttr(JSON.stringify({ ...cluster, id: cluster.cluster_uuid, collection, node_type: file.is_container ? 'container' : 'file' }))}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
+                    return `<tr data-id="${escapeAttr(cluster.cluster_uuid)}" data-entity-data='${escapeAttr(JSON.stringify({ ...cluster, id: cluster.cluster_uuid, axis: axes[0] || activeAxis, collection, node_type: file.is_container ? 'container' : 'file' }))}' oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                         <td>${card}</td>
-                        <td><a href="${escapeAttr(clusterUrl)}" onclick="Nav.openPath(this.href, event)" style="color:var(--text); font-weight:600; text-decoration:none;">${escapeHtml(name)}</a><div class="dim mono" style="font-size:0.65rem;">${escapeHtml(axes.join(', ') || activeAxis)}</div></td>
+                        <td><a data-cluster-name="${escapeAttr(cluster.cluster_uuid)}" href="${escapeAttr(clusterUrl)}" onclick="Nav.openPath(this.href, event)" style="color:var(--text); font-weight:600; text-decoration:none;">${escapeHtml(name)}</a>${clusterNameSource(cluster, axes[0] || activeAxis)} <button class="btn-action" title="Rename cluster" onclick="renameBinCluster(${escapeAttr(jsString(cluster.cluster_id))}, ${escapeAttr(jsString(cluster.cluster_name || ''))}, { uuid: ${escapeAttr(jsString(cluster.cluster_uuid))}, collection: ${escapeAttr(jsString(collection))}, axis: ${escapeAttr(jsString(axes[0] || activeAxis))}, node_type: ${escapeAttr(jsString(file.is_container ? 'container' : 'file'))} })"><i class="fa-solid fa-pen"></i></button><div class="dim mono" style="font-size:0.65rem;">${escapeHtml(axes.join(', ') || activeAxis)}</div></td>
                         <td class="mono">${size.toLocaleString()}</td>
                         <td class="mono">${Number(cluster.avg_stability || 0).toFixed(2)}</td>
                         <td><div style="display:flex; align-items:center; gap:8px;"><div style="flex:1; min-width:60px; height:5px; background:var(--border); border-radius:3px; overflow:hidden;"><div style="width:${(cohesion * 100).toFixed(0)}%; height:100%; background:${cohesionColor};"></div></div><span class="mono" style="color:${cohesionColor}; font-weight:600;">${(cohesion * 100).toFixed(0)}%</span></div></td>
@@ -883,6 +910,13 @@ window.FileView = {
         const panel = document.getElementById(`file-panel-${tabId}`);
         if (panel) panel.style.display = 'block';
 
+        if (tabId === 'functions') {
+            this.fitFunctionsScroll();
+            if (!this._fitBound) {
+                this._fitBound = true;
+                window.addEventListener('resize', () => this.fitFunctionsScroll());
+            }
+        }
         if (tabId === 'functions' && !this.functionsLoaded) {
             this.loadFunctionsTable();
         }
@@ -892,6 +926,9 @@ window.FileView = {
         if (tabId === 'tags') {
             this.renderFileTagsTab();
         }
+        if (tabId === 'strings') {
+            this.loadStringsPanel();
+        }
 
         if (push && location.hash.slice(1) !== tabId) {
             history.pushState(null, '', location.pathname + location.search + '#' + tabId);
@@ -899,8 +936,9 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'inferred', 'tags', 'functions', 'clusters', 'extracted_from', 'files', 'neighbors'];
+        const allowedTabs = ['metadata', 'inferred', 'tags', 'functions', 'clusters', 'strings', 'extracted_from', 'files', 'neighbors'];
         let tab = location.hash.slice(1);
+        if (!tab && location.pathname.endsWith('/strings')) tab = 'strings';
 
         const hasChildren = this.file && (this.file.child_count > 0 || this.file.is_container);
         const hasParents = this.file && !!this.file.parent_md5;
@@ -985,19 +1023,23 @@ window.FileView = {
         return p.toString();
     },
 
-    async loadFunctionsTable({ reset = false } = {}) {
+    // `at` (page mode): the offset of the page to show.
+    async loadFunctionsTable({ reset = false, at } = {}) {
+        const paged = window.Paging.mode() === 'page';
         if (this.funcPage.loading && !reset) return;
         // No `functionsLoaded` guard here: this is also the "load the next page"
         // entry point for the infinite scroll. Having everything already is what
         // the total check below covers; callers that only want the first page
         // check functionsLoaded themselves.
-        if (!reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
+        if (!paged && !reset && this.funcPage.total !== null && this.functions.length >= this.funcPage.total) return;
 
         const tbody = document.getElementById('file-functions-tbody');
         if (reset) {
             this.functions = [];
             this.funcPage.total = null;
+            this.funcOffset = 0;
         }
+        if (at !== undefined) this.funcOffset = at;
         this.funcPage.loading = true;
         this.setFunctionsStatus('<i class="fa-solid fa-spinner fa-spin"></i> Loading...');
 
@@ -1005,18 +1047,20 @@ window.FileView = {
         const reqId = ++this.funcPage.reqId;
 
         try {
-            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(this.functions.length)}`);
+            const res = await fetch(`/api/function/search?${this.buildFunctionsQuery(paged ? this.funcOffset : this.functions.length)}`);
             if (!res.ok) throw new Error("Functions load failed");
             const data = await res.json();
             if (reqId !== this.funcPage.reqId) return;
             if (data.error) throw new Error(data.error);
 
-            this.functions = this.functions.concat(data.functions || []);
+            this.functions = paged ? (data.functions || []) : this.functions.concat(data.functions || []);
             this.funcPage.total = data.total || 0;
+            this.syncFunctionsUrl(paged);
             this.functionEmptyMessage = data.message || '';
             this.funcClusters = Object.assign(this.funcClusters || {}, data.clusters || {});
             document.getElementById('functions-count').innerText = this.funcPage.total;
             this.renderFunctionsTable();
+            this.fitFunctionsScroll();
             this.functionsLoaded = true;
         } catch (e) {
             console.error(e);
@@ -1028,9 +1072,30 @@ window.FileView = {
         }
     },
 
+    // Only page mode puts the offset in the URL, so a page can be shared.
+    syncFunctionsUrl(paged) {
+        const u = new URL(location.href);
+        if (paged && this.funcOffset) u.searchParams.set('offset', this.funcOffset);
+        else u.searchParams.delete('offset');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    },
+
     setFunctionsStatus(html) {
         const el = document.getElementById('file-func-status');
         if (el) el.innerHTML = html;
+    },
+
+    /** The list takes the viewport height left under the controls (measured with
+     * the page scrolled to its top), so only the rows scroll. */
+    fitFunctionsScroll() {
+        const el = document.getElementById('file-func-scroll');
+        if (!el || el.offsetParent === null) return;
+        const page = document.getElementById('file-view-content');
+        const top = el.getBoundingClientRect().top + (page ? page.scrollTop : 0);
+        el.style.maxHeight = `${Math.max(300, window.innerHeight - top - 40)}px`;
+        // whatever sits under the list (status line, card padding) must not push the page into scrolling
+        const over = page ? page.scrollHeight - page.clientHeight : 0;
+        if (over > 0) el.style.maxHeight = `${Math.max(300, el.clientHeight - over)}px`;
     },
 
     // Loads the next page whenever the table is scrolled near the bottom.
@@ -1039,7 +1104,7 @@ window.FileView = {
         if (!scroller || scroller._funcScrollBound) return;
         scroller._funcScrollBound = true;
         scroller.addEventListener('scroll', () => {
-            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
+            if (window.Paging.mode() === 'scroll' && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 200) {
                 this.loadFunctionsTable();
             }
         });
@@ -1269,7 +1334,7 @@ window.FileView = {
 
         const rowHtml = (f) => {
             const entry = f.entrypoint_address || '';
-            const funcName = f.function_name || 'unknown';
+            const funcName = fnName(f) || 'unknown';
             const featCount = f.bsim_features_count || 0;
             const fColl = f.collection || collection;
             // A container's tab lists its whole subtree, so the owning file is
@@ -1386,7 +1451,18 @@ window.FileView = {
 
         const shown = this.functions.length;
         const total = this.funcPage.total ?? shown;
-        this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        if (window.Paging.mode() === 'page') {
+            this.setFunctionsStatus(window.Paging.footer({ offset: this.funcOffset, total, size: this.FUNC_PAGE_SIZE, shown }));
+            window.Paging.bind(document.getElementById('file-func-status'),
+                () => ({ offset: this.funcOffset, total: this.funcPage.total || 0, size: this.FUNC_PAGE_SIZE }),
+                off => {
+                    this.loadFunctionsTable({ at: off });
+                    const sc = document.getElementById('file-func-scroll');
+                    if (sc) sc.scrollTop = 0;
+                });
+        } else {
+            this.setFunctionsStatus(shown < total ? `Showing ${shown} of ${total} — scroll for more` : `${total} function${total === 1 ? '' : 's'}`);
+        }
         this.bindFunctionsScroll();
         this.renderTagTree();
 
@@ -1869,6 +1945,29 @@ window.FileView = {
         e.preventDefault();
         const url = Nav.buildUIUrl(this.params.collection, ['search', 'functions']) + `?file_md5=${encodeURIComponent(this.params.md5)}`;
         Nav.openPath(url, e, { title: 'Functions', type: 'functions' });
+    },
+
+    async loadStringsPanel(reload = false) {
+        if (this.stringsLoaded && !reload) return;
+        const body = document.getElementById('file-str-body');
+        const note = document.getElementById('file-str-note');
+        const { collection, md5 } = this.params;
+        const qs = new URLSearchParams({ collection, md5, limit: 1000 });
+        const q = document.getElementById('file-str-q').value.trim();
+        if (q) qs.set('q', q);
+        try {
+            const res = await fetch(`/api/strings/file?${qs}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load strings');
+            this.stringsLoaded = true;
+            body.innerHTML = data.strings.length
+                ? TableRenderers.renderFileStrings(data.strings, { collection, md5 })
+                : '<tr><td colspan="7" style="text-align: center; color: var(--dim); padding: 20px;">No strings.</td></tr>';
+            note.textContent = data.total > data.strings.length ? `Showing ${data.strings.length} of ${data.total}. Use the filter to narrow.` : '';
+            if (window.TableSelection) new window.TableSelection('file-str-table');
+        } catch (err) {
+            body.innerHTML = `<tr><td colspan="7" style="text-align: center; color:#f92672; padding: 20px;">${escapeHtml(err.message)}</td></tr>`;
+        }
     },
 
     openCallGraph(e) {

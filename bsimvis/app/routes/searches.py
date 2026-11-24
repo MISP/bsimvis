@@ -36,6 +36,9 @@ def _resolve_scope(collection, scope):
         filters_qs = f"md5={md5}"
         if scope.get("skip_fid_tagged", True):
             filters_qs += "&exclude_tag=fid"
+        min_complexity = int(scope.get("min_complexity") or 0)
+        if min_complexity:
+            filters_qs += f"&min_features={min_complexity}"
         func_ids, error = _resolve_filters_to_ids(
             collection, filters_qs, max_batch_size()
         )
@@ -145,7 +148,11 @@ def list_searches():
         offset = int(request.args.get("offset", 0))
     except ValueError:
         return {"error": "limit and offset must be integers"}, 400
-    searches, total = search_service.list_searches(limit, offset)
+    collection = request.args.get("collection")
+    pool = request.args.get("pool")
+    if pool:
+        collection = f"global:pool:{pool}"
+    searches, total = search_service.list_searches(limit, offset, collection)
     for s in searches:
         s["verdict_counts"] = search_service.get_verdict_counts(s["id"])
     return {"searches": searches, "total": total, "limit": limit, "offset": offset}
@@ -189,6 +196,8 @@ def _enrich_with_function_meta(rows):
         row["file_md5"] = md5
         row["entrypoint_address"] = addr
         row["function_name"] = meta.get("function_name")
+        row["user_name"] = meta.get("user_name")
+        row["user_name_source"] = meta.get("user_name_source")
         row["namespace"] = meta.get("namespace")
         row["parameters"] = meta.get("parameters")
         row["return_type"] = meta.get("return_type")

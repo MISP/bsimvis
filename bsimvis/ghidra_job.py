@@ -196,6 +196,26 @@ class GhidraAnalyzer:
                     out.setdefault(key(f), set()).update(values)
         return out
 
+    def _strings_by_offset(self, hits, program):
+        """`{file offset: set}` -> `{string address: union}` for hits that land
+        inside a defined data item. Keyed like `extract_strings` records."""
+        from bsimvis.app.services.ghidra_service import string_addr_key
+
+        memory = program.getMemory()
+        listing = program.getListing()
+        out = {}
+        for file_offset, values in hits.items():
+            try:
+                addrs = memory.locateAddressesForFileOffset(file_offset)
+            except Exception:
+                continue
+            for addr in addrs:
+                data = listing.getDataContaining(addr)
+                if data:
+                    key = string_addr_key(data.getMinAddress())
+                    out.setdefault(key, set()).update(values)
+        return out
+
     def _funcs_referencing(self, addr, program):
         """Functions with a reference to the data item containing `addr`.
 
@@ -291,6 +311,9 @@ class GhidraAnalyzer:
             job_id=job_id,
         )
         file_meta = next(generator)
+        # Same hand-off as an uploaded chunk: index_metadata below writes the
+        # string table; keep it out of the per-function file_meta copies.
+        strings = file_meta.pop("strings", None)
 
         # Merge CLI-provided metadata (upload --metadata) into the file metadata so
         # it gets stored just like the `metadata propagate` path. The raw-upload
@@ -347,7 +370,9 @@ class GhidraAnalyzer:
             None,
             self.job_service,
             job_id,
-            file_meta=file_meta,
+            file_meta=(
+                {**file_meta, "strings": strings} if strings is not None else file_meta
+            ),
             num_functions=num_functions,
             total_features=total_features,
         )
@@ -381,9 +406,9 @@ class GhidraAnalyzer:
             )
 
         if not skip_sim and not tail_pending:
-            from bsimvis.app.services.collection_config import resolve_collection_algo
+            from bsimvis.app.services.collection_config import lock_collection_algo
 
-            algo = resolve_collection_algo(collection, payload.get("algo"))
+            algo = lock_collection_algo(collection, payload.get("algo"))
             top_k = payload.get("top_k", config_service.get("similarity.top_k", 1000))
             from bsimvis.app.services.collection_config import resolve_and_lock
 
@@ -470,6 +495,7 @@ class GhidraAnalyzer:
                 CAPA_E_INVALID_FILE_OS,
                 capa_failure_reason,
                 capa_fallback_os,
+                capa_limits,
                 capa_path,
             )
 
@@ -505,6 +531,7 @@ class GhidraAnalyzer:
                     [capa, "-j", temp_path],
                     stdout=capa_out,
                     stderr=capa_err,
+                    preexec_fn=capa_limits(),
                 )
 
             # 3. Analyze and index in this crash-isolated child process.
@@ -666,6 +693,7 @@ class GhidraAnalyzer:
                                         [capa, "-j", "--os", fallback_os, temp_path],
                                         stdout=out,
                                         stderr=err,
+                                        preexec_fn=capa_limits(),
                                     )
 
                             if returncode:
@@ -733,6 +761,7 @@ class GhidraAnalyzer:
                                 from bsimvis.app.services.yara_service import scan_file
                                 from bsimvis.app.services.tag_taxonomy import (
                                     yara_file_tags,
+                                    yara_rule_hits,
                                 )
                                 from bsimvis.app.services import tag_provenance
 
@@ -786,6 +815,33 @@ class GhidraAnalyzer:
                                     tag_provenance.record_hits_bulk(
                                         collection, hits, self.r_data
                                     )
+                                # Which extracted string each rule hit, so
+                                # the strings view can badge it.
+                                payload["yara_string_tags"] = {
+                                    k: sorted(v)
+                                    for k, v in self._strings_by_offset(
+                                        yara_rule_hits(matches, extra_tags), program
+                                    ).items()
+                                }
+                                payload["yara_string_rules"] = {
+                                    k: sorted(v)
+                                    for k, v in self._strings_by_offset(
+                                        tag_provenance.match_offsets(matches), program
+                                    ).items()
+                                }
+                                # Same provenance table the function chips read, so
+                                # a string's YARA tag names the rule that hit it.
+                                if file_md5 and payload["yara_string_rules"]:
+                                    tag_provenance.record_hits_bulk(
+                                        collection,
+                                        {
+                                            f"{collection}:string:{file_md5}:{a}": ids
+                                            for a, ids in payload[
+                                                "yara_string_rules"
+                                            ].items()
+                                        },
+                                        self.r_data,
+                                    )
                                 self.job_service.add_log(
                                     job_id,
                                     f"yara matched {len(file_tags)} rules, "
@@ -800,6 +856,13 @@ class GhidraAnalyzer:
                                 k: sorted(v) for k, v in yara_tags_by_addr.items()
                             }
 
+                        from bsimvis.app.services.entrypoint_service import (
+                            entry_address,
+                        )
+
+                        payload["entry_addr"] = entry_address(
+                            temp_path, program.getImageBase().getOffset()
+                        )
                         self._index_streamed_program(program, payload, job_id)
                     finally:
                         # close() releases every program importProgram() registered

@@ -69,6 +69,18 @@ def fetch_function_data(collection, md5, addr, meta_only=False):
         return None, None, None, str(e)
 
 
+def source_tokens(source):
+    """The source's c_tokens, or one plain-text token per c_lines line when an
+    uploader sent only the text (no Ghidra markup)."""
+    tokens = source.get("c_tokens") or []
+    if tokens:
+        return tokens
+    return [
+        {"t": line, "type": "text", "line": i}
+        for i, line in enumerate(source.get("c_lines") or [])
+    ]
+
+
 def get_feature_map(features):
     """
     Maps global token indices to lists of BSim features that cover them.

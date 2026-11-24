@@ -202,7 +202,9 @@ class LLMBatchService:
                 if marked.lower() not in known:
                     tag_service.create_tag(collection, marked, llm=True)
                     known.add(marked.lower())
-                if tag_service.add_user_tag(collection, "function", func_id, marked):
+                if tag_service.add_user_tag(
+                    collection, "function", func_id, marked, writer="analysis"
+                ):
                     applied.append(marked)
             _mark_enriched(self.r, collection, func_id, "tags")
 

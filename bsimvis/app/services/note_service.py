@@ -3,7 +3,12 @@ import time
 import logging
 import json
 from .redis_client import get_redis
-from bsimvis.app.services.index_service import resolve_origin_collection
+from redis.exceptions import WatchError
+from bsimvis.app.services.index_service import (
+    resolve_origin_collection,
+    _index_tag,
+    _unindex_tag,
+)
 
 
 def _normalize_collection(collection, entity_id=None):
@@ -196,6 +201,63 @@ class NoteService:
             return doc.get(json_field, [])
         except:
             return []
+
+    def set_user_name(self, func_id, name, source="user"):
+        """Sets (or, with an empty name, clears) a function's analyst-chosen name.
+
+        Stored on the origin function doc, so every collection, pool and N-way
+        view over that function sees it. The doc write and the `user_name` index
+        move in one WATCH/MULTI, so a concurrent note or rename is retried
+        instead of lost. Each change is appended to `user_name_history`.
+        """
+        doc_id = self._resolve_func_id(None, func_id)
+        base_id = doc_id[:-5]
+        coll = base_id.split(":func:")[0]
+        name = (name or "").strip()
+        pools = [
+            f"global:pool:{p.decode() if isinstance(p, bytes) else p}"
+            for p in self.r.smembers(f"{coll}:pools")
+        ]
+        for _ in range(5):
+            with self.r.pipeline() as pipe:
+                try:
+                    pipe.watch(doc_id)
+                    raw = pipe.get(doc_id)
+                    if not raw:
+                        return False
+                    doc = json.loads(raw)
+                    old = doc.get("user_name")
+                    if name == (old or ""):
+                        return True
+                    if name:
+                        doc["user_name"] = name
+                        doc["user_name_source"] = source
+                    else:
+                        doc.pop("user_name", None)
+                        doc.pop("user_name_source", None)
+                    doc.setdefault("user_name_history", []).append(
+                        {
+                            "name": name,
+                            "source": source,
+                            "timestamp": int(time.time() * 1000),
+                        }
+                    )
+                    pipe.multi()
+                    pipe.set(doc_id, json.dumps(doc))
+                    for c in [coll] + pools:
+                        if old:
+                            _unindex_tag(pipe, c, "func", "user_name", old, base_id)
+                        if name:
+                            _index_tag(pipe, c, "func", "user_name", name, base_id)
+                    pipe.execute()
+                    return True
+                except WatchError:
+                    continue
+        return False
+
+    def set_user_names(self, renames):
+        """Applies `[(func_id, name, source)]`; returns the func ids that took."""
+        return [f for f, n, s in renames if self.set_user_name(f, n, s)]
 
     # --- File notes ---
 
@@ -487,6 +549,65 @@ class NoteService:
             return doc.get("notes", [])
         except:
             return []
+
+    # --- Binary cluster notes ---
+    # A rebuild rewrites every cluster meta, so cluster notes live in a
+    # `{collection}:cluster_notes` sidecar under the same field as the tag
+    # sidecar (`bin_cluster:{algo}:{uuid}`). The client passes the
+    # self-qualifying key `{collection}:bin_cluster:{algo}:{uuid}`.
+
+    @staticmethod
+    def split_cluster_key(key):
+        coll, sep, rest = (key or "").partition(":bin_cluster:")
+        if not (coll and sep and rest.rpartition(":")[2]):
+            return None, None
+        return f"{coll}:cluster_notes", f"bin_cluster:{rest}"
+
+    def get_cluster_notes(self, key):
+        hkey, field = self.split_cluster_key(key)
+        if not hkey:
+            return []
+        raw = self.r.hget(hkey, field)
+        return json.loads(raw) if raw else []
+
+    def _write_cluster_notes(self, key, notes):
+        hkey, field = self.split_cluster_key(key)
+        if notes:
+            self.r.hset(hkey, field, json.dumps(notes))
+        else:
+            self.r.hdel(hkey, field)
+
+    # ponytail: read-modify-write without WATCH; analysts rarely race on one cluster.
+    def add_cluster_note(self, key, text, owner="user"):
+        text = (text or "").strip()
+        if not text or not self.split_cluster_key(key)[0]:
+            return None
+        note = {
+            "id": str(uuid.uuid4()),
+            "text": text,
+            "owner": owner,
+            "timestamp": int(time.time() * 1000),
+        }
+        self._write_cluster_notes(key, self.get_cluster_notes(key) + [note])
+        return note
+
+    def update_cluster_note(self, key, note_id, text):
+        notes = self.get_cluster_notes(key)
+        for note in notes:
+            if note["id"] == note_id:
+                note["text"] = text
+                note["timestamp"] = int(time.time() * 1000)
+                self._write_cluster_notes(key, notes)
+                return note
+        return None
+
+    def remove_cluster_note(self, key, note_id):
+        notes = self.get_cluster_notes(key)
+        kept = [n for n in notes if n["id"] != note_id]
+        if len(kept) == len(notes):
+            return False
+        self._write_cluster_notes(key, kept)
+        return True
 
 
 note_service = NoteService()

@@ -125,7 +125,7 @@ window.PoolDetailView = {
         const crossOnly = pool.only_cross_collection;
 
         const buildBtnHtml = status === 'outdated'
-            ? `<button onclick="window.poolDetailBuild(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-play"></i> Build</button>`
+            ? UI.Button.render({ className: 'hdr-btn primary', icon: 'fa-solid fa-play', label: 'Build', onClick: `window.poolDetailBuild(${jsString(poolId)}, this)` })
             : '';
 
         let totalPoolBatches = 0;
@@ -208,12 +208,14 @@ window.PoolDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <button onclick="window.openPoolMaintenanceWindow(${escapeAttr(jsString(poolId))})" style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); color:#f59e0b; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-screwdriver-wrench"></i> Maintenance</button>
-                    <button onclick="Nav.openPath('/pools/${encodeURIComponent(poolId)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
                     ${buildBtnHtml}
-                    <button onclick="window.poolDetailCluster(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
-                    <button onclick="window.poolDetailRebuild(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-rotate"></i> Rebuild</button>
-                    <button onclick="window.poolDetailDelete(${escapeAttr(jsString(poolId))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    ${UI.MoreMenu.render([
+                        { label: 'Maintenance…', icon: 'fa-solid fa-screwdriver-wrench', onClick: `window.openPoolMaintenanceWindow(${jsString(poolId)})` },
+                        { label: 'Cluster', icon: 'fa-solid fa-circle-nodes', onClick: `window.poolDetailCluster(${jsString(poolId)}, this)` },
+                        { label: 'Rebuild', icon: 'fa-solid fa-rotate-right', onClick: `window.poolDetailRebuild(${jsString(poolId)}, this)` },
+                        '-',
+                        { label: 'Delete pool', icon: 'fa-solid fa-trash-can', danger: true, onClick: `window.poolDetailDelete(${jsString(poolId)}, this)` },
+                    ])}
                 </div>
             </div>
 
@@ -261,6 +263,14 @@ window.PoolDetailView = {
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${totalPoolFiles}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>Similarities</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileSims}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Clusters</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileClusts}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code" style="margin-right:8px; width:16px;"></i>Functions</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${totalPoolFunctions}</a></td>
                                     </tr>
@@ -268,17 +278,9 @@ window.PoolDetailView = {
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcSims}</a></td>
                                     </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                    <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcClusts}</a></td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>File Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileSims}</a></td>
-                                    </tr>
-                                    <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>File Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/pools/${encodeURIComponent(poolId)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${fileClusts}</a></td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -338,7 +340,7 @@ window.PoolDetailView = {
                         ${this._configInput("pool-file-cluster-epsilon-edit", "Epsilon", fic.epsilon, "0.01")}
                         ${this._configSelect("pool-file-cluster-method-edit", "Method", fic.selection_method || "eom", `<option value="eom">EOM</option><option value="leaf">Leaf</option>`)}
                         ${this._configInput('pool-file-cluster-min-sim-edit', 'Min Similarity', fic.min_sim, '0.01')}
-                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" style="margin-top:14px; padding:8px 14px; border:1px solid rgba(16,185,129,.4); border-radius:6px; background:rgba(16,185,129,.12); color:#10b981; cursor:pointer; display:inline-flex; align-items:center; gap:7px; font-size:.78rem; font-weight:700;"><i class="fa-solid fa-floppy-disk"></i> Save parameters</button>
+                        <button onclick="window.poolDetailSaveConfig(${escapeAttr(jsString(poolId))}, this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-floppy-disk"></i> Save parameters</button>
                     </div>
                 </div>
             </div>

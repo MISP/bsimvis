@@ -724,10 +724,11 @@ class PoolService:
         # 4. Merge idx:file:functions:*
         md5_set = set()
         for coll in collections:
-            for key in r.scan_iter(match=f"{coll}:idx:file:functions:*", count=1000):
+            for key in r.smembers(f"{coll}:all_files"):
                 key_str = key.decode() if isinstance(key, bytes) else str(key)
-                md5 = key_str.split(":")[-1]
-                md5_set.add(md5)
+                parts = key_str.split(":")
+                if not key_str.endswith(":meta") and len(parts) >= 3:
+                    md5_set.add(parts[2])
 
         for md5 in md5_set:
             sources = [
@@ -1032,60 +1033,35 @@ class PoolService:
                         f"Field '{field}': processing chunk {chunk_idx}/{total_chunks} (size {len(chunk)})"
                     )
 
-                    # Phase 1: Pipeline read smembers for all collections and bucket values in the chunk
-                    read_pipe = r.pipeline(transaction=False)
-                    key_mapping = []
+                    # One bucket value at a time, streamed: a popular value is a huge set.
                     for val in chunk:
-                        for coll in collections:
-                            sb = f"{coll}:idx:sim:{field}:{val}"
-                            read_pipe.smembers(sb)
-                            key_mapping.append((val, coll))
-
-                    logging.info(
-                        f"Executing read pipeline for chunk {chunk_idx} ({len(key_mapping)} commands)"
-                    )
-                    read_results = read_pipe.execute()
-                    logging.info(f"Read pipeline for chunk {chunk_idx} completed")
-
-                    # Group similarity IDs by bucket value
-                    val_to_sids = {}
-                    for (val, coll), sids in zip(key_mapping, read_results):
-                        if not sids:
-                            continue
-                        if val not in val_to_sids:
-                            val_to_sids[val] = set()
-                        for sid in sids:
-                            sid_str = (
-                                sid.decode() if isinstance(sid, bytes) else str(sid)
-                            )
-                            pool_sid = to_pool_indexed_id(sid_str, "sim", pool_id)
-                            if pool_sid:
-                                val_to_sids[val].add(pool_sid)
-
-                    # Phase 2: Pipeline write results back
-                    if val_to_sids:
+                        pool_bucket_key = f"{pool_coll}:idx:sim:{field}:{val}"
                         write_pipe = r.pipeline(transaction=False)
-                        sadd_cmd_count = 0
-                        for val, all_sids in val_to_sids.items():
-                            if all_sids:
-                                pool_bucket_key = f"{pool_coll}:idx:sim:{field}:{val}"
-                                write_pipe.delete(pool_bucket_key)
-
-                                # Chunk SADD calls to prevent excessively large Redis commands
-                                sids_list = list(all_sids)
-                                for k in range(0, len(sids_list), 2000):
-                                    write_pipe.sadd(
-                                        pool_bucket_key, *sids_list[k : k + 2000]
-                                    )
-                                    sadd_cmd_count += 1
-
-                                write_pipe.sadd(pool_reg_key, pool_bucket_key)
-
-                        logging.info(
-                            f"Executing write pipeline for chunk {chunk_idx} (with {sadd_cmd_count} SADD chunks)"
-                        )
-                        write_pipe.execute()
-                        logging.info(f"Write pipeline for chunk {chunk_idx} completed")
+                        write_pipe.delete(pool_bucket_key)
+                        batch = []
+                        wrote = False
+                        for coll in collections:
+                            for sid in r.sscan_iter(
+                                f"{coll}:idx:sim:{field}:{val}", count=2000
+                            ):
+                                sid_str = (
+                                    sid.decode() if isinstance(sid, bytes) else str(sid)
+                                )
+                                pool_sid = to_pool_indexed_id(sid_str, "sim", pool_id)
+                                if not pool_sid:
+                                    continue
+                                batch.append(pool_sid)
+                                wrote = True
+                                if len(batch) >= 2000:
+                                    write_pipe.sadd(pool_bucket_key, *batch)
+                                    batch = []
+                        if batch:
+                            write_pipe.sadd(pool_bucket_key, *batch)
+                        if wrote:
+                            write_pipe.sadd(pool_reg_key, pool_bucket_key)
+                            write_pipe.execute()
+                        # same as before: an empty value leaves the old bucket untouched
+                        # (previously delete only ran when sids existed)
 
         # 2. Merge NUM ZSets for level 'sim'
         for field in SIM_NUM_FIELDS:

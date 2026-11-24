@@ -3,7 +3,7 @@ import logging
 import re
 import threading
 import time
-from ollama import Client
+import ollama
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.config_service import config_service
 
@@ -69,6 +69,20 @@ def _with_schema_hint(messages, schema):
     return out
 
 
+class Client(ollama.Client):
+    """Every chat call uses one context size and stays loaded. Ollama reloads the
+    model whenever num_ctx changes (15-30 s, longer behind other callers), so two
+    features with different sizes evict each other on every call. Without a size
+    it loads the model's whole context (262k for qwen3.8: 51 GB instead of 18)."""
+
+    def chat(self, *args, options=None, **kwargs):
+        kwargs.setdefault("keep_alive", "1h")
+        num_ctx = int(config_service.get("llm.num_ctx", 65536))
+        return super().chat(
+            *args, options={**(options or {}), "num_ctx": num_ctx}, **kwargs
+        )
+
+
 class LLMService:
     def __init__(self):
         self._load_config()
@@ -78,7 +92,7 @@ class LLMService:
         self.model = config_service.get("llm.model", "qwen3.6:35b")
         # Ollama's own default window is 4096 tokens and silently drops the
         # start of a longer prompt -- the analysis rules alone are ~1.5k.
-        self.num_ctx = config_service.get("llm.num_ctx", 8192)
+        self.num_ctx = int(config_service.get("llm.num_ctx", 65536))
         self.default_prompt = config_service.get(
             "llm.prompt",
             "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact.",
@@ -394,6 +408,254 @@ class LLMService:
             out[fid] = (summary, tags)
         missing = [fid for fid in func_ids if fid not in out]
         return out, missing, None
+
+    def name_blocks(self, blocks):
+        """Short titles for the blocks of one decompiled function, in one call.
+
+        `blocks` is [(block_id, code)]. Returns ({block_id: title}, error).
+        """
+        self._load_config()
+        ids = [b for b, _ in blocks]
+        body = "\n\n".join(f"=== BLOCK {b} ===\n{code}" for b, code in blocks)
+        prompt = (
+            "Give every block of this decompiled function a title of at most "
+            "five words that says what the block does (for example 'open raw "
+            "socket', 'fill packet header'). Describe only what the code shows; "
+            "use its id exactly as given.\n\n" + body
+        )
+        fmt = {
+            "type": "object",
+            "properties": {
+                "titles": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "enum": ids},
+                            "title": {"type": "string"},
+                        },
+                        "required": ["id", "title"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["titles"],
+            "additionalProperties": False,
+        }
+        try:
+            response = Client(host=self.ollama_url, timeout=150).chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format=fmt,
+                options={"num_predict": 24 * len(ids) + 64, "temperature": 0.1},
+            )
+            msg = response.get("message", {})
+            value = json.loads(
+                msg.get("content", "") or msg.get("thinking", "") or "{}"
+            )
+        except Exception as e:
+            logging.error(f"LLMService name_blocks error: {e}")
+            return {}, str(e)
+        out = {}
+        for item in value.get("titles") or []:
+            if isinstance(item, dict) and item.get("id") in ids:
+                title = " ".join(str(item.get("title") or "").split())[:60]
+                if title:
+                    out.setdefault(item["id"], title)
+        return out, None
+
+    def draft_yara(self, name, picks):
+        """A YARA rule from ranked string picks (`yara_edit_service.suggest` rows).
+
+        The strings are written by code, verbatim and escaped, so the model can
+        not invent one; it only chooses the `condition`, and a condition that
+        does not compile falls back to `2 of them`.
+        """
+        from bsimvis.app.services import yara_edit_service as ys
+
+        self._load_config()
+        ident = re.sub(r"\W", "_", name)[:40] or "family"
+        lines = [
+            '    $s%d = "%s" ascii wide'
+            % (i, p["value"].replace("\\", "\\\\").replace('"', '\\"'))
+            for i, p in enumerate(picks)
+        ]
+
+        def build(cond):
+            return (
+                f'rule {ident} {{\n  meta:\n    description = "{ident} family"\n'
+                "  strings:\n" + "\n".join(lines) + f"\n  condition:\n    {cond}\n}}\n"
+            )
+
+        cond = "2 of them"
+        listing = "\n".join(
+            f'$s{i}: "{p["value"][:60]}" in {p["pos"]}/{p["of"]} family files, {p["neg"]} others'
+            for i, p in enumerate(picks)
+        )
+        try:
+            text = (
+                Client(host=self.ollama_url, timeout=120)
+                .chat(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": "Write only the condition line of a YARA rule that "
+                            "matches this malware family and avoids other files. Use "
+                            "only these string ids and 'any of', 'all of', 'N of', "
+                            "'and', 'or'.\n\n" + listing,
+                        }
+                    ],
+                    stream=False,
+                    think=False,
+                    options={"num_predict": 80, "temperature": 0},
+                )
+                .get("message", {})
+                .get("content", "")
+            )
+            guess = (
+                text.strip().strip("`").splitlines()[0].strip() if text.strip() else ""
+            )
+            if guess and ys.compile_source(build(guess))[0] is not None:
+                cond = guess
+        except Exception as e:
+            logging.error(f"LLMService draft_yara error: {e}")
+        return build(cond)
+
+    def name_lane(self, evidence):
+        """A description of at most six words for one lane of an N-way table, from its `evidence` text.
+
+        The first try is a short plain-text answer: a warm call takes about a
+        second. A refusal or an empty answer gets one slower try that lets the
+        model think and asks for a general description. Returns (name, error).
+        """
+        self._load_config()
+        model = config_service.get("llm.lane_model", self.model)
+        base = (
+            "Describe this lane in at most six words by what its functions have in "
+            "common (for example 'network scanning', 'string helpers', 'UDP flood "
+            "attack', 'low-level byte utilities'). Function names that carry a "
+            "rule or family prefix (for example linux_trojan_x) are evidence of "
+            "the family. Library calls are strong evidence of what the code does "
+            "(socket and connect: network client). Strings (paths, commands, "
+            "messages, credentials) are strong evidence for the functions that use "
+            "them; describe what most of the lane's functions do, not one "
+            "function. A handle, URL or name inside a printed message is not a "
+            "capability: name what the code does with it. Much of a binary is "
+            "library or runtime code linked in (C library, threads, RPC, crypto, "
+            "compiler runtime such as soft-float or 64-bit division, a language "
+            "runtime): name such a lane as that library code. Rule findings are "
+            "automatic matches and can be wrong. Name only what the evidence "
+            "lines show: no API, system or technology none of them mentions. The "
+            "platform line is context; never describe the platform itself. "
+            "Say what the code does: the lane's malware family is already known, so "
+            "a family name alone is not a description. "
+            "Always give a description: when "
+            "the evidence is thin, describe the general kind of code it looks like. "
+            "Never answer 'unknown' or 'unnamed', and never answer with code, a "
+            "signature or a FUN_ name. Answer with the description only."
+        )
+        tries = (
+            {"think": False, "options": {"num_predict": 20}},
+            {"think": True, "options": {"num_predict": 700}},
+        )
+        error = None
+        for i, t in enumerate(tries):
+            hint = (
+                ""
+                if i == 0
+                else "\nBest guess is fine; a general description is expected."
+            )
+            try:
+                response = Client(host=self.ollama_url, timeout=180).chat(
+                    model=model,
+                    messages=[
+                        {"role": "user", "content": base + hint + "\n\n" + evidence}
+                    ],
+                    stream=False,
+                    think=t["think"],
+                    options={**t["options"], "temperature": 0, "stop": ["\n"]},
+                )
+                text = response.get("message", {}).get("content", "")
+            except Exception as e:
+                logging.error(f"LLMService name_lane error: {e}")
+                error = str(e)
+                continue
+            name = " ".join(text.strip().strip("\"'`*.").split())[:60]
+            # a refusal, or code echoed back (a FUN_ name, a signature), gets the second try
+            if name and not re.match(r"(?i)(unnamed|unknown|unclear)", name):
+                if not re.search(r"FUN_|undefined\d|\w\(", name):
+                    return name, None
+        return "", error
+
+    def explain_block_change(self, ctx):
+        """How one block of the reference function differs in another function.
+
+        `ctx` (see nway_facets_service.explain_block) holds both whole
+        functions, the per-block outline and stored summaries, so the block is
+        judged in the context of the rest. Returns
+        ({"verdict": cosmetic|semantic|unclear, "summary": str}, error).
+        """
+        self._load_config()
+        notes = "".join(
+            f"- Function {name} (already analysed): {t}\n"
+            for name, t in zip(("A (reference)", "B"), ctx.get("notes") or [])
+            if t
+        )
+        prompt = (
+            "Two decompiled versions of the same function are compared block by "
+            "block. The matcher lists how every block of A looks in B: "
+            f"{ctx['outline']}.\n"
+            f"{notes}\n"
+            f"=== FUNCTION A (reference) ===\n{ctx['ref']}\n\n"
+            f"=== FUNCTION B ===\n{ctx['other']}\n\n"
+            f"Explain block {ctx['target']} only (marked TARGET; the matcher "
+            f"calls its change '{ctx['state']}'). Use the other blocks only as "
+            "context: say in at most two sentences how B's version of the block "
+            "differs from A's and what it does in the function. Verdict: "
+            "'cosmetic' if behaviour is the same (renames, reordering, a "
+            "different compiler layout, work moved to a neighbouring block), "
+            "'semantic' if behaviour changes (added or removed checks, "
+            "different calls, constants or algorithm), else 'unclear'. Describe "
+            "only what the code shows."
+        )
+        fmt = {
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["cosmetic", "semantic", "unclear"],
+                },
+                "summary": {"type": "string"},
+            },
+            "required": ["verdict", "summary"],
+            "additionalProperties": False,
+        }
+        try:
+            response = Client(host=self.ollama_url, timeout=150).chat(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                stream=False,
+                think=False,
+                format=fmt,
+                options={"num_predict": 200, "temperature": 0.1},
+            )
+            msg = response.get("message", {})
+            value = json.loads(
+                msg.get("content", "") or msg.get("thinking", "") or "{}"
+            )
+        except Exception as e:
+            logging.error(f"LLMService explain_block_change error: {e}")
+            return None, str(e)
+        summary = " ".join(str(value.get("summary") or "").split())[:400]
+        if (
+            not summary
+            or value.get("verdict") not in fmt["properties"]["verdict"]["enum"]
+        ):
+            return None, "empty answer"
+        return {"verdict": value["verdict"], "summary": summary}, None
 
     def classify_relevance_batch(self, members, query, vocabulary=None):
         """Fast relevance triage: for every function, does it plausibly
@@ -1239,6 +1501,20 @@ def _selfcheck():
     assert out["f1"][2] is None  # no tag guessed from free text
     assert out["f2"] == ("no", "unrelated helper.", None)
     assert missing == ["f3"]
+
+    # A caller's own context size never reaches Ollama: one size, no reloads.
+    seen = {}
+    real_chat = ollama.Client.chat
+    ollama.Client.chat = lambda self, *a, **kw: seen.update(kw)
+    try:
+        Client().chat(
+            model="m", messages=[], options={"num_ctx": 2560, "num_predict": 20}
+        )
+    finally:
+        ollama.Client.chat = real_chat
+    num_ctx = int(config_service.get("llm.num_ctx", 65536))
+    assert seen["options"] == {"num_predict": 20, "num_ctx": num_ctx}, seen
+    assert seen["keep_alive"] == "1h"
 
     print("ok")
 

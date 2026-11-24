@@ -741,9 +741,15 @@ class AxisSplit:
     Drop-in for `TagSplit` at the call sites: same `add_match` / `add_unique`.
     """
 
-    def __init__(self, fid_tags, tag_meta=None):
+    def __init__(self, fid_tags, tag_meta=None, fids=None):
+        # `fids` limits the split to the functions this pair can ask about: the
+        # callers pass a whole build's tags, and splitting all of them for every
+        # pair cost 4.3 s a pair on a 250k-function collection.
+        fid_tags = fid_tags or {}
+        if fids is not None:
+            fid_tags = {f: fid_tags[f] for f in fids if f in fid_tags}
         self.fid_axes = {axis: {} for axis in AXES}
-        for fid, tags in (fid_tags or {}).items():
+        for fid, tags in fid_tags.items():
             axes = split_axes(tags, tag_meta)
             for axis, picked in axes.items():
                 if picked:
@@ -975,9 +981,10 @@ def score_pair(
     diff_matched = []
     sum_weighted_cohesion = 0.0
     sum_weights = 0.0
-    tag_split = AxisSplit(fid_tags, tag_meta_cache)
-
     accepted, assigned_a, assigned_b = greedy_match(edges)
+    pair_fids = set(funcs_a) | set(funcs_b)
+    pair_fids.update(f for edge in accepted for f in edge[:2])
+    tag_split = AxisSplit(fid_tags, tag_meta_cache, fids=pair_fids)
     for fid_a, fid_b, score in accepted:
         f_a = feat(fid_a)
         f_b = feat(fid_b)

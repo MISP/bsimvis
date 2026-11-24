@@ -82,6 +82,7 @@ class MaintenanceService:
         from bsimvis.app.services.lineage_service import children, parents, forget
         from bsimvis.app.services.bin_sim_service import _unindex_bin_sim_pair
         from bsimvis.app.services.feature_service import FeatureService
+        from bsimvis.app.services import string_service
 
         def txt(value):
             return value.decode() if isinstance(value, bytes) else str(value)
@@ -282,6 +283,8 @@ class MaintenanceService:
                 delete_file(self.r, collection, md5)
             elif not self.r.exists(f"{file_base}:meta"):
                 forget(collection, md5, self.r)
+            # String indexes point at this file from outside its key prefix.
+            string_service.unindex_file_strings(self.r, collection, md5)
             # Preserve raw sample bytes; clear only analyzed file/function keys.
             keys = [
                 txt(k)
@@ -307,7 +310,12 @@ class MaintenanceService:
             ):
                 if self.r.zcard(key) == 0:
                     stem = txt(key)[: -len(":functions")]
-                    self.r.delete(key, f"{stem}:meta", f"{stem}:global_meta")
+                    # :stats is the derived cache of :meta; drop it with the
+                    # feature so a later enrich never reads a stale table for
+                    # a feature that has no occurrences.
+                    self.r.delete(
+                        key, f"{stem}:meta", f"{stem}:stats", f"{stem}:global_meta"
+                    )
             # The batch membership index also covers legacy files without metadata.
             was_batch_member = False
             if not batch_uuid:

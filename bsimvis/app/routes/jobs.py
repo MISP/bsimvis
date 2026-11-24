@@ -95,13 +95,38 @@ def cancel_all_jobs():
     return {"status": "cancelled", "cancelled_count": cancelled}
 
 
-def _reset_job_recursive(job_id):
-    """Recursively resets a job and all its sub-tasks/descendants to pending."""
+def _reset_job_recursive(job_id, top=True):
+    """Resets a job and its unfinished descendants to pending; True if it reset.
+
+    A completed subtree with nothing failed or cancelled inside is kept, so a
+    retried pipeline resumes at the step that failed (start_job steps over
+    completed tasks) instead of re-running every Ghidra analysis before it.
+    A group that finished with failed members is itself "completed", hence the
+    check on the children first.
+    """
     job = job_service.r.hgetall(f"job:{job_id}")
     if not job:
-        return
+        return False
 
-    # Reset this job.
+    child_reset = False
+    task_ids_raw = job.get(b"task_ids") or job.get("task_ids")
+    if task_ids_raw:
+        try:
+            if isinstance(task_ids_raw, bytes):
+                task_ids_raw = task_ids_raw.decode()
+            task_ids = json.loads(task_ids_raw)
+            if isinstance(task_ids, list):
+                for tid in task_ids:
+                    child_reset = _reset_job_recursive(tid, top=False) or child_reset
+        except Exception:
+            pass
+
+    status = job.get(b"status") or job.get("status")
+    if isinstance(status, bytes):
+        status = status.decode()
+    if not top and status == "completed" and not child_reset:
+        return False
+
     job_service.r.hset(
         f"job:{job_id}",
         mapping={
@@ -117,19 +142,7 @@ def _reset_job_recursive(job_id):
     # Delete (not zero) the enqueue + barrier latches: both use field-existence
     # semantics (hset return value), so they must be absent to re-arm on retry.
     job_service.r.hdel(f"job:{job_id}", "queued", "barrier_fired")
-
-    # Check for children
-    task_ids_raw = job.get(b"task_ids") or job.get("task_ids")
-    if task_ids_raw:
-        try:
-            if isinstance(task_ids_raw, bytes):
-                task_ids_raw = task_ids_raw.decode()
-            task_ids = json.loads(task_ids_raw)
-            if isinstance(task_ids, list):
-                for tid in task_ids:
-                    _reset_job_recursive(tid)
-        except Exception:
-            pass
+    return True
 
 
 def retry_job(job_id):

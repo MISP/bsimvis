@@ -222,6 +222,12 @@ function parseRestfulPath() {
             params.view = 'scan';
         }
         return params;
+    } else if (parts[pIdx] === 'yara') {
+        params.view = 'yara';
+        return params;
+    } else if (parts[pIdx] === 'diff' && parts[pIdx + 1] === 'nway') {
+        params.view = 'nway';
+        return params;
     } else if (parts[pIdx] === 'upload') {
         params.view = 'upload';
         return params;
@@ -262,6 +268,8 @@ function parseRestfulPath() {
             pIdx++;
             if (parts.length === pIdx) {
                 params.view = 'file';
+            } else if (parts[pIdx] === 'strings') {
+                params.view = 'file'; // Strings is a tab of the file view
             } else if (parts[pIdx] === 'vs') {
                 params.view = 'bin_sim';
                 params.coll_b = decodeURIComponent(parts[pIdx + 1] || '');
@@ -324,6 +332,8 @@ function parseRestfulPath() {
                 }
             }
         }
+    } else if (p2 === 'strings') {
+        params.view = 'strings';
     } else if (p2 === 'features' || p2 === 'feature') {
         pIdx++;
         if (parts.length === pIdx) {
@@ -331,6 +341,13 @@ function parseRestfulPath() {
         } else {
             params.view = 'feature';
             params.hash = parts[pIdx];
+        }
+    } else if (p2 === 'searches') {
+        if (parts[pIdx + 1]) {
+            params.view = 'search-detail';
+            params.search_id = decodeURIComponent(parts[pIdx + 1]);
+        } else {
+            params.view = 'search';
         }
     } else if (p2 === 'bin_sim') {
         params.view = 'bin_sim';
@@ -355,6 +372,7 @@ window.getCollectionFromId = function (id) {
     if (id.includes(':function:')) return stripPoolPrefix(id.split(':function:')[0]) || '';
     if (id.includes(':file:')) return stripPoolPrefix(id.split(':file:')[0]) || '';
     if (id.includes(':bin_sim:')) return id.split(':bin_sim:')[0] || '';
+    if (id.includes(':bin_cluster:')) return id.split(':bin_cluster:')[0] || '';
 
     const parts = id.split(':');
     if (parts.length >= 4 && (parts[parts.length - 1].startsWith('00') || parts[parts.length - 1].length < 10)) {
@@ -435,11 +453,12 @@ function getRoutingState() {
     }
     const pool = restful.pool || params.get('pool') || null;
 
-    if (collection && viewKey !== 'jobs') {
-        localStorage.setItem('lastCollectionContext', collection);
-    }
-    if (pool && viewKey !== 'jobs') {
-        localStorage.setItem('lastPoolContext', pool);
+    // The last context is the most recent scope: entering a collection must not leave an older pool behind (and vice versa).
+    if ((collection || pool) && viewKey !== 'jobs') {
+        if (collection) localStorage.setItem('lastCollectionContext', collection);
+        else localStorage.removeItem('lastCollectionContext');
+        if (pool) localStorage.setItem('lastPoolContext', pool);
+        else localStorage.removeItem('lastPoolContext');
     }
 
     // Bridge restful params to search params for backward compatibility
@@ -457,7 +476,7 @@ function getRoutingState() {
     if (restful.search_id && !params.has('search_id')) params.set('search_id', restful.search_id);
     if (restful.cluster_uuid && !params.has('cluster_uuid')) params.set('cluster_uuid', restful.cluster_uuid);
 
-    return { viewKey, collection, pool, params, ...restful };
+    return { ...restful, viewKey, collection, pool, params };
 }
 window.getRoutingState = getRoutingState;
 

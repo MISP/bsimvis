@@ -1,0 +1,1006 @@
+[
+ {
+  "rule": "Linux_Botnet_Mirai_Boatnet",
+  "file": "A.yar",
+  "kind": "family",
+  "family": "mirai",
+  "variant": "boatnet",
+  "hits": {
+   "boatnet_xor22": 60
+  },
+  "unclassified_hits": 0,
+  "total": 60
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Boatnet_Netis",
+  "file": "A.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "boatnet_netis",
+  "hits": {
+   "boatnet_xor22": 41
+  },
+  "unclassified_hits": 0,
+  "total": 41
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Boatnet_Tftp",
+  "file": "A.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "boatnet_tftp",
+  "hits": {
+   "boatnet_xor22": 15
+  },
+  "unclassified_hits": 0,
+  "total": 15
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_XorWbyy",
+  "file": "A.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "xor_wbyy",
+  "hits": {
+   "xor_wbyy": 13
+  },
+  "unclassified_hits": 0,
+  "total": 13
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_MvChmodDlr",
+  "file": "A.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "mvchmod_dlr",
+  "hits": {
+   "xor_wbyy": 1,
+   "mvchmod_dlr": 10
+  },
+  "unclassified_hits": 0,
+  "total": 11
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_StrippedSha",
+  "file": "A.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "stripped_sha256_set",
+  "hits": {
+   "stripped_sha256_set": 4
+  },
+  "unclassified_hits": 1,
+  "total": 5
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_PKillerMaps",
+  "file": "B.yar",
+  "kind": "family",
+  "family": "mirai",
+  "variant": "pkillermaps",
+  "hits": {
+   "p_killermaps": 48
+  },
+  "unclassified_hits": 0,
+  "total": 48
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_PKillerMaps_HttpFlood",
+  "file": "B.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "pkillermaps_http",
+  "hits": {
+   "p_killermaps": 27
+  },
+  "unclassified_hits": 0,
+  "total": 27
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_PKillerMaps_Lean",
+  "file": "B.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "pkillermaps_lean",
+  "hits": {
+   "p_killermaps": 21
+  },
+  "unclassified_hits": 0,
+  "total": 21
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Xnxn",
+  "file": "B.yar",
+  "kind": "family",
+  "family": "mirai",
+  "variant": "xnxn",
+  "hits": {
+   "xnxn": 22
+  },
+  "unclassified_hits": 0,
+  "total": 22
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Xnxn_KeyA",
+  "file": "B.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "xnxn_key_a",
+  "hits": {
+   "xnxn": 11
+  },
+  "unclassified_hits": 0,
+  "total": 11
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Xnxn_KeyB",
+  "file": "B.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "xnxn_key_b",
+  "hits": {
+   "xnxn": 11
+  },
+  "unclassified_hits": 0,
+  "total": 11
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Demons",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "demons",
+  "hits": {
+   "demons": 18
+  },
+  "unclassified_hits": 0,
+  "total": 18
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Mushi",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "mushi",
+  "hits": {
+   "mushi": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Nuclear",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "nuclear",
+  "hits": {
+   "nuclear": 13
+  },
+  "unclassified_hits": 0,
+  "total": 13
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Frosted",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "frosted",
+  "hits": {
+   "frosted": 7
+  },
+  "unclassified_hits": 0,
+  "total": 7
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Frosted_Locker",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "frosted_locker",
+  "hits": {
+   "frosted": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Josho_Flood",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "josho",
+  "hits": {
+   "josho_flood": 11
+  },
+  "unclassified_hits": 0,
+  "total": 11
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_SecureCore",
+  "file": "C.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "securecore",
+  "hits": {
+   "securecore": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Flylegit",
+  "file": "D.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "flylegit",
+  "hits": {
+   "flylegit": 16
+  },
+  "unclassified_hits": 0,
+  "total": 16
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Iran_ProcScan",
+  "file": "D.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "iran_procscan",
+  "hits": {
+   "iran_dg": 2,
+   "iran_procscan": 2
+  },
+  "unclassified_hits": 0,
+  "total": 4
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Condi2_Top1hbt",
+  "file": "D.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "condi2_top1hbt",
+  "hits": {
+   "boatnet_xor22": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Cling_Scanner",
+  "file": "D.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "cling",
+  "hits": {
+   "cling_exploit_scanner": 9
+  },
+  "unclassified_hits": 0,
+  "total": 9
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Kushnet",
+  "file": "D.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "kushnet",
+  "hits": {
+   "rival_killer": 7
+  },
+  "unclassified_hits": 0,
+  "total": 7
+ },
+ {
+  "rule": "Linux_Botnet_Mirai_Sysd_Dropper",
+  "file": "D.yar",
+  "kind": "variant",
+  "family": "mirai",
+  "variant": "sysd",
+  "hits": {
+   "sysd_dropper": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_Tsunami_NetSeries",
+  "file": "E.yar",
+  "kind": "variant",
+  "family": "tsunami",
+  "variant": "net_series",
+  "hits": {
+   "tsun_net_series": 12
+  },
+  "unclassified_hits": 0,
+  "total": 12
+ },
+ {
+  "rule": "Linux_Botnet_Tsunami_Holocaust",
+  "file": "E.yar",
+  "kind": "variant",
+  "family": "tsunami",
+  "variant": "holocaust",
+  "hits": {
+   "tsun_holocaust": 10
+  },
+  "unclassified_hits": 0,
+  "total": 10
+ },
+ {
+  "rule": "Linux_Botnet_Gafgyt_BusyboxWgetCgi",
+  "file": "E.yar",
+  "kind": "variant",
+  "family": "gafgyt",
+  "variant": "busybox_wget_cgi",
+  "hits": {
+   "busybox_wget_exploit": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Capability_UdpVseTinyFlood",
+  "file": "E.yar",
+  "kind": "capability",
+  "family": "other",
+  "variant": "udp_flood,tcp_flood,game_server_flood",
+  "hits": {
+   "udp_vse_tiny": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_Other_MountFlagsHelper",
+  "file": "E.yar",
+  "kind": "variant",
+  "family": "other",
+  "variant": "mtab_manji",
+  "hits": {
+   "mtab_manji": 3
+  },
+  "unclassified_hits": 0,
+  "total": 3
+ },
+ {
+  "rule": "Linux_Botnet_BotTx_HttpToken",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "bottx",
+  "variant": null,
+  "hits": {
+   "bottx": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_StunProbe_Cloudflare",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "stun_probe",
+  "variant": null,
+  "hits": {
+   "stun_probe": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_DhtBep44_Peer",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "dht_bep44_bot",
+  "variant": null,
+  "hits": {
+   "dht_bep44_bot": 4
+  },
+  "unclassified_hits": 1,
+  "total": 5
+ },
+ {
+  "rule": "Linux_Botnet_StaticBot_BotStarted",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "static_bot_started",
+  "variant": null,
+  "hits": {
+   "static_bot_started": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_StaticBot_UpdaterDesktop",
+  "file": "F.yar",
+  "kind": "variant",
+  "family": "static_bot_started",
+  "variant": "updater_desktop",
+  "hits": {
+   "static_bot_started": 1
+  },
+  "unclassified_hits": 0,
+  "total": 1
+ },
+ {
+  "rule": "Linux_Botnet_Zbot_StaticDropper",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "zbot",
+  "variant": "static_dropper",
+  "hits": {
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 10
+ },
+ {
+  "rule": "Linux_Botnet_Zbot_Rc4Stub",
+  "file": "F.yar",
+  "kind": "variant",
+  "family": "zbot",
+  "variant": "rc4_stub",
+  "hits": {
+   "static_sk_bot": 2
+  },
+  "unclassified_hits": 0,
+  "total": 2
+ },
+ {
+  "rule": "Linux_Botnet_GoMethods_Family",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "go_methods_bot",
+  "variant": null,
+  "hits": {
+   "go_bot_a": 8,
+   "go_bot_b": 2
+  },
+  "unclassified_hits": 2,
+  "total": 12
+ },
+ {
+  "rule": "Linux_Botnet_GoMethods_Vortax",
+  "file": "F.yar",
+  "kind": "variant",
+  "family": "go_methods_bot",
+  "variant": "vortax",
+  "hits": {
+   "go_bot_a": 8
+  },
+  "unclassified_hits": 0,
+  "total": 8
+ },
+ {
+  "rule": "Linux_Botnet_GoMethods_Catstorm",
+  "file": "F.yar",
+  "kind": "variant",
+  "family": "go_methods_bot",
+  "variant": "catstorm",
+  "hits": {
+   "go_bot_b": 1
+  },
+  "unclassified_hits": 0,
+  "total": 1
+ },
+ {
+  "rule": "Linux_Botnet_GoMethods_Botnet",
+  "file": "F.yar",
+  "kind": "variant",
+  "family": "go_methods_bot",
+  "variant": "botnet_fortattack",
+  "hits": {
+   "go_bot_b": 1
+  },
+  "unclassified_hits": 2,
+  "total": 3
+ },
+ {
+  "rule": "Linux_Miner_Redtail_Xmrig",
+  "file": "F.yar",
+  "kind": "family",
+  "family": "miner",
+  "variant": "redtail",
+  "hits": {
+   "miner_redtail": 8
+  },
+  "unclassified_hits": 0,
+  "total": 8
+ },
+ {
+  "rule": "Linux_Capability_DdosUdpFlood",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "udp_flood",
+  "hits": {
+   "boatnet_xor22": 12,
+   "p_killermaps": 6,
+   "xnxn": 22,
+   "demons": 4,
+   "josho_flood": 11,
+   "nuclear": 2,
+   "frosted": 2
+  },
+  "unclassified_hits": 0,
+  "total": 59
+ },
+ {
+  "rule": "Linux_Capability_DdosTcpFlood",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "tcp_flood",
+  "hits": {
+   "boatnet_xor22": 10,
+   "p_killermaps": 6,
+   "demons": 4,
+   "josho_flood": 11,
+   "nuclear": 2,
+   "frosted": 2,
+   "sysd_dropper": 1,
+   "tsun_net_series": 11
+  },
+  "unclassified_hits": 0,
+  "total": 47
+ },
+ {
+  "rule": "Linux_Capability_DdosGreIcmpFlood",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "gre_flood,icmp_flood",
+  "hits": {
+   "boatnet_xor22": 8,
+   "p_killermaps": 7,
+   "demons": 4,
+   "josho_flood": 11,
+   "nuclear": 2,
+   "frosted": 2
+  },
+  "unclassified_hits": 0,
+  "total": 34
+ },
+ {
+  "rule": "Linux_Capability_DdosSourceEngineQuery",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "vse_flood",
+  "hits": {
+   "boatnet_xor22": 59,
+   "p_killermaps": 49,
+   "demons": 4,
+   "josho_flood": 2,
+   "frosted": 2,
+   "tsun_net_series": 12,
+   "tsun_holocaust": 10
+  },
+  "unclassified_hits": 2,
+  "total": 140
+ },
+ {
+  "rule": "Linux_Capability_DdosHttpCdnCgiBypass",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "http_flood",
+  "hits": {
+   "boatnet_xor22": 6,
+   "nuclear": 2,
+   "tsun_net_series": 11,
+   "tsun_holocaust": 10
+  },
+  "unclassified_hits": 0,
+  "total": 29
+ },
+ {
+  "rule": "Linux_Capability_DdosDnsFlood",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "dns_flood",
+  "hits": {
+   "boatnet_xor22": 6,
+   "demons": 4,
+   "josho_flood": 2
+  },
+  "unclassified_hits": 0,
+  "total": 12
+ },
+ {
+  "rule": "Linux_Capability_DdosGameProtocol",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "game_protocol_flood",
+  "hits": {
+   "boatnet_xor22": 12,
+   "p_killermaps": 6,
+   "demons": 4,
+   "josho_flood": 2,
+   "frosted": 2,
+   "go_bot_a": 8,
+   "udp_vse_tiny": 2
+  },
+  "unclassified_hits": 0,
+  "total": 36
+ },
+ {
+  "rule": "Linux_Capability_DdosSsdpMsearch",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "ssdp_reflection",
+  "hits": {
+   "boatnet_xor22": 56,
+   "josho_flood": 12,
+   "nuclear": 13,
+   "rival_killer": 7
+  },
+  "unclassified_hits": 2,
+  "total": 90
+ },
+ {
+  "rule": "Linux_Capability_C2GoogleDnsResolver",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "dns_resolve_google",
+  "hits": {
+   "boatnet_xor22": 11,
+   "demons": 4,
+   "josho_flood": 2,
+   "iran_dg": 1,
+   "cling_exploit_scanner": 9,
+   "frosted": 2,
+   "zbot_static": 10,
+   "stun_probe": 2,
+   "tsun_net_series": 12,
+   "tsun_holocaust": 10
+  },
+  "unclassified_hits": 4,
+  "total": 67
+ },
+ {
+  "rule": "Linux_Capability_C2TextPingPong",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "c2_ping_pong",
+  "hits": {
+   "xnxn": 22,
+   "flylegit": 16,
+   "iran_dg": 2,
+   "static_bot_started": 1,
+   "iran_procscan": 2
+  },
+  "unclassified_hits": 0,
+  "total": 43
+ },
+ {
+  "rule": "Linux_Capability_C2IrcCommandsXor22",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "irc_commands",
+  "hits": {
+   "boatnet_xor22": 17
+  },
+  "unclassified_hits": 0,
+  "total": 17
+ },
+ {
+  "rule": "Linux_Capability_C2SelfRepBanner",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "self_rep_banner",
+  "hits": {
+   "boatnet_xor22": 41,
+   "tsun_net_series": 11,
+   "tsun_holocaust": 10
+  },
+  "unclassified_hits": 2,
+  "total": 64
+ },
+ {
+  "rule": "Linux_Capability_XorTable22Telnet",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "xor22_string_table",
+  "hits": {
+   "boatnet_xor22": 41,
+   "p_killermaps": 48
+  },
+  "unclassified_hits": 1,
+  "total": 90
+ },
+ {
+  "rule": "Linux_Capability_XorTable54Telnet",
+  "file": "G.yar",
+  "kind": "capability",
+  "family": "mirai,gafgyt,tsunami",
+  "variant": "xor54_string_table",
+  "hits": {
+   "demons": 18,
+   "josho_flood": 12,
+   "frosted": 2
+  },
+  "unclassified_hits": 1,
+  "total": 33
+ },
+ {
+  "rule": "Linux_Capability_TelnetDefaultCreds",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "telnet_default_credential_dictionary",
+  "hits": {
+   "boatnet_xor22": 1,
+   "demons": 18,
+   "mushi": 2,
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 31
+ },
+ {
+  "rule": "Linux_Capability_TelnetLoginPromptTable",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "telnet_login_prompt_xor22_table,telnet_login_prompt_xor54_table",
+  "hits": {
+   "boatnet_xor22": 41,
+   "p_killermaps": 48,
+   "demons": 18,
+   "josho_flood": 12,
+   "frosted": 2
+  },
+  "unclassified_hits": 2,
+  "total": 123
+ },
+ {
+  "rule": "Linux_Capability_TelnetBruteScanner",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "telnet_scanner_bruteforce",
+  "hits": {
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 10
+ },
+ {
+  "rule": "Linux_Capability_KillerProcScan0cl",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "competitor_killer_0cl",
+  "hits": {
+   "p_killermaps": 48
+  },
+  "unclassified_hits": 0,
+  "total": 48
+ },
+ {
+  "rule": "Linux_Capability_KillerByNameOrPort",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "competitor_killer_by_name_port",
+  "hits": {
+   "p_killermaps": 6,
+   "frosted": 2,
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 18
+ },
+ {
+  "rule": "Linux_Capability_WatchdogHandle",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "hardware_watchdog_keepalive",
+  "hits": {
+   "boatnet_xor22": 57,
+   "p_killermaps": 48,
+   "demons": 18,
+   "josho_flood": 12,
+   "cling_exploit_scanner": 9,
+   "frosted": 2,
+   "mushi": 2,
+   "zbot_static": 10,
+   "static_bot_started": 3
+  },
+  "unclassified_hits": 5,
+  "total": 166
+ },
+ {
+  "rule": "Linux_Capability_SingleInstanceLock",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "gafgyt",
+  "variant": "single_instance_lock",
+  "hits": {
+   "xnxn": 22,
+   "static_bot_started": 1
+  },
+  "unclassified_hits": 0,
+  "total": 23
+ },
+ {
+  "rule": "Linux_Capability_PersistKsync",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "other",
+  "variant": "persistence_ksync_initd_cron",
+  "hits": {
+   "rival_killer": 7
+  },
+  "unclassified_hits": 0,
+  "total": 7
+ },
+ {
+  "rule": "Linux_Capability_PersistCrontabTmpZ",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "other",
+  "variant": "persistence_crontab_tmp_z",
+  "hits": {
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 10
+ },
+ {
+  "rule": "Linux_Capability_AntiVmDmi",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "other",
+  "variant": "anti_vm_dmi_hypervisor",
+  "hits": {
+   "xnxn": 22,
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 32
+ },
+ {
+  "rule": "Linux_Capability_AntiPtrace",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "anti_debug_ptrace_strace",
+  "hits": {
+   "frosted": 9
+  },
+  "unclassified_hits": 0,
+  "total": 9
+ },
+ {
+  "rule": "Linux_Capability_ExploitKitOd",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "router_exploit_kit_od",
+  "hits": {
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 10
+ },
+ {
+  "rule": "Linux_Capability_ExploitTendaRealtekLinksys",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "router_exploit_soap_tenda_realtek",
+  "hits": {
+   "cling_exploit_scanner": 9
+  },
+  "unclassified_hits": 0,
+  "total": 9
+ },
+ {
+  "rule": "Linux_Capability_ExploitDvrCstecgi",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "busybox_cstecgi_dvr_dropper_sh",
+  "hits": {
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 10
+ },
+ {
+  "rule": "Linux_Capability_SelfCopyProcHide",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "self_copy_proc_hide",
+  "hits": {
+   "cling_exploit_scanner": 9
+  },
+  "unclassified_hits": 0,
+  "total": 9
+ },
+ {
+  "rule": "Linux_Capability_DropperShellChain",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "downloader_shell_chain",
+  "hits": {
+   "boatnet_xor22": 15,
+   "sysd_dropper": 1
+  },
+  "unclassified_hits": 0,
+  "total": 16
+ },
+ {
+  "rule": "Linux_Capability_SshPythonSpread",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "gafgyt",
+  "variant": "ssh_python_udp_deployer",
+  "hits": {
+   "tsun_net_series": 11
+  },
+  "unclassified_hits": 0,
+  "total": 11
+ },
+ {
+  "rule": "Linux_Capability_AdbSpread",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "adb_android_spread",
+  "hits": {
+   "busybox_wget_exploit": 1,
+   "zbot_static": 10
+  },
+  "unclassified_hits": 0,
+  "total": 11
+ },
+ {
+  "rule": "Linux_Capability_CryptoMinerXmrig",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "miner",
+  "variant": "cryptominer_xmrig",
+  "hits": {
+   "miner_redtail": 8
+  },
+  "unclassified_hits": 0,
+  "total": 8
+ },
+ {
+  "rule": "Linux_Capability_CondiMarkers",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "mirai",
+  "variant": "condi_botnet_markers",
+  "hits": {
+   "boatnet_xor22": 13
+  },
+  "unclassified_hits": 0,
+  "total": 13
+ },
+ {
+  "rule": "Linux_Capability_GoBotScannerLoader",
+  "file": "H.yar",
+  "kind": "capability",
+  "family": "other",
+  "variant": "go_bot_scanner_loader",
+  "hits": {
+   "go_bot_b": 1
+  },
+  "unclassified_hits": 2,
+  "total": 3
+ }
+]

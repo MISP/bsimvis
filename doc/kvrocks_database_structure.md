@@ -51,6 +51,21 @@ These keys store the actual analysis results and decompiler output.
 | `{coll}:batch:{uuid}` | **Hash** | Ingestion batch metadata. |
 | `{coll}:batch:{uuid}:functions` | **Set** | Function doc keys belonging to a batch (used to list a batch's functions). |
 
+### Strings
+Written once per analysis (new analyses only; there is no backfill), on the origin collection. A pool reads its members' keys.
+| Key Pattern | Type | Description |
+|:--- |:--- |:--- |
+| `{coll}:file:{md5}:strings` | **Hash** | String table: field = string address (`SPACE::addr` outside the loaded image), value = JSON `{id, value, encoding, addr, section, length, tags, rules, user_tags, funcs}`. `id` = sha1(value)[:16]; `tags`/`rules` come from YARA, `user_tags` are analyst tags, `funcs` are referencing function entry addresses. |
+| `{coll}:func:{md5}:{addr}:strings` | **Set** | Addresses (keys of the table above) of the strings the function references. |
+| `{coll}:idx:string:value:{id}` | **Set** | Function IDs referencing the string. Registry: `{coll}:reg:string:value`. |
+| `{coll}:idx:string:file:{id}` | **Set** | File IDs holding the string. Registry: `{coll}:reg:string:file`. |
+| `{coll}:idx:func:strings:{lowercased value[:128]}` | **Set** | Function IDs, searched by `strings=` on function search. Registry: `{coll}:reg:func:strings`. |
+| `{coll}:idx:file:strings:{lowercased value[:128]}` | **Set** | File IDs, searched by `strings=` on file search. Registry: `{coll}:reg:file:strings`. |
+| `{coll}:idx:string:meta` | **Hash** | id -> JSON `{value, length, encodings, sections, tags, rules}` for the collection-wide listing. The sets only grow while any file still holds the string. |
+| `{coll}:idx:string:file_count` / `{coll}:idx:string:func_count` | **Hash** | id -> number of files / functions referencing the string (`HINCRBY` on index and removal). A string whose last file goes is dropped from all three hashes. |
+
+Removing a file (`maintenance/remove`) and deleting a collection clear all of these; clearing features or similarities does not (strings are analysis output, like `vec:meta`).
+
 ### Similarities
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
@@ -87,11 +102,15 @@ File-level (binary-to-binary) similarity, derived from shared function clusters.
 | Key Pattern | Type | Description |
 |:--- |:--- |:--- |
 | `{coll}:bin_cluster:list:{algo}` | **Set** | All binary cluster IDs for the algorithm. |
-| `{coll}:bin_cluster:{algo}:{cid}:meta` | **JSON** | Metadata for a binary cluster. |
+| `{coll}:bin_cluster:{algo}:{cid}:meta` | **JSON** | Metadata for a binary cluster. Its `timeline` holds, per member date field (`entry_date`, `first_seen`, `last_seen`), `first`, `last`, `n` and `days` (`[[utc_day_ms, members], ...]`); activity (`new_members`, `last_added`, ...) is derived on read. Older clusters: `POST /api/bin_cluster/timeline/backfill`. |
 | `{coll}:bin_cluster:{algo}:{cid}:members` | **Set** | Member file IDs (full subtree). |
 | `{coll}:bin_cluster:{algo}:{cid}:direct_members` | **Set** | Direct member file IDs. |
 | `{coll}:bin_cluster:tree:{algo}` | **String** | Serialized binary dendrogram tree. |
 | `{coll}:bin_cluster:tree_links:{algo}` | **String** | Raw parent-child links. |
+| `{coll}:cluster_tags` / `{coll}:cluster_notes` | **Hash** | Analyst tags (bookmarks) / notes of clusters, field `bin_cluster:{algo}:{uuid}` (JSON list). Kept outside the meta so a rebuild never drops them. |
+| `{coll}:bin_cluster:retired:{algo}` | **Hash** | uuid -> snapshot (name, size, member-set hash, 32 anchors) of a cluster a clear / rebuild deleted; consumed by the next build (`cluster_history.carry_uuids`). |
+| `{coll}:bin_cluster:uuid_history:{algo}` | **Hash** | Retired uuid -> `{kind, successors: [{uuid, share, jaccard}], ...}`. Never expires. |
+| `{coll}:bin_cluster:inherit:{algo}` | **Hash** | Live uuid -> retired uuids with analyst data whose files it now holds (the "copy tags & notes here" proposal). |
 
 ---
 
@@ -157,6 +176,10 @@ A pool combines the functions/binaries of several collections into one searchabl
 |:--- |:--- |:--- |
 | `global:pools` | **Set** | All pool IDs. |
 | `global:pool:{pool_id}:meta` | **JSON** | Pool definition (name, config, timestamps, sync status). |
+| `global:yara_rules` | **ZSET** | YARA workbench rules: uuid -> updated ts. |
+| `global:yara_rule:{uuid}` | **JSON** | Current rule version, name, scope (target/negative sets). |
+| `global:yara_rule:{uuid}:v:{n}` | **JSON** | One saved version (text, ts, note). |
+| `global:yara_rule:{uuid}:tags` | **Set** | `yara:custom:` tags the rule has applied, so a rename can clear them. |
 | `global:pool:{pool_id}:collections` | **Set** | Member collection names. |
 | `{coll}:pools` | **Set** | Reverse index: pools a collection belongs to. |
 

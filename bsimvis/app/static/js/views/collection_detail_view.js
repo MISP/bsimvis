@@ -18,6 +18,7 @@ window.CollectionDetailView = {
         if (!container) return;
 
         const collName = params.collection;
+        this._ovForce = !!params.force;
         if (!collName) {
             container.innerHTML = '<div style="padding:30px; color:#f87171;">Error: No collection name provided.</div>';
             return;
@@ -29,11 +30,12 @@ window.CollectionDetailView = {
             </div>`;
 
         try {
-            const [collRes, poolsRes, jobsStatsRes, paramsRes] = await Promise.all([
+            const [collRes, poolsRes, jobsStatsRes, paramsRes, countsRes] = await Promise.all([
                 fetch(`/api/collection/search?q=${encodeURIComponent(collName)}`),
                 fetch(`/api/pool?collection=${encodeURIComponent(collName)}`),
                 fetch('/api/jobs/stats').catch(() => null),
-                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null)
+                fetch(`/api/collection/params?collection=${encodeURIComponent(collName)}`).catch(() => null),
+                fetch(`/api/collection/counts?collection=${encodeURIComponent(collName)}`).catch(() => null)
             ]);
 
             if (!collRes.ok) throw new Error('Failed to load collections list');
@@ -52,6 +54,8 @@ window.CollectionDetailView = {
                 params = pj.params || {};
             }
 
+            const counts = countsRes && countsRes.ok ? await countsRes.json() : {};
+
             let collectionActiveJobs = [];
             if (jobsStatsRes && jobsStatsRes.ok) {
                 const stats = await jobsStatsRes.json();
@@ -65,11 +69,14 @@ window.CollectionDetailView = {
                     total_files: 0,
                     total_functions: 0,
                     total_batches: 0,
-                    last_updated: 0
+                    last_updated: 0,
+                    counts
                 }, associatedPools, collectionActiveJobs, params);
             } else {
-                container.innerHTML = this._renderPage(collection, associatedPools, collectionActiveJobs, params);
+                container.innerHTML = this._renderPage({ ...collection, counts }, associatedPools, collectionActiveJobs, params);
             }
+
+            this._loadOverview(collName, { ...(collection || {}), counts });
 
             if (this.refreshInterval) clearInterval(this.refreshInterval);
             this.refreshInterval = setInterval(async () => {
@@ -93,6 +100,374 @@ window.CollectionDetailView = {
             container.innerHTML = `<div style="padding:30px; color:#f87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${e.message}</div>`;
         }
     },
+
+    /** Landing cards (cluster Overview look): family map, families, files, uploads, mix. One cached call, nothing computed live. */
+    async _loadOverview(col, coll = {}) {
+        const host = document.getElementById('coll-overview');
+        if (!host) return;
+        this._ovCol = col;
+        this._ovColl = coll;
+        try {
+            const qs = new URLSearchParams({ collection: col, axis: this._ovAxis() });
+            if (this._ovForce) qs.set('refresh', 'true'); // Refresh button: skip the server's 120 s cache
+            this._ovForce = false;
+            const res = await fetch(`/api/index/collection/overview?${qs}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            this._ov = await res.json();
+        } catch (e) {
+            console.error('Overview failed', e);
+            this._ov = { error: true };
+        }
+        if (this._ovCol !== col || !host.isConnected) return;
+        host.innerHTML = this._renderOverview();
+        this._drawFamilyMap();
+    },
+
+    /** Cluster axis the cards read: URL `axis`, else the app default (code). */
+    _ovAxis() {
+        const a = new URLSearchParams(location.search).get('axis');
+        return window.FileTree && FileTree.AXES.includes(a) ? a : (window.BINSIM_DEFAULT_AXIS || 'code');
+    },
+
+    /** `?key=axis` for a link, or nothing when the axis is the default its target starts on. */
+    _ovAxisQs(key = 'axis') {
+        const a = this._ovAxis();
+        return a === (window.BINSIM_DEFAULT_AXIS || 'code') ? '' : `?${key}=${encodeURIComponent(a)}`;
+    },
+
+    _ovSetAxis(a) {
+        const u = new URL(location.href);
+        if (a === (window.BINSIM_DEFAULT_AXIS || 'code')) u.searchParams.delete('axis'); else u.searchParams.set('axis', a);
+        history.replaceState(history.state, '', u);
+        const host = document.getElementById('coll-overview');
+        if (host) host.innerHTML = this._ovSkeleton(this._ovCol, this._ovColl);
+        this._loadOverview(this._ovCol, this._ovColl);
+    },
+
+    /** Same axis buttons as the file tree's cluster grouping (FileTree toolbar). */
+    _ovAxisSeg() {
+        const types = window.BinSimScoreTypes || {}, cur = this._ovAxis();
+        const btns = (window.FileTree ? FileTree.AXES : ['overall', 'code', 'library', 'content']).map(a => {
+            const m = types[a === 'overall' ? 'score' : `score_${a}`] || {};
+            const label = m.label || a;
+            return `<button type="button" class="ft-seg-btn${a === cur ? ' active' : ''}" style="--ft-axis:${m.color || 'var(--accent)'}" aria-pressed="${a === cur}" title="${escapeAttr(`Show ${label} clusters`)}" onclick="CollectionDetailView._ovSetAxis('${a}')"><i class="${m.icon || 'fa-solid fa-layer-group'}"></i> ${escapeHtml(label)}</button>`;
+        }).join('');
+        return `<div class="cdo-bar"><span class="dim">Clusters by</span><div class="ft-seg" role="group" aria-label="Cluster axis">${btns}</div></div>`;
+    },
+
+    /** The overview's cards at their final size, bodies still loading: nothing moves when the data lands. */
+    _ovSkeleton(col, coll = {}) {
+        this._ov = null;
+        this._ovCol = col;
+        this._ovColl = coll;
+        if (window.ClusterOverview) ClusterOverview.ensureCss();
+        if (!document.getElementById('cdo-css')) {
+            const st = document.createElement('style');
+            st.id = 'cdo-css';
+            st.textContent = this._OV_CSS;
+            document.head.appendChild(st);
+        }
+        return this._renderOverview();
+    },
+
+    _ovNway(uuid) {
+        return `/diff/nway?${new URLSearchParams({ cluster_uuid: uuid, axis: this._ovAxis(), collection: this._ovCol })}`;
+    },
+
+    _ovBtn(icon, color, label, url, tip = '') {
+        return `<button class="btn-code-action cov-btn" style="--c:${color}" ${tip ? `title="${escapeAttr(tip)}"` : ''} onclick="${escapeAttr(`Nav.openPath(${jsString(url)}, event)`)}"><i class="${icon}"></i> ${escapeHtml(label)}</button>`;
+    },
+
+    _ovTitle(icon, color, name, info, big) {
+        return `<div class="cov-title"><span class="cov-ico" style="--c:${color}"><i class="${icon}"></i></span><b>${name}</b>
+            <i class="fa-solid fa-circle-info cov-info" title="${escapeAttr(info)}"></i>${big === undefined ? '' : `<span class="cov-big">${Number(big || 0).toLocaleString()}</span>`}</div>`;
+    },
+
+    // Same cohesion colour as the cluster cards (renderClusterCards).
+    _cohColor(c) {
+        return `hsl(${Math.max(0, Math.min(120, (c || 0) * 120))}, var(--color-s-high), var(--color-l-high))`;
+    },
+
+    _ovFamRow(f, max) {
+        const uuid = f.cluster_uuid;
+        const name = f.cluster_name || `Cluster ${f.cid}`;
+        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0, axis: this._ovAxis() }], true);
+        const w = max ? Math.max(3, (f.matching || 0) / max * 100) : 0;
+        return `<div class="cdo-fam">
+            <span>${card || ''}</span>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${clusterNameSource({ ...f, cluster_id: f.cid }, this._ovAxis())}</span>
+            <span class="cdo-size"><i style="width:${w.toFixed(1)}%"></i></span>
+            <a class="cdo-go" onclick="${escapeAttr(`Nav.openPath(${jsString(this._ovNway(uuid))}, event)`)}" title="Functions: N-way diff of this cluster"><i class="fa-solid fa-layer-group"></i></a>
+        </div>`;
+    },
+
+    /** A family row with an activity figure on the right (Most active / Recently changed). */
+    _ovActRow(f, right, tip) {
+        const uuid = f.cluster_uuid;
+        const name = f.cluster_name || `Cluster ${f.cid}`;
+        const card = renderClusterCards([{ cluster_id: f.cid, cluster_uuid: uuid, cluster_name: f.cluster_name, cohesion_score: f.cohesion_score || 0, member_count: f.matching || 0, axis: this._ovAxis() }], true);
+        return `<div class="cdo-act">
+            <span>${card || ''}</span>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(this._ovAxis()))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${clusterNameSource({ ...f, cluster_id: f.cid }, this._ovAxis())}</span>
+            <span class="mono" title="${escapeAttr(tip)}">${right}</span>
+        </div>`;
+    },
+
+    /** A bookmarked cluster: its own axis (bookmarks span them all), notes on the right. */
+    _ovMarkRow(b) {
+        const uuid = b.cluster_uuid;
+        const name = b.cluster_name || (b.retired ? 'Retired cluster' : `Cluster ${b.cid}`);
+        const card = b.retired ? '<i class="fa-solid fa-clock-rotate-left dim" title="A rebuild retired this uuid: open it to see where its files went"></i>'
+            : renderClusterCards([{ cluster_id: b.cid, cluster_uuid: uuid, cluster_name: b.cluster_name, cohesion_score: b.cohesion_score || 0, member_count: b.matching || 0, axis: b.axis }], true);
+        const axis = b.axis !== this._ovAxis() ? `<span class="cov-arch" title="Score axis of this cluster">${escapeHtml(b.axis)}</span>` : '';
+        const notes = b.note_count ? EntityRenderer.renderBinClusterNoteButton(b.cluster_key, b.note_owners || [], { raw_data: b }) : '';
+        return `<div class="cdo-act">
+            <span>${card || ''}</span>
+            <span class="cdo-nm"><a class="fb-link" onclick="openCluster(${escapeAttr(jsString(uuid))}, true, event, ${escapeAttr(jsString(b.axis))})" title="${escapeAttr(name)}">${escapeHtml(name)}</a>${b.retired ? (b.has_history ? ' <span class="dim">retired</span>' : ' <span class="dim" title="Retired by a rebuild before uuid history existed: its files cannot be traced">lost in an older rebuild</span>') : clusterNameSource({ ...b, cluster_id: b.cid }, b.axis)} ${axis}</span>
+            <span style="display:inline-flex; gap:6px; align-items:center;">${notes}<span class="mono dim" title="Files">${b.retired ? '' : Number(b.matching || 0).toLocaleString()}</span></span>
+        </div>`;
+    },
+
+    _ovFileRows(files) {
+        const col = this._ovCol;
+        if (!files.length) return '<div class="dim" style="font-size:0.78rem;">None.</div>';
+        return `<div class="cov-list">${files.map(f => {
+            const arch = String(f.language_id || '').split(':')[0];
+            return `<div class="cov-row"><span class="dim"><i class="fa-regular fa-file"></i></span>
+                ${EntityRenderer.renderFileName(f.file_name, f.file_md5, col)}
+                <span>${arch ? `<span class="cov-arch">${escapeHtml(arch)}</span>` : ''}</span>
+                <span class="dim" style="text-align:right" title="Functions">${Number(f.function_count || 0).toLocaleString()}</span></div>`;
+        }).join('')}</div>`;
+    },
+
+    /** Circle packing of the shown families: area = files, colour = cohesion. Click opens the cluster. */
+    _drawFamilyMap() {
+        const el = document.getElementById('cdo-map');
+        const ov = this._ov || {};
+        const tree = ov.family_map || ov.families || [];
+        if (!el || !tree.length || !window.d3) return;
+        const W = el.clientWidth || 600, H = el.clientHeight || 320;
+        // Loose clusters (no family of their own) are dashed groups around the families inside them.
+        const root = d3.pack().size([W, H]).padding(n => (n.depth ? 6 : 3))(
+            d3.hierarchy({ children: tree }, d => (d.cid === undefined || d.family === false ? d.children : null))
+                .sum(d => (d.cid && d.family !== false ? Math.max(1, d.matching || 0) : 0))
+                .sort((x, y) => y.value - x.value));
+        // Map labels drop the repeated prefix: 'mirai#Unix.Trojan.Mirai-8041698-0' -> 'Mirai-8041698-0'.
+        const brief = name => String(name).split('#').pop().split('.').pop() || String(name);
+        const short = (name, r) => { const t = brief(name); const k = Math.max(3, Math.floor(r / 3)); return t.length > k ? t.slice(0, k) + '…' : t; };
+        const tip = f => escapeHtml(`${f.cluster_name || `Cluster ${f.cid}`}${(clusterNameSourceInfo(f) || { text: '' }).text.replace(/^(?=.)/, '\n')}\n${Number(f.matching || 0).toLocaleString()} files · cohesion ${Number(f.cohesion_score || 0).toFixed(2)}${f.family === false ? '\nLoose group: the families inside are tighter' : ''}`);
+        const open = f => `onclick="${escapeAttr(`event.stopPropagation(); openCluster(${jsString(f.cluster_uuid)}, true, event, ${jsString(this._ovAxis())})`)}"`;
+        const out = root.descendants().filter(n => n.depth > 0).map(n => {
+            const f = n.data, x = n.x.toFixed(1), y = n.y.toFixed(1), r = n.r.toFixed(1);
+            const name = f.cluster_name || `Cluster ${f.cid}`;
+            if (f.family === false) {
+                const lab = n.r > 40 ? `<text x="${x}" y="${(n.y - n.r + 12).toFixed(1)}" text-anchor="middle" class="cdo-map-g">${escapeHtml(short(name, n.r * 1.6))}</text>` : '';
+                return `<g class="cdo-map-grp" ${open(f)}><circle cx="${x}" cy="${y}" r="${r}"><title>${tip(f)}</title></circle>${lab}</g>`;
+            }
+            const lab = n.r > 15 ? `<text x="${x}" y="${(n.y + 3).toFixed(1)}" text-anchor="middle" class="cdo-map-t">${escapeHtml(short(name, n.r))}</text>` : '';
+            return `<g class="cdo-map-n" ${open(f)}><circle cx="${x}" cy="${y}" r="${r}" style="--c:${this._cohColor(f.cohesion_score)}"><title>${tip(f)}</title></circle>${lab}</g>`;
+        }).join('');
+        el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Family map">${out}</svg>`;
+    },
+
+    /** Uploads card, switchable to the in-the-wild dates (overview `dates`). */
+    _ovUpCard(ov, loading) {
+        const dates = ov.dates || { entry_date: ov.uploads };
+        const fields = this._OV_DATES.filter(([f]) => dates[f]);
+        const field = this._ovDateField && dates[this._ovDateField] ? this._ovDateField : 'all';
+        const shown = field === 'all' ? fields : fields.filter(([f]) => f === field);
+        const pills = [['all', 'All'], ...fields.map(([f, l]) => [f, l])];
+        const seg = fields.length > 1 ? `<div class="cov-tl-seg" role="group" aria-label="Date">${pills.map(([f, l]) => `<button type="button" aria-pressed="${f === field}" onclick="CollectionDetailView._ovDates('${f}')">${l}</button>`).join('')}</div>` : '';
+        const title = field === 'all' ? (fields.length > 1 ? 'Files over time' : 'Uploads') : shown[0][1];
+        return `<div class="cov-card cdo-wide cdo-r2" id="cdo-up">
+            ${this._ovTitle('fa-solid fa-chart-column', 'var(--info, #3b82f6)', title, 'Files per period by upload date, and by the dates they were first and last seen in the wild (only files whose upload gave them). Same time span and same scale in every view.')}
+            ${seg}
+            ${loading ? '<span class="cdo-sk" style="height:126px;"></span>' : this._uploadsChart(dates, shown, fields)}
+        </div>`;
+    },
+
+    // [field, label, colour], drawn in this order: the later curves sit on top.
+    _OV_DATES: [['entry_date', 'Uploads', 'var(--info, #3b82f6)'], ['first_seen', 'First seen', 'var(--success)'], ['last_seen', 'Last seen', 'var(--warning, #d97706)']],
+
+    _ovDates(field) {
+        this._ovDateField = field;
+        const el = document.getElementById('cdo-up');
+        if (el && this._ov) el.outerHTML = this._ovUpCard(this._ov, false);
+    },
+
+    /** Files per bin for each shown date field, over the server's shared bins: a smooth line over a
+     * translucent body per field. One y-scale (max over every field), so all views compare. */
+    _uploadsChart(dates, shown, all) {
+        const first = all.length ? dates[all[0][0]] : null;
+        if (!first || !all.some(([f]) => (dates[f].counts || []).some(Boolean))) return '<div class="dim" style="font-size:0.78rem;">No dates.</div>';
+        const day = v => new Date(+v).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' });
+        const n = first.counts.length, W = 1000, H = 110, TOP = 6;
+        const max = Math.max(1, ...all.flatMap(([f]) => dates[f].counts));
+        const x = i => (i + 0.5) / n * W, y = v => H - v / max * (H - TOP);
+        // ponytail: d3 is on this page for the family map; without it the curve is straight segments.
+        const shape = (pts, area) => {
+            if (window.d3) {
+                const g = (area ? d3.area().y0(H).y1(p => p[1]) : d3.line().y(p => p[1])).x(p => p[0]).curve(d3.curveMonotoneX);
+                return g(pts);
+            }
+            const l = 'M' + pts.map(p => p.join(',')).join('L');
+            return area ? `${l}L${W},${H}L0,${H}Z` : l;
+        };
+        const series = shown.map(([f, , c]) => {
+            const pts = [[0, y(dates[f].counts[0])], ...dates[f].counts.map((v, i) => [x(i), y(v)]), [W, y(dates[f].counts[n - 1])]];
+            return `<path d="${shape(pts, true)}" style="fill:color-mix(in srgb, ${c} 22%, transparent);"></path>
+                <path d="${shape(pts, false)}" class="cdo-ln" style="stroke:${c};"></path>`;
+        }).join('');
+        const hover = first.counts.map((_, i) => {
+            const a = first.start + i * first.step;
+            const tip = `${day(a)} – ${day(a + first.step)}\n` + shown.map(([f, l]) => `${l}: ${dates[f].counts[i].toLocaleString()}`).join('\n');
+            return `<rect class="cdo-hv" x="${(i / n * W).toFixed(1)}" y="0" width="${(W / n).toFixed(1)}" height="${H}"><title>${escapeHtml(tip)}</title></rect>`;
+        }).join('');
+        const leg = shown.length > 1 ? `<div class="cov-mleg">${shown.map(([f, l, c]) => `<span><i style="background:${c}"></i>${l} <b>${dates[f].counts.reduce((s, v) => s + v, 0).toLocaleString()}</b></span>`).join('')}</div>` : '';
+        return `<svg class="cdo-area" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Files over time">${series}${hover}</svg>
+            <div class="cdo-axis"><span>${day(first.start)}</span><span>${day(first.start + first.step * n)}</span></div>${leg}`;
+    },
+
+    /** Stacked share bar + legend, the cluster Metadata card's look (cov-sbar / cov-mleg). */
+    _mixBlock(icon, label, items, total) {
+        if (!items.length) return '';
+        const colors = ['var(--info, #3b82f6)', 'var(--success)', 'var(--warning, #d97706)', 'var(--token-instruction, #e11d48)', 'var(--accent)', 'var(--dim)'];
+        const shown = items.slice(0, 5);
+        const rest = Math.max(0, total - shown.reduce((s, x) => s + x.count, 0));
+        const parts = [...shown.map((x, i) => [colors[i], x.count, x.value]), ...(rest ? [[colors[5], rest, 'other']] : [])];
+        return `<div><div class="cov-h3"><i class="${icon}"></i>${label}</div>
+            <div class="cov-sbar">${parts.map(([c, n, v]) => `<span style="flex:${n}; background:${c}" title="${escapeAttr(`${v}: ${n.toLocaleString()}`)}"></span>`).join('')}</div>
+            <div class="cov-mleg">${parts.map(([c, n, v]) => `<span title="${escapeAttr(v)}"><i style="background:${c}"></i>${escapeHtml(v)} <b>${total ? Math.round(n / total * 100) : 0}%</b></span>`).join('')}</div></div>`;
+    },
+
+    _renderOverview() {
+        const ov = this._ov || {};
+        const loading = !this._ov;
+        if (ov.error) return `<div class="dim" style="font-size:0.8rem; margin-bottom:20px;"><i class="fa-solid fa-triangle-exclamation"></i> Overview unavailable. Refresh to retry.</div>`;
+        const col = this._ovCol;
+        const fams = ov.families || [];
+        const coll = this._ovColl || {};
+        const total = Number(coll.total_files || 0);
+        const filesUrl = Nav.buildUIUrl(col, ['files']) + this._ovAxisQs('group_axis');
+        const ax = this._ovAxis();
+        // Cluster cards take the axis colour (BinSimScoreTypes), like their badges.
+        const OK = ((window.BinSimScoreTypes || {})[ax === 'overall' ? 'score' : `score_${ax}`] || {}).color || 'var(--success)', INFO = 'var(--info, #3b82f6)', WARN = 'var(--warning, #d97706)';
+        const sk = (n, h = 14) => `<div class="cov-list">${Array.from({ length: n }, (_, i) => `<span class="cdo-sk" style="height:${h}px; width:${92 - (i * 17) % 40}%"></span>`).join('')}</div>`;
+        const none = text => `<div class="dim" style="font-size:0.78rem;">${text}</div>`;
+        const noClusters = none('No file clusters yet. Build them from the Clusters tab.');
+        const hidden = ov.families_hidden ? `<span class="dim" style="font-size:0.72rem;">${Number(ov.families_hidden).toLocaleString()} small or packed not shown</span>` : '';
+        const big = v => (loading ? undefined : v);
+
+        const mapCard = `<div class="cov-card cdo-wide cdo-r1">
+            ${this._ovTitle('fa-solid fa-diagram-project', OK, 'Family map', 'File families: circle area is the number of files, colour is cohesion (green = near-identical files). A dashed circle is a loose cluster that groups several families. Click to open a cluster.', big(ov.families_total))}
+            <div id="cdo-map" class="cdo-map">${loading ? '<span class="cdo-sk cdo-sk-map"></span>' : fams.length ? '' : noClusters}</div>
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-bullseye', OK, 'Clusters', Nav.buildUIUrl(col, ['files', 'clusters']) + this._ovAxisQs())}${hidden}</div>
+        </div>`;
+        const top = fams.slice(0, 12);
+        const max = Math.max(1, ...top.map(f => f.matching || 0));
+        const famCard = `<div class="cov-card cdo-r1">
+            ${this._ovTitle('fa-solid fa-bullseye', OK, 'Families', `The ${top.length} most relevant of ${fams.length} families: size first once a cluster is coherent, so a big family outranks a tight pair. All of them are on the map. A name opens the cluster; the layers icon opens its N-way diff.`)}
+            ${loading ? sk(12, 18) : top.length ? `<div class="cov-list">${top.map(f => this._ovFamRow(f, max)).join('')}</div>` : noClusters}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', OK, 'Files by cluster', filesUrl)}</div>
+        </div>`;
+        const recentCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-clock-rotate-left', INFO, 'Recent files', 'Last files added to this collection.', total)}
+            ${loading ? sk(8) : this._ovFileRows(ov.recent || [])}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', INFO, 'Files', filesUrl)}</div>
+        </div>`;
+        const looseCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-regular fa-circle', WARN, `Rare files <span class="dim" style="font-weight:400; font-size:0.75rem;">${escapeHtml(ax)}</span>`, `Files in no family of ${Number(ov.rare_min_members || 3)}+ files on the ${ax} axis, newest first. Archives are left out. A file can still be in a pair, or in a family on another axis.`, big(ov.unclustered_total))}
+            ${loading ? sk(8) : ov.has_clusters ? this._ovFileRows(ov.rare || []) : noClusters}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-file-code', WARN, 'Files', filesUrl, 'The unclustered files are the last group')}</div>
+        </div>`;
+        const upCard = this._ovUpCard(ov, loading);
+        const day = ms => new Date(+ms).toISOString().slice(0, 10);
+        const days = ov.active_days || 30;
+        const byActivity = sort => this._ovBtn('fa-solid fa-table-list', OK, 'All clusters', `${Nav.buildUIUrl(col, ['files', 'clusters'])}${this._ovAxisQs() || '?'}${this._ovAxisQs() ? '&' : ''}sort_by=${sort}${sort === 'active' && days !== 30 ? `&active_days=${days}` : ''}`, 'The clusters table, sorted the same way');
+        const untimed = Number(ov.families_untimed || 0);
+        const noDates = untimed ? none(`${untimed.toLocaleString()} famil${untimed > 1 ? 'ies have' : 'y has'} no member dates yet: rebuild the clusters or run <code>bsimvis metadata backfill-timeline -c ${escapeHtml(col)}</code>.`) : '';
+        const activeCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-fire', OK, `Most active <span class="dim" style="font-weight:400; font-size:0.75rem;">${Number(days)} d</span>`, `Families with the most members uploaded in the last ${days} days.`)}
+            ${loading ? sk(7, 18) : (ov.active || []).length ? `<div class="cov-list">${ov.active.map(f => this._ovActRow(f, `<b style="color:var(--success)">+${Number(f.new_members).toLocaleString()}</b> <span class="dim">/ ${Number(f.matching || 0).toLocaleString()}</span>`, `New members in ${days} days / files`)).join('')}</div>` : (noDates || (fams.length ? none(`No family grew in the last ${days} days.`) : noClusters))}
+            <div class="cov-foot">${byActivity('active')}</div>
+        </div>`;
+        const seenCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-satellite-dish', OK, 'Active in the wild', 'Families by the last time one of their members was seen in the wild (first_seen / last_seen, when the upload gave them).')}
+            ${loading ? sk(7, 18) : (ov.seen || []).length ? `<div class="cov-list">${ov.seen.map(f => this._ovActRow(f, `<span class="dim">${day(f.last_seen)}</span>`, `Last seen ${day(f.last_seen)}, first seen ${day(f.first_seen)}`)).join('')}</div>` : (noDates || (fams.length ? none('No family member has a first or last seen date.') : noClusters))}
+            <div class="cov-foot">${byActivity('last_seen')}</div>
+        </div>`;
+        const changedCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-clock-rotate-left', OK, 'Recently changed', 'Families by the upload date of their newest member: the last ones to grow.')}
+            ${loading ? sk(7, 18) : (ov.changed || []).length ? `<div class="cov-list">${ov.changed.map(f => this._ovActRow(f, `<span class="dim">${day(f.last_added)}</span>`, `Newest member uploaded on ${day(f.last_added)}, oldest on ${day(f.first_added)}`)).join('')}</div>` : (noDates || noClusters)}
+            <div class="cov-foot">${byActivity('last_added')}</div>
+        </div>`;
+        const marks = ov.bookmarks || [];
+        const markCard = `<div class="cov-card cdo-r2">
+            ${this._ovTitle('fa-solid fa-bookmark', 'var(--accent)', 'Bookmarked clusters', 'File clusters an analyst bookmarked, on every score axis, with their notes. A retired one was changed by a rebuild: open it to see where its files went and copy its notes.', big(ov.bookmarks_total))}
+            ${loading ? sk(7, 18) : marks.length ? `<div class="cov-list">${marks.map(b => this._ovMarkRow(b)).join('')}</div>` : none('No bookmarked cluster. Bookmark one from its page (the bookmark next to its tags).')}
+            <div class="cov-foot">${this._ovBtn('fa-solid fa-table-list', 'var(--accent)', 'All bookmarked', `${Nav.buildUIUrl(col, ['files', 'clusters'])}?cluster_tag=bookmark`, 'The clusters table, bookmarked only')}</div>
+        </div>`;
+        // filetype strings can be long ("ELF 32-bit LSB executable, ARM, ..."): group on the format word.
+        const fmt = {};
+        (ov.filetype || []).forEach(x => { const k = String(x.value).split(/[\s,]/)[0] || 'unknown'; fmt[k] = (fmt[k] || 0) + x.count; });
+        const fmtItems = Object.entries(fmt).map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count);
+        const arch = {};
+        (ov.arch || []).forEach(x => { const k = String(x.value).split(':')[0]; arch[k] = (arch[k] || 0) + x.count; });
+        const archItems = Object.entries(arch).map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count);
+        const tags = (ov.tags || []).slice(0, 10);
+        const mixBody = loading ? sk(6, 16)
+            : (archItems.length || fmtItems.length || tags.length) ? `${this._mixBlock('fa-solid fa-microchip', 'Architecture', archItems, total)}
+            ${this._mixBlock('fa-solid fa-file-code', 'Format', fmtItems, total)}
+            ${tags.length ? `<div><div class="cov-h3"><i class="fa-solid fa-tags"></i>Top tags</div><div class="cov-chips">${tags.map(t => `<span class="cov-chip" style="--c:${escapeAttr(window.TagColor ? TagColor.forTag(t.tag) : 'var(--accent)')}" title="${escapeAttr(t.tag)}">${escapeHtml(t.tag)} <span class="dim">${Number(t.count).toLocaleString()}</span></span>`).join('')}</div></div>` : ''}`
+            : none('No architecture, format or tag indexed yet.');
+        const mixCard = `<div class="cov-card cdo-r1">
+            ${this._ovTitle('fa-solid fa-chart-pie', INFO, 'Mix', 'How the files split by architecture and format, and the tags most of them carry.')}
+            ${mixBody}
+        </div>`;
+        return `${this._ovAxisSeg()}<div class="cdo-grid${loading ? ' cdo-loading' : ''}" aria-busy="${loading}">${mapCard}${famCard}${mixCard}${recentCard}${looseCard}${upCard}<div class="cdo-row3">${markCard}${activeCard}${changedCard}${seenCard}</div></div>`;
+    },
+
+    _OV_CSS: `
+.cdo-bar { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:0.78rem; }
+.cdo-fam { display:grid; grid-template-columns:auto minmax(0,1fr) 64px 22px; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
+.cdo-fam:hover { background:var(--hover); }
+.cdo-act { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:8px; align-items:center; padding:3px 4px; border-radius:5px; font-size:0.8rem; }
+.cdo-act:hover { background:var(--hover); }
+.cdo-nm { display:flex; align-items:center; min-width:0; }
+.cdo-nm > a.fb-link { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.cdo-size { height:6px; border-radius:3px; background:var(--hover); overflow:hidden; }
+.cdo-size i { display:block; height:100%; background:color-mix(in srgb, var(--success) 70%, var(--card-bg)); }
+.cdo-go { color:var(--dim); cursor:pointer; text-align:center; }
+.cdo-go:hover { color:var(--accent); }
+#coll-overview .cov-btn { min-width:0; padding:3px 9px; }
+#coll-overview .cov-foot { align-items:center; }
+.cdo-map { height:320px; display:flex; align-items:center; justify-content:center; }
+.cdo-map > svg { width:100%; height:100%; }
+.cdo-map-n { cursor:pointer; }
+.cdo-map-n circle { fill:color-mix(in srgb, var(--c) 22%, var(--card-bg)); stroke:color-mix(in srgb, var(--c) 70%, transparent); stroke-width:1.2; }
+.cdo-map-n:hover circle { fill:color-mix(in srgb, var(--c) 40%, var(--card-bg)); stroke:var(--c); }
+.cdo-map-t { fill:var(--text); font-size:9px; pointer-events:none; }
+.cdo-map-grp { cursor:pointer; }
+.cdo-map-grp circle { fill:color-mix(in srgb, var(--dim) 6%, transparent); stroke:var(--dim); stroke-width:1; stroke-dasharray:4 3; }
+.cdo-map-grp:hover circle { stroke:var(--text); }
+.cdo-map-g { fill:var(--dim); font-size:10px; pointer-events:none; }
+.cdo-area { display:block; width:100%; height:120px; }
+.cdo-area .cdo-ln { fill:none; stroke-width:2; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
+.cdo-area .cdo-hv { fill:transparent; }
+.cdo-area .cdo-hv:hover { fill:color-mix(in srgb, var(--text) 7%, transparent); }
+.cdo-axis { display:flex; justify-content:space-between; font-size:0.68rem; color:var(--dim); }
+.cdo-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:20px; }
+.cdo-wide { grid-column:span 2; }
+.cdo-row3 { grid-column:1 / -1; display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:12px; }
+.cdo-r1 { min-height:420px; }
+.cdo-r2 { min-height:300px; }
+.cdo-sk { display:block; border-radius:4px; margin:3px 0; background:linear-gradient(90deg, var(--hover) 25%, color-mix(in srgb, var(--hover) 45%, var(--card-bg)) 50%, var(--hover) 75%); background-size:200% 100%; animation:cdo-sh 1.3s ease-in-out infinite; }
+.cdo-sk-map { width:260px; height:260px; border-radius:50%; }
+@keyframes cdo-sh { from { background-position:100% 0; } to { background-position:-100% 0; } }
+@media (prefers-reduced-motion: reduce) { .cdo-sk { animation:none; } }
+@media (max-width:1300px) { .cdo-grid { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+@media (max-width:700px) { .cdo-grid { grid-template-columns:minmax(0,1fr); } .cdo-wide { grid-column:auto; } .cdo-r1, .cdo-r2 { min-height:0; } }
+`,
 
     _statusBadge(status) {
         if (status === 'current') return `<span style="background:rgba(16,185,129,0.15); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:4px 12px; border-radius:20px; font-size:0.8rem; font-weight:700; display:inline-flex; align-items:center; gap:6px;"><i class="fa-solid fa-circle-check"></i> Current</span>`;
@@ -153,8 +528,8 @@ window.CollectionDetailView = {
                     <span>These are locked on the first similarity build. Changing them does not rescore existing edges — rebuild the collection to apply.</span>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
-                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-floppy-disk"></i> Save</button>
-                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:7px 16px; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:7px;"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
+                    <button onclick="window.collectionDetailSaveParams(${escapeAttr(jsString(name))}, this)" class="ui-button hdr-btn primary"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                    <button onclick="window.collectionDetailRebuildSim(${escapeAttr(jsString(name))}, this)" class="ui-button hdr-btn"><i class="fa-solid fa-rotate-right"></i> Rebuild Similarity</button>
                 </div>
             </div>
         </div>`;
@@ -165,6 +540,8 @@ window.CollectionDetailView = {
         const files = coll.total_files !== undefined ? coll.total_files : 0;
         const funcs = coll.total_functions !== undefined ? coll.total_functions : 0;
         const batches = coll.total_batches !== undefined ? coll.total_batches : 0;
+        const counts = coll.counts || {};
+        const num = v => (v === undefined ? '—' : Number(v).toLocaleString());
         const updated = coll.last_updated ? (typeof window.formatDate === 'function' ? formatDate(toEpochMs(coll.last_updated)) : new Date(toEpochMs(coll.last_updated)).toLocaleString()) : '—';
 
         const filesUrl = `/collections/${encodeURIComponent(name)}/files`;
@@ -214,12 +591,14 @@ window.CollectionDetailView = {
                     </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                    <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/jobs')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-server"></i> View Jobs</button>
-                    <button onclick="Nav.openPath('/collections/${encodeURIComponent(name)}/upload')" style="background:rgba(59,130,246,0.12); border:1px solid rgba(59,130,246,0.35); color:#60a5fa; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-upload"></i> Upload Binaries</button>
-                    <button onclick="openFileAnalysisModal({ collection: ${escapeAttr(jsString(name))} })" style="background:rgba(174,129,255,0.12); border:1px solid rgba(174,129,255,0.35); color:#ae81ff; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-robot"></i> Analyze Collection</button>
-                    <button onclick="window.collectionDetailCluster(${escapeAttr(jsString(name))}, this)" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-circle-nodes"></i> Cluster</button>
-                    <button onclick="window.collectionDetailClean(${escapeAttr(jsString(name))}, this)" style="background:rgba(168,85,247,0.12); border:1px solid rgba(168,85,247,0.35); color:#c084fc; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-broom"></i> Clean</button>
-                    <button onclick="window.collectionDetailDelete(${escapeAttr(jsString(name))}, this)" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:8px; height:36px; box-sizing:border-box; white-space:nowrap; flex-shrink:0;"><i class="fa-solid fa-trash-can"></i> Delete</button>
+                    ${UI.Button.render({ className: 'hdr-btn primary', icon: 'fa-solid fa-upload', label: 'Upload', onClick: `Nav.openPath('/collections/${encodeURIComponent(name)}/upload')` })}
+                    ${UI.Button.render({ className: 'hdr-btn', icon: 'fa-solid fa-robot', label: 'Analyze', onClick: `openFileAnalysisModal({ collection: ${jsString(name)} })` })}
+                    ${UI.MoreMenu.render([
+                        { label: 'Maintenance…', icon: 'fa-solid fa-screwdriver-wrench', onClick: `window.openMaintenanceWindow(${jsString(name)})` },
+                        { label: 'Clean', icon: 'fa-solid fa-broom', onClick: `window.collectionDetailClean(${jsString(name)}, this)` },
+                        '-',
+                        { label: 'Delete collection', icon: 'fa-solid fa-trash-can', danger: true, onClick: `window.collectionDetailDelete(${jsString(name)}, this)` },
+                    ])}
                 </div>
             </div>
 
@@ -232,7 +611,8 @@ window.CollectionDetailView = {
                 </div>
             </div>
 
-            <button class="maintenance-launch" onclick="window.openMaintenanceWindow(${escapeAttr(jsString(name))})"><i class="fa-solid fa-screwdriver-wrench"></i> Open maintenance</button>
+            <div id="coll-overview">${this._ovSkeleton(name, coll)}</div>
+
             <!-- MAIN GRID -->
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:start;">
 
@@ -247,7 +627,7 @@ window.CollectionDetailView = {
                                 <thead>
                                     <tr style="border-bottom:1px solid var(--border); background: var(--hover); color:var(--dim);">
                                         <th style="padding:10px 15px;">Entity Type</th>
-                                        <th style="padding:10px 15px; text-align:right;">Count / Actions</th>
+                                        <th style="padding:10px 15px; text-align:right;">Count</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -260,24 +640,32 @@ window.CollectionDetailView = {
                                         <td style="padding:10px 15px; text-align:right;"><a href="${filesUrl}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${files}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>Similarities</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.file_sims)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Clusters</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.file_clusters)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code" style="margin-right:8px; width:16px;"></i>Functions</td>
                                         <td style="padding:10px 15px; text-align:right;"><a href="${funcsUrl}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${funcs}</a></td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-fingerprint" style="margin-right:8px; width:16px;"></i>Features</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/features" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.features)}</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-tags" style="margin-right:8px; width:16px;"></i>Tags</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/tags" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">Manage</a></td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
                                         <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-code-compare" style="margin-right:8px; width:16px;"></i>Function Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Similarities</a></td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Clusters</a></td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid var(--border); transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-right-left" style="margin-right:8px; width:16px;"></i>File Similarities</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Similarities</a></td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/similarities" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_sims)}</a></td>
                                     </tr>
                                     <tr style="transition:background 0.2s;" onmouseover="this.style.background='var(--border)'" onmouseout="this.style.background='transparent'">
-                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>File Clusters</td>
-                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/files/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">View Clusters</a></td>
+                                        <td style="padding:10px 15px; font-weight:600; color:var(--dim);"><i class="fa-solid fa-bullseye" style="margin-right:8px; width:16px;"></i>Function Clusters</td>
+                                        <td style="padding:10px 15px; text-align:right;"><a href="/collections/${encodeURIComponent(name)}/functions/clusters" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); font-weight:700; text-decoration:none;">${num(counts.function_clusters)}</a></td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -382,27 +770,6 @@ window.CollectionDetailView = {
                     No active jobs running for this collection.
                 </div>
                 `}`;
-    }
-};
-
-window.collectionDetailCluster = async function(collName, btn) {
-    if (!confirm(`Rebuild function clusters for "${collName}"? Binary similarities and binary clusters are not rebuilt.`)) return;
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
-    try {
-        const res = await fetch(`/api/maintenance`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ collection: collName, operation: "rebuild", targets: ["function_cluster"] })
-        });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.error || `HTTP ${res.status}`); }
-        const data = await res.json();
-        alert(`Collection re-analysis pipeline enqueued! Job ID: ${data.job_id}`);
-        if (typeof refreshData === 'function') refreshData(false, true);
-        else Nav.openPath(window.location.pathname);
-    } catch(e) {
-        alert(`Failed to enqueue re-analysis: ${e.message}`);
-    } finally {
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-circle-nodes"></i> Cluster'; }
     }
 };
 

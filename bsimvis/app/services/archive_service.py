@@ -89,6 +89,37 @@ def _extract_tar(raw_bytes):
     return out
 
 
+def is_protected_zip(raw_bytes, password=DEFAULT_PASSWORD):
+    """True if raw_bytes is a zip whose every member is encrypted and opens
+    with `password` -- safe to hand out as-is."""
+    if raw_bytes[:4] != b"PK\x03\x04":
+        return False
+    try:
+        with zipfile.AESZipFile(io.BytesIO(raw_bytes)) as zf:
+            files = [i for i in zf.infolist() if not i.is_dir()]
+            if not files or not all(i.flag_bits & 0x1 for i in files):
+                return False
+            zf.setpassword(password.encode())
+            zf.read(files[0])
+            return True
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, ValueError):
+        return False
+
+
+def protected_zip(raw_bytes, member_name, password=DEFAULT_PASSWORD):
+    """AES-encrypted zip holding one member, or raw_bytes unchanged when it
+    already is a zip protected by `password`."""
+    if is_protected_zip(raw_bytes, password):
+        return raw_bytes
+    buf = io.BytesIO()
+    with zipfile.AESZipFile(
+        buf, "w", compression=zipfile.ZIP_DEFLATED, encryption=zipfile.WZ_AES
+    ) as zf:
+        zf.setpassword(password.encode())
+        zf.writestr(member_name, raw_bytes)
+    return buf.getvalue()
+
+
 def demo():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
@@ -117,6 +148,20 @@ def demo():
         pass
     else:
         raise AssertionError("bad zip should raise ArchiveError")
+
+    sample = b"\x7fELF sample"
+    z = protected_zip(sample, "s.bin")
+    assert is_protected_zip(z)
+    assert extract(z) == [("s.bin", sample)]
+    assert not is_protected_zip(z, "other")
+    assert protected_zip(z, "x") is z  # already protected: passed through
+    plain = io.BytesIO()
+    with zipfile.ZipFile(plain, "w") as zf:
+        zf.writestr("p.bin", sample)
+    assert not is_protected_zip(plain.getvalue())  # plain zip gets wrapped
+    assert extract(protected_zip(plain.getvalue(), "p.zip")) == [
+        ("p.zip", plain.getvalue())
+    ]
 
     print("ok")
 

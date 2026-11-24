@@ -174,7 +174,7 @@ class WindowManager {
     snapTo(win, side) {
         if (win.isDiminished) return;
 
-        const sidebarW = document.body.classList.contains('sidebar-collapsed') ? 70 : 240;
+        const sidebarW = 0;
         const trayH = document.getElementById('window-tray').offsetHeight || 40;
         const screenW = window.innerWidth;
         const screenH = window.innerHeight;

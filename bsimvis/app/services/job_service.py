@@ -42,6 +42,8 @@ class JobType(Enum):
     CLEAN_COLLECTION = "clean_collection"
     PROPAGATE_METADATA = "propagate_metadata"
     BACKFILL_IMPORT_TAGS = "backfill_import_tags"
+    BACKFILL_ENTRYPOINTS = "backfill_entrypoints"
+    BACKFILL_CLUSTER_TIMELINE = "backfill_cluster_timeline"
     BUILD_POOL_SIM = "build_pool_sim"
     CLUSTER_POOL = "cluster_pool"
     INIT_POOL_BUILD = "init_pool_build"
@@ -55,6 +57,8 @@ class JobType(Enum):
     SEARCH_CLASSIFY = "search_classify"
     SCAN = "scan"
     SCAN_CONTAINER = "scan_container"
+    NWAY_BUILD = "nway_build"
+    YARA_RULE_RUN = "yara_rule_run"
 
 
 # Lease-based claims. A worker refreshes its lease while it holds a job; if the
@@ -1340,6 +1344,16 @@ class JobService:
     # ------------------------------------------------------------------
     # Task splicing
     # ------------------------------------------------------------------
+
+    def splice_group(self, parent_id, after_id, tasks):
+        """Inserts a parallel group of `tasks` into a pipeline after `after_id`.
+
+        The group starts when the pipeline reaches it -- right after `after_id`
+        completes -- and the pipeline moves on once every task in it is done.
+        """
+        group_id = self.create_group(tasks, parent_id=parent_id, enqueue=False)
+        self.splice_tasks(parent_id, after_id, [group_id])
+        return group_id
 
     def splice_tasks(self, parent_id, after_id, new_tids, retries=10):
         """Inserts task ids into a parent's task_ids after `after_id`, atomically.

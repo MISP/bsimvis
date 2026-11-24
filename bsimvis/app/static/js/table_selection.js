@@ -181,7 +181,9 @@ class TableSelection {
         const not = SECONDARY.map(cls => `:not(.${cls})`).join('');
         const selector = `a[href]${not}, [onclick]${not}`;
         const cell = this.cellAt(r, c);
-        const inCell = cell ? Array.from(cell.querySelectorAll(selector)) : [];
+        // The hidden overflow tag list has inline onclick handlers that stop propagation, so it
+        // would eat the click of any cell with more tags than fit.
+        const inCell = cell ? Array.from(cell.querySelectorAll(selector)).filter(el => !el.closest('.tag-overflow-dropdown')) : [];
         if (inCell.length) {
             // A pair row stacks both sides in one cell, so the first link in the
             // DOM is only right half the time. Activate the one the click landed
@@ -258,6 +260,8 @@ class TableSelection {
         if (!td) return null;
         const tr = td.parentElement;
         if (!tr || tr.parentElement !== this.tbody) return null;
+        // Rows marked data-ts-skip are layout (spacers between cards), not data.
+        if (tr.hasAttribute('data-ts-skip')) return null;
 
         const rowIndex = Array.from(this.tbody.children).indexOf(tr);
         const colIndex = Array.from(tr.children).indexOf(td);
@@ -496,10 +500,16 @@ class TableSelection {
         let newR = r;
         let newC = c;
 
+        // Step over rows a collapsed card/fold hides (display:none).
+        const vstep = d => {
+            let i = r + d;
+            while (i >= 0 && i < rows && !this.tbody.children[i].getClientRects().length) i += d;
+            return i >= 0 && i < rows ? i : r;
+        };
         if (e.key === 'ArrowUp') {
-            newR = Math.max(0, r - 1);
+            newR = vstep(-1);
         } else if (e.key === 'ArrowDown') {
-            newR = Math.min(rows - 1, r + 1);
+            newR = vstep(1);
         } else if (e.key === 'ArrowLeft') {
             newC = Math.max(0, c - 1);
         } else if (e.key === 'ArrowRight') {
@@ -541,6 +551,7 @@ class TableSelection {
 
         for (let r = startR; r <= endR; r++) {
             const row = this.tbody.children[r];
+            if (row && row.hasAttribute('data-ts-skip')) continue;
             if (row && row.dataset.id) {
                 this.selectedIds.add(row.dataset.id);
             }
@@ -553,6 +564,13 @@ class TableSelection {
                 if (!cell) continue;
                 cell.querySelectorAll('[data-etype][data-eid]').forEach(el => {
                     this.selectedEntities.add(`${el.dataset.etype} ${el.dataset.eid}`);
+                });
+                // File name / md5 cells (e.g. in function search) are files too.
+                cell.querySelectorAll('.entity-md5[data-entity-data], .entity-filename[data-entity-data]').forEach(el => {
+                    try {
+                        const fid = JSON.parse(el.dataset.entityData).fileId;
+                        if (fid) this.selectedEntities.add('file\0' + fid);
+                    } catch (e) {}
                 });
             }
         }
@@ -663,7 +681,7 @@ class TableSelection {
         // method already measured above.
         const selStats = this.selStatsEl();
         if (selStats) {
-            const rows = maxR - minR + 1;
+            const rows = new Set([...this.selectedCells].map(k => k.split(':')[0])).size;
             const cols = maxC - minC + 1;
             const cells = this.selectedCells.size;
             selStats.style.display = 'inline-block';

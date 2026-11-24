@@ -6,12 +6,21 @@ import heapq
 import numpy as np
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services import sim_edges
+from bsimvis.app.services import cluster_history
 from bsimvis.app.services.cluster_utils import (
+    write_tree_links,
+    clear_tree_links,
     cluster_summary,
     collect_member_values,
     set_tag_distribution_score,
     default_bin_cluster_name,
+    ClusterNameKeeper,
+    BinClusterNamer,
+    bin_cluster_name_fields,
+    refresh_near_names,
+    _near_keys,
     function_count_stats,
+    timeline_stats,
     inferred_tag_values,
     resolve_hierarchical_inferred_tags,
 )
@@ -71,6 +80,13 @@ def _store_inferred_tags(pipe, collection, member_metas_by_id, resolved):
             pipe.execute()
 
 
+def pick_medoid(centrality):
+    """Member id with the highest centrality, ties broken by id; None if empty."""
+    if not centrality:
+        return None
+    return min(centrality, key=lambda m: (-centrality[m], m))
+
+
 class BinClusterService:
     # Pair reads the incremental path spends on cohesion, split over the
     # nodes one upload dirties. Measured against kvrocks (~27k pipelined
@@ -122,6 +138,22 @@ class BinClusterService:
             for u, v, dist in zip(edge_set.src, edge_set.dst, edge_set.dist)
         }
         return [(u, v, raw_sims[(min(u, v), max(u, v))]) for u, v, _ in mst]
+
+    @staticmethod
+    def _bottlenecks(tree_rows, raw_mst):
+        """{tree node: weakest raw MST edge inside it}.
+
+        tree_rows[2i] / [2i+1] are the two child rows of raw_mst[i]'s merge
+        (see cluster_common.stabilise), and merges run strongest first, so
+        both children are already scored when their parent is.
+        """
+        out = {}
+        for i, (_u, _v, sim) in enumerate(raw_mst):
+            a, b = tree_rows[2 * i], tree_rows[2 * i + 1]
+            out[a["parent"]] = min(
+                sim, out.get(a["child"], 1.0), out.get(b["child"], 1.0)
+            )
+        return out
 
     @staticmethod
     def _hierarchical_algo_ns(algo, axis, node_type, use_snn):
@@ -337,8 +369,21 @@ class BinClusterService:
             import json
 
             old_meta = json.loads(old_meta_raw) if old_meta_raw else {}
+            cluster_history.snapshot(
+                r,
+                collection,
+                algo_ns,
+                old_meta,
+                [
+                    m.decode() if isinstance(m, bytes) else m
+                    for m in r.smembers(
+                        f"{collection}:bin_cluster:{algo_ns}:{stale}:members"
+                    )
+                ],
+            )
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:meta")
             pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:direct_members")
+            pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{stale}:centrality")
             pipe.srem(f"{collection}:bin_cluster:list:{algo_ns}", str(stale))
             pipe.delete(f"{collection}:idx:file:bin_cluster_id:{str(stale).lower()}")
             old_name = old_meta.get("cluster_name")
@@ -572,7 +617,30 @@ class BinClusterService:
         # "{collection}:file:{md5}"; stored bare, downstream id parsing
         # (routes/bin_cluster.py, the context-menu frontend) mistakes the
         # md5 itself for a collection-qualified id.
+        axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
         prefix = f"{collection}:file:"
+        keeper = ClusterNameKeeper(self.r, collection, "bin", algo_ns, cluster_members)
+        labels = list(cluster_members)
+        label_to_uuid = {
+            label: (u.decode() if isinstance(u, bytes) else u)
+            for label, u in zip(labels, r.hmget(uuid_key, labels) if labels else [])
+            if u
+        }
+        cluster_history.carry_uuids(
+            r,
+            collection,
+            algo_ns,
+            {
+                label: [m if m.startswith(prefix) else f"{prefix}{m}" for m in ms]
+                for label, ms in cluster_members.items()
+            },
+            label_to_uuid,
+            log=(
+                (lambda m: job_service.add_log(job_id, m))
+                if job_service and job_id
+                else logging.info
+            ),
+        )
         for label, members in cluster_members.items():
             members = [m if m.startswith(prefix) else f"{prefix}{m}" for m in members]
             pipe.sadd(f"{collection}:bin_cluster:{algo_ns}:{label}:members", *members)
@@ -581,13 +649,8 @@ class BinClusterService:
             )
             pipe.sadd(f"{collection}:bin_cluster:list:{algo_ns}", str(label))
 
-            # Ensure UUID
-            c_uuid = r.hget(uuid_key, label)
-            if not c_uuid:
-                c_uuid = uuid.uuid4().hex[:12]
-                r.hset(uuid_key, label, c_uuid)
-            else:
-                c_uuid = c_uuid.decode() if isinstance(c_uuid, bytes) else c_uuid
+            c_uuid = label_to_uuid[label]
+            r.hset(uuid_key, label, c_uuid)
 
             # Build Metadata
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
@@ -603,6 +666,7 @@ class BinClusterService:
                 f"Binary Cluster {label}",
                 tag_distribution=summary.get("tag_distribution"),
             )
+            default_name, is_custom = keeper.pick(label, default_name)
 
             filename_freq = summary["filename_distribution"]
             md5_freq = summary["md5_distribution"]
@@ -612,8 +676,19 @@ class BinClusterService:
             # chain A-B-C with A~C never compared is a valid cluster at any
             # threshold. So this has to be measured, not assumed; the 1.0 that
             # used to sit here reported every cluster as perfectly cohesive.
+            centrality = {}
             cohesion_score, cohesion_exact = self._node_cohesion(
-                label, members, sim_prefix, score_key, min_sim, pair_budget
+                label,
+                members,
+                sim_prefix,
+                score_key,
+                min_sim,
+                pair_budget,
+                centrality_out=centrality,
+            )
+
+            cohesion_axes, cohesion_axes_exact = self._secondary_cohesion(
+                label, members, sim_prefix, axis_keys, min_sim, pair_budget
             )
 
             set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
@@ -640,8 +715,13 @@ class BinClusterService:
                 "snippet": snippet,
                 "cluster_uuid": c_uuid,
                 "cluster_name": default_name,
+                "is_custom_name": is_custom,
                 "cohesion_score": float(cohesion_score),
                 "cohesion_exact": bool(cohesion_exact),
+                "medoid": pick_medoid(centrality),
+                "centrality_exact": bool(cohesion_exact),
+                "cohesion_axes": cohesion_axes,
+                "cohesion_axes_exact": bool(cohesion_axes_exact),
                 "inferred_tags": gated_inferred_tags,
                 "avg_stability": 1.0,
                 "cluster_stability": 1.0,
@@ -657,12 +737,14 @@ class BinClusterService:
                 ],
                 "batch_uuid_distribution": summary["batch_uuid_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
+                "timeline": timeline_stats(member_metas),
                 "created_at": int(time.time() * 1000),
             }
 
             pipe.set(
                 f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta)
             )
+            self._write_centrality(pipe, collection, algo_ns, label, centrality)
 
             # Indexes
             bucket_key = (
@@ -751,8 +833,58 @@ class BinClusterService:
 
         return birth_lambdas, death_lambdas
 
-    def _node_cohesion(self, label, members, prefix, score_key, min_sim, max_pairs):
+    _SECONDARY_AXES = ("overall", "code", "library", "content")
+
+    def _secondary_axis_keys(self, collection, algo, sim_score_key):
+        """{axis: score zset key} for every non-primary axis that has pairs."""
+        keys = {}
+        for ax in self._SECONDARY_AXES:
+            suffix = "" if ax == "overall" else f"_{ax}"
+            key = f"{collection}:bin_sim:score{suffix}:{algo}"
+            if key != sim_score_key and self.r.exists(key):
+                keys[ax] = key
+        return keys
+
+    def _secondary_cohesion(self, label, members, prefix, axis_keys, min_sim, budget):
+        """Cohesion of the same members on each secondary axis.
+
+        Returns ({axis: score}, exact). The pair budget is split across axes
+        so the total reads stay flat.
+        """
+        if not axis_keys:
+            return {}, True
+        per_axis = max(self._COHESION_MIN_PAIRS, budget // len(axis_keys))
+        out, exact = {}, True
+        for ax, key in axis_keys.items():
+            out[ax], ex = self._node_cohesion(
+                label, members, prefix, key, min_sim, per_axis
+            )
+            exact = exact and ex
+        return out, exact
+
+    @staticmethod
+    def _write_centrality(pipe, collection, algo_ns, label, centrality):
+        """Replace the node's member -> centrality hash (read by the member list)."""
+        key = f"{collection}:bin_cluster:{algo_ns}:{label}:centrality"
+        pipe.delete(key)
+        if centrality:
+            pipe.hset(key, mapping={m: round(v, 4) for m, v in centrality.items()})
+
+    def _node_cohesion(
+        self,
+        label,
+        members,
+        prefix,
+        score_key,
+        min_sim,
+        max_pairs,
+        centrality_out=None,
+    ):
         """Mean similarity over the pairs inside one cluster.
+
+        `centrality_out`, when given, receives {member: mean score to the other
+        members} off the very pairs read here, so it costs no extra reads and
+        follows the same sample as the cohesion number.
 
         Cohesion is defined over all n(n-1)/2 pairs, with an unstored pair
         counting as 0 -- the same convention the full rebuild gets from its
@@ -776,14 +908,16 @@ class BinClusterService:
 
         n = len(members)
         if n <= 1:
+            if centrality_out is not None:
+                centrality_out.update({m: 1.0 for m in members})
             return 1.0, True
 
         # The pair key's side is `md5` in a collection but `coll:md5` in a
         # pool, both ordered as (coll, md5) tuples by their writers.
-        md5s = sorted(
-            (m.rsplit(":file:", 1)[-1] for m in members),
-            key=lambda s: tuple(s.split(":")),
+        order = sorted(
+            members, key=lambda m: tuple(m.rsplit(":file:", 1)[-1].split(":"))
         )
+        md5s = [m.rsplit(":file:", 1)[-1] for m in order]
         total_pairs = n * (n - 1) // 2
         exact = total_pairs <= max_pairs
         if exact:
@@ -804,14 +938,23 @@ class BinClusterService:
         # ZSCORE per pair, no second probe for the reversed spelling.
         r = self.r
         total = 0.0
+        sums, counts = [0.0] * n, [0] * n
         for start in range(0, len(pairs), 1000):
             chunk = pairs[start : start + 1000]
             pipe = r.pipeline(transaction=False)
             for i, j in chunk:
                 pipe.zscore(score_key, f"{prefix}{md5s[i]}::{md5s[j]}")
-            for score in pipe.execute():
+            for (i, j), score in zip(chunk, pipe.execute()):
+                counts[i] += 1
+                counts[j] += 1
                 if score is not None and float(score) >= min_sim:
                     total += float(score)
+                    sums[i] += float(score)
+                    sums[j] += float(score)
+        if centrality_out is not None:
+            centrality_out.update(
+                {m: sums[k] / counts[k] for k, m in enumerate(order) if counts[k]}
+            )
         return total / len(pairs), exact
 
     def _incremental_cluster_hierarchical(
@@ -972,7 +1115,8 @@ class BinClusterService:
                     node_meta[c] = json.loads(raw) if raw else {}
 
             cohesion = {
-                c: meta.get("cohesion_score", 1.0) for c, meta in node_meta.items()
+                c: meta.get("cohesion_mean", meta.get("cohesion_score", 1.0))
+                for c, meta in node_meta.items()
             }
             # Every dirty node is recomputed, and `dirty` holds the whole
             # root-path of every new leaf, so the node count grows with the
@@ -980,6 +1124,7 @@ class BinClusterService:
             # read budget over them keeps an upload's cost flat instead of
             # letting it track corpus size.
             cohesion_exact = {}
+            centrality = {}
             budget = max(
                 self._COHESION_MIN_PAIRS,
                 min(
@@ -988,15 +1133,22 @@ class BinClusterService:
                 ),
             )
             for c in dirty:
+                centrality[c] = {}
                 cohesion[c], cohesion_exact[c] = self._node_cohesion(
-                    c, node_members[c], prefix, sim_score_key, min_sim, budget
+                    c,
+                    node_members[c],
+                    prefix,
+                    sim_score_key,
+                    min_sim,
+                    budget,
+                    centrality_out=centrality[c],
                 )
 
-            uuids = {
-                c: node_meta.get(c, {}).get("cluster_uuid") or uuid.uuid4().hex[:12]
-                for c in node_members
-            }
+            # New nodes get a uuid in _persist (cluster_history.carry_uuids):
+            # an old one back when their member set is unchanged.
+            uuids = {c: node_meta.get(c, {}).get("cluster_uuid") for c in node_members}
             birth_lambdas, _ = self._tree_lambdas(tree_df)
+            bottlenecks = self._bottlenecks(tree_rows, state["mst"])
             results.append(
                 (
                     node_type,
@@ -1013,6 +1165,8 @@ class BinClusterService:
                     affected_fids,
                     retired,
                     algo_ns,
+                    centrality,
+                    bottlenecks,
                 )
             )
 
@@ -1034,6 +1188,8 @@ class BinClusterService:
             affected_fids,
             retired,
             algo_ns,
+            centrality,
+            bottlenecks,
         ) in results:
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
@@ -1053,6 +1209,8 @@ class BinClusterService:
                 label_to_uuid=uuids,
                 cohesion_by_label=cohesion,
                 cohesion_exact_by_label=cohesion_exact,
+                centrality_by_label=centrality,
+                bottleneck_by_label=bottlenecks,
                 only_nodes=dirty,
                 only_fids=affected_fids,
                 retired_nodes=retired,
@@ -1188,6 +1346,7 @@ class BinClusterService:
                 job_service.add_log(job_id, msg)
 
             birth_lambdas, _ = self._tree_lambdas(tree_df)
+            bottlenecks = self._bottlenecks(tree_rows, hier_state["mst"])
 
             persisted = self._persist_hierarchical_binary_clusters(
                 collection,
@@ -1206,6 +1365,7 @@ class BinClusterService:
                 node_type=node_type,
                 algo=algo,
                 sim_score_key=sim_score_key,
+                bottleneck_by_label=bottlenecks,
             )
             if persisted is False:
                 return False
@@ -1597,6 +1757,8 @@ class BinClusterService:
         label_to_uuid=None,
         cohesion_by_label=None,
         cohesion_exact_by_label=None,
+        centrality_by_label=None,
+        bottleneck_by_label=None,
         only_nodes=None,
         only_fids=None,
         retired_nodes=(),
@@ -1634,13 +1796,13 @@ class BinClusterService:
         )
 
         label_key = (lambda label: f"c{label}") if node_type == "container" else str
+        axis_keys = self._secondary_axis_keys(collection, algo, sim_score_key)
 
         # 4. Extract Condensed Tree for UI
         tree_json = tree_df.to_json(orient="records")
         tree_key = f"{collection}:bin_cluster:tree:{algo_ns}"
         r.set(tree_key, tree_json)
 
-        cluster_tree_key = f"{collection}:bin_cluster:tree_links:{algo_ns}"
         tree_links = []
         for row in tree_df.itertuples(index=False):
             if int(row.child_size) > 1:
@@ -1652,7 +1814,7 @@ class BinClusterService:
                         "size": int(row.child_size),
                     }
                 )
-        r.set(cluster_tree_key, json.dumps(tree_links))
+        write_tree_links(r, collection, "bin_cluster", algo_ns, tree_links)
 
         logging.info("[*] Extracting hierarchical clusters from tree...")
         if job_service and job_id:
@@ -1679,8 +1841,9 @@ class BinClusterService:
             else set(only_nodes) & set(cluster_members)
         )
 
-        if label_to_uuid is None:
-            label_to_uuid = {c: uuid.uuid4().hex[:12] for c in cluster_members}
+        label_to_uuid = dict(label_to_uuid or {})
+        if only_nodes is None:  # a full build that skipped CLEAR_BIN_CLUSTER
+            self._snapshot_clusters(collection, algo_ns)
 
         # 5. Calculate Stability
         stabilities = {}
@@ -1741,6 +1904,8 @@ class BinClusterService:
                     retired_member_ids.update(members)
                 raw = r.get(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
                 old_meta = json.loads(raw) if raw else {}
+                if c in retired_nodes:
+                    cluster_history.snapshot(r, collection, algo_ns, old_meta, members)
                 for member in members:
                     if "bin_cluster_id" in file_tag_fields:
                         _unindex_tag(
@@ -1784,8 +1949,30 @@ class BinClusterService:
                         pipe.execute()
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:members")
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:direct_members")
+                pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:centrality")
                 pipe.delete(f"{collection}:bin_cluster:{algo_ns}:{c}:meta")
             pipe.execute()
+
+        cluster_history.carry_uuids(
+            r,
+            collection,
+            algo_ns,
+            cluster_members,
+            label_to_uuid,
+            log=(
+                (lambda m: job_service.add_log(job_id, m))
+                if job_service and job_id
+                else logging.info
+            ),
+        )
+        # A kept uuid usually sits on a new cluster id: refresh the uuid -> cid
+        # lookup now instead of leaving it to resolve_cluster_id_by_uuid's
+        # throttled rescan (an old link would answer "no cluster" meanwhile).
+        if label_to_uuid:
+            r.hset(
+                f"{collection}:bin_cluster:uuid2cid:{algo_ns}",
+                mapping={u: str(c) for c, u in label_to_uuid.items()},
+            )
 
         for c in write_nodes:
             members = cluster_members[c]
@@ -1914,6 +2101,33 @@ class BinClusterService:
         # after this loop, once every touched cluster's gate result is known.
         gated_by_label = {}
 
+        keeper = ClusterNameKeeper(
+            self.r,
+            collection,
+            "bin",
+            algo_ns,
+            cluster_members,
+            stable_ids=only_nodes is not None,
+        )
+        # The namer reads a node's parent: the next cluster up any member's chain.
+        # In an incremental run the parent is written too (dirty = root path).
+        parent_of = {}
+        for chain in leaf_to_clusters.values():
+            for c, p in zip(chain, chain[1:]):
+                parent_of.setdefault(c, p)
+        namer = BinClusterNamer(m for m in all_member_meta.values() if m)
+        known_metas = {}
+
+        def metas_of(c):  # same list object per node: the namer memoises by it
+            if c not in known_metas:
+                known_metas[c] = [
+                    all_member_meta[f]
+                    for f in cluster_members.get(c, ())
+                    if all_member_meta.get(f)
+                ]
+            return known_metas[c]
+
+        named_labels = set()
         for idx, label in enumerate(write_nodes):
             members = cluster_members[label]
             member_metas = [all_member_meta.get(file_id, {}) for file_id in members]
@@ -1922,13 +2136,21 @@ class BinClusterService:
                 collect_member_values(member_metas)
             )
 
-            default_name = default_bin_cluster_name(
-                names_list,
-                avtype_list,
-                yara_list,
-                f"Binary Cluster {label}",
-                tag_distribution=summary.get("tag_distribution"),
+            name_fields = bin_cluster_name_fields(
+                namer,
+                metas_of(label),
+                metas_of(parent_of[label]) if label in parent_of else None,
+                summary.get("tag_distribution"),
+                default_bin_cluster_name(
+                    names_list, avtype_list, yara_list, f"Binary Cluster {label}"
+                ),
             )
+            default_name, is_custom = keeper.pick(label, name_fields["cluster_name"])
+            if is_custom:
+                named_labels.add(label)
+                name_fields.update(
+                    cluster_name=default_name, name_source="analyst", name_basis=[]
+                )
 
             filename_freq = summary["filename_distribution"]
             md5_freq = summary["md5_distribution"]
@@ -1937,23 +2159,44 @@ class BinClusterService:
             # full rebuilds use the complete edge-set adjacency, which is
             # always exact.
             cohesion_exact = True
+            centrality = {}
             if cohesion_by_label is not None:
                 cohesion_score = cohesion_by_label.get(label, 1.0)
                 if cohesion_exact_by_label is not None:
                     cohesion_exact = cohesion_exact_by_label.get(label, True)
+                centrality = (centrality_by_label or {}).get(label) or {}
             elif len(members) > 1:
                 member_indices = [id_to_idx[file_id] for file_id in members]
                 n_members = len(members)
 
                 total_sim = adj_sim.cohesion_sum(member_indices)
                 cohesion_score = total_sim / (n_members * (n_members - 1) / 2.0)
+                centrality = {
+                    m: v / (n_members - 1)
+                    for m, v in zip(members, adj_sim.member_sums(member_indices))
+                }
             else:
                 cohesion_score = 1.0
+                centrality = {m: 1.0 for m in members}
+            cohesion_mean = cohesion_score
+            if bottleneck_by_label is not None:
+                cohesion_score = bottleneck_by_label.get(label, 1.0)
             set_tag_distribution_score(summary["tag_distribution"], cohesion_score)
             gated_inferred_tags = inferred_tag_values(
                 summary, cohesion_score, inferred_min_cohesion, inferred_min_coverage
             )
             gated_by_label[label] = gated_inferred_tags
+            cohesion_axes, cohesion_axes_exact = self._secondary_cohesion(
+                label,
+                members,
+                f"{collection}:bin_sim:{algo}:",
+                axis_keys,
+                0.0,
+                max(
+                    self._COHESION_MIN_PAIRS,
+                    self._COHESION_BUDGET // max(1, len(write_nodes)),
+                ),
+            )
 
             sample_members = []
             for file_id in members[:5]:
@@ -1978,11 +2221,19 @@ class BinClusterService:
                 "node_type": node_type,
                 "snippet": snippet,
                 "cluster_uuid": label_to_uuid[label],
-                "cluster_name": default_name,
+                **name_fields,
+                "is_custom_name": is_custom,
                 "cohesion_score": float(cohesion_score),
-                # False when cohesion came off a pair sample rather than every
+                # Mean over all pairs (unstored = 0): density, kept off the
+                # headline because chains and mixed families always score low.
+                "cohesion_mean": float(cohesion_mean),
+                # False when the mean came off a pair sample rather than every
                 # pair -- see BinClusterService._node_cohesion.
                 "cohesion_exact": bool(cohesion_exact),
+                "medoid": pick_medoid(centrality),
+                "centrality_exact": bool(cohesion_exact),
+                "cohesion_axes": cohesion_axes,
+                "cohesion_axes_exact": bool(cohesion_axes_exact),
                 "avg_stability": float(stabilities.get(label, 0.0)),
                 "cluster_stability": float(stabilities.get(label, 0.0)),
                 "member_count": len(members),
@@ -1997,6 +2248,7 @@ class BinClusterService:
                 ],
                 "batch_uuid_distribution": summary["batch_uuid_distribution"],
                 "function_count_stats": function_count_stats(member_metas),
+                "timeline": timeline_stats(member_metas),
                 "inferred_tags": gated_inferred_tags,
                 "created_at": int(time.time() * 1000),
             }
@@ -2008,6 +2260,7 @@ class BinClusterService:
             pipe.set(
                 f"{collection}:bin_cluster:{algo_ns}:{label}:meta", json.dumps(meta)
             )
+            self._write_centrality(pipe, collection, algo_ns, label, centrality)
 
             if "bin_cluster_name" in file_tag_fields:
                 bucket_key = (
@@ -2042,6 +2295,16 @@ class BinClusterService:
                 )
 
         pipe.execute()
+        keeper.reanchor(write_nodes)
+        # Analyst-named nodes, then the near-identical nodes that inherit them.
+        named_key = f"{collection}:bin_cluster:named:{algo_ns}"
+        if only_nodes is None:
+            r.delete(named_key)
+        elif write_nodes or retired_nodes:
+            r.srem(named_key, *[str(c) for c in write_nodes | set(retired_nodes)])
+        if named_labels:
+            r.sadd(named_key, *[str(c) for c in named_labels])
+        refresh_near_names(r, collection, algo_ns)
 
         # Decision 4: resolve each touched or orphaned file against the tree
         # it survives into, most-specific passing ancestor wins. Untouched
@@ -2156,6 +2419,7 @@ class BinClusterService:
                     job_id,
                     f"Cleaning up binary clustering data for {total_clusters} clusters ({algo_ns})...",
                 )
+            self._snapshot_clusters(collection, algo_ns, cluster_ids)
 
             for i, cid in enumerate(cluster_ids):
                 members_key = f"{collection}:bin_cluster:{algo_ns}:{cid}:members"
@@ -2174,6 +2438,7 @@ class BinClusterService:
                         pipe.execute()
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:members")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:direct_members")
+                r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:centrality")
                 r.delete(f"{collection}:bin_cluster:{algo_ns}:{cid}:meta")
 
                 if job_service and job_id and total_clusters and i % 10 == 0:
@@ -2182,7 +2447,8 @@ class BinClusterService:
 
             r.delete(f"{collection}:bin_cluster:tree:{algo_ns}")
             r.delete(f"{collection}:bin_cluster:list:{algo_ns}")
-            r.delete(f"{collection}:bin_cluster:tree_links:{algo_ns}")
+            r.delete(*_near_keys(collection, algo_ns))
+            clear_tree_links(r, collection, "bin_cluster", algo_ns)
             clear_hier_state(r, f"{collection}:bin_cluster:hier:{algo_ns}")
 
         # Clear named-based indexes (shared bucket space across both
@@ -2213,6 +2479,34 @@ class BinClusterService:
             job_service.update_progress(job_id, 100)
 
         return True
+
+    def _snapshot_clusters(self, collection, algo_ns, cluster_ids=None):
+        """Snapshot clusters about to be deleted, so the next build can give
+        an unchanged cluster its uuid back (see cluster_history)."""
+        r = self.r
+        if cluster_ids is None:
+            cluster_ids = [
+                v.decode() if isinstance(v, bytes) else v
+                for v in r.smembers(f"{collection}:bin_cluster:list:{algo_ns}")
+            ]
+        prefix = f"{collection}:bin_cluster:{algo_ns}"
+        for i in range(0, len(cluster_ids), 200):
+            chunk = cluster_ids[i : i + 200]
+            pipe = r.pipeline(transaction=False)
+            for cid in chunk:
+                pipe.get(f"{prefix}:{cid}:meta")
+                pipe.smembers(f"{prefix}:{cid}:members")
+            res = pipe.execute()
+            for raw, members in zip(res[::2], res[1::2]):
+                if raw and members:
+                    meta = json.loads(raw)
+                    cluster_history.snapshot(
+                        r,
+                        collection,
+                        algo_ns,
+                        meta,
+                        [m.decode() if isinstance(m, bytes) else m for m in members],
+                    )
 
     def _strip_inferred_tags_meta(self, collection):
         """Drop the `inferred_tags` field from every file it was written on.
@@ -2273,6 +2567,183 @@ class BinClusterService:
         r.delete(reg_key)
 
 
+def _timeline_namespaces(r, collection):
+    """Every binary-cluster namespace this collection has a list for."""
+    from bsimvis.similarity import registry
+    from bsimvis.app.services.scan_service import BIN_AXES
+
+    names = [
+        BinClusterService._hierarchical_algo_ns(algo, axis, node, snn)
+        for algo in registry.names(buildable=True)
+        for axis in BIN_AXES
+        for node in ("file", "container")
+        for snn in (False, True)
+    ]
+    pipe = r.pipeline(transaction=False)
+    for ns in names:
+        pipe.exists(f"{collection}:bin_cluster:list:{ns}")
+    return [ns for ns, ok in zip(names, pipe.execute()) if ok]
+
+
+def backfill_timeline(r, collection, cursor=0, chunk=200):
+    """Recompute `timeline` on `chunk` stored cluster metas, from their members.
+
+    For clusters built before the timeline existed, or after first_seen /
+    last_seen were set outside the metadata route. -> (next_cursor, done
+    in this chunk, total); next_cursor 0 = finished.
+    """
+    pairs = []
+    for ns in _timeline_namespaces(r, collection):
+        cids = r.smembers(f"{collection}:bin_cluster:list:{ns}")
+        pairs += sorted(
+            (ns, c.decode() if isinstance(c, bytes) else str(c)) for c in cids
+        )
+    batch = pairs[cursor : cursor + chunk]
+    if not batch:
+        return 0, 0, len(pairs)
+
+    pipe = r.pipeline(transaction=False)
+    for ns, cid in batch:
+        pipe.smembers(f"{collection}:bin_cluster:{ns}:{cid}:members")
+    members = [
+        [m.decode() if isinstance(m, bytes) else str(m) for m in ms]
+        for ms in pipe.execute()
+    ]
+    # Nested clusters share members: read each file's dates once per chunk.
+    fids = list({f for ms in members for f in ms})
+    dates = {}
+    for i in range(0, len(fids), 1000):
+        part = fids[i : i + 1000]
+        pipe = r.pipeline(transaction=False)
+        for f in part:
+            pipe.get(_file_meta_key(collection, f))
+        for f, raw in zip(part, pipe.execute()):
+            m = json.loads(raw) if raw else {}
+            dates[f] = {k: m.get(k) for k in ("entry_date", "first_seen", "last_seen")}
+
+    pipe = r.pipeline(transaction=False)
+    for ns, cid in batch:
+        pipe.get(f"{collection}:bin_cluster:{ns}:{cid}:meta")
+    metas = pipe.execute()
+    # ponytail: read-modify-write without a lock; a build landing in between
+    # loses nothing it cares about, it rewrites the timeline itself.
+    pipe = r.pipeline(transaction=False)
+    done = 0
+    for (ns, cid), ms, raw in zip(batch, members, metas):
+        if not raw:
+            continue
+        meta = json.loads(raw)
+        meta["timeline"] = timeline_stats([dates.get(f, {}) for f in ms])
+        pipe.set(f"{collection}:bin_cluster:{ns}:{cid}:meta", json.dumps(meta))
+        done += 1
+    pipe.execute()
+    nxt = cursor + chunk
+    return (nxt if nxt < len(pairs) else 0), done, len(pairs)
+
+
+def backfill_names(r, collection, namespaces=None):
+    """Rename every stored file cluster with the current namer, in place.
+
+    Analyst names stay (source "analyst"); every other cluster gets the build's
+    name fields. Then the named registry and near names are rebuilt per
+    namespace, and the file `bin_cluster_name` index is rebuilt from the new
+    names (its buckets are shared by every axis, so all namespaces go in one
+    call). -> {namespace: clusters renamed}.
+    ponytail: holds every member file meta of the collection in memory at once;
+    chunk per namespace if a collection outgrows that.
+    """
+    from collections import defaultdict
+    from bsimvis.app.services.cluster_utils import real_links
+    from bsimvis.app.services.index_config import get_native_fields
+
+    dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
+    fmeta, index, out = {}, defaultdict(set), {}
+    for ns in namespaces or _timeline_namespaces(r, collection):
+        key = lambda c: f"{collection}:bin_cluster:{ns}:{c}"
+        cids = sorted(dec(c) for c in r.smembers(f"{collection}:bin_cluster:list:{ns}"))
+        raw = r.get(f"{collection}:bin_cluster:tree_links:{ns}")
+        parent = (
+            {str(l["child"]): str(l["parent"]) for l in real_links(json.loads(raw))}
+            if raw
+            else {}
+        )
+        pipe = r.pipeline(transaction=False)
+        for c in cids:
+            pipe.smembers(f"{key(c)}:members")
+            pipe.get(f"{key(c)}:meta")
+        res = pipe.execute()
+        members = {c: sorted(dec(m) for m in res[2 * i]) for i, c in enumerate(cids)}
+        metas = {c: res[2 * i + 1] for i, c in enumerate(cids)}
+        todo = sorted({f for ms in members.values() for f in ms} - set(fmeta))
+        for i in range(0, len(todo), 1000):
+            part = todo[i : i + 1000]
+            pipe = r.pipeline(transaction=False)
+            for f in part:
+                pipe.get(_file_meta_key(collection, f))
+            for f, m in zip(part, pipe.execute()):
+                fmeta[f] = json.loads(m) if m else {}
+
+        namer = BinClusterNamer(m for m in fmeta.values() if m)
+        known = {}
+
+        def metas_of(c):  # one list per node: the namer memoises by it
+            if c not in known:
+                known[c] = [fmeta[f] for f in members.get(c, ()) if fmeta.get(f)]
+            return known[c]
+
+        named = set()
+        pipe = r.pipeline(transaction=False)
+        for c in cids:
+            if not metas[c]:
+                continue
+            meta = json.loads(metas[c])
+            mm = [fmeta.get(f, {}) for f in members[c]]
+            names_list, _, yara_list, avtype_list, _, _ = collect_member_values(mm)
+            p = parent.get(c)
+            fields = bin_cluster_name_fields(
+                namer,
+                metas_of(c),
+                metas_of(p) if p in members else None,
+                meta.get("tag_distribution"),
+                default_bin_cluster_name(
+                    names_list, avtype_list, yara_list, f"Binary Cluster {c}"
+                ),
+            )
+            if meta.get("is_custom_name"):
+                named.add(c)
+                fields.update(
+                    cluster_name=meta["cluster_name"],
+                    name_source="analyst",
+                    name_basis=[],
+                )
+            meta.pop("name_ref", None)
+            meta.update(fields, is_custom_name=bool(meta.get("is_custom_name")))
+            pipe.set(f"{key(c)}:meta", json.dumps(meta))
+            index[meta["cluster_name"].lower()].update(members[c])
+        pipe.execute()
+        named_k, near_k = _near_keys(collection, ns)
+        r.delete(named_k, near_k)
+        if named:
+            r.sadd(named_k, *named)
+        refresh_near_names(r, collection, ns)
+        out[ns] = len(cids)
+
+    if "bin_cluster_name" in get_native_fields("file", False):
+        reg = f"{collection}:reg:file:bin_cluster_name"
+        pipe = r.pipeline(transaction=False)
+        for b in r.smembers(reg):
+            pipe.delete(dec(b))
+        pipe.delete(reg)
+        for name, ids in index.items():
+            b = f"{collection}:idx:file:bin_cluster_name:{name}"
+            ids = sorted(ids)
+            for i in range(0, len(ids), 5000):
+                pipe.sadd(b, *ids[i : i + 5000])
+            pipe.sadd(reg, b)
+        pipe.execute()
+    return out
+
+
 bin_cluster_service = BinClusterService()
 
 
@@ -2315,6 +2786,13 @@ def _demo():
     assert exact is True, exact
     assert abs(coh - 2.0 / 3.0) < 1e-9, coh
 
+    # Same chain: the middle file is the medoid (mean 1.0 vs 0.5 at the ends).
+    cen = {}
+    svc._node_cohesion("n1", members, "p:", "sk", 0.0, cap, centrality_out=cen)
+    assert cen == {"c:file:m1": 0.5, "c:file:m2": 1.0, "c:file:m3": 0.5}, cen
+    assert pick_medoid(cen) == "c:file:m2"
+    assert pick_medoid({"b": 0.5, "a": 0.5}) == "a" and pick_medoid({}) is None
+
     # A cluster with no stored pair at all scores 0, not 1.0.
     coh, _ = svc_for({})._node_cohesion("n2", members, "p:", "sk", 0.0, cap)
     assert coh == 0.0, coh
@@ -2345,6 +2823,43 @@ def _demo():
     members = ["global:pool:P:file:a1:m1", "global:pool:P:file:a:m2"]
     coh, _ = pool._node_cohesion("n4", members, "p:", "sk", 0.0, cap)
     assert coh == 0.5, coh
+
+    # Secondary axes: one value per axis key, none when no other axis has pairs.
+    two = svc_for({"p:m1::m2": 1.0, "p:m2::m3": 1.0})
+    members = ["c:file:m1", "c:file:m2", "c:file:m3"]
+    axes, exact = two._secondary_cohesion(
+        "n5", members, "p:", {"library": "k1", "content": "k2"}, 0.0, cap
+    )
+    assert set(axes) == {"library", "content"} and exact, axes
+    assert all(abs(v - 2.0 / 3.0) < 1e-9 for v in axes.values()), axes
+    assert two._secondary_cohesion("n5", members, "p:", {}, 0.0, cap) == ({}, True)
+
+    # Adjacency path: per-member sums add back up to the cohesion sum, on both
+    # the pairwise (<50) and neighbour-sweep (>=50) branches.
+    import numpy as np
+    from types import SimpleNamespace
+
+    for n in (4, 60):
+        src = np.array([i for i in range(n - 1)])
+        edges = SimpleNamespace(src=src, dst=src + 1, dist=np.full(n - 1, 0.5))
+        adj = sim_edges.SimAdjacency(edges, n)
+        idx = list(range(n))
+        sums = adj.member_sums(idx)
+        assert abs(sum(sums) / 2.0 - adj.cohesion_sum(idx)) < 1e-4, n
+        assert abs(sums[0] - 0.5) < 1e-6 and abs(sums[1] - 1.0) < 1e-6, sums[:2]
+
+    # Bottleneck: a tight pair stays 0.9, one loose member drags the parent to 0.2.
+    from bsimvis.app.services.cluster_threshold import build_single_linkage_tree
+
+    edges = SimpleNamespace(
+        src=np.array([0, 1]),
+        dst=np.array([1, 2]),
+        dist=np.array([0.1, 0.8]),
+        idx_to_id=["a", "b", "c"],
+    )
+    rows, _root, _n, mst = build_single_linkage_tree(edges)
+    bn = BinClusterService._bottlenecks(rows, mst)
+    assert sorted(round(v, 3) for v in bn.values()) == [0.2, 0.9], bn
 
     print("incremental cohesion demo OK")
 

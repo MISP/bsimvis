@@ -1,5 +1,9 @@
 import logging
-from bsimvis.app.services.index_service import now_ms, normalize_timestamp_fields
+from bsimvis.app.services.index_service import (
+    now_ms,
+    normalize_timestamp,
+    normalize_timestamp_fields,
+)
 import json
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import save_file, save_function
@@ -62,7 +66,15 @@ class ProcessingService:
         )
 
         if file_meta is not None:
+            # The string table rides in the file meta from the analyzer; it has
+            # its own keys, so it must not reach the file doc.
+            file_meta = dict(file_meta)
+            strings = file_meta.pop("strings", None)
             file_md5 = file_meta.get("file_md5") or "unknown_md5"
+            if strings is not None:
+                from bsimvis.app.services import string_service
+
+                string_service.index_file_strings(self.r, collection, file_md5, strings)
             batch_uuid = file_meta.get("batch_uuid") or "unknown_batch_uuid"
             batch_name = file_meta.get("batch_name") or "unknown_batch_name"
             num_functions = num_functions or 0
@@ -133,8 +145,22 @@ class ProcessingService:
         existing_raw = self.r.get(file_meta_key)
         if existing_raw:
             try:
-                existing_status = json.loads(existing_raw).get("status")
-            except (ValueError, TypeError):
+                existing = json.loads(existing_raw)
+                existing_status = existing.get("status")
+                # A re-upload (or a re-analysis without the CSV) keeps the
+                # earliest first_seen and the latest last_seen it ever had.
+                for field, pick in (("first_seen", min), ("last_seen", max)):
+                    seen = [
+                        v
+                        for v in (
+                            normalize_timestamp(existing.get(field), pick),
+                            normalize_timestamp(coll_file_meta.get(field), pick),
+                        )
+                        if v
+                    ]
+                    if seen:
+                        coll_file_meta[field] = pick(seen)
+            except (ValueError, TypeError, AttributeError):
                 pass
 
         if coll_file_meta.get("is_container"):

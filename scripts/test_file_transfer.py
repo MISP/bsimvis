@@ -27,8 +27,11 @@ class FakeRedis:
             return {"a" * 32}
         return set()
 
-    def sscan_iter(self, *_):
+    def sscan_iter(self, *_, **__):
         return iter(())
+
+    def pipeline(self, **_kwargs):
+        return FakePipeline(self)
 
 
 class FakePipeline:
@@ -42,10 +45,24 @@ class FakePipeline:
     def zrange(self, key, *_args, **_kwargs):
         self.commands.append(("zrange", key))
 
+    def exists(self, key):
+        self.commands.append(("exists", key))
+
+    def sismember(self, key, value):
+        self.commands.append(("sismember", (key, value)))
+
     def execute(self):
-        return [
-            self.redis.get(key) if kind == "get" else [] for kind, key in self.commands
-        ]
+        out = []
+        for kind, arg in self.commands:
+            if kind == "get":
+                out.append(self.redis.get(arg))
+            elif kind == "exists":
+                out.append(int(arg in self.redis.data))
+            elif kind == "sismember":
+                out.append(self.redis.sismember(*arg))
+            else:
+                out.append([])
+        return out
 
 
 class IndexedFakeRedis(FakeRedis):
@@ -55,9 +72,6 @@ class IndexedFakeRedis(FakeRedis):
 
     def smembers(self, key):
         return self.sets.get(key, super().smembers(key))
-
-    def pipeline(self, **_kwargs):
-        return FakePipeline(self)
 
 
 class FakeJobs:

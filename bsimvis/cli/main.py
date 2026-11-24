@@ -736,6 +736,14 @@ def main():
         "-c", "--collection", required=True, help="Target collection name"
     )
 
+    metadata_backfill_timeline = metadata_actions.add_parser(
+        "backfill-timeline",
+        help="Store the member timeline (upload / first / last seen) on clusters built before it",
+    )
+    metadata_backfill_timeline.add_argument(
+        "-c", "--collection", required=True, help="Target collection name"
+    )
+
     rulezet_parser = subparsers.add_parser(
         "rulezet", help="Mirror YARA rules from rulezet.org"
     )
@@ -756,6 +764,26 @@ def main():
         "--meta-only",
         action="store_true",
         help="Backfill metadata for a previously-synced mirror",
+    )
+
+    rz_status = rulezet_actions.add_parser(
+        "status", help="Show what the next sync would change, without writing"
+    )
+    rz_status.add_argument(
+        "--full",
+        action="store_true",
+        help="Diff every rule against disk instead of only changes since last sync",
+    )
+    rz_status.add_argument("--limit", type=int, help="Only look at N rules")
+
+    rz_backfill = rulezet_actions.add_parser(
+        "backfill",
+        help="Add mirror file tags to files already in a collection (needs the originals)",
+    )
+    rz_backfill.add_argument("-c", "--collection", required=True)
+    rz_backfill.add_argument("dir", help="Directory holding the original samples")
+    rz_backfill.add_argument(
+        "--dry-run", action="store_true", help="Count changes, write nothing"
     )
 
     rz_index = rulezet_actions.add_parser(

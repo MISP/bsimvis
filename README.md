@@ -9,49 +9,78 @@ BSimVis is a tool to analyze similarities across a collection of binaries, based
 
 BSimVis uses a custom database because Ghidra's BSim databases don't store decompiled code and other metadata. This alternative BSim database and API provide filtering and visualization of this additional data across multiple binaries at once. It doesn't aim to replace Ghidra's BSim plugin, but to enable more advanced analysis and visualization of the similarities on a large scale (family clustering, etc.).
 
+Version 1.0 makes BSimVis a family analysis tool: compare every sample of a family at once, follow its lineage over time, and see where each piece of code first appeared. See the [changelog](doc/whats_new.md).
 
-![alt text](img/sim_view.png)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/bsimvis_preview_dark.gif">
+  <img alt="BSimVis preview: collection overview, N-way diff of a family, function detail" src="img/bsimvis_preview.gif">
+</picture>
+
 # Features
 
 ### Analysis
-- Upload decompiled functions and BSim vectors from Ghidra
-- Similarity search with score filtering across multiple binaries
-- Function diffing based on BSim features
-- BSim feature correlation with decompiled C tokens / Pcode blocks
-- Call graph navigation (callers and callees)
+- Upload binaries, archives or Ghidra projects; headless Ghidra decompiles them and extracts BSim vectors, strings and the control-flow graph
+- Scan mode: compare a sample with every collection without storing it, then commit it if it is worth keeping
+- Function similarity search across binaries (weighted cosine over BSim features by default), with discovery of weaker matches when two files are compared
+- Function and file diffing: code blocks, CFG, callers and callees, strings
+- Library and boilerplate code split from the original code (FunctionID, boilerplate tags), so file scores and clusters follow the malware code
+
+### N-way diff and lineage
+- Compare a whole family at once: functions grouped into lanes (the code a set of files shares) under Core / Common / Rare tiers
+- Lineage page: the family as a tree, a timeline by first-seen date, the births of new code, and a ring of sub-clusters
 
 ### Clustering
-- HDBSCAN-based binary family clustering and interactive file dendrogram visualization
-- Cluster search view with dendrogram and packing diagram
-- Stability and parent cluster filtering
+- Hierarchical file and function clustering (single linkage with a cohesion cut, shared-nearest-neighbour reweighting for files), with family overviews and dendrograms
+- Cluster names, notes and bookmarks that survive rebuilds; cluster timelines and activity ranking
 
 ### Cross-Collection Pools
 - Combine multiple collections into a pool for similarity search and clustering across their union
 - Search endpoints accept a `pool` parameter; per-pool build/cluster jobs with sync-status tracking
 
 ### Search & Filtering
-- Full text search on files and features with sorting, filtering, and pagination
-- Search history and caching
+- Full text search on files, functions and strings with sorting, filtering, and pagination
+- Collection overview: families, uploads over time, architecture and tag mix
+
+### Tagging
+- YARA, capa and Rulezet tags with the rule behind each tag; a YARA workbench (experimental) to write and test rules against stored samples
+- Metadata inferred from neighbour files
 
 ### Web Interface
-- Similarity graph
+- Similarity graph, call graph and CFG views
 - Dynamic window management for multiple code previews
 - Tag management for files, functions, and similarities
-- Quick preview tooltips for clusters and diffs
 - Table selection and copy across all views
 
 ### Analyst Notes & AI Insights
-- Analyst notes system for files and functions
-- LLM assistant for file and function summaries (local or remote via Ollama)
+- Analyst notes and function names for files, functions and clusters
+- LLM assistant for file and function summaries and lane names (local or remote via Ollama)
 
 ### API
-- REST API with Swagger documentation
+- REST API with Swagger documentation, plus an MCP server for AI agents
 - Upload API: processor/compiler config, profiling, batch metadata, and similarity params
 
 # Screenshots
 
+## Collection overview
 
+![Collection overview: family map, families, architecture and tag mix, files over time](img/release-1.0/Overview_collection.png)
 
+## N-way diff
+
+![N-way diff of a Mirai family, Lanes tab, Core tier open](img/release-1.0/nway_lanes.png)
+
+![N-way diff, Rare tier open](img/release-1.0/nway_rare_lanes.png)
+
+## Lineage: timeline and births
+
+![Lineage page, Timeline view by first-seen date](img/release-1.0/lineage_timeline.png)
+
+![Lineage page, Births view: where new code first appears](img/release-1.0/lineage_births.png)
+
+## Function CFG
+
+![Function page, CFG tab with the code of each block](img/release-1.0/function_cfg.png)
 
 ## Web UI Similarity Search Graph view
 
@@ -78,18 +107,14 @@ BSimVis uses a custom database because Ghidra's BSim databases don't store decom
 - Ollama (optional) for LLM analyst insights and function summaries. Can be run locally (default port `11434`) or remotely (configurable via `ollama_url` in `bsimvis_config.toml`).
 # Installation
 
-Copy the example configuration files and customize them:
-
-```bash
-cp .env.example .env
-cp bsimvis_config.toml.example bsimvis_config.toml
-```
-
 Run the install script to set up portable Redis, Kvrocks, and optionally Ghidra:
 
 ```bash
 ./install.sh
 ```
+
+On its first run it creates `.env` and `bsimvis_config.toml` from their `.example` files. The defaults
+work as they are; edit those two files to change ports, worker count or analysis settings.
 
 Milvus support is optional and can be enabled via the `.env` file (`ENABLE_MILVUS=true`).
 
@@ -158,6 +183,39 @@ Use `--clear` to kill stale sessions before restarting:
 `launch_tmux.sh` is the tmux equivalent, and additionally caps the worker count by host
 RAM and runs each worker under a memory-limited systemd scope.
 
+On a small machine, set `DOCKER_DATASTORES=true` in `.env` before `./install.sh`: it skips
+the Redis/Kvrocks source builds, and both launch scripts start them with
+`docker compose up -d --wait redis kvrocks` instead (bound to `127.0.0.1`, data under
+`DATA_BASE_DIR`). Milvus stays opt-in via `COMPOSE_PROFILES=milvus`. Don't run the
+Docker and native Kvrocks against the same data dir at once.
+
+### Everything in Docker
+
+`docker compose up -d --build` builds one image (Python, Ghidra, a portable JDK, capa, UPX,
+YARA rules; `install.sh` runs at build time) and starts Redis, Kvrocks, the app and
+`WORKERS_COUNT` workers plus `SCAN_WORKERS_COUNT` scan workers. The dashboard is on
+`127.0.0.1:${APP_PORT}`. Worker memory is capped by `WORKER_MEMORY_MAX`. The first build
+downloads about 1 GB. `bsimvis_config.toml` is baked in from the example at build time:
+edit it and rebuild.
+
+### Sizing
+
+The defaults target a 16 GB machine: 2 workers plus 1 scan worker (each a Ghidra
+JVM with a 1.5 GB heap, capped at `WORKER_MEMORY_MAX=3G`), Kvrocks capped at 3 GB in
+Docker, and `HOST_RESERVED_GB=6` left for Kvrocks, Redis and the desktop. Both launch
+scripts lower `WORKERS_COUNT` to fit `(RAM - HOST_RESERVED_GB) / WORKER_MEMORY_MAX`.
+On 8 GB, expect a single worker. With 32 GB+, raise `WORKERS_COUNT`.
+
+On WSL2, Linux only gets half the Windows RAM by default, so a 16 GB PC sees about
+8 GB, which runs 1 worker plus the scan worker. Giving WSL 12 GB (keep ~4 GB for
+Windows) leaves more headroom for large samples, still with 1 worker plus the scan
+worker. Set it in `%UserProfile%\.wslconfig`, then run `wsl --shutdown`:
+
+```ini
+[wsl2]
+memory=12GB
+```
+
 Services are configured via `.env` (see `.env.example`). Key variables:
 
 | Variable | Default | Description |
@@ -168,8 +226,12 @@ Services are configured via `.env` (see `.env.example`). Key variables:
 | `REDIS_PORT` | `6379` | Redis job queue port |
 | `KVROCKS_HOST` | `localhost` | Kvrocks host |
 | `KVROCKS_PORT` | `6666` | Kvrocks database port |
-| `WORKERS_COUNT` | `5` | Number of background workers |
+| `WORKERS_COUNT` | `2` | Number of background workers (capped by host RAM) |
 | `DATA_BASE_DIR` | `./data` | Storage path for all service data |
+| `DOCKER_DATASTORES` | `false` | Run Redis + Kvrocks from `docker-compose.yml` instead of built binaries |
+| `KVROCKS_BLOCK_CACHE_MB` | `1024` | Kvrocks block cache in the container (Docker only) |
+| `KVROCKS_MEMORY_LIMIT` | `3G` | Kvrocks container memory limit (Docker only) |
+| `HOST_RESERVED_GB` | `6` | RAM kept for kvrocks, redis and the desktop when capping workers |
 | `ENABLE_MILVUS` | `false` | Enable optional Milvus vector DB |
 | `MILVUS_HOST` | `localhost` | Milvus host (when enabled) |
 | `MILVUS_PORT` | `19530` | Milvus gRPC port |
@@ -190,24 +252,26 @@ Copy `bsimvis_config.toml.example` and edit to taste. Key sections:
 
 | Key | Default | Description |
 |---|---|---|
-| `algo` | `unweighted_cosine` | Default similarity algorithm |
+| `algo` | `weighted_cosine` | Similarity algorithm. A collection keeps the one of its first build |
 | `top_k` | `1000` | Max neighbours per function |
 | `min_score` | `0.9` | Minimum similarity score |
 | `min_features` | `10` | BSim floor — functions below it are matched by exact FunctionID hash |
+| `unweighted_match` | `true` | Every matched function pair counts as 1.0 in the file score (match coverage) |
+| `discovery` / `discovery_min_score` | `true` / `0.4` | Re-match the functions stored edges left unmatched, down to this score, when scoring two files |
 
 **Clustering** (`[clustering]`):
 
 | Key | Default | Description |
 |---|---|---|
-| `engine` | `threshold_uf` | Function cluster engine: `threshold_uf`, `hierarchical_uf`, or `hdbscan` |
-| `bin_engine` | `threshold_uf` | Binary cluster engine (same choices) |
+| `engine` | `hierarchical_uf` | Function cluster engine: `hierarchical_uf`, `threshold_uf`, or `hdbscan` |
+| `bin_engine` | `hierarchical_snn` | Binary cluster engine: `hierarchical_uf` with shared-nearest-neighbour reweighting, or one of the function engines |
 | `uf_threshold` | `0.98` | Similarity edge threshold for `threshold_uf` / `hierarchical_uf` |
 | `bin_uf_threshold` | `0.1` | Same, for binary clustering |
 | `cohesion_cut` | `0.9` | Minimum cohesion for a cluster to be kept |
 | `idle_debounce_seconds` | `30` | Quiet period after uploads before auto-cluster fires |
 | `lane_stale_seconds` | `1800` | Stale lane timeout (self-heals a crashed worker) |
 
-**Analysis modules** (`[analysis_modules]`): `enabled = []` lists modules that run on every upload by default. Choices: `FunctionID`, `capa`, `yara`, `rulezet`. Override per-request with `--enable`/`--disable` (CLI) or `enable=`/`disable=` (API).
+**Analysis modules** (`[analysis_modules]`): `enabled` lists modules that run on every upload by default (`FunctionID`, `boilerplate` and `yara`; `FunctionID` and `boilerplate` feed the code / library score split). Choices: `FunctionID`, `boilerplate`, `capa`, `yara`, `rulezet`. Override per-request with `--enable`/`--disable` (CLI) or `enable=`/`disable=` (API).
 
 **LLM** (`[llm]`): `ollama_url`, `model`, `prompt`.
 
@@ -475,6 +539,14 @@ uv run bsimvis rulezet sync
 
 # Force a full re-fetch (ignores last sync date)
 uv run bsimvis rulezet sync --full
+
+# Dry run: how many rules the next sync would add/change (writes no rules)
+uv run bsimvis rulezet status          # only changes since last sync
+uv run bsimvis rulezet status --full   # diff every rule against disk
+
+# Add mirror file tags to files already in a collection. Sample bytes are not
+# kept after analysis, so point it at the original files (matched by md5).
+uv run bsimvis rulezet backfill -c <collection> <sample_dir> [--dry-run]
 
 # Recover curated MISP-galaxy tags (requires api_key in config)
 uv run bsimvis rulezet index-tags mitre-attack-pattern

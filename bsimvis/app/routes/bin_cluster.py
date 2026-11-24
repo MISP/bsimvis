@@ -15,7 +15,16 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    Tree,
+    real_links,
+    timeline_summary,
+    name_fields,
+    refresh_near_names,
+    restore_default_name,
+    near_chain,
 )
+from bsimvis.app.services.cluster_display import score as display_score
+from bsimvis.app.services.index_service import parse_timestamp
 
 job_service = JobService()
 
@@ -24,6 +33,42 @@ def _avg_function_count(c):
     """Sort key for the Avg Funcs column. Clusters built before the stat was
     stored have no spread, and sort as 0 rather than blocking the sort."""
     return (c.get("function_count_stats") or {}).get("avg") or 0
+
+
+def _relevance(m):
+    """The overview's Families rank (cluster_display.score), over the stored
+    member count. Computed on read: the listing already loads every meta."""
+    return round(
+        display_score(m.get("member_count") or 0, m.get("cohesion_score") or 0), 4
+    )
+
+
+# Sorts over the timeline summary (cluster_utils.timeline_summary), on read.
+# `active`: members added in the last `active_days`, then the latest addition.
+_TIME_SORTS = {
+    "active": lambda x: (
+        (x.get("new_members") or 0, x.get("last_added"))
+        if x.get("last_added")
+        else None
+    ),
+    "last_added": lambda x: x.get("last_added"),
+    "first_added": lambda x: x.get("first_added"),
+    "first_seen": lambda x: x.get("first_seen"),
+    "last_seen": lambda x: x.get("last_seen"),
+}
+# min_/max_ date filters: param suffix -> summary field.
+_TIME_FILTERS = ("first_added", "last_added", "first_seen", "last_seen")
+
+
+def _sort_rows(rows, sort_by, reverse):
+    """Sort in place; a time sort puts clusters with no such date last, either order."""
+    key = _TIME_SORTS.get(sort_by)
+    if key is None:
+        return False
+    have = [x for x in rows if key(x) is not None]
+    have.sort(key=key, reverse=reverse)
+    rows[:] = have + [x for x in rows if key(x) is None]
+    return True
 
 
 def _pool_bin_cluster_namespace(pool, algo, axis, node_type="file"):
@@ -180,21 +225,25 @@ def _get_matching_ids(r, collection, level, field, val):
     return matching_ids
 
 
-def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
+def _shape_bin_cluster_result(m, parent, child_total):
     """meta blob -> the dict shape the UI expects (parent, has_children, distributions)."""
-    cid = str(m.get("cluster_id"))
     return {
         "cluster_id": m.get("cluster_id"),
         "cluster_uuid": m.get("cluster_uuid"),
         "cluster_name": m.get("cluster_name"),
         "tag_id": m.get("tag_id", m.get("cluster_id")),
         "user_tags": m.get("user_tags", []),
-        "is_custom_name": m.get("is_custom_name", False),
+        "note_count": m.get("note_count", 0),
+        "note_owners": m.get("note_owners", []),
+        "cluster_key": m.get("cluster_key"),
+        **name_fields(m),
         "avg_stability": m.get("avg_stability", 0.0),
         "cohesion_score": m.get("cohesion_score", 0),
+        "cohesion_axes": m.get("cohesion_axes", {}),
+        "relevance": _relevance(m),
         "count": m.get("member_count"),
         "created_at": m.get("created_at"),
-        "parent": child_to_parent.get(cid),
+        "parent": parent,
         "snippet": m.get("snippet", ""),
         "sample_members": m.get("sample_members", []),
         "filename_distribution": m.get("filename_distribution", []),
@@ -207,10 +256,32 @@ def _shape_bin_cluster_result(m, child_to_parent, parent_to_children):
         "architecture_distribution": m.get("architecture_distribution", []),
         "executable_format_distribution": m.get("executable_format_distribution", []),
         "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
+        "inferred_tags": m.get("inferred_tags", []),
         "function_count_stats": m.get("function_count_stats", {}),
-        "has_children": bool(parent_to_children.get(cid)),
-        "child_total": len(parent_to_children.get(cid, [])),
+        "timeline": m.get("timeline") or {},
+        **timeline_summary(m.get("timeline")),
+        "has_children": bool(child_total),
+        "child_total": child_total,
+        "medoid": m.get("medoid"),
+        "centrality_exact": m.get("centrality_exact"),
     }
+
+
+def _attach_user_tags(r, collection, algo, metas):
+    """Tags and notes live in the `{collection}:cluster_tags` / `:cluster_notes`
+    sidecars, keyed by uuid, so a rebuild's meta rewrite never drops them."""
+    metas = list(metas)
+    if not metas:
+        return
+    fields = [f"bin_cluster:{algo}:{m.get('cluster_uuid')}" for m in metas]
+    tags = r.hmget(f"{collection}:cluster_tags", fields)
+    notes = r.hmget(f"{collection}:cluster_notes", fields)
+    for m, field, raw, raw_notes in zip(metas, fields, tags, notes):
+        m["user_tags"] = json.loads(raw) if raw else []
+        notes = json.loads(raw_notes) if raw_notes else []
+        m["note_count"] = len(notes)
+        m["note_owners"] = sorted({n.get("owner", "user") for n in notes})
+        m["cluster_key"] = f"{collection}:{field}"
 
 
 def _list_bin_clusters_slice(collection, algo, r):
@@ -226,6 +297,7 @@ def _list_bin_clusters_slice(collection, algo, r):
     if parent_q:
         width = request.args.get("width", 10, type=int)
         offset = request.args.get("offset", 0, type=int)
+        tree = Tree(r, collection, algo, "bin_cluster")
         metas, total_children = cluster_children_page(
             r,
             collection,
@@ -234,11 +306,14 @@ def _list_bin_clusters_slice(collection, algo, r):
             offset=offset,
             width=width,
             meta_prefix="bin_cluster",
+            tree=tree,
         )
-        _, parent_to_children = get_tree_links(r, collection, algo, "bin_cluster")
-        child_to_parent = {cid: parent_q for cid in metas}
+        _, counts = tree.info(metas)
+        _attach_user_tags(r, collection, algo, metas.values())
         results = [
-            _shape_bin_cluster_result(m, child_to_parent, parent_to_children)
+            _shape_bin_cluster_result(
+                m, parent_q, counts.get(str(m.get("cluster_id")), 0)
+            )
             for m in metas.values()
         ]
         results.sort(key=lambda x: x.get("count") or 0, reverse=True)
@@ -253,6 +328,7 @@ def _list_bin_clusters_slice(collection, algo, r):
     up = request.args.get("up", 3, type=int)
     down = request.args.get("down", 3, type=int)
     width = request.args.get("width", 10, type=int)
+    tree = Tree(r, collection, algo, "bin_cluster")
     metas, center, hidden_above = cluster_tree_slice(
         r,
         collection,
@@ -262,12 +338,16 @@ def _list_bin_clusters_slice(collection, algo, r):
         down=down,
         width=width,
         meta_prefix="bin_cluster",
+        tree=tree,
     )
-    child_to_parent, parent_to_children = get_tree_links(
-        r, collection, algo, "bin_cluster"
-    )
+    parents, counts = tree.info(metas)
+    _attach_user_tags(r, collection, algo, metas.values())
     results = [
-        _shape_bin_cluster_result(m, child_to_parent, parent_to_children)
+        _shape_bin_cluster_result(
+            m,
+            parents.get(str(m.get("cluster_id"))),
+            counts.get(str(m.get("cluster_id")), 0),
+        )
         for m in metas.values()
     ]
     return {
@@ -280,28 +360,35 @@ def _list_bin_clusters_slice(collection, algo, r):
     }
 
 
+def bin_cluster_algo(collection, requested=None, axis="overall", node_type="file"):
+    """The key namespace a collection's binary clusters live under.
+
+    Containers and files cluster in two separate graphs (a container holds no
+    code of its own, so it can never share a similarity edge with a file) and
+    persist under two namespaces -- see
+    BinClusterService._persist_hierarchical_binary_clusters. A pool's
+    namespace carries neither the engine nor the node-type suffix.
+    """
+    algo = resolve_collection_algo(collection, requested)
+    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    if collection.startswith("global:pool:"):
+        return algo
+    if (
+        config_service.get("clustering.bin_engine", "hierarchical_snn")
+        == "hierarchical_snn"
+    ):
+        algo = f"{algo}:snn"
+    return f"{algo}:container" if node_type == "container" else algo
+
+
 def list_bin_clusters():
     """Lists discovered binary clusters with metadata, filtering, and sorting."""
     t_start = time.perf_counter()
     collection = request.args.get("collection", "main")
-    algo = resolve_collection_algo(collection, request.args.get("algo"))
     axis = request.args.get("axis", "overall").strip().lower()
-
-    # Containers and files cluster in two separate graphs (a container holds
-    # no code of its own, so it can never share a similarity edge with a
-    # file) and persist under two separate key namespaces -- see
-    # BinClusterService._persist_hierarchical_binary_clusters. node_type
-    # picks which one this listing reads.
     node_type = request.args.get("node_type", "file").strip().lower()
-    algo = f"{algo}:{axis}" if axis != "overall" else algo
+    algo = bin_cluster_algo(collection, request.args.get("algo"), axis, node_type)
     is_pool = collection.startswith("global:pool:")
-    if not is_pool:
-        if (
-            config_service.get("clustering.bin_engine", "hierarchical_snn")
-            == "hierarchical_snn"
-        ):
-            algo = f"{algo}:snn"
-        algo = f"{algo}:container" if node_type == "container" else algo
 
     # Filtering
     format_arg = request.args.get("format")
@@ -314,6 +401,16 @@ def list_bin_clusters():
     exclude_tag_filters = [
         parse_filter_value("user_tags", value)
         for value in request.args.getlist("exclude_cluster_tag")
+        if value.strip()
+    ]
+    inferred_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("inferred_tag")
+        if value.strip()
+    ]
+    exclude_inferred_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("exclude_inferred_tag")
         if value.strip()
     ]
     cluster_id_q = request.args.get("cluster_id", "").lower()
@@ -338,6 +435,25 @@ def list_bin_clusters():
         max_count = int(request.args.get("max_count") or 0)
         min_cohesion = float(request.args.get("min_cohesion") or 0)
         max_cohesion = float(request.args.get("max_cohesion") or 0)
+        min_avg_funcs = float(request.args.get("min_avg_funcs") or 0)
+        max_avg_funcs = float(request.args.get("max_avg_funcs") or 0)
+        min_relevance = float(request.args.get("min_relevance") or 0)
+        max_relevance = float(request.args.get("max_relevance") or 0)
+        active_days = float(request.args.get("active_days") or 30)
+        min_new = int(request.args.get("min_new") or 0)
+        # ISO date or epoch; a bare day as max_ covers that whole day.
+        time_bounds = []
+        for field in _TIME_FILTERS:
+            for side in ("min", "max"):
+                raw = request.args.get(f"{side}_{field}")
+                if not raw:
+                    continue
+                t = parse_timestamp(raw)
+                if not t:
+                    raise ValueError(raw)
+                if side == "max" and len(raw.strip()) == 10 and "-" in raw:
+                    t += 86_400_000 - 1
+                time_bounds.append((field, side, t))
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
@@ -345,8 +461,8 @@ def list_bin_clusters():
         return {"error": "Invalid numeric parameter"}, 400
 
     sort_by = request.args.get(
-        "sort_by", "count"
-    )  # count, stability, cohesion, functions
+        "sort_by", "relevance"
+    )  # relevance, count, stability, cohesion, functions, active, last_added, ...
     sort_order = request.args.get("sort_order", "desc").lower()
 
     r = get_redis()
@@ -410,7 +526,7 @@ def list_bin_clusters():
     links_raw = r.get(links_key)
     if links_raw:
         try:
-            links = json.loads(links_raw)
+            links = real_links(json.loads(links_raw))
             child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
             for l in links:
                 p = str(l["parent"])
@@ -438,6 +554,10 @@ def list_bin_clusters():
             key.decode() if isinstance(key, bytes) else key: value
             for key, value in (r.hgetall(f"{collection}:cluster_tags") or {}).items()
         }
+        cluster_notes = {
+            key.decode() if isinstance(key, bytes) else key: json.loads(value)
+            for key, value in (r.hgetall(f"{collection}:cluster_notes") or {}).items()
+        }
         meta_map = {}
         for meta_key, meta in zip(all_meta_keys, raw_metas):
             if not meta:
@@ -448,12 +568,19 @@ def list_bin_clusters():
             tag_field = f"bin_cluster:{algo}:{m.get('cluster_uuid')}"
             raw_tags = annotations.get(tag_field)
             m["user_tags"] = json.loads(raw_tags) if raw_tags else []
+            notes = cluster_notes.get(tag_field) or []
+            m["note_count"] = len(notes)
+            m["note_owners"] = sorted({n.get("owner", "user") for n in notes})
+            m["cluster_key"] = f"{collection}:{tag_field}"
             m["tag_id"] = meta_key[len(meta_prefix) : -len(":meta")]
             cid = str(m.get("cluster_id", ""))
             meta_map[cid] = m
 
         valid_nodes = set()
+        now_ms = int(time.time() * 1000)
         for cid, m in meta_map.items():
+            # Every meta, filtered or not: expanded parents/children show it too.
+            m.update(timeline_summary(m.get("timeline"), now_ms, active_days))
             cuuid = str(m.get("cluster_uuid", ""))
             cname = str(m.get("cluster_name", ""))
             user_tags = [str(tag).lower() for tag in m.get("user_tags", [])]
@@ -484,6 +611,23 @@ def list_bin_clusters():
             ):
                 continue
 
+            inferred = [
+                str(t).lower()
+                for t in (m.get("inferred_tags") or [])
+                + (m.get("file_inferred_tags") or [])
+            ]
+            if any(
+                not any(spec.matches(tag) for tag in inferred)
+                for spec in inferred_filters
+            ):
+                continue
+            if any(
+                spec.matches(tag)
+                for spec in exclude_inferred_filters
+                for tag in inferred
+            ):
+                continue
+
             if cluster_id_q and cluster_id_q not in cid.lower():
                 continue
             if parent_q and child_to_parent.get(cid) != parent_q:
@@ -511,6 +655,25 @@ def list_bin_clusters():
             if min_cohesion > 0 and m.get("cohesion_score", 0) < min_cohesion:
                 continue
             if max_cohesion > 0 and m.get("cohesion_score", 0) > max_cohesion:
+                continue
+            avg_funcs = _avg_function_count(m)
+            if min_avg_funcs > 0 and avg_funcs < min_avg_funcs:
+                continue
+            if max_avg_funcs > 0 and avg_funcs > max_avg_funcs:
+                continue
+            if min_relevance > 0 or max_relevance > 0:
+                rel = _relevance(m)
+                if min_relevance > 0 and rel < min_relevance:
+                    continue
+                if max_relevance > 0 and rel > max_relevance:
+                    continue
+            if min_new > 0 and m["new_members"] < min_new:
+                continue
+            if any(
+                m.get(field) is None
+                or (m[field] < t if side == "min" else m[field] > t)
+                for field, side, t in time_bounds
+            ):
                 continue
 
             valid_nodes.add(cid)
@@ -590,7 +753,9 @@ def list_bin_clusters():
             matched_results.append(m)
 
         reverse = sort_order == "desc"
-        if sort_by == "stability":
+        if _sort_rows(matched_results, sort_by, reverse):
+            pass
+        elif sort_by == "stability":
             matched_results.sort(
                 key=lambda x: x.get("avg_stability", 0.0), reverse=reverse
             )
@@ -604,6 +769,8 @@ def list_bin_clusters():
             )
         elif sort_by == "functions":
             matched_results.sort(key=_avg_function_count, reverse=reverse)
+        elif sort_by == "relevance":
+            matched_results.sort(key=_relevance, reverse=reverse)
         else:
             matched_results.sort(
                 key=lambda x: str(x.get("cluster_id", "")), reverse=reverse
@@ -644,9 +811,14 @@ def list_bin_clusters():
                 "cluster_name": m.get("cluster_name"),
                 "tag_id": m.get("tag_id", m.get("cluster_id")),
                 "user_tags": m.get("user_tags", []),
-                "is_custom_name": m.get("is_custom_name", False),
+                "note_count": m.get("note_count", 0),
+                "note_owners": m.get("note_owners", []),
+                "cluster_key": m.get("cluster_key"),
+                **name_fields(m),
                 "avg_stability": m.get("avg_stability", 0.0),
                 "cohesion_score": m.get("cohesion_score", 0),
+                "cohesion_axes": m.get("cohesion_axes", {}),
+                "relevance": _relevance(m),
                 "count": m.get("member_count"),
                 "created_at": m.get("created_at"),
                 "parent": child_to_parent.get(str(m.get("cluster_id"))),
@@ -664,14 +836,22 @@ def list_bin_clusters():
                     "executable_format_distribution", []
                 ),
                 "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
+                "inferred_tags": m.get("inferred_tags", []),
                 "function_count_stats": m.get("function_count_stats", {}),
+                "timeline": m.get("timeline") or {},
+                **{k: m.get(k) for k in ("new_members",) + _TIME_FILTERS},
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
+                # null until the cluster is rebuilt with centrality
+                "medoid": m.get("medoid"),
+                "centrality_exact": m.get("centrality_exact"),
             }
             results.append(cluster_result)
 
     # Sorting expanded results
     reverse = sort_order == "desc"
-    if sort_by == "stability":
+    if _sort_rows(results, sort_by, reverse):
+        pass
+    elif sort_by == "stability":
         results.sort(key=lambda x: x.get("avg_stability", 0.0), reverse=reverse)
     elif sort_by == "count":
         results.sort(key=lambda x: x.get("count") or 0, reverse=reverse)
@@ -679,6 +859,8 @@ def list_bin_clusters():
         results.sort(key=lambda x: x.get("cohesion_score", 0), reverse=reverse)
     elif sort_by == "functions":
         results.sort(key=_avg_function_count, reverse=reverse)
+    elif sort_by == "relevance":
+        results.sort(key=lambda x: x.get("relevance", 0), reverse=reverse)
     else:
         results.sort(key=lambda x: str(x.get("cluster_id", "")), reverse=reverse)
 
@@ -695,6 +877,21 @@ def list_bin_clusters():
                 cid = str(c["cluster_id"])
                 p_pipe.smembers(f"{collection}:bin_cluster:{algo}:{cid}:direct_members")
         direct_members_ids_list = p_pipe.execute()
+        c_pipe = r.pipeline(transaction=False)
+        for c in page:
+            ckey = (
+                f"global:pool:{pool_id}:bin_cluster:{c['cluster_uuid']}:centrality"
+                if is_pool
+                else f"{collection}:bin_cluster:{algo}:{c['cluster_id']}:centrality"
+            )
+            c_pipe.hgetall(ckey)
+        centrality_list = [
+            {
+                (k.decode() if isinstance(k, bytes) else k): float(v)
+                for k, v in (h or {}).items()
+            }
+            for h in c_pipe.execute()
+        ]
 
         all_member_ids = set()
         cluster_to_member_ids = {}
@@ -732,7 +929,7 @@ def list_bin_clusters():
                 m["function_count"] = func_count
                 member_meta_map[mid] = m
 
-        for cluster_res in page:
+        for cluster_res, centrality in zip(page, centrality_list):
             cid = str(cluster_res["cluster_id"])
             mids = cluster_to_member_ids.get(cid, [])
             cluster_res["direct_members"] = [
@@ -749,6 +946,7 @@ def list_bin_clusters():
                     "tags": member_meta_map.get(mid, {}).get("tags", []),
                     "user_tags": member_meta_map.get(mid, {}).get("user_tags", []),
                     "filetype": member_meta_map.get(mid, {}).get("filetype", []),
+                    "centrality": centrality.get(mid),
                 }
                 for mid in mids
             ]
@@ -869,12 +1067,21 @@ def update_bin_cluster_meta():
             algo = f"{algo}:snn"
         algo = f"{algo}:container" if node_type == "container" else algo
     cluster_id = data.get("cluster_id")
-    cluster_name = data.get("cluster_name")
-
-    if not cluster_id or not cluster_name:
-        return {"error": "cluster_id and cluster_name required"}, 400
+    cluster_name = (data.get("cluster_name") or "").strip()
 
     r = get_redis()
+    if not cluster_id and data.get("cluster_uuid"):
+        if is_pool:  # pool bin clusters are keyed by their uuid
+            cluster_id = data["cluster_uuid"]
+        else:
+            from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
+
+            cluster_id = resolve_cluster_id_by_uuid(
+                r, collection, algo, data["cluster_uuid"], meta_prefix="bin_cluster"
+            )
+    if not cluster_id:
+        return {"error": "cluster_id or cluster_uuid required"}, 400
+
     if is_pool:
         meta_key = f"global:pool:{pool_id}:bin_cluster:{cluster_id}:meta"
         collection_for_tags = f"global:pool:{pool_id}"
@@ -882,15 +1089,29 @@ def update_bin_cluster_meta():
         meta_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:meta"
         collection_for_tags = collection
 
-    if not r.exists(meta_key):
+    meta_val = r.get(meta_key)
+    if not meta_val:
         return {"error": "Cluster meta not found"}, 404
 
-    meta_val = r.get(meta_key)
-    if meta_val:
-        meta_doc = json.loads(meta_val)
-        meta_doc["cluster_name"] = cluster_name
-        meta_doc["is_custom_name"] = True
-        r.set(meta_key, json.dumps(meta_doc))
+    # Empty name = back to the name the build gave it.
+    meta_doc = json.loads(meta_val)
+    prev_custom = (
+        meta_doc.get("cluster_name") if meta_doc.get("is_custom_name") else None
+    )
+    if not cluster_name:
+        restore_default_name(meta_doc, f"Binary Cluster {cluster_id}")
+        cluster_name = meta_doc["cluster_name"]
+    else:
+        if "auto_name" not in meta_doc:  # legacy meta: its name was the build's
+            meta_doc["auto_name"] = meta_doc.get("cluster_name")
+        meta_doc.pop("name_ref", None)
+        meta_doc.update(
+            cluster_name=cluster_name,
+            is_custom_name=True,
+            name_source="analyst",
+            name_basis=[],
+        )
+    r.set(meta_key, json.dumps(meta_doc))
 
     # Propagate name to all member files for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
@@ -900,9 +1121,25 @@ def update_bin_cluster_meta():
     else:
         members_key = f"{collection}:bin_cluster:{algo}:{cluster_id}:members"
     members = r.smembers(members_key)
+    from bsimvis.app.services.cluster_utils import save_cluster_name
+
+    save_cluster_name(
+        r,
+        collection_for_tags,
+        "bin",
+        algo,
+        [m.decode() if isinstance(m, bytes) else str(m) for m in members],
+        cluster_name if meta_doc["is_custom_name"] else "",
+        replaces=prev_custom,
+        label=cluster_id,
+    )
 
     old_meta = json.loads(meta_val) if meta_val else {}
     old_name = old_meta.get("cluster_name")
+    if old_meta.get("name_source") == "near":  # never indexed: the build's name is
+        old_name = (old_meta.get("name_default") or {}).get("name") or old_meta.get(
+            "auto_name"
+        )
 
     # Fetch all members' metadata
     mid_list = [m.decode() if isinstance(m, bytes) else str(m) for m in members]
@@ -925,7 +1162,82 @@ def update_bin_cluster_meta():
         pipe.set(f"{mid_str}:meta", json.dumps(m))
     pipe.execute()
 
-    return {"status": "success", "cluster_name": cluster_name}
+    if not is_pool:  # near-identical neighbours follow the name at once
+        named_key = f"{collection}:bin_cluster:named:{algo}"
+        if meta_doc["is_custom_name"]:
+            r.sadd(named_key, str(cluster_id))
+        else:
+            r.srem(named_key, str(cluster_id))
+        refresh_near_names(r, collection, algo)
+
+    return {"status": "success", "cluster_name": cluster_name, **name_fields(meta_doc)}
+
+
+def get_bin_cluster_chain():
+    """The near-identical chain around a file cluster (the near-name rule, named
+    nodes included), largest first, so a rename can pick the right level."""
+    from bsimvis.app.services.cluster_display import load_display_tree
+    from bsimvis.app.services.cluster_utils import (
+        get_cluster_metas,
+        resolve_cluster_id_by_uuid,
+    )
+    from bsimvis.app.services.redis_client import get_queue_redis
+
+    collection = request.args.get("collection")
+    if not collection:
+        return {"error": "No collection specified"}, 400
+    if get_pool_id(collection):
+        return {"error": "Chains are not available for pools"}, 400
+    axis = request.args.get("axis", "overall").strip().lower()
+    node_type = request.args.get("node_type", "file").strip().lower()
+    algo = bin_cluster_algo(collection, request.args.get("algo"), axis, node_type)
+    r = get_redis()
+    cid = request.args.get("cluster_id")
+    if not cid and request.args.get("cluster_uuid"):
+        cid = resolve_cluster_id_by_uuid(
+            r, collection, algo, request.args["cluster_uuid"], "bin_cluster"
+        )
+    if not cid:
+        return {"error": "cluster_id or cluster_uuid required"}, 400
+
+    raw = r.get(f"{collection}:bin_cluster:tree_links:{algo}")
+    ch = near_chain(json.loads(raw), cid) if raw else None
+    if not ch:
+        return {"error": "Cluster not in the tree"}, 404
+    ends = [c for c in [ch["above"], *ch["below"]] if c]
+    metas = get_cluster_metas(r, collection, algo, ch["chain"] + ends, "bin_cluster")
+    shown = load_display_tree(r, collection, algo, get_queue_redis())
+    base = int((metas.get(str(cid)) or {}).get("member_count") or 0)
+
+    def brief(c):
+        m = metas.get(c) or {}
+        return {
+            "cluster_id": c,
+            "cluster_uuid": m.get("cluster_uuid"),
+            "member_count": int(m.get("member_count") or 0),
+            "cluster_name": m.get("cluster_name"),
+        }
+
+    def row(c):
+        m = metas.get(c) or {}
+        b = brief(c)
+        return {
+            **b,
+            "delta": b["member_count"] - base,
+            "cohesion_score": m.get("cohesion_score"),
+            "name_source": name_fields(m)["name_source"],
+            "name_ref": m.get("name_ref"),
+            "shown": c in shown,
+            "clicked": c == str(cid),
+        }
+
+    return {
+        "cluster_id": str(cid),
+        "algo": algo,
+        "chain": [row(c) for c in ch["chain"]],
+        "above": brief(ch["above"]) if ch["above"] else None,
+        "below": [brief(c) for c in ch["below"]],
+    }
 
 
 def list_bin_cluster_members():
@@ -963,6 +1275,16 @@ def list_bin_cluster_members():
     members = [m.decode() if isinstance(m, bytes) else m for m in members_raw]
     members.sort()
 
+    # Written at cluster build; empty on a cluster built before centrality.
+    centrality = {
+        (k.decode() if isinstance(k, bytes) else k): float(v)
+        for k, v in r.hgetall(
+            cluster_set_key[: -len(":members")] + ":centrality"
+        ).items()
+    }
+    if request.args.get("sort") == "centrality":
+        members.sort(key=lambda m: -centrality.get(m, -1.0))
+
     page = members[offset : offset + limit]
 
     results = []
@@ -979,10 +1301,17 @@ def list_bin_cluster_members():
 
     for i, meta in enumerate(raw_metas):
         m = json.loads(meta) if meta and not isinstance(meta, dict) else (meta or {})
-        results.append({"id": page[i], "meta": m})
+        results.append(
+            {"id": page[i], "meta": m, "centrality": centrality.get(page[i])}
+        )
+
+    medoid = None
+    if centrality:
+        medoid = min(centrality, key=lambda m: (-centrality[m], m))
 
     return {
         "cluster_id": cluster_id,
+        "medoid": medoid,
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -1123,3 +1452,82 @@ def get_bin_cluster_files():
         "collection": collection,
         "cluster_uuid": cluster_uuid,
     }
+
+
+def backfill_bin_cluster_timeline():
+    """Enqueues the chunked timeline backfill over a collection's stored clusters."""
+    data = request.json or {}
+    collection = data.get("collection") or request.args.get("collection")
+    if not collection:
+        return {"error": "No collection specified"}, 400
+    job_id = job_service.create_job(
+        JobType.BACKFILL_CLUSTER_TIMELINE, {"collection": collection}
+    )
+    return {"status": "processing", "job_id": job_id}
+
+
+def _history_scope(args):
+    """(key collection, algo_for(axis, node_type)) of a cluster history call."""
+    collection = args.get("collection", "main")
+    pool_id = args.get("pool") or get_pool_id(collection)
+    if pool_id:
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id) or {}
+        algo = pool_service.similarity_algo(pool)
+        return f"global:pool:{pool_id}", lambda axis, node_type: (
+            _pool_bin_cluster_namespace(pool, algo, axis, node_type)[0]
+        )
+    return collection, lambda axis, node_type: bin_cluster_algo(
+        collection, args.get("algo"), axis, node_type
+    )
+
+
+def get_bin_cluster_history():
+    """What became of a file cluster uuid, and what a live one may inherit.
+
+    A dead uuid answers `history`: its kind (reshaped / merged / split /
+    dissolved), its live successors and the tags / notes it still holds.
+    A live uuid answers `inherited`: retired clusters with analyst data whose
+    best successor it is, for the "copy their tags and notes here" proposal."""
+    from bsimvis.app.services import cluster_history
+
+    c_uuid = (request.args.get("uuid") or "").strip().lower()
+    if not c_uuid:
+        return {"error": "uuid required"}, 400
+    r = get_redis()
+    coll, algo_for = _history_scope(request.args)
+    hist = cluster_history.find(r, coll, c_uuid, algo_for)
+    if hist:
+        hist.update(cluster_history.user_data(r, coll, hist["algo"], c_uuid))
+        hist["cluster_key"] = f"{coll}:bin_cluster:{hist['algo']}:{c_uuid}"
+    axis = request.args.get("axis", "overall").strip().lower()
+    node_type = request.args.get("node_type", "file").strip().lower()
+    inherited = cluster_history.inherited(r, coll, algo_for(axis, node_type), c_uuid)
+    return {"uuid": c_uuid, "history": hist, "inherited": inherited}
+
+
+def carry_bin_cluster_history():
+    """Copy a retired cluster's tags / notes onto a live one, or dismiss the
+    proposal. Payload: collection, pool, axis, node_type, from_uuid, to_uuid,
+    tags (default true), notes (default true), dismiss (default false)."""
+    from bsimvis.app.services import cluster_history
+
+    data = request.json or {}
+    src = (data.get("from_uuid") or "").strip().lower()
+    dst = (data.get("to_uuid") or "").strip().lower()
+    if not (src and dst) or src == dst:
+        return {"error": "from_uuid and to_uuid required"}, 400
+    r = get_redis()
+    coll, algo_for = _history_scope(data)
+    algo_ns = algo_for(
+        (data.get("axis") or "overall").strip().lower(),
+        (data.get("node_type") or "file").strip().lower(),
+    )
+    if data.get("dismiss"):
+        cluster_history.dismiss(r, coll, algo_ns, src, dst)
+        return {"status": "success", "added": {"tags": 0, "notes": 0}}
+    added = cluster_history.carry_data(
+        r, coll, algo_ns, src, dst, data.get("tags", True), data.get("notes", True)
+    )
+    return {"status": "success", "added": added}

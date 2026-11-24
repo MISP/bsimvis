@@ -139,3 +139,186 @@ def similarity_api():
 
     except Exception as e:
         return {"detail": f"Error retrieving similarity: {str(e)}"}, 500
+
+
+# Args that describe the anchor or the pair, not the partner function, so they
+# are not forwarded to the partner-side function filter.
+_PAIR_ARGS = {
+    "collection",
+    "pool",
+    "md5",
+    "address",
+    "min_score",
+    "max_score",
+    "limit",
+    "offset",
+    "cross_binary",
+    "use_cache",
+    "sort_by",
+    "sort_order",
+    "match_mode",
+    "format",
+}
+_META_FIELDS = (
+    "file_md5",
+    "file_name",
+    "entrypoint_address",
+    "tags",
+    "user_tags",
+    "language_id",
+    "return_type",
+    "namespace",
+    "parameters",
+    "bsim_features_count",
+    "caller_count",
+    "callee_count",
+    "note_owners",
+)
+
+
+def _anchor():
+    """`(anchor fid, pool_id, error)` from the query string or JSON body."""
+    data = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
+
+    def get(k):
+        return data.get(k) or request.args.get(k)
+
+    collection, md5, address = get("collection"), get("md5"), get("address")
+    if not (collection and md5 and address):
+        return None, None, ({"error": "collection, md5 and address required"}, 400)
+    # With ?pool= the app rewrites collection to global:pool:{id}:col:{coll};
+    # the anchor's own id is always the origin collection's.
+    collection = collection.split(":col:")[-1]
+    return f"{collection}:func:{md5}:{address}", get("pool") or None, None
+
+
+def _metas(r, ids):
+    raw = r.mget([f"{i}:meta" for i in ids]) if ids else []
+    out = {}
+    for i, m in zip(ids, raw):
+        m = json.loads(m) if m else {}
+        if isinstance(m, list):
+            m = m[0] if m else {}
+        meta = {k: m.get(k) for k in _META_FIELDS}
+        meta["collection"] = i.split(":")[0]
+        meta["function_name"] = m.get("user_name") or m.get("function_name")
+        out[i] = meta
+    return out
+
+
+def discover_similar():
+    """Live partners of one function below the stored edges' min_score.
+
+    Read-only. Rows use the /api/similarity/search pair shape with `live: true`
+    and no `sid`; partner filters go through /api/function/search's own parsing.
+    """
+    from werkzeug.datastructures import MultiDict
+    from bsimvis.app.routes.home import _call
+    from bsimvis.app.routes.search_function import search_functions
+    from bsimvis.app.services.bin_sim_service import discovery_floor
+    from bsimvis.app.services.config_service import config_service
+
+    fid, pool_id, err = _anchor()
+    if err:
+        return err
+    try:
+        floor = discovery_floor()
+        min_score = max(floor, float(request.args.get("min_score") or floor))
+        max_score = float(request.args.get("max_score") or 1.0)
+        limit = max(1, min(int(request.args.get("limit") or 50), 1000))
+        top_k = int(config_service.get("similarity.top_k", 1000))
+    except ValueError:
+        return {"error": "Invalid numeric parameter"}, 400
+
+    service = SimilarityService()
+    try:
+        found = service.discover_live(fid, min_score, top_k, pool_id=pool_id)
+    except LookupError as e:
+        return {"error": str(e)}, 404
+    base = {
+        "algo": found["algo"],
+        "min_score": min_score,
+        "floor": floor,
+        "pairs": [],
+        "total": 0,
+    }
+    if found.get("below_min_features"):
+        return dict(base, below_min_features=True, min_features=found["min_features"])
+
+    anchor_md5 = fid.split(":")[-2]
+    cross = request.args.get("cross_binary")
+    cands = [c for c in found["candidates"] if c["score"] <= max_score]
+    if cross in ("true", "false"):
+        want_cross = cross == "true"
+        cands = [
+            c for c in cands if (c["id"].split(":")[-2] != anchor_md5) == want_cross
+        ]
+    # A live pair carries no sim tags yet, so a positive sim-tag filter matches none.
+    if any(
+        request.args.getlist(k) for k in ("sim_tag", "sim_static_tag", "sim_user_tag")
+    ):
+        cands = []
+
+    partner_args = {
+        k: v
+        for k, v in MultiDict(request.args).lists()
+        if k not in _PAIR_ARGS and not k.startswith(("sim_", "exclude_sim_"))
+    }
+    if cands and partner_args:
+        scope = {"pool": pool_id} if pool_id else {"collection": fid.split(":")[0]}
+        res = _call(
+            search_functions, **partner_args, **scope, ids=[c["id"] for c in cands]
+        )
+        if res.get("error"):
+            return {"error": res["error"]}, 400
+        keep = set(res.get("ids") or [])
+        cands = [c for c in cands if c["id"] in keep]
+
+    page = cands[:limit]
+    metas = _metas(service.r, [fid] + [c["id"] for c in page])
+    m1 = metas[fid]
+    pairs = [
+        {
+            "id1": fid,
+            "id2": c["id"],
+            "name1": m1.get("function_name"),
+            "name2": metas[c["id"]].get("function_name"),
+            "score": c["score"],
+            "feat_count": int(c["c_total"]),
+            "meta1": m1,
+            "meta2": metas[c["id"]],
+            "shared_clusters": [],
+            "tags": [],
+            "user_tags": [],
+            "algo": found["algo"],
+            "live": True,
+        }
+        for c in page
+    ]
+    return dict(base, pairs=pairs, total=len(cands))
+
+
+def persist_discovered():
+    """Store chosen live pairs as real edges tagged `discovered`.
+
+    JSON body: collection, md5, address (the anchor), partner_ids, optional pool.
+    """
+    from bsimvis.app.services.bin_sim_service import discovery_floor
+
+    fid, pool_id, err = _anchor()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    partner_ids = data.get("partner_ids") or []
+    if not isinstance(partner_ids, list) or not partner_ids:
+        return {"error": "partner_ids must be a non-empty list"}, 400
+    if len(partner_ids) > 1000:
+        return {"error": "at most 1000 partner_ids"}, 400
+    try:
+        return SimilarityService().persist_live(
+            fid, [str(p) for p in partner_ids], discovery_floor(), pool_id=pool_id
+        )
+    except LookupError as e:
+        return {"error": str(e)}, 404
+    except ValueError as e:
+        return {"error": str(e)}, 400

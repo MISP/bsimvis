@@ -28,7 +28,7 @@ window.EntityRenderer = {
     },
 
     renderFunction: function(f, options = {}) {
-        const name = f['function_name'] || 'Unknown';
+        const name = fnName(f) || 'Unknown';
         const namespace = f['namespace'] || '';
         const parameters = f['parameters'] || [];
         const returnType = f['return_type'] || 'void';
@@ -63,13 +63,14 @@ window.EntityRenderer = {
                  data-entity-data='${escapeAttr(JSON.stringify(f))}'
                  draggable="true" ondragstart="typeof onTableRowDragStart === 'function' && onTableRowDragStart(event)"
                  oncontextmenu='EntityRenderer.handleContextMenu(event, "function", this)'>
-                <b class="entity-name" style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" 
-                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)" 
+                <b class="entity-name" style="color:var(--accent); cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex: 1; min-width: 0;" ${options.noNav ? '' : `
+                   onmouseenter="typeof showCodePreview === 'function' && showCodePreview(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, ${escapeAttr(jsString(entry))}, ${escapeAttr(jsString(file_md5))}, ${Number(featCount) || 0}, event)"
                    onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)"
                    onmouseleave="typeof hideCodePreview === 'function' && hideCodePreview(event)"
-                   onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)">
+                   ${options.noClick ? '' : `onclick="typeof showFunctionCodeById === 'function' && showFunctionCodeById(${escapeAttr(jsString(funcId))}, ${escapeAttr(jsString(name))}, '', event)"`}`}>
                     ${fInfo.ret ? `<span style="color:var(--token-address)">${escapeHtml(fInfo.ret)}</span> ` : ''}${fInfo.ns ? `<span style="opacity:0.8; color:var(--text)">${escapeHtml(fInfo.ns)}::</span>` : ''}${escapeHtml(name)}<span style="color:var(--text)">(</span>${fInfo.params.map(t => `<span style="color:var(--token-address)">${escapeHtml(t)}</span>`).join('<span style="color:var(--text)">, </span>')}<span style="color:var(--text)">)</span>
                 </b>
+                ${typeof nameBadge === 'function' ? nameBadge(f) : ''}
                 ${actionsHtml}
             </div>
         `;
@@ -116,7 +117,8 @@ window.EntityRenderer = {
     noteButtonModes: {
         func: { open: 'showNotePanel', has: 'Notes by', add: 'Add note' },
         file: { open: 'showFileNotePanel', has: 'File notes by', add: 'Add file note' },
-        bin_sim: { open: 'showBinSimNotePanel', has: 'Pair notes by', add: 'Add pair note' }
+        bin_sim: { open: 'showBinSimNotePanel', has: 'Pair notes by', add: 'Add pair note' },
+        bin_cluster: { open: 'showBinClusterNotePanel', has: 'Cluster notes by', add: 'Add cluster note' }
     },
 
     renderNoteButtonFor: function(mode, id, noteOwners = [], options = {}) {
@@ -151,6 +153,11 @@ window.EntityRenderer = {
 
     renderBinSimNoteButton: function(sid, noteOwners = [], options = {}) {
         return this.renderNoteButtonFor('bin_sim', sid, noteOwners, options);
+    },
+
+    /** `key` is the row's `cluster_key` ({coll}:bin_cluster:{algo}:{uuid}). */
+    renderBinClusterNoteButton: function(key, noteOwners = [], options = {}) {
+        return this.renderNoteButtonFor('bin_cluster', key, noteOwners, options);
     },
 
     /**
@@ -191,7 +198,7 @@ window.EntityRenderer = {
             if (firstChild?.dataset?.filterValue) {
                 value = firstChild.dataset.filterValue.trim();
             } else {
-                value = (td.dataset?.filterValue || td.innerText || '').trim();
+                value = (td.dataset?.filterValue || td.textContent || '').trim();
             }
         }
         if (!value) return null;

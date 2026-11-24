@@ -29,6 +29,17 @@ DEFAULT_LIMIT = 100
 # API stops handing them back now that the tags cover the same ground.
 # filetype is NOT here -- Decision 5 keeps it a plain returned field.
 _LEGACY_RAW_FIELDS = ("avtype", "yara", "cc_ip")
+_HEAVY_CLUSTER_FIELDS = {
+    "tag_distribution",
+    "md5_distribution",
+    "filename_distribution",
+    "architecture_distribution",
+    "batch_uuid_distribution",
+    "executable_format_distribution",
+    "function_count_stats",
+    "sample_members",
+    "sample_files",
+}
 
 
 def search_files():
@@ -59,112 +70,7 @@ def search_files():
             offset = 0
             limit = 100000
 
-        # Filtering parameters
-        filters = {
-            "fields": {},
-            "tags": {
-                "include": [],
-                "exclude": [],
-                "static": [],
-                "exclude_static": [],
-                "user": [],
-                "exclude_user": [],
-            },
-        }
-
-        for arg, field in [
-            ("q", "q"),
-            ("language_id", "language_id"),
-            ("language", "language_id"),
-            ("status", "status"),
-            ("batch_uuid", "batch_uuid"),
-            ("bin_cluster_uuid", "bin_cluster_uuid"),
-            ("bin_cluster_name", "bin_cluster_name"),
-            ("first_seen", "first_seen"),
-            ("last_seen", "last_seen"),
-            ("filetype", "filetype"),
-            ("avtype", "avtype"),
-            ("yara", "yara"),
-            ("cc_ip", "cc_ip"),
-            ("file_names", "file_names"),
-            ("inferred_yara", "inferred_yara"),
-            ("inferred_avtype", "inferred_avtype"),
-            ("inferred_ccip", "inferred_ccip"),
-            ("inferred_filename", "inferred_filename"),
-            ("inferred_md5", "inferred_md5"),
-            ("inferred_tags", "inferred_tags"),
-            ("note_owner", "note_owners"),
-            ("note_owners", "note_owners"),
-            # Every file extracted out of one upload, at any depth.
-            ("root_md5", "root_md5"),
-        ]:
-            val = request.args.get(arg)
-            if val:
-                filters["fields"][field] = val.strip()
-
-        md5_val = request.args.get("md5") or request.args.get("file_md5")
-        if md5_val:
-            filters["fields"]["_any_md5"] = md5_val.strip()
-
-        file_name_val = request.args.get("file_name")
-        if file_name_val:
-            filters["fields"]["_any_file_name"] = file_name_val.strip()
-
-        # Range fields
-        for arg, field in [
-            ("min_function_count", "function_count"),
-            ("max_function_count", "function_count"),
-            ("min_bsim_features", "bsim_features_count"),
-            ("max_bsim_features", "bsim_features_count"),
-            ("min_cohesion", "cohesion_score"),
-            ("max_cohesion", "cohesion_score"),
-            ("min_entry_date", "entry_date"),
-            ("max_entry_date", "entry_date"),
-            ("min_first_seen", "first_seen"),
-            ("max_first_seen", "first_seen"),
-            ("min_last_seen", "last_seen"),
-            ("max_last_seen", "last_seen"),
-        ]:
-            val = request.args.get(arg)
-            if val:
-                filters["fields"][arg] = val.strip()
-
-        # Tags
-        filters["tags"]["include"] = [
-            t.strip()
-            for t in request.args.getlist("tag") + request.args.getlist("file_tag")
-            if t.strip()
-        ]
-        filters["tags"]["static"] = [
-            t.strip()
-            for t in request.args.getlist("static_tag")
-            + request.args.getlist("file_static_tag")
-            if t.strip()
-        ]
-        filters["tags"]["user"] = [
-            t.strip()
-            for t in request.args.getlist("user_tag")
-            + request.args.getlist("file_user_tag")
-            if t.strip()
-        ]
-        filters["tags"]["exclude"] = [
-            t.strip()
-            for t in request.args.getlist("exclude_tag")
-            + request.args.getlist("exclude_file_tag")
-            if t.strip()
-        ]
-        filters["tags"]["exclude_static"] = [
-            t.strip()
-            for t in request.args.getlist("exclude_static_tag")
-            + request.args.getlist("exclude_file_static_tag")
-            if t.strip()
-        ]
-        filters["tags"]["exclude_user"] = [
-            t.strip()
-            for t in request.args.getlist("exclude_user_tag")
-            + request.args.getlist("exclude_file_user_tag")
-            if t.strip()
-        ]
+        filters = filters_from_args()
 
         sort_by = request.args.get("sort_by", "file_name")
         sort_order = request.args.get("sort_order", "asc").lower()
@@ -184,134 +90,12 @@ def search_files():
         # 3. Paginate
         paged_ids = ordered_ids[offset : offset + limit]
 
-        # 4. Fetch full JSON, function counts, and cluster assignments for the page
-        # We fetch all 4 axes at once so the UI can show per-axis badges.
-        _AXES = ["overall", "code", "library", "content"]
-        if pool_id:
-            from bsimvis.app.services.pool_service import pool_service
-
-            pool = pool_service.get_pool(pool_id)
-            if not pool:
-                return {"error": "Pool not found"}, 404
-            algo_p = pool_service.similarity_algo(pool)
-        else:
-            from bsimvis.app.services.collection_config import resolve_collection_algo
-
-            algo_p = resolve_collection_algo(col, request.args.get("algo"))
-        pipe = r.pipeline(transaction=False)
-        for doc_id in paged_ids:
-            pipe.get(f"{doc_id}:meta")
-            actual_col = doc_id.split(":")[0]
-            md5 = doc_id.split(":")[-1]
-            pipe.scard(f"{actual_col}:idx:file:functions:{md5}")
-            for axis in _AXES:
-                axis_algo_ns = f"{algo_p}:{axis}" if axis != "overall" else algo_p
-                if pool_id:
-                    pipe.smembers(
-                        f"pool:{pool_id}:file:{md5}:bin_clusters:{axis_algo_ns}"
-                    )
-                else:
-                    if (
-                        config_service.get("clustering.bin_engine", "hierarchical_snn")
-                        == "hierarchical_snn"
-                    ):
-                        axis_algo_ns = f"{axis_algo_ns}:snn"
-                    pipe.smembers(f"{doc_id}:bin_clusters:{axis_algo_ns}")
-            # Whether this row can be expanded into a lineage subtree.
-            pipe.smembers(f"{actual_col}:lineage:children:{md5}")
-
-        results = pipe.execute()
-        t2 = time.perf_counter()
-        files_list = []
-
-        # First pass: collect results and unique cluster IDs
-        # Each file: meta, func_count, <4 axis smembers>, children = 7 results
-        _STRIDE = 2 + len(_AXES) + 1
-        raw_files_data = []
-        for i, doc_id in enumerate(paged_ids):
-            base = _STRIDE * i
-            res = results[base]
-            func_count = results[base + 1]
-            axis_cluster_raws = results[base + 2 : base + 2 + len(_AXES)]
-            child_raw = results[base + 2 + len(_AXES)]
-            child_count = lineage_service.count_members(child_raw)
-
-            if not res:
-                continue
-
-            data = json.loads(res) if not isinstance(res, dict) else res
-            if isinstance(data, str):
-                data = json.loads(data)
-
-            if not data.get("is_container"):
-                data["function_count"] = func_count
-            data["child_count"] = child_count or 0
-            data["file_id"] = doc_id
-            # Store as {axis: [cids]} dict
-            data["bin_clusters"] = {
-                axis: list(raw) if isinstance(raw, (list, set)) else []
-                for axis, raw in zip(_AXES, axis_cluster_raws)
-            }
-
-            raw_files_data.append(data)
-
-        # Second pass: fetch cluster metadata for all 4 axes
-        cluster_meta_map = {}
-
-        min_cohesion = float(
-            request.args.get(
-                "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+        try:
+            files_list, cluster_meta_map, t2, t3 = hydrate_files(
+                r, col, pool_id, paged_ids
             )
-        )
-        t3 = t2
-        if any(any(v for v in d["bin_clusters"].values()) for d in raw_files_data):
-            meta_by_uuid, uuids_per_file_by_axis = fetch_bin_cluster_meta_all_axes(
-                r,
-                col,
-                [(d["bin_clusters"], d.get("is_container")) for d in raw_files_data],
-                algo=algo_p,
-                pool_id=pool_id,
-            )
-            t3 = time.perf_counter()
-            cluster_meta_map = {}
-            for u, cm in meta_by_uuid.items():
-                if (cm.get("cohesion_score") or 0) >= min_cohesion:
-                    # Strip huge inferred metadata distributions to keep payload tiny
-                    for dist_key in (
-                        "filename_distribution",
-                        "md5_distribution",
-                        "tag_distribution",
-                        "architecture_distribution",
-                        "executable_format_distribution",
-                        "batch_uuid_distribution",
-                    ):
-                        cm.pop(dist_key, None)
-                    cluster_meta_map[u] = cm
-            # Flatten to a list of uuids (axis is encoded in meta["axis"])
-            for data, uuids_by_axis in zip(raw_files_data, uuids_per_file_by_axis):
-                data["bin_clusters"] = [
-                    u
-                    for uuids in uuids_by_axis.values()
-                    for u in uuids
-                    if u in cluster_meta_map
-                ]
-
-        # Third pass: finalize files list
-        for data in raw_files_data:
-            # Map IDs to metadata
-            # We don't map it here anymore, we send the map separately
-            normalize_tags(data)
-            for f in _LEGACY_RAW_FIELDS:
-                data.pop(f, None)
-
-            if pool_id:
-                enrich_pool_data(data, pool_id)
-            # Ensure dates are Unix timestamps
-            for date_field in ["entry_date", "file_date", "first_seen", "last_seen"]:
-                if date_field in data:
-                    data[date_field] = parse_timestamp(data[date_field])
-
-            files_list.append(data)
+        except LookupError as e:
+            return {"error": str(e)}, 404
 
         response_data = {
             "total": total,
@@ -339,6 +123,259 @@ def search_files():
     except Exception as e:
         logging.error(f"Error in search_files: {e}", exc_info=True)
         return {"error": str(e)}, 500
+
+
+def filters_from_args():
+    """The file search filters named in the query string."""
+    # Filtering parameters
+    filters = {
+        "fields": {},
+        "tags": {
+            "include": [],
+            "exclude": [],
+            "static": [],
+            "exclude_static": [],
+            "user": [],
+            "exclude_user": [],
+        },
+    }
+
+    for arg, field in [
+        ("q", "q"),
+        ("language_id", "language_id"),
+        ("language", "language_id"),
+        ("status", "status"),
+        ("batch_uuid", "batch_uuid"),
+        ("bin_cluster_uuid", "bin_cluster_uuid"),
+        ("bin_cluster_name", "bin_cluster_name"),
+        ("first_seen", "first_seen"),
+        ("last_seen", "last_seen"),
+        ("filetype", "filetype"),
+        ("avtype", "avtype"),
+        ("yara", "yara"),
+        ("cc_ip", "cc_ip"),
+        ("file_names", "file_names"),
+        ("inferred_yara", "inferred_yara"),
+        ("inferred_avtype", "inferred_avtype"),
+        ("inferred_ccip", "inferred_ccip"),
+        ("inferred_filename", "inferred_filename"),
+        ("inferred_md5", "inferred_md5"),
+        ("inferred_tags", "inferred_tags"),
+        ("note_owner", "note_owners"),
+        ("note_owners", "note_owners"),
+        # Every file extracted out of one upload, at any depth.
+        ("root_md5", "root_md5"),
+        # One file by its own md5 only; `md5` also matches its children.
+        ("exact_md5", "file_md5"),
+        ("only_md5", "file_md5"),
+        ("strings", "strings"),
+    ]:
+        val = request.args.get(arg)
+        if val:
+            filters["fields"][field] = val.strip()
+
+    md5_val = request.args.get("md5") or request.args.get("file_md5")
+    if md5_val:
+        filters["fields"]["_any_md5"] = md5_val.strip()
+
+    file_name_val = request.args.get("file_name")
+    if file_name_val:
+        filters["fields"]["_any_file_name"] = file_name_val.strip()
+
+    # Range fields
+    for arg, field in [
+        ("min_function_count", "function_count"),
+        ("max_function_count", "function_count"),
+        ("min_bsim_features", "bsim_features_count"),
+        ("max_bsim_features", "bsim_features_count"),
+        ("min_cohesion", "cohesion_score"),
+        ("max_cohesion", "cohesion_score"),
+        ("min_entry_date", "entry_date"),
+        ("max_entry_date", "entry_date"),
+        ("min_first_seen", "first_seen"),
+        ("max_first_seen", "first_seen"),
+        ("min_last_seen", "last_seen"),
+        ("max_last_seen", "last_seen"),
+    ]:
+        val = request.args.get(arg)
+        if val:
+            filters["fields"][arg] = val.strip()
+
+    # Tags
+    filters["tags"]["include"] = [
+        t.strip()
+        for t in request.args.getlist("tag") + request.args.getlist("file_tag")
+        if t.strip()
+    ]
+    filters["tags"]["static"] = [
+        t.strip()
+        for t in request.args.getlist("static_tag")
+        + request.args.getlist("file_static_tag")
+        if t.strip()
+    ]
+    filters["tags"]["user"] = [
+        t.strip()
+        for t in request.args.getlist("user_tag")
+        + request.args.getlist("file_user_tag")
+        if t.strip()
+    ]
+    filters["tags"]["exclude"] = [
+        t.strip()
+        for t in request.args.getlist("exclude_tag")
+        + request.args.getlist("exclude_file_tag")
+        if t.strip()
+    ]
+    filters["tags"]["exclude_static"] = [
+        t.strip()
+        for t in request.args.getlist("exclude_static_tag")
+        + request.args.getlist("exclude_file_static_tag")
+        if t.strip()
+    ]
+    filters["tags"]["exclude_user"] = [
+        t.strip()
+        for t in request.args.getlist("exclude_user_tag")
+        + request.args.getlist("exclude_file_user_tag")
+        if t.strip()
+    ]
+    return filters
+
+
+def hydrate_files(r, col, pool_id, paged_ids):
+    """File docs, function counts and cluster assignments for one page of ids.
+
+    Returns (files, bin_cluster_map, t_meta, t_cluster); LookupError on a bad pool."""
+    # 4. Fetch full JSON, function counts, and cluster assignments for the page
+    # We fetch all 4 axes at once so the UI can show per-axis badges.
+    _AXES = ["overall", "code", "library", "content"]
+    if pool_id:
+        from bsimvis.app.services.pool_service import pool_service
+
+        pool = pool_service.get_pool(pool_id)
+        if not pool:
+            raise LookupError("Pool not found")
+        algo_p = pool_service.similarity_algo(pool)
+    else:
+        from bsimvis.app.services.collection_config import resolve_collection_algo
+
+        algo_p = resolve_collection_algo(col, request.args.get("algo"))
+    pipe = r.pipeline(transaction=False)
+    for doc_id in paged_ids:
+        pipe.get(f"{doc_id}:meta")
+        actual_col = doc_id.split(":")[0]
+        md5 = doc_id.split(":")[-1]
+        pipe.scard(f"{actual_col}:idx:file:functions:{md5}")
+        for axis in _AXES:
+            axis_algo_ns = f"{algo_p}:{axis}" if axis != "overall" else algo_p
+            if pool_id:
+                pipe.smembers(f"pool:{pool_id}:file:{md5}:bin_clusters:{axis_algo_ns}")
+            else:
+                if (
+                    config_service.get("clustering.bin_engine", "hierarchical_snn")
+                    == "hierarchical_snn"
+                ):
+                    axis_algo_ns = f"{axis_algo_ns}:snn"
+                pipe.smembers(f"{doc_id}:bin_clusters:{axis_algo_ns}")
+        # Whether this row can be expanded into a lineage subtree.
+        pipe.smembers(f"{actual_col}:lineage:children:{md5}")
+
+    results = pipe.execute()
+    t2 = time.perf_counter()
+    files_list = []
+
+    # First pass: collect results and unique cluster IDs
+    # Each file: meta, func_count, <4 axis smembers>, children = 7 results
+    _STRIDE = 2 + len(_AXES) + 1
+    raw_files_data = []
+    for i, doc_id in enumerate(paged_ids):
+        base = _STRIDE * i
+        res = results[base]
+        func_count = results[base + 1]
+        axis_cluster_raws = results[base + 2 : base + 2 + len(_AXES)]
+        child_raw = results[base + 2 + len(_AXES)]
+        child_count = lineage_service.count_members(child_raw)
+
+        if not res:
+            continue
+
+        data = json.loads(res) if not isinstance(res, dict) else res
+        if isinstance(data, str):
+            data = json.loads(data)
+
+        if not data.get("is_container"):
+            data["function_count"] = func_count
+        data["child_count"] = child_count or 0
+        data["file_id"] = doc_id
+        # Store as {axis: [cids]} dict
+        data["bin_clusters"] = {
+            axis: list(raw) if isinstance(raw, (list, set)) else []
+            for axis, raw in zip(_AXES, axis_cluster_raws)
+        }
+
+        raw_files_data.append(data)
+
+    # Second pass: fetch cluster metadata for all 4 axes
+    cluster_meta_map = {}
+
+    min_cohesion = float(
+        request.args.get(
+            "min_cohesion", config_service.get("clustering.min_cohesion", 0.5)
+        )
+    )
+    t3 = t2
+    # bin_clusters=false: rows without cluster badges (the overview's file
+    # cards), which skips the meta of every cluster each file sits in.
+    if request.args.get("bin_clusters") == "false":
+        for d in raw_files_data:
+            d["bin_clusters"] = []
+    elif any(any(v for v in d["bin_clusters"].values()) for d in raw_files_data):
+        meta_by_uuid, uuids_per_file_by_axis = fetch_bin_cluster_meta_all_axes(
+            r,
+            col,
+            [(d["bin_clusters"], d.get("is_container")) for d in raw_files_data],
+            algo=algo_p,
+            pool_id=pool_id,
+        )
+        t3 = time.perf_counter()
+        cluster_meta_map = {}
+        for u, cm in meta_by_uuid.items():
+            if (cm.get("cohesion_score") or 0) >= min_cohesion:
+                # Strip huge inferred metadata distributions to keep payload tiny
+                for dist_key in (
+                    "filename_distribution",
+                    "md5_distribution",
+                    "tag_distribution",
+                    "architecture_distribution",
+                    "executable_format_distribution",
+                    "batch_uuid_distribution",
+                ):
+                    cm.pop(dist_key, None)
+                cluster_meta_map[u] = cm
+        # Flatten to a list of uuids (axis is encoded in meta["axis"])
+        for data, uuids_by_axis in zip(raw_files_data, uuids_per_file_by_axis):
+            data["bin_clusters"] = [
+                u
+                for uuids in uuids_by_axis.values()
+                for u in uuids
+                if u in cluster_meta_map
+            ]
+
+    # Third pass: finalize files list
+    for data in raw_files_data:
+        # Map IDs to metadata
+        # We don't map it here anymore, we send the map separately
+        normalize_tags(data)
+        for f in _LEGACY_RAW_FIELDS:
+            data.pop(f, None)
+
+        if pool_id:
+            enrich_pool_data(data, pool_id)
+        # Ensure dates are Unix timestamps
+        for date_field in ["entry_date", "file_date", "first_seen", "last_seen"]:
+            if date_field in data:
+                data[date_field] = parse_timestamp(data[date_field])
+
+        files_list.append(data)
+    return files_list, cluster_meta_map, t2, t3
 
 
 def get_true_total_files(r, collection):
@@ -421,8 +458,9 @@ def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order, slice_end=None):
 
     Numeric fields rank off their ZSET; text fields rank off their tag-bucket
     registry. Anything else has no index to order by and falls back to arbitrary
-    set order. ponytail: walks the full ZSET/registry once (O(N)); fine at current
-    sizes, switch to per-id pipelined ZSCORE if the index dwarfs the candidate set.
+    set order. With `slice_end`, both walks stop once the first `slice_end` are
+    ordered and the rest is left out. ponytail: a sparse candidate set still walks
+    most of the index; switch to per-id pipelined ZSCORE if that gets slow.
     """
     desc = sort_order == "desc"
 
@@ -433,13 +471,27 @@ def sort_doc_ids(r, collection, doc_ids, sort_by, sort_order, slice_end=None):
         return list(doc_ids)
 
     zset_key = f"{collection}:idx:file:{sort_by}"
-    ranked = r.zrange(zset_key, 0, -1, desc=desc)
-    ranked = [d.decode() if isinstance(d, bytes) else str(d) for d in ranked]
-
     candidates = set(doc_ids)
-    ordered = [d for d in ranked if d in candidates]
+    ordered, seen = [], set()
+    # Growing pages instead of one ZRANGE 0 -1: the full read was ~2.3 s of a 3 s
+    # "8 newest files" request on a live 1.2k-file collection during a build.
+    start, step = 0, (max(256, 4 * slice_end) if slice_end else -1)
+    while True:
+        chunk = r.zrange(
+            zset_key, start, start + step - 1 if step > 0 else -1, desc=desc
+        )
+        for d in chunk:
+            d = d.decode() if isinstance(d, bytes) else str(d)
+            if d in candidates and d not in seen:
+                seen.add(d)
+                ordered.append(d)
+        if step < 0 or len(chunk) < step or len(ordered) >= slice_end:
+            break
+        start, step = start + step, step * 2
+    if slice_end and len(ordered) >= slice_end:
+        return ordered
     # Candidates missing from the ZSET (no score) go last, arbitrary order.
-    ordered.extend(candidates - set(ordered))
+    ordered.extend(candidates - seen)
     return ordered
 
 
@@ -524,7 +576,7 @@ def query_files_advanced(r, collection, filters):
             from bsimvis.app.services.index_config import INDEX_CONFIG
 
             for f_name, targets in INDEX_CONFIG.get("file", {}).items():
-                if "file" in targets and f_name != "inferred_tags":
+                if "file" in targets and f_name not in ("inferred_tags", "strings"):
                     # Free-text box: a bare word stays a substring search.
                     q_matches.update(
                         get_field_matches(f_name, val, default_kind="substring")
@@ -563,8 +615,20 @@ def query_files_advanced(r, collection, filters):
             "inferred_tags",
             "note_owners",
             "root_md5",
+            "file_md5",
         ]:
-            candidates &= get_field_matches(field, val)
+            if field in ("root_md5", "file_md5") and "," in val:
+                # A list of md5s: any of them. The file tree loads every
+                # upload behind a page in one request this way.
+                matches = set()
+                for v in val.split(","):
+                    if v.strip():
+                        matches |= get_field_matches(field, v.strip())
+                candidates &= matches
+            else:
+                candidates &= get_field_matches(field, val)
+        elif field == "strings":
+            candidates &= get_field_matches(field, val, default_kind="substring")
 
     # Apply Numeric Range Filters
     for field, val in fields.items():
@@ -812,9 +876,16 @@ def get_file_details(collection, file_md5):
             if date_field in data:
                 data[date_field] = parse_timestamp(data[date_field])
 
+        # The file view only draws cluster cards; the distributions were just
+        # folded into inferred_meta, so they would be ~10MB of dead weight.
+        slim_clusters = {
+            cid: {k: v for k, v in cm.items() if k not in _HEAVY_CLUSTER_FIELDS}
+            for cid, cm in cluster_meta_map.items()
+        }
+
         return {
             "file": data,
-            "bin_cluster_map": cluster_meta_map,
+            "bin_cluster_map": slim_clusters,
             "inferred_meta": inferred_meta,
             "collection": collection,
         }

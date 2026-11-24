@@ -1273,12 +1273,14 @@ def similarity_search():
                 enriched_pair = {
                     "id1": id1,
                     "id2": id2,
-                    "name1": m1.get(
-                        "function_name", id1.split(":")[-1] if id1 else "N/A"
-                    ),
-                    "name2": m2.get(
-                        "function_name", id2.split(":")[-1] if id2 else "N/A"
-                    ),
+                    "name1": m1.get("user_name")
+                    or m1.get("function_name", id1.split(":")[-1] if id1 else "N/A"),
+                    "name2": m2.get("user_name")
+                    or m2.get("function_name", id2.split(":")[-1] if id2 else "N/A"),
+                    "user_name1": m1.get("user_name"),
+                    "user_name2": m2.get("user_name"),
+                    "user_name_source1": m1.get("user_name_source"),
+                    "user_name_source2": m2.get("user_name_source"),
                     "score": sim_score,
                     "feat_count": int(feat_count),
                     "sid": sid,

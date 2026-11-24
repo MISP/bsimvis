@@ -15,6 +15,7 @@ window.FunctionFilters = {
         { param: 'min_callers', label: 'Min callers', type: 'number' },
         { param: 'min_callees', label: 'Min callees', type: 'number' },
         { param: 'note_owner', label: 'Note owner' },
+        { param: 'strings', label: 'Uses string' },
         { param: 'file_name', label: 'File name' },
         { param: 'file_md5', label: 'File MD5' },
         { param: 'file_tag', label: 'File tags', multiple: true },
@@ -69,7 +70,7 @@ window.FunctionFilters = {
         });
         const cells = [
             ...leadingCells,
-            { html: `<div style="display:flex; flex-direction:column; gap:4px;">${input('flt-func-name', 'function_name', 'Name...')}<div style="display:flex; gap:2px;">${input('flt-func-namespace', 'namespace', 'Namespace...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-ret_type', 'return_type', 'Return type...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}</div></div>` },
+            { html: `<div style="display:flex; flex-direction:column; gap:4px;">${input('flt-func-name', 'function_name', 'Name...')}<div style="display:flex; gap:2px;">${input('flt-func-namespace', 'namespace', 'Namespace...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-ret_type', 'return_type', 'Return type...', { style: 'width:50%; box-sizing:border-box; font-size:0.6rem;' })}</div>${input('flt-func-strings', 'strings', 'Uses string...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}</div>` },
             { html: input('flt-func-address', 'entrypoint_address', 'Addr...') },
             { html: tagCell, attrs: '' },
             { html: `<div style="display:flex; flex-direction:column; gap:2px;">${input('flt-func-cluster', 'cluster_uuid', 'UUID...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-cluster-name', 'cluster_name', 'Cluster name...', { style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}${input('flt-func-min-cohesion', 'min_cohesion', 'Min cohesion...', { type: 'number', attrs: 'step="0.05" min="0" max="1"', style: 'width:100%; box-sizing:border-box; font-size:0.6rem;' })}</div>` },
@@ -154,6 +155,6 @@ window.enhanceFilterClears = function (root = document) {
 document.addEventListener('DOMContentLoaded', () => {
     window.enhanceFilterClears();
     new MutationObserver(records => records.forEach(record => record.addedNodes.forEach(node => {
-        if (node.nodeType === Node.ELEMENT_NODE) window.enhanceFilterClears(node.parentElement || document);
+        if (node.nodeType === Node.ELEMENT_NODE && !(node instanceof SVGElement)) window.enhanceFilterClears(node.parentElement || document);
     }))).observe(document.body, { childList: true, subtree: true });
 });

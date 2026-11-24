@@ -1,0 +1,2067 @@
+"""N-way file diff: rows of functions shared across N files.
+
+`stored` mode takes edges from each pair's stored bin_sim doc (`diff.matched`),
+so the rows agree with the pair diff view by construction. A pair with no stored
+doc falls back to `cached_pair_from_stored_sims` and is counted in
+`fallback_pairs`.
+
+`virtual` mode (R1) rebuilds the edges from the files' tf vectors as a fresh
+collection holding exactly these files would: BSim discovery over functions at
+or above `min_features`, exact FunctionID-hash matches below it, pairwise greedy,
+then the bin-level discovery pass. It works for any set, whatever collections the
+files live in. Nothing is written to Kvrocks in either mode.
+
+`compute` is pure (no Flask), so a worker job calls it unchanged. A set over
+`nway.auto_build_max_members` files is never built on demand: a NWAY_BUILD job
+builds it once and keeps its base + matched rows in Redis (`nway:built:*`).
+"""
+
+import hashlib
+import json
+import pickle
+import re
+import statistics
+import threading
+import zlib
+
+import numpy as np
+from collections import Counter, OrderedDict, defaultdict
+from itertools import combinations
+
+from bsimvis.app.services import bsim_profiles, container_sim_service, lineage_service
+from bsimvis.app.services.bin_sim_service import (
+    _discover_edges_py,
+    _origin_coll,
+    bin_sim_service,
+    discover_edges,
+    load_vectors,
+    read_bin_sim_rev,
+    stored_discovery,
+)
+from bsimvis.app.services.bin_sim_tags import (
+    greedy_match,
+    is_library_tag,
+    merge_tag_fields,
+    read_tags_rev,
+)
+from bsimvis.app.services.collection_config import (
+    assert_signature_settings_match,
+    get_signature_settings,
+    resolve_collection_algo,
+)
+from bsimvis.app.services.config_service import config_service
+from bsimvis.app.services.nway_match import PairEdges, nway_match
+from bsimvis.app.services.redis_client import get_raw_queue_redis
+
+_MD5 = re.compile(r"^[0-9a-f]{32}$")
+_DEFAULT_NAME = re.compile(r"^(FUN_|sub_|thunk_)", re.I)
+_SUFFIX = re.compile(r"\.(part|isra|constprop|cold|llvm)(\.\d+)?$")
+MAX_COLUMNS = 400  # a column tree stops expanding past this many columns
+PAIR_CHUNK = 100  # pair docs fetched per pipeline; a doc can be megabytes
+# Sampled sets: what links files beyond the pairs read (see `_bridges`). Measured on
+# 437 mirai files: `lane` pays per pair read; `fid`/`cluster` cost BSim checks for
+# a few rows. Cross-arch pair picking and a spanning tree were tried: no better
+# than a larger pair_k at the same budget.
+BRIDGES = ("lane", "fid", "cluster")
+BRIDGE_CHUNK = 5000  # candidate pairs whose vectors are held at once
+SCORABLE = ("unweighted_cosine", "binary_cosine", "jaccard", "weighted_cosine")
+SCORE_CHUNK = 5000  # pair scores fetched per ZMSCORE
+
+
+_progress = threading.local()
+
+
+def set_progress(fn):
+    """Per-thread callback `fn(fraction, label)` for the slow base load; None clears it."""
+    _progress.fn = fn
+
+
+def _report(frac, label):
+    fn = getattr(_progress, "fn", None)
+    if fn:
+        fn(frac, label)
+
+
+class TooLarge(Exception):
+    def __init__(self, members, functions=None):
+        super().__init__(f"{members} members, {functions} functions")
+        self.members = members
+        self.functions = functions
+
+
+class BadParams(ValueError):
+    pass
+
+
+class NeedsBuild(Exception):
+    """A large set with no built doc yet: queue a NWAY_BUILD job (see `compute`)."""
+
+    def __init__(self, members, key, functions=0, pair_k=None):
+        super().__init__(f"{members} members: build it as a job")
+        self.members = members
+        self.key = key
+        self.functions = functions
+        self.pair_k = pair_k
+
+
+class MemberMissing(Exception):
+    def __init__(self, missing):
+        super().__init__(f"unknown files: {missing}")
+        self.missing = missing
+
+
+def caps():
+    return (
+        int(config_service.get("nway.max_members", 1000)),
+        int(config_service.get("nway.max_functions", 1000000)),
+    )
+
+
+def check_caps(n_members, n_functions=None, max_members=None, max_functions=None):
+    """Raise TooLarge when the set is over either cap (functions may be unknown yet)."""
+    cap_m, cap_f = caps()
+    max_members = cap_m if max_members is None else max_members
+    max_functions = cap_f if max_functions is None else max_functions
+    if n_members > max_members or (n_functions or 0) > max_functions:
+        raise TooLarge(n_members, n_functions)
+
+
+class _LRU:
+    """Tiny thread-safe cache; the app is one threaded process (see _DIFF_CACHE)."""
+
+    def __init__(self, size):
+        self.size, self.data, self.lock = size, OrderedDict(), threading.Lock()
+
+    def get(self, key):
+        with self.lock:
+            if key in self.data:
+                self.data.move_to_end(key)
+                return self.data[key]
+
+    def put(self, key, value):
+        with self.lock:
+            self.data[key] = value
+            self.data.move_to_end(key)
+            while len(self.data) > self.size:
+                self.data.popitem(last=False)
+
+
+# ponytail: counted by entries, not bytes. Edges + metadata of a 12-file set are
+# tens of MB at most under the caps; the Redis-backed job cache replaces this.
+_BASE_CACHE = _LRU(2)
+_DOC_CACHE = _LRU(8)
+# Matched rows per (base, min_edge): twins, column folds, focus and presence only
+# re-project them, so those toggles skip the match (99% of a doc build).
+_MATCH_CACHE = _LRU(4)
+
+
+_FLIGHTS = {}
+_FLIGHTS_LOCK = threading.Lock()
+
+
+def _single_flight(key, build):
+    """`build()` runs once per key at a time; a concurrent caller waits for it.
+
+    A reload, or the overview and the Functions tab asking for the same set,
+    joins the running build instead of starting a second one: the waiter
+    reports the leader's progress as its own (its own cancel flag still stops
+    it) and returns the leader's result. If the leader fails or is cancelled,
+    the waiter builds itself.
+    """
+    with _FLIGHTS_LOCK:
+        flight = _FLIGHTS.get(key)
+        leader = flight is None
+        if leader:
+            flight = _FLIGHTS[key] = {"done": threading.Event(), "progress": None}
+    if not leader:
+        while not flight["done"].wait(0.5):
+            if flight["progress"]:
+                _report(*flight["progress"])
+        if "result" in flight:
+            return flight["result"]
+        return _single_flight(key, build)
+    own = getattr(_progress, "fn", None)
+
+    def share(frac, label):
+        flight["progress"] = (frac, label)
+        if own:
+            own(frac, label)
+
+    set_progress(share)
+    try:
+        flight["result"] = build()
+        return flight["result"]
+    finally:
+        set_progress(own)
+        with _FLIGHTS_LOCK:
+            _FLIGHTS.pop(key, None)
+        flight["done"].set()
+
+
+BUILT_TTL = 7 * 24 * 3600
+
+
+def auto_build_max():
+    """Above this many files a set is built by a job, never by a request."""
+    return int(config_service.get("nway.auto_build_max_members", 50))
+
+
+def depth_key(scope, members):
+    """Queue-Redis key holding the pair_k a large set was last asked to build at."""
+    ident = json.dumps([scope, members], sort_keys=True).encode()
+    return f"nway:depth:{hashlib.md5(ident).hexdigest()}"
+
+
+# (id, label, pair_k, what it reads); pair_k None = nway.pair_k, 0 = every pair
+DEPTHS = (
+    ("fast", "Fast", None, "nearest partners of each file (nway.pair_k)"),
+    ("balanced", "Balanced", 64, "64 nearest partners of each file"),
+    ("deep", "Deep", 0, "every file pair: exact"),
+)
+
+
+def estimate(n_files, n_functions, pair_k):
+    """(file pairs read, seconds) of a build at `pair_k` (0 = every pair).
+
+    Fitted on 437 mirai files (212k functions, ~485 per file): a fixed cost
+    per function, plus per pair read a cost that grows with the functions per
+    file (pair docs list matched functions). Recalibrate on other hardware
+    with `nway.est_secs_per_function` / `nway.est_secs_per_pair_function`.
+    """
+    above, _, extra, _ = pair_sample()
+    total = n_files * (n_files - 1) // 2
+    pairs = total
+    if pair_k and n_files > above:
+        # k nearest + random partners overlap: ~0.72 of k + extra per file
+        pairs = min(total, int(0.72 * n_files * (pair_k + extra)))
+    per_fn = float(config_service.get("nway.est_secs_per_function", 1.4e-4))
+    per_pair = float(config_service.get("nway.est_secs_per_pair_function", 1.44e-5))
+    secs = per_fn * n_functions + per_pair * n_functions / max(n_files, 1) * pairs
+    return pairs, secs
+
+
+def build_depths(n_files, n_functions):
+    """The build choices a large set offers, with their estimated cost.
+
+    Depths reading the same pairs collapse into the deepest: under
+    `nway.sample_above` files every depth reads every pair, so only Deep is left.
+    """
+    out = []
+    for did, label, pair_k, note in DEPTHS:
+        k = pair_sample()[1] if pair_k is None else pair_k
+        pairs, secs = estimate(n_files, n_functions, k)
+        if out and out[-1]["pairs"] == pairs:
+            out.pop()
+        out.append(
+            {
+                "id": did,
+                "label": label,
+                "pair_k": k,
+                "note": note,
+                "pairs": pairs,
+                "total_pairs": n_files * (n_files - 1) // 2,
+                "secs": round(secs),
+            }
+        )
+    return out
+
+
+def _built(kind, key):
+    raw = get_raw_queue_redis().get(f"nway:built:{kind}:{key}")
+    # pickle: only this module writes these keys (app or worker), never a client
+    return pickle.loads(zlib.decompress(raw)) if raw else None
+
+
+def _keep_built(kind, key, value):
+    raw = zlib.compress(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL), 1)
+    get_raw_queue_redis().setex(f"nway:built:{kind}:{key}", BUILT_TTL, raw)
+
+
+def invalidate():
+    """Drop cached docs: function names are not part of their revision key."""
+    for c in (_BASE_CACHE, _DOC_CACHE, _MATCH_CACHE):
+        with c.lock:
+            c.data.clear()
+
+
+def default_min_edge():
+    """The read-time floor the UI applies to file diffs (`similarity.file_min_score`)."""
+    return float(config_service.get("similarity.file_min_score", 0.0))
+
+
+def _decode(raw):
+    if not raw:
+        return {}
+    value = json.loads(raw) if not isinstance(raw, dict) else raw
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _rev_scopes(scope, members):
+    """Where the stored-data revisions live: the pool, or each member collection."""
+    if scope.get("pool"):
+        return [f"global:pool:{scope['pool']}"]
+    return sorted({c for c, _ in members})
+
+
+def _algo(scope, members):
+    if scope.get("pool"):
+        from bsimvis.app.services.pool_service import pool_service
+
+        return pool_service.similarity_algo(pool_service.get_pool(scope["pool"]))
+    return resolve_collection_algo(members[0][0])
+
+
+def _col_id(coll, md5):
+    return f"{coll}:{md5}"
+
+
+def _file_names(r, members):
+    pipe = r.pipeline(transaction=False)
+    for coll, md5 in members:
+        pipe.get(f"{coll}:file:{md5}:meta")
+    return {
+        _col_id(*m): _decode(raw).get("file_name") or m[1]
+        for m, raw in zip(members, pipe.execute())
+    }
+
+
+def expand_members(r, members):
+    """Replace each container by its code-bearing leaf children.
+
+    Returns `(members, labels, warnings)`; `labels` maps a leaf's column id to
+    `container › child` so the UI can show where it came from.
+    """
+    out, labels, warnings, containers = [], {}, [], {}
+    for coll, md5 in members:
+        if coll not in containers:
+            containers[coll] = lineage_service.container_md5s(coll, r)
+        if md5 not in containers[coll]:
+            out.append((coll, md5))
+            continue
+        leaves, _ = container_sim_service.leaf_info(coll, md5, r, containers[coll])
+        names = _file_names(r, [(coll, x) for x in [md5, *leaves]])
+        empty = 0
+        for leaf, count in sorted(leaves.items()):
+            if not count:
+                empty += 1
+                continue
+            out.append((coll, leaf))
+            labels[_col_id(coll, leaf)] = (
+                f"{names[_col_id(coll, md5)]} › {names[_col_id(coll, leaf)]}"
+            )
+        if empty:
+            warnings.append(f"{md5}: {empty} child file(s) without functions skipped.")
+    return list(dict.fromkeys(out)), labels, warnings
+
+
+def _pool_params(scope):
+    from bsimvis.app.services.pool_service import pool_service
+
+    pool = pool_service.get_pool(scope["pool"])
+    fsp, fisp = pool.get("func_sim_params") or {}, pool.get("file_sim_params") or {}
+    cfg = config_service.get
+    base = {
+        "algo": pool_service.similarity_algo(pool),
+        "min_score": fsp.get("min_score", cfg("similarity.min_score", 0.9)),
+        "min_features": fsp.get("min_features", cfg("similarity.min_features", 10)),
+    }
+    discovery = None
+    if fisp.get("discovery", stored_discovery() is not None):
+        discovery = (
+            float(
+                fisp.get(
+                    "discovery_min_score", cfg("similarity.discovery_min_score", 0.5)
+                )
+            ),
+            float(
+                fisp.get("discovery_max_df", cfg("similarity.discovery_max_df", 1.0))
+            ),
+        )
+    return base, discovery
+
+
+def virtual_params(scope, members, params):
+    """Parameters a fresh collection of these files would run with, plus warnings.
+
+    A caller-supplied value wins; otherwise a pool uses its own function-sim
+    params and a collection scope (or a mixed set) uses the first member
+    collection's locked values, the way scan does.
+    """
+    from bsimvis.app.services.scan_service import get_scan_service
+
+    warnings = []
+    colls = list(dict.fromkeys(c for c, _ in members))
+    if scope.get("pool"):
+        base, discovery = _pool_params(scope)
+    else:
+        scan = get_scan_service()
+        base, discovery = scan._params_for(colls[0], {}), stored_discovery()
+        for coll in colls[1:]:
+            theirs = scan._params_for(coll, {})
+            diff = [
+                k for k in ("algo", "min_score", "min_features") if theirs[k] != base[k]
+            ]
+            if diff:
+                warnings.append(
+                    f"{coll}: locked {', '.join(diff)} differ from {colls[0]}; "
+                    f"using {colls[0]}'s."
+                )
+    for key in ("algo", "min_score", "min_features"):
+        if params.get(key) is not None:
+            base[key] = params[key]
+    out = {
+        "algo": base["algo"],
+        "min_score": float(base["min_score"]),
+        "min_features": int(base["min_features"]),
+        "discovery": discovery,
+    }
+    # ponytail: top_k is ignored (it never binds at the caps); minhash_lsh and
+    # milvus_sparse have no in-memory scorer.
+    if bsim_profiles.parse_algo(out["algo"])[0] not in SCORABLE:
+        raise BadParams(f"mode=virtual cannot score with algo {out['algo']!r}")
+
+    masks = set()
+    for coll in colls:
+        mask = get_signature_settings(coll)
+        if mask is not None:
+            masks.add(int(mask))
+        try:
+            assert_signature_settings_match(coll)
+        except ValueError as e:
+            warnings.append(f"{coll}: {e}")
+    if len(masks) > 1:
+        warnings.append(
+            "Member collections were extracted with different signature settings; "
+            "their feature hashes do not intersect."
+        )
+    return out, warnings
+
+
+def _virtual_edges(r, columns, fid_sets, p, fids, ix):
+    """Pairwise-greedy edges per column pair, as a fresh collection would build them."""
+    all_fids = set().union(*fid_sets.values())
+    _report(0.1, "loading vectors")
+    vectors = load_vectors(r, all_fids)
+    small = {f for f in all_fids if len(vectors.get(f, ())) < p["min_features"]}
+
+    # Sub-floor functions match on their exact FunctionID hash, never on BSim.
+    ordered = sorted(small)
+    pipe = r.pipeline(transaction=False)
+    for fid in ordered:
+        pipe.get(f"{fid}:funcid")
+    owner = {f: cid for cid, fs in fid_sets.items() for f in fs}
+    by_hash = defaultdict(lambda: defaultdict(list))
+    for fid, h in zip(ordered, pipe.execute()):
+        if h:
+            by_hash[h.decode() if isinstance(h, bytes) else h][owner[fid]].append(fid)
+
+    edges = {}
+    pairs = list(combinations(columns, 2))
+    for n, (a, b) in enumerate(pairs):
+        _report(0.3 + 0.65 * n / len(pairs), f"matching file pair {n + 1}/{len(pairs)}")
+        fa, fb = fid_sets[a["id"]], fid_sets[b["id"]]
+        found = discover_edges(
+            vectors, fa - small, fb - small, p["algo"], p["min_score"]
+        )
+        for cols in by_hash.values():
+            found += [
+                (x, y, 1.0)
+                for x in cols.get(a["id"], ())
+                for y in cols.get(b["id"], ())
+            ]
+        if p["discovery"]:
+            min_score, max_df = p["discovery"]
+            _, done_a, done_b = greedy_match(found)
+            found += discover_edges(
+                vectors, fa - done_a, fb - done_b, p["algo"], min_score, max_df=max_df
+            )
+        edges[(a["id"], b["id"])] = PairEdges(
+            fids, ix, ((x, y, float(s)) for x, y, s in greedy_match(found)[0])
+        )
+    return edges
+
+
+def bridge_kinds(value):
+    """`lane,fid,cluster` (str or list) -> tuple in BRIDGES order; `none` or empty -> ()."""
+    asked = value.split(",") if isinstance(value, str) else list(value or ())
+    asked = {a.strip() for a in asked} - {"", "none"}
+    if asked - set(BRIDGES):
+        raise BadParams(f"bridges must be a subset of {','.join(BRIDGES)} or none")
+    return tuple(b for b in BRIDGES if b in asked)
+
+
+def pair_sample():
+    """(files above which pairs are sampled, nearest partners, random partners, bridges)."""
+    return (
+        int(config_service.get("nway.sample_above", 100)),
+        int(config_service.get("nway.pair_k", 16)),
+        int(config_service.get("nway.pair_random", 4)),
+        bridge_kinds(config_service.get("nway.bridges", "lane")),
+    )
+
+
+def nearest_pairs(scores, k, extra, seed):
+    """Pairs to read for a large set -> sorted [(i, j)], i < j.
+
+    Each file keeps its `k` best-scored partners plus `extra` seeded random
+    ones, so two sub-families inside one cluster stay linked. `scores` is an
+    N x N array, -1 where a pair has no stored score.
+    """
+    n = len(scores)
+    s = np.array(scores, np.float64)
+    np.fill_diagonal(s, -np.inf)
+    best = np.argsort(-s, axis=1, kind="stable")[:, :k].tolist()
+    out = {(min(i, j), max(i, j)) for i in range(n) for j in best[i]}
+    rng = np.random.default_rng(seed)
+    for i in range(n):
+        for j in rng.choice(n - 1, size=min(extra, n - 1), replace=False).tolist():
+            j += j >= i
+            out.add((min(i, j), max(i, j)))
+    return sorted(out)
+
+
+def lane_pairs(rows, scores, read, k):
+    """Unread file pairs that would join lanes sharing no file -> sorted [(i, j)].
+
+    `rows` are matched rows, `mask` bit i = file i. A lane is a set of 2+
+    files held by 2+ rows. Each lane takes its `k` best lanes it shares no
+    file with, ranked by their best stored file pair outside `read`, and
+    that pair is returned. One read pair is enough to join every row the two
+    lanes hold in common.
+    """
+    count = Counter(r["mask"] for r in rows if r["span"] > 1)
+    lanes = [m for m, c in count.items() if c >= 2]  # nway_group_service.LANE_MIN
+    if len(lanes) < 2:
+        return []
+    n = len(scores)
+    s = np.array(scores, np.float64)
+    np.fill_diagonal(s, -1.0)
+    # a read pair already had its say: those lanes stayed apart through it
+    for i, j in read:
+        s[i, j] = s[j, i] = -1.0
+    idx = [np.array([i for i in range(n) if m >> i & 1]) for m in lanes]
+    member = np.zeros((len(lanes), n), bool)
+    for a, ia in enumerate(idx):
+        member[a, ia] = True
+    near = np.stack(
+        [s[ia].max(axis=0) for ia in idx]
+    )  # lane -> best score to each file
+    best = np.stack([near[:, ib].max(axis=1) for ib in idx], axis=1)
+    best[(member.astype(np.int32) @ member.T.astype(np.int32)) > 0] = -1.0
+    out = set()
+    for a in range(len(lanes)):
+        for b in np.argsort(-best[a], kind="stable")[:k].tolist():
+            if best[a, b] <= 0:
+                break
+            j = idx[b][np.argmax(near[a, idx[b]])]
+            i = idx[a][np.argmax(s[idx[a], j])]
+            out.add((int(min(i, j)), int(max(i, j))))
+    return sorted(out)
+
+
+def bridge_candidates(groups, pos, read):
+    """Chain links across unread file pairs -> [(fid_a, fid_b)].
+
+    `groups` is `{key: {column: [fid, ...]}}` (one FunctionID hash, or one
+    cluster). Its files are chained in `pos` order, one link per consecutive
+    pair, skipping pairs in `read` (frozensets of columns): a read pair's doc
+    already decided. A group where one file holds several functions is
+    ambiguous and skipped.
+    """
+    # ponytail: a chain, not every pair -- a link that fails BSim splits the
+    # group; try more links per group if recall measures short.
+    out = []
+    for g in groups.values():
+        if len(g) < 2 or any(len(v) > 1 for v in g.values()):
+            continue
+        cols = sorted(g, key=pos.__getitem__)
+        out += [
+            (g[x][0], g[y][0])
+            for x, y in zip(cols, cols[1:])
+            if frozenset((x, y)) not in read
+        ]
+    return out
+
+
+def _bridges(r, scope, members, fid_sets, info, read, kinds, algo):
+    """Edges across the file pairs a sampled set did not read -> (edges, warning).
+
+    `info` is `{fid: (FunctionID hash, distinct feature count)}`. Two functions
+    under the BSim floor sharing a FunctionID hash match at 1.0, the sim
+    builder's own rule. Above the floor, a shared hash or a shared primary
+    cluster (cohesion >= `clustering.cohesion_cut`) is only a candidate, kept
+    when its BSim score reaches the collection's `min_score`.
+    """
+    if scope.get("pool"):
+        p = _pool_params(scope)[0]
+    else:
+        from bsimvis.app.services.scan_service import get_scan_service
+
+        p = get_scan_service()._params_for(members[0][0], {})
+    floor, min_score = int(p["min_features"]), float(p["min_score"])
+    owner = {f: c for c, fs in fid_sets.items() for f in fs}
+    pos = {c: i for i, c in enumerate(fid_sets)}
+    small = {f for f, (_, n) in info.items() if n < floor}
+    auto, check = [], set()
+
+    if "fid" in kinds:
+        groups = defaultdict(lambda: defaultdict(list))
+        for f, (h, _) in info.items():
+            if h:
+                groups[h][owner[f]].append(f)
+        for x, y in bridge_candidates(groups, pos, read):
+            if x in small and y in small:
+                auto.append((x, y, 1.0))
+            else:
+                check.add((x, y))
+
+    if "cluster" in kinds:
+        # tiny functions cluster on BSim noise (clustering.min_features is 0)
+        # ponytail: no cluster rev in the base key; a recluster shows up when the
+        # base is next rebuilt. BSim checks every link, so staleness costs recall only.
+        pool = scope.get("pool")
+        big = sorted(f for f in info if f not in small)
+        pipe = r.pipeline(transaction=False)
+        for f in big:
+            pipe.hkeys(
+                f"global:pool:{pool}:{f}:cluster_scores"
+                if pool
+                else f"{f}:cluster_scores"
+            )
+        # ponytail: one primary cluster per function; hdbscan's multi-cluster
+        # entries are skipped.
+        cid = {
+            f: (c[0].decode() if isinstance(c[0], bytes) else str(c[0]))
+            for f, c in zip(big, pipe.execute())
+            if len(c) == 1
+        }
+        ns = f"global:pool:{pool}" if pool else members[0][0]
+        calgo = resolve_collection_algo(ns)
+        ids = sorted(set(cid.values()))
+        pipe = r.pipeline(transaction=False)
+        for c in ids:
+            pipe.get(f"{ns}:cluster:{calgo}:{c}:meta")
+        cut = float(config_service.get("clustering.cohesion_cut", 0.9))
+        tight = {
+            c
+            for c, raw in zip(ids, pipe.execute())
+            if float(_decode(raw).get("cohesion_score") or 0) >= cut
+        }
+        groups = defaultdict(lambda: defaultdict(list))
+        for f, c in cid.items():
+            if c in tight:
+                groups[c][owner[f]].append(f)
+        check.update(bridge_candidates(groups, pos, read))
+
+    check = sorted(check)
+    cap = int(config_service.get("nway.bridge_max_checks", 200000))
+    unchecked = 0
+    if bsim_profiles.parse_algo(algo)[0] not in SCORABLE:
+        check, unchecked = [], len(check)
+    elif len(check) > cap:
+        check, unchecked = check[:cap], len(check) - cap
+    kept = []
+    for start in range(0, len(check), BRIDGE_CHUNK):
+        _report(0.9, f"checking bridge {start + 1}/{len(check)}")
+        chunk = check[start : start + BRIDGE_CHUNK]
+        vectors = load_vectors(r, {f for pair in chunk for f in pair})
+        for x, y in chunk:
+            kept += _discover_edges_py(vectors, [x], [y], algo, min_score)
+    warning = None
+    if auto or check or unchecked:
+        warning = (
+            f"Bridges over unread pairs: {len(auto):,} FunctionID match(es) under "
+            f"min_features, {len(kept):,} of {len(check):,} FunctionID/cluster "
+            f"candidates kept at BSim >= {min_score:g}"
+            + (f", {unchecked:,} not checked" if unchecked else "")
+            + "."
+        )
+    return auto + kept, warning
+
+
+def _pair_scores(r, scope, members, algo, pairs, sids):
+    """N x N stored file-pair scores (-1 where none), read from the scoreboard ZSET."""
+    pool_id = scope.get("pool")
+    key = (
+        f"global:pool:{pool_id}:bin_sim:score:{algo}"
+        if pool_id
+        else f"{members[0][0]}:bin_sim:score:{algo}"
+    )
+    scores = np.full((len(members), len(members)), -1.0)
+    known = [(p, sid) for p, sid in zip(pairs, sids) if sid]
+    for start in range(0, len(known), SCORE_CHUNK):
+        chunk = known[start : start + SCORE_CHUNK]
+        for ((i, j), _), v in zip(chunk, r.zmscore(key, [sid for _, sid in chunk])):
+            if v is not None:
+                scores[i, j] = scores[j, i] = float(v)
+    return scores
+
+
+def _stored_edges(r, scope, members, columns, algo, fid_sets, fids, ix, sample):
+    pool_id = scope.get("pool")
+    # ponytail: fallback pairs use a fixed discovery floor, so lowering min_edge
+    # below it cannot recover their weaker edges; pairs with a stored doc are exact.
+    fallback_floor = float(config_service.get("similarity.discovery_min_score", 0.5))
+    pairs = list(combinations(range(len(members)), 2))
+    if pool_id:
+        # One involves set per member, intersected here, not two reads per pair.
+        pipe = r.pipeline(transaction=False)
+        for coll, md5 in members:
+            pipe.smembers(
+                f"global:pool:{pool_id}:bin_sim:involves:{_origin_coll(coll)}:{md5}"
+            )
+        tag = f":bin_sim:{algo}:"
+        involves = [
+            {s for x in res if tag in (s := x.decode() if isinstance(x, bytes) else x)}
+            for res in pipe.execute()
+        ]
+        sids = [next(iter(involves[i] & involves[j]), None) for i, j in pairs]
+    else:
+        sids = [
+            bin_sim_service.find_pair_sid(
+                members[i][0], members[i][1], members[j][1], algo=algo
+            )
+            for i, j in pairs
+        ]
+
+    sampled = None
+    stats = None
+    if not (sample and len(members) > sample[0]):
+        sc = _pair_scores(r, scope, members, algo, pairs, sids)
+        found = sorted(v for v in sc[np.triu_indices(len(members), 1)] if v >= 0)
+        if found:
+            stats = {
+                "min": found[0],
+                "median": found[len(found) // 2],
+                "max": found[-1],
+                "scored": len(found),
+                "total": len(pairs),
+            }
+    if sample and len(members) > sample[0]:
+        # ponytail: k nearest + a few random partners per file, not every pair;
+        # a row still forms through any chain of read pairs, but a function only
+        # matched between two unread files is missed. pair_k=0 reads every pair.
+        _report(0.05, "picking file pairs")
+        scores = _pair_scores(r, scope, members, algo, pairs, sids)
+        seed = int(hashlib.md5(json.dumps(members).encode()).hexdigest()[:8], 16)
+        keep = set(nearest_pairs(scores, sample[1], sample[2], seed))
+        sampled = (len(keep), len(pairs))
+        all_pairs, all_sids = pairs, sids
+        sids = [sid for p, sid in zip(pairs, sids) if p in keep]
+        pairs = [p for p in pairs if p in keep]
+
+    edges, missing = {}, []
+
+    def read(pairs, sids):
+        for start in range(0, len(pairs), PAIR_CHUNK):
+            _report(
+                0.1 + 0.85 * start / len(pairs),
+                f"reading file pair {start + 1}/{len(pairs)}",
+            )
+            pipe = r.pipeline(transaction=False)
+            for sid in sids[start : start + PAIR_CHUNK]:
+                pipe.get(sid or "")
+            chunk = zip(pairs[start : start + PAIR_CHUNK], pipe.execute())
+            for (i, j), raw in chunk:
+                doc = _decode(raw)
+                edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
+                    fids,
+                    ix,
+                    (
+                        (m["func_a"], m["func_b"], float(m["similarity"]))
+                        for m in (doc.get("diff") or {}).get("matched") or []
+                    ),
+                )
+                if not doc:
+                    missing.append((i, j))
+
+    read(pairs, sids)
+    if sampled and "lane" in sample[3]:
+        # Second pass: match what was read, then read the best pair between lanes
+        # sharing no file, so a family split across far files can rejoin.
+        _report(0.6, "joining lanes")
+        funcs = {c["id"]: dict.fromkeys(fid_sets[c["id"]], 1.0) for c in columns}
+        sid_of = dict(zip(all_pairs, all_sids))
+        lane_k = int(config_service.get("nway.lane_k", 8))
+        for _ in range(int(config_service.get("nway.lane_rounds", 3))):
+            rows = nway_match(edges, funcs, default_min_edge())
+            extra = lane_pairs(rows, scores, keep, lane_k)
+            if not extra:
+                break
+            read(extra, [sid_of[p] for p in extra])
+            keep |= set(extra)
+        sampled = (len(keep), sampled[1])
+
+    if missing:
+        # No stored doc: edges from function-sim docs, each file's vectors read once.
+        def key(m):
+            return (_origin_coll(m[0]) if pool_id else m[0], m[1])
+
+        files = {
+            key(members[x]): fid_sets[columns[x]["id"]] for p in missing for x in p
+        }
+        vectors = load_vectors(r, set().union(*files.values()))
+        for n, (i, j) in enumerate(missing):
+            _report(
+                0.1 + 0.85 * n / len(missing),
+                f"matching file pair {n + 1}/{len(missing)}",
+            )
+            (coll_a, md5_a), (coll_b, md5_b) = members[i], members[j]
+            found, _, _ = bin_sim_service.stored_sim_edges(
+                coll_a,
+                md5_a,
+                md5_b,
+                algo,
+                coll_b if pool_id else None,
+                pool_id,
+                min_score=fallback_floor,
+                fid_sets=files,
+                vectors=vectors,
+            )
+            edges[(columns[i]["id"], columns[j]["id"])] = PairEdges(
+                fids, ix, ((x, y, float(s)) for x, y, s in greedy_match(found)[0])
+            )
+    return edges, len(missing), sampled, stats
+
+
+def _fn_meta(meta):
+    """The function fields the N-way views show."""
+    out = {
+        k: meta[k]
+        for k in (
+            "name",
+            "user_name",
+            "user_name_source",
+            "namespace",
+            "entrypoint_address",
+            "tags",
+            "user_tags",
+            "parameters",
+            "return_type",
+            "bsim_features_count",
+            "instruction_count",
+        )
+        if k in meta
+    }
+    if "function_name" in meta:
+        out["name"] = meta["function_name"]
+    return out
+
+
+def _load_base(r, scope, members, vparams, labels, warnings, sample=None):
+    """Everything min_edge-independent: columns, function weights, metadata, edges.
+
+    `vparams` is None for stored mode, else the virtual-mode parameters.
+    """
+    algo = vparams["algo"] if vparams else _algo(scope, members)
+    _report(0.02, "reading files")
+
+    pipe = r.pipeline(transaction=False)
+    for coll, md5 in members:
+        pipe.get(f"{coll}:file:{md5}:meta")
+        pipe.smembers(f"{coll}:idx:file:functions:{md5}")
+    res = pipe.execute()
+    file_meta = [_decode(x) for x in res[0::2]]
+    missing = [_col_id(*m) for m, meta in zip(members, file_meta) if not meta]
+    if missing:
+        raise MemberMissing(missing)
+    fid_sets = [
+        {
+            (f.decode() if isinstance(f, bytes) else str(f)).removesuffix(":meta")
+            for f in s
+        }
+        for s in res[1::2]
+    ]
+    check_caps(len(members), sum(len(s) for s in fid_sets))
+
+    all_fids = sorted(set().union(*fid_sets))
+    pipe = r.pipeline(transaction=False)
+    for fid in all_fids:
+        pipe.get(f"{fid}:meta")
+    fmeta, library = {}, {}
+    weights, info = {}, {}
+    for fid, raw in zip(all_fids, pipe.execute()):
+        meta = _decode(raw)
+        weights[fid] = float(meta.get("bsim_features_count") or 0) or 1.0
+        library[fid] = any(is_library_tag(t) for t in merge_tag_fields(meta))
+        fmeta[fid] = _fn_meta(meta)
+        # the BSim floor counts distinct features, as the sim builder does
+        info[fid] = (
+            meta.get("function_id_hash"),
+            int(
+                meta.get("bsim_unique_features_count")
+                or meta.get("bsim_features_count")
+                or 0
+            ),
+        )
+
+    columns = [
+        {
+            "id": _col_id(coll, md5),
+            "collection": coll,
+            "md5": md5,
+            "file_name": labels.get(_col_id(coll, md5)) or meta.get("file_name") or md5,
+            "functions": len(fids),
+            "language_id": meta.get("language_id"),
+            "file_size": meta.get("file_size"),
+            "format": (meta.get("file_format") or {}).get("Executable Format"),
+            "batch_name": meta.get("batch_name"),
+            "tags": list(meta.get("tags") or [])[:40],
+        }
+        for (coll, md5), meta, fids in zip(members, file_meta, fid_sets)
+    ]
+    fid_sets = {col["id"]: fids for col, fids in zip(columns, fid_sets)}
+
+    ix = {fid: i for i, fid in enumerate(all_fids)}
+    sampled = None
+    if vparams:
+        edges = _virtual_edges(r, columns, fid_sets, vparams, all_fids, ix)
+        fallback, stats = 0, None
+    else:
+        edges, fallback, sampled, stats = _stored_edges(
+            r, scope, members, columns, algo, fid_sets, all_fids, ix, sample
+        )
+    bridges = None
+    if sampled:
+        warnings = warnings + [
+            f"Large set: read each file's closest partners only ({sampled[0]:,} of "
+            f"{sampled[1]:,} file pairs). Support counts the pairs read."
+        ]
+        kinds = {"fid", "cluster"} & set(sample[3])
+        if kinds:
+            found, note = _bridges(
+                r,
+                scope,
+                members,
+                fid_sets,
+                info,
+                {frozenset(k) for k in edges},
+                kinds,
+                algo,
+            )
+            bridges = PairEdges(all_fids, ix, found) if found else None
+            warnings += [note] if note else []
+
+    columns = seriate(columns, edges, default_min_edge())
+    return {
+        "algo": algo,
+        "columns": columns,
+        "funcs": {
+            c["id"]: {fid: weights[fid] for fid in fid_sets[c["id"]]} for c in columns
+        },
+        "fmeta": fmeta,
+        "library": library,
+        "edges": edges,
+        "bridges": bridges,
+        "fallback_pairs": fallback,
+        "pairs_read": sampled,
+        "pair_stats": stats,
+        "warnings": warnings,
+    }
+
+
+def _label(cells, fmeta, weights):
+    """Most frequent non-default name, else the heaviest function's own name (FUN_addr)."""
+    names = Counter(
+        n
+        for fid in cells
+        if (n := (fmeta.get(fid) or {}).get("name")) and not _DEFAULT_NAME.match(n)
+    )
+    if names:
+        return names.most_common(1)[0][0], len(names)
+    heaviest = max(cells, key=lambda f: (weights[f], f))
+    meta = fmeta.get(heaviest) or {}
+    addr = meta.get("entrypoint_address") or heaviest.rsplit(":", 1)[-1]
+    return meta.get("name") or f"FUN_{addr}", 0
+
+
+def _tag_name(tag):
+    """A function name carried by a tag: `fid:libc:1.2.6#__toread` -> `__toread`,
+    `yara:botnet:generic:Rule` -> `Rule`, `capa:a:host-interaction:software` -> `host-interaction:software`. Bare `fid:libc` names no function.
+    """
+    if "#" in tag:
+        name = tag.rsplit("#", 1)[1]
+        return (
+            None if name in ("", "ambiguous") else name
+        )  # #ambiguous: FID multi-match marker
+    parts = tag.split(":")
+    # capa / mbc / mitre: the last two fields after the prefix tell more than the last one
+    if parts[0] in ("capa", "mbc", "mitre"):
+        return ":".join(parts[1:][-2:]) or None
+    return parts[-1] if len(parts) >= 3 and parts[0] != "user" else None
+
+
+def _row_tags(fids, fmeta):
+    """Tags over the row's functions, most shared first, library tags ahead on a tie."""
+    count = Counter(t for f in fids for t in merge_tag_fields(fmeta.get(f)))
+    ranked = sorted(count, key=lambda t: (-count[t], not is_library_tag(t), t))
+    return ranked
+
+
+def _name_conflict(fids, fmeta):
+    """Distinct Ghidra names over one row's functions, or None when they agree.
+
+    Only the function's own name counts: no analyst / LLM name, no tag or
+    string name, no FUN_ / sub_ / thunk_, no FID_conflict. Compiler suffixes
+    (.part.0, .cold) are dropped first. `spread` is (names - 1) / (named - 1):
+    low when one function disagrees, 1 when every named function differs.
+    """
+    count, shown = Counter(), {}
+    for f in fids:
+        name = (fmeta.get(f) or {}).get("name") or ""
+        if not name or _DEFAULT_NAME.match(name) or name.startswith("FID_conflict"):
+            continue
+        while m := _SUFFIX.search(name):
+            name = name[: m.start()]
+        count[name.lower()] += 1
+        shown.setdefault(name.lower(), name)
+    if len(count) < 2:
+        return None
+    named = sum(count.values())
+    return {
+        "names": [[shown[k], c] for k, c in count.most_common()],
+        "named": named,
+        "spread": round((len(count) - 1) / (named - 1), 2),
+    }
+
+
+def _name_row(fids, fmeta, weights):
+    """Name + tags of a set of functions: the rule N-way rows and the function hero share.
+
+    Analyst name > most frequent non-default name > tag-carried name > heaviest FUN_addr.
+    """
+    out = {"tags": _row_tags(fids, fmeta)}
+    out["name"], out["names"] = _label(fids, fmeta, weights)
+    if conflict := _name_conflict(fids, fmeta):
+        out["name_conflict"] = conflict
+    if not out["names"] and _DEFAULT_NAME.match(out["name"]):
+        tagged = next((n for t in out["tags"] if (n := _tag_name(t))), None)
+        if tagged:
+            out["name"], out["name_from"] = tagged, "tag"
+    # An analyst name wins; the heaviest named function decides, others show as aliases.
+    named = sorted(
+        (f for f in fids if (fmeta.get(f) or {}).get("user_name")),
+        key=lambda f: (-weights[f], f),
+    )
+    if named:
+        meta = fmeta[named[0]]
+        out["name"] = meta["user_name"]
+        out["user_named"] = meta.get("user_name_source", "user")
+        out.pop("name_from", None)
+        out["aliases"] = sorted({fmeta[f]["user_name"] for f in named} - {out["name"]})
+    return out
+
+
+def seriate(columns, edges, min_edge):
+    """Column order that puts files sharing many functions side by side.
+
+    Greedy chain over pair affinity (matched pairs / smaller file), so lanes
+    (sets of files) stay contiguous in the matrix. Depends on the base only,
+    so it does not move when a display parameter changes.
+    """
+    ids = [c["id"] for c in columns]
+    if len(ids) < 3:
+        return columns
+    size = {c["id"]: max(1, c["functions"]) for c in columns}
+    aff = {i: {} for i in ids}
+    for (a, b), found in edges.items():
+        if isinstance(found, PairEdges):
+            hits = int((found.s >= min_edge).sum())
+        else:
+            hits = sum(1 for _, _, sc in found if sc >= min_edge)
+        n = hits / min(size[a], size[b])
+        aff[a][b] = aff[b][a] = n
+    left = set(ids)
+    cur = max(ids, key=lambda i: sum(aff[i].values()))
+    order = [cur]
+    left.discard(cur)
+    while left:
+        cur = max((i for i in ids if i in left), key=lambda i: aff[cur].get(i, 0))
+        order.append(cur)
+        left.discard(cur)
+    by = {c["id"]: c for c in columns}
+    return [by[i] for i in order]
+
+
+_TAG_PREFERENCE = {"capa": 0, "mbc": 0, "yara": 1}
+
+
+def _variants(rows):
+    """Rows that share a name are told apart.
+
+    A row named only by a tag (every function is FUN_xxx) takes the name of the tag the
+    other rows of that name lack, capa / mbc first: its old name stays in `name_was`.
+    Rows that still share a name, tag-named or not, are numbered `variant = {n, of}`
+    in table order (span, then weight)."""
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for name, group in by.items():
+        if len(group) < 2:
+            continue
+        sets = [set(r["tags"]) for r in group]
+        for row, own in zip(group, sets):
+            if row.get("name_from") != "tag":
+                continue
+            seen = set().union(*(s for s in sets if s is not own))
+            fresh = [
+                (_TAG_PREFERENCE.get(t.split(":")[0], 2), i, short)
+                for i, t in enumerate(row["tags"])
+                if t not in seen and (short := _tag_name(t)) and short != name
+            ]
+            if fresh:
+                row["name_was"], row["name"] = name, min(fresh)[2]
+    by = {}
+    for row in rows:
+        by.setdefault(row["name"], []).append(row)
+    for group in by.values():
+        if len(group) > 1:
+            for n, row in enumerate(group, 1):
+                row["variant"] = {"n": n, "of": len(group)}
+
+
+def _match(base, min_edge):
+    weights = {f: w for funcs in base["funcs"].values() for f, w in funcs.items()}
+    rows = nway_match(base["edges"], base["funcs"], min_edge, base.get("bridges"))
+    for row in rows:
+        fids = list(row["cells"].values())
+        row.update(_name_row(fids, base["fmeta"], weights))
+        row["library"] = any(base["library"].get(f) for f in fids)
+    _variants(rows)
+    return rows
+
+
+def project_rows(rows, groups, presence):
+    """Re-express file-level rows over child-cluster / direct-file groups.
+
+    `groups` is `[{"id", "members": [file column id, ...]}]`. A group is `on`
+    for a row when at least `presence` of its files hold a function in it; the
+    row's mask and span count the `on` groups. Rows are not merged: one function
+    group stays one row. `file_span` keeps the file-level span (the Unique tab
+    still means "one file"), `files` keeps the file-level cells. A group's own
+    `presence` overrides the shared one.
+    """
+    out = []
+    for row in rows:
+        cells, mask, span = {}, 0, 0
+        for i, g in enumerate(groups):
+            present = sum(1 for m in g["members"] if m in row["cells"])
+            need = g.get("presence", presence)
+            on = present > 0 and present / len(g["members"]) >= need
+            cells[g["id"]] = {"present": present, "total": len(g["members"]), "on": on}
+            if on:
+                mask |= 1 << i
+                span += 1
+        out.append(
+            {
+                **row,
+                "mask": mask,
+                "span": span,
+                "cells": cells,
+                "file_span": row["span"],
+                "files": row["cells"],
+            }
+        )
+    return out
+
+
+def file_groups(group, names):
+    """One column per file of a group: what an expanded twin or cluster leaf shows."""
+    return [
+        {
+            "id": f"{group['id']}/{m}",
+            "kind": "file",
+            "label": names.get(m, m),
+            "members": [m],
+            "member_count": 1,
+            "presence": 1e-9,
+        }
+        for m in group["members"]
+    ]
+
+
+def grow_columns(groups, open_ids, children_of, limit=MAX_COLUMNS):
+    """Replace every open group by its sub-groups, recursively -> the columns to show.
+
+    `children_of(group)` gives a group's sub-groups (`[]` for a leaf). Each column
+    comes back with `path`, the groups it was expanded out of (outermost first,
+    each `{id, label, member_count}`, so a header can draw a collapse band over
+    its children), and `expandable`: more than one file. A group is left closed
+    when expanding would pass `limit` columns. `"*"` in `open_ids` opens every group,
+    `"*N"` every group less than N levels deep, `"*fit:N"` opens the biggest groups first (deeper where there are more files) while the total stays at N columns or fewer.
+    """
+    fit = next(
+        (int(i[5:]) for i in open_ids if i[:5] == "*fit:" and i[5:].isdigit()), 0
+    )
+    if fit:
+        # biggest group first, so crowded groups open deeper than small ones
+        cols = [{**g, "path": [], "expandable": g["member_count"] > 1} for g in groups]
+        stuck = set()
+        while True:
+            cand = [
+                i
+                for i, g in enumerate(cols)
+                if g["expandable"] and g["id"] not in stuck
+            ]
+            if not cand:
+                return cols
+            i = max(cand, key=lambda i: cols[i]["member_count"])
+            g = cols[i]
+            sub = children_of(g)
+            if not sub or len(cols) + len(sub) - 1 > min(limit, fit):
+                stuck.add(g["id"])
+                continue
+            here = g["path"] + [
+                {"id": g["id"], "label": g["label"], "member_count": g["member_count"]}
+            ]
+            cols[i : i + 1] = [
+                {**c, "path": here, "expandable": c["member_count"] > 1} for c in sub
+            ]
+    depth = max(
+        (
+            float("inf") if i == "*" else int(i[1:])
+            for i in open_ids
+            if i[:1] == "*" and (i == "*" or i[1:].isdigit())
+        ),
+        default=0,
+    )
+    count = [len(groups)]
+
+    def grow(g, path):
+        g = {**g, "path": path, "expandable": g["member_count"] > 1}
+        if not (len(path) < depth or g["id"] in open_ids) or not g["expandable"]:
+            return [g]
+        sub = children_of(g)
+        if not sub or count[0] + len(sub) - 1 > limit:
+            return [g]
+        count[0] += len(sub) - 1
+        here = path + [
+            {"id": g["id"], "label": g["label"], "member_count": g["member_count"]}
+        ]
+        return [x for child in sub for x in grow(child, here)]
+
+    return [x for g in groups for x in grow(g, [])]
+
+
+def _twin_group(files, gid=None):
+    ids = [f["id"] for f in files]
+    return {
+        "id": gid or "twin:" + hashlib.md5("|".join(ids).encode()).hexdigest()[:8],
+        "kind": "twin",
+        "label": files[0].get("file_name") or files[0]["md5"],
+        "members": ids,
+        "member_count": len(files),
+        "presence": 1e-9,
+    }
+
+
+def _jaccard(a, b):
+    u = (a | b).bit_count()
+    return (a & b).bit_count() / u if u else 1.0
+
+
+def _twin_tree(units, held, depth, link):
+    """Average-linkage tree over the twin units -> (top groups, {group id: sub-groups}).
+
+    `units` are lists of twin files (each file has `_pos`, its column position),
+    `held` their shared-row bitsets. Level k of `depth - 1` nests the units whose
+    average Jaccard is at least a cut between `link` (outermost) and 1; the twin
+    units themselves are the last level.
+    """
+    m = len(units)
+    sim = np.array([[_jaccard(held[a], held[b]) for b in range(m)] for a in range(m)])
+    np.fill_diagonal(sim, -1.0)
+    nodes = {i: {"units": [i], "sim": 1.0, "kids": []} for i in range(m)}
+    while len(nodes) > 1:
+        live = list(nodes)
+        sub = sim[np.ix_(live, live)]
+        a, b = divmod(int(sub.argmax()), len(live))
+        if sub[a, b] < link:
+            break
+        i, j = live[a], live[b]
+        wi, wj = len(nodes[i]["units"]), len(nodes[j]["units"])
+        sim[i] = sim[:, i] = (sim[i] * wi + sim[j] * wj) / (wi + wj)
+        sim[i, i] = -1.0
+        nodes[i] = {
+            "units": nodes[i]["units"] + nodes[j]["units"],
+            "sim": float(sub[a, b]),
+            "kids": [nodes[i], nodes[j]],
+        }
+        del nodes[j]
+    cuts = [link + (1 - link) * k / (depth - 1) for k in range(depth - 1)]
+    kids = {}
+
+    def group(unit_ids):
+        files = [f for u in unit_ids for f in units[u]]
+        return _twin_group(sorted(files, key=lambda f: f["_pos"]))
+
+    def first(g):
+        return min(pos[x] for x in g["members"])
+
+    def split(node, level):
+        if len(node["units"]) == 1:
+            return [group(node["units"])]
+        if level < len(cuts) and node["sim"] < cuts[level]:
+            return [g for k in node["kids"] for g in split(k, level)]
+        g = group(node["units"])
+        if level >= len(cuts):
+            sub = [group([u]) for u in node["units"]]
+        else:
+            sub = [x for k in node["kids"] for x in split(k, level + 1)]
+        if len(sub) > 1:
+            kids[g["id"]] = sorted(sub, key=first)
+        return [g]
+
+    pos = {f["id"]: f["_pos"] for us in units for f in us}
+    top = [g for n in nodes.values() for g in split(n, 0)]
+    return sorted(top, key=first), kids
+
+
+def twin_groups(rows, columns, depth=1, link=0.5, kids=None):
+    """Files that hold a function in exactly the same shared rows (span >= 2): one column each.
+
+    -> groups for `project_rows` (a group of one file for a file with no twin),
+    or None when no two files are twins. A group counts as holding a function
+    when any of its files does, so a function only one twin has shows as partial.
+    With `depth` > 1, twin columns also nest under looser groups of files whose
+    shared rows overlap (average Jaccard >= `link`); `kids` is filled with each
+    group's sub-groups for `grow_columns`.
+    """
+    held = {c["id"]: 0 for c in columns}
+    k = 0
+    for row in rows:
+        if row["span"] < 2:
+            continue
+        for cid in row["cells"]:
+            held[cid] |= 1 << k
+        k += 1
+    by = {}
+    for pos, c in enumerate(columns):
+        by.setdefault(held[c["id"]], []).append({**c, "_pos": pos})
+    if depth > 1 and len(by) > 1:
+        groups, tree = _twin_tree(list(by.values()), list(by), depth, link)
+        if kids is not None:
+            kids.update(tree)
+    else:
+        groups = [_twin_group(files) for files in by.values()]
+    return None if len(groups) == len(columns) else groups
+
+
+def coverage(rows, column_ids):
+    """{column id: share of the shared weight that file holds}.
+
+    Shared weight = sum of `weight` over rows spanning at least two files
+    (Core + Partial, whatever `k` is); a file's share counts the same rows it
+    has a function in. None for every file when nothing is shared.
+    """
+    shared = [r for r in rows if r["span"] >= 2]
+    total = sum(r["weight"] for r in shared)
+    if total <= 0:
+        return {c: None for c in column_ids}
+    return {
+        c: sum(r["weight"] for r in shared if c in r["cells"]) / total
+        for c in column_ids
+    }
+
+
+def demo():
+    import time
+
+    # name_conflict: Ghidra names only, suffixes folded, FUN_ / FID_conflict ignored
+    fm = {
+        "a": {"name": "udp_attack"},
+        "b": {"name": "udp_attack.part.0"},
+        "c": {"name": "http_attack"},
+        "d": {"name": "FUN_00401000"},
+        "e": {"name": "FID_conflict:memcpy"},
+        "f": {"name": "udp_attack", "user_name": "flood"},
+    }
+    c = _name_conflict(list(fm), fm)
+    assert c == {
+        "names": [["udp_attack", 3], ["http_attack", 1]],
+        "named": 4,
+        "spread": 0.33,
+    }, c
+    assert _name_conflict(["a", "b", "d", "e"], fm) is None
+    assert _name_row(["a", "c"], fm, {"a": 1, "c": 1})["name_conflict"]["spread"] == 1
+
+    # Concurrent builds of one key run once; the waiter sees the leader's progress and result.
+    calls, seen, started = [], [], threading.Event()
+
+    def slow():
+        calls.append(1)
+        started.set()
+        _report(0.5, "half")
+        time.sleep(1.2)
+        return "doc"
+
+    def waiter():
+        started.wait()
+        set_progress(lambda f, l: seen.append(l))
+        seen.append(_single_flight(("demo",), slow))
+
+    t = threading.Thread(target=waiter)
+    t.start()
+    assert _single_flight(("demo",), slow) == "doc"
+    t.join()
+    assert len(calls) == 1 and "half" in seen and seen[-1] == "doc", (calls, seen)
+
+    tags = [f"capa:rule:{i}" for i in range(8)] + ["yara:trojan:family#Canary"]
+    assert "yara:trojan:family#Canary" in _row_tags(["f"], {"f": {"tags": tags}})
+    assert _tag_name("capa:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("capa:communication/http/client") == "communication/http/client"
+    assert _tag_name("capa:a:host-interaction:software") == "host-interaction:software"
+    assert _tag_name("yara:trojan:mirai:Mirai_ELF") == "Mirai_ELF"
+    # tag-named rows take the tag the others lack (capa before yara); the rest are numbered
+    vr = [
+        {
+            "name": "Mirai_ELF",
+            "name_from": "tag",
+            "tags": ["yara:a:Mirai_ELF", "yara:b:Other", "capa:x:xor"],
+        },
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "Mirai_ELF", "name_from": "tag", "tags": ["yara:a:Mirai_ELF"]},
+        {"name": "main", "tags": []},
+        {"name": "main", "tags": []},
+    ]
+    _variants(vr)
+    assert [r["name"] for r in vr[:3]] == ["x:xor", "Mirai_ELF", "Mirai_ELF"], vr
+    assert vr[0]["name_was"] == "Mirai_ELF" and "variant" not in vr[0]
+    assert [r["variant"]["n"] for r in vr[1:]] == [1, 2, 1, 2], vr
+    cols = [{"id": i, "functions": 10} for i in "abcd"]
+    ed = {("a", "c"): [(1, 2, 0.9)] * 9, ("b", "d"): [(1, 2, 0.9)] * 9}
+    got = [c["id"] for c in seriate(cols, ed, 0.5)]
+    assert abs(got.index("a") - got.index("c")) == 1, got
+    assert abs(got.index("b") - got.index("d")) == 1, got
+    fx = [1, 2]
+    packed = {k: PairEdges(fx, {1: 0, 2: 1}, v) for k, v in ed.items()}
+    assert [c["id"] for c in seriate(cols, packed, 0.5)] == got
+    cov_rows = [
+        {"span": 3, "weight": 6.0, "cells": {"a": 1, "b": 2, "c": 3}},
+        {"span": 2, "weight": 2.0, "cells": {"a": 4, "b": 5}},
+        {"span": 1, "weight": 50.0, "cells": {"c": 6}},
+    ]
+    cov = coverage(cov_rows, ["a", "b", "c"])
+    assert cov == {"a": 1.0, "b": 1.0, "c": 0.75}, cov
+    assert coverage(cov_rows[2:], ["c"]) == {"c": None}
+
+    groups = [
+        {"id": "A", "members": ["f1", "f2", "f3", "f4"]},
+        {"id": "B", "members": ["f5", "f6"]},
+    ]
+
+    def row(cells):
+        return {"cells": cells, "span": len(cells), "mask": 0}
+
+    full = row({f"f{i}": f"x{i}" for i in range(1, 7)})
+    half = row({"f1": "a", "f2": "b", "f5": "c"})
+    lone = row({"f3": "z"})
+    got = project_rows([full, half, lone], groups, 0.5)
+    assert [(r["span"], r["mask"]) for r in got] == [(2, 3), (2, 3), (0, 0)], got
+    assert got[1]["cells"]["A"] == {"present": 2, "total": 4, "on": True}
+    assert got[1]["cells"]["B"] == {"present": 1, "total": 2, "on": True}
+    assert (got[2]["file_span"], got[2]["cells"]["A"]["on"]) == (1, False)
+    assert got[2]["files"] == {"f3": "z"} and len(got) == 3
+    strict = project_rows([half], groups, 0.75)[0]
+    assert (strict["span"], strict["mask"]) == (0, 0), strict
+    assert project_rows([half], groups, 0.25)[0]["span"] == 2
+    own = [dict(groups[0], presence=1.0), groups[1]]
+    assert project_rows([half], own, 0.25)[0]["cells"]["A"]["on"] is False
+    # twin files: same shared rows -> one column; a file with other rows stays alone
+    cols = [{"id": i, "md5": i, "file_name": i.lower()} for i in "ABC"]
+    shared = [
+        {"span": 3, "cells": {"A": 1, "B": 2, "C": 3}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 1, "cells": {"C": 6}},
+    ]
+    tw = twin_groups(shared, cols)
+    assert [g["members"] for g in tw] == [["A", "B"], ["C"]], tw
+    assert tw[0]["label"] == "a" and tw[1]["label"] == "c"
+    assert tw[0]["id"].startswith("twin:") and tw[0]["id"] != tw[1]["id"]
+
+    # column tree: open groups give way to their children, recursively, within the limit
+    g0 = [
+        {
+            "id": "a",
+            "label": "A",
+            "kind": "child",
+            "members": ["f1", "f2", "f3"],
+            "member_count": 3,
+        },
+        {
+            "id": "b",
+            "label": "B",
+            "kind": "child",
+            "members": ["f4"],
+            "member_count": 1,
+        },
+    ]
+    a1 = {
+        "id": "a1",
+        "label": "A1",
+        "kind": "child",
+        "members": ["f1", "f2"],
+        "member_count": 2,
+    }
+    a_direct = {
+        "id": "a:direct",
+        "label": "direct",
+        "kind": "direct",
+        "members": ["f3"],
+        "member_count": 1,
+    }
+    kids = {"a": [a1, a_direct], "a1": file_groups(a1, {"f1": "one", "f2": "two"})}
+    of = lambda g: kids.get(g["id"], [])
+    ids = lambda gs: [g["id"] for g in gs]
+    assert ids(grow_columns(g0, set(), of)) == ["a", "b"]
+    assert [g["expandable"] for g in grow_columns(g0, set(), of)] == [True, False]
+    one = grow_columns(g0, {"a"}, of)
+    assert ids(one) == ["a1", "a:direct", "b"] and one[0]["path"][0]["id"] == "a"
+    assert one[0]["expandable"] and not one[1]["expandable"] and one[2]["path"] == []
+    deep = grow_columns(g0, {"a", "a1"}, of)
+    assert ids(deep) == ["a1/f1", "a1/f2", "a:direct", "b"], ids(deep)
+    assert [p["id"] for p in deep[0]["path"]] == ["a", "a1"] and deep[0][
+        "label"
+    ] == "one"
+    assert ids(grow_columns(g0, {"a"}, of, limit=2)) == [
+        "a",
+        "b",
+    ]  # would pass the limit
+    assert ids(grow_columns(g0, {"b", "zzz"}, of)) == [
+        "a",
+        "b",
+    ]  # one file: not expandable
+    assert ids(grow_columns(g0, {"*fit:3"}, of)) == ["a1", "a:direct", "b"]
+    assert ids(grow_columns(g0, {"*fit:9"}, of)) == ["a1/f1", "a1/f2", "a:direct", "b"]
+    assert ids(grow_columns(g0, {"*fit:1"}, of)) == ["a", "b"]
+    assert twin_groups(shared[:1], cols) is not None
+    # hierarchical twins: A,B hold the same rows, C overlaps them, D is apart
+    cols4 = [{"id": i, "md5": i, "file_name": i.lower()} for i in "ABCD"]
+    rows4 = [
+        {"span": 3, "cells": {"A": 1, "B": 2, "C": 3}},
+        {"span": 3, "cells": {"A": 1, "B": 2, "C": 3}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 2, "cells": {"A": 4, "B": 5}},
+        {"span": 2, "cells": {"D": 6, "C": 7}},
+    ]
+    sub = {}
+    deep = twin_groups(rows4, cols4, 2, 0.3, sub)
+    assert [g["members"] for g in deep] == [["A", "B", "C"], ["D"]], deep
+    assert [g["members"] for g in sub[deep[0]["id"]]] == [["A", "B"], ["C"]]
+    assert [g["members"] for g in twin_groups(rows4, cols4, 2, 0.95)] == [
+        ["A", "B"],
+        ["C"],
+        ["D"],
+    ]
+    assert [g["members"] for g in twin_groups(rows4, cols4)] == [
+        ["A", "B"],
+        ["C"],
+        ["D"],
+    ]
+    assert (
+        twin_groups(
+            [
+                {"span": 2, "cells": {"A": 1, "B": 2}},
+                {"span": 2, "cells": {"B": 3, "C": 4}},
+            ],
+            cols,
+        )
+        is None
+    )
+    # two tight families: nearest partners stay inside, random ones bridge them
+    fam = [i % 2 for i in range(20)]
+    sc = [[0.9 if fam[i] == fam[j] else 0.2 for j in range(20)] for i in range(20)]
+    pairs = nearest_pairs(sc, 3, 2, seed=1)
+    assert pairs == nearest_pairs(sc, 3, 2, seed=1)
+    assert all(i < j for i, j in pairs) and len(pairs) < 190
+    assert any(fam[i] != fam[j] for i, j in pairs)
+    assert all(sum(i == x or j == x for i, j in pairs) >= 3 for x in range(20))
+    # lanes sharing no file: one unread pair between them, the best scored
+    ln = [{"span": 2, "mask": 0b0011}] * 2 + [{"span": 2, "mask": 0b1100}] * 2
+    ls = np.full((4, 4), 0.1)
+    ls[1, 2] = ls[2, 1] = 0.6
+    assert lane_pairs(ln, ls, set(), 1) == [(1, 2)]
+    ls[0, 3] = ls[3, 0] = 0.4
+    assert lane_pairs(ln, ls, {(1, 2)}, 1) == [(0, 3)]  # the best pair left unread
+    assert lane_pairs(ln[:3], ls, set(), 1) == []  # one row is not a lane
+
+    # bridge chains: column order, read pairs skipped, ambiguous groups dropped
+    pos = {"A": 0, "B": 1, "C": 2, "D": 3}
+    groups = {
+        "h1": {"C": ["c1"], "A": ["a1"], "B": ["b1"]},
+        "h2": {"A": ["a2"], "D": ["d2", "d3"]},
+        "h3": {"B": ["b4"]},
+    }
+    got = bridge_candidates(groups, pos, {frozenset(("A", "B"))})
+    assert got == [("b1", "c1")], got
+    assert bridge_candidates(groups, pos, set()) == [("a1", "b1"), ("b1", "c1")]
+    assert bridge_kinds("cluster, lane") == ("lane", "cluster")
+    # build estimates: calibration point (437 files, 212k functions) and order
+    deep_pairs, deep_secs = estimate(437, 211798, 0)
+    assert deep_pairs == 95266 and 600 < deep_secs < 800, deep_secs
+    assert 5000 < estimate(437, 211798, 16)[0] < 8000
+    ds = build_depths(437, 211798)
+    assert [d["id"] for d in ds] == ["fast", "balanced", "deep"]
+    assert ds[0]["secs"] < ds[1]["secs"] < ds[2]["secs"]
+    assert estimate(60, 6000, 16)[0] == 60 * 59 // 2  # not sampled: every pair
+    assert [d["id"] for d in build_depths(60, 6000)] == ["deep"]
+    assert len(build_depths(120, 12000)) == 3
+    assert bridge_kinds("none") == () and bridge_kinds(["fid"]) == ("fid",)
+    try:
+        bridge_kinds("fid,lsh")
+        raise AssertionError("bad bridge kind accepted")
+    except BadParams:
+        pass
+    print("nway_diff_service demo ok")
+
+
+def compute(r, scope, members, params=None):
+    """Rows for `members` (list of `(collection, md5)`) under `scope`.
+
+    `scope` is `{"collection": c}`, `{"collections": [...]}` or `{"pool": id}`.
+    `params`: `min_edge` (default `similarity.file_min_score`); `mode`
+    (`stored` | `virtual`; a set spanning collections with no pool is always
+    virtual); `algo` / `min_score` / `min_features` override virtual-mode values.
+    `groups` (+ `child_presence`, default 0.5) re-expresses the rows over
+    child-cluster columns; see `project_rows`. `focus` (column ids) +
+    `focus_rule` (`any` | `all`) instead split the files into Focus vs Rest
+    groups: Rest uses `child_presence`, Focus needs any / all of its files.
+    `groups_mode` names `columns_mode` when `groups` are not child clusters (`by`).
+    """
+    params = params or {}
+    mode = params.get("mode") or "stored"
+    if mode not in ("stored", "virtual"):
+        raise BadParams("mode must be stored or virtual")
+    members = list(dict.fromkeys((_origin_coll(c), m) for c, m in members))
+    members, labels, warnings = expand_members(r, members)
+    check_caps(len(members))
+    if not scope.get("pool") and len({c for c, _ in members}) > 1:
+        mode = "virtual"
+    min_edge = params.get("min_edge")
+    min_edge = default_min_edge() if min_edge is None else float(min_edge)
+
+    sample = list(pair_sample())
+    if params.get("sample_above") is not None:
+        sample[0] = int(params["sample_above"])
+    # Large sets: the base (all the Kvrocks reads) comes from a job only, so a
+    # call-graph walk or a reload never re-reads every pair; matched rows for a
+    # new min_edge are CPU only and are kept next to it.
+    big = len(members) > auto_build_max()
+    if big and mode == "stored":
+        # A build's depth (pair_k) sticks to the set, so every view without
+        # one reads the base that was built, or re-attaches to its job.
+        dkey = depth_key(scope, members)
+        if params.get("pair_k") is not None:
+            get_raw_queue_redis().setex(dkey, BUILT_TTL, int(params["pair_k"]))
+        elif (stored := get_raw_queue_redis().get(dkey)) is not None:
+            sample[1] = int(stored)
+    if params.get("pair_k") is not None:
+        sample[1] = int(params["pair_k"])
+    if params.get("bridges") is not None:
+        sample[3] = bridge_kinds(params["bridges"])
+    sample = tuple(sample) if sample[1] > 0 else None
+
+    vparams = None
+    if mode == "virtual":
+        vparams, vwarnings = virtual_params(scope, members, params)
+        warnings += vwarnings
+    revs = [
+        (read_bin_sim_rev(r, s), read_tags_rev(r, s))
+        for s in _rev_scopes(scope, members)
+    ]
+    base_key = (
+        json.dumps(scope, sort_keys=True),
+        hashlib.md5(json.dumps(members).encode()).hexdigest(),
+        json.dumps(revs),
+        mode,
+        json.dumps(vparams, sort_keys=True),
+        sample,
+    )
+    groups = params.get("groups")
+    presence = float(params.get("child_presence", 0.5))
+    focus = list(dict.fromkeys(params.get("focus") or []))
+    # twin columns come from the matched rows, so they replace any child-cluster groups
+    twins = bool(params.get("twins")) and not focus
+    if twins:
+        groups = None
+    open_ids = set(params.get("open") or [])
+    twin_depth = max(1, min(6, int(params.get("twin_depth") or 1)))
+    twin_link = max(0.0, min(1.0, float(params.get("twin_link", 0.5))))
+    if focus:
+        ids = [_col_id(c, m) for c, m in members]
+        if [f for f in focus if f not in ids]:
+            raise BadParams("focus must name files of the set")
+        rest = [i for i in ids if i not in focus]
+        if not rest:
+            raise BadParams("focus must leave at least one file out")
+        need = 1.0 if params.get("focus_rule") == "all" else 1e-9
+        groups = [
+            {
+                "id": "focus",
+                "kind": "focus",
+                "label": "Focus",
+                "members": focus,
+                "presence": need,
+            },
+            {"id": "rest", "kind": "rest", "label": "Rest", "members": rest},
+        ]
+        for g in groups:
+            g["member_count"] = len(g["members"])
+    doc_key = base_key + (
+        min_edge,
+        presence,
+        twins,
+        (twin_depth, twin_link) if twins else (),
+        tuple(sorted(open_ids)) if twins else (),
+        hashlib.md5(json.dumps(groups, sort_keys=True).encode()).hexdigest(),
+    )
+    doc = _DOC_CACHE.get(doc_key)
+    if doc is not None:
+        return doc
+
+    bkey = hashlib.md5(repr(base_key).encode()).hexdigest()
+    rkey = hashlib.md5(repr(base_key + (min_edge,)).encode()).hexdigest()
+
+    def build():
+        base = _BASE_CACHE.get(base_key)
+        if base is None and big:
+            base = _built("base", bkey)
+        if base is None:
+            if big and not params.get("build"):
+                pipe = r.pipeline(transaction=False)
+                for coll, md5 in members:
+                    pipe.scard(f"{coll}:idx:file:functions:{md5}")
+                depth = sample[1] if sample else 0
+                raise NeedsBuild(len(members), bkey, sum(pipe.execute()), depth)
+            base = _load_base(r, scope, members, vparams, labels, warnings, sample)
+            if big:
+                _keep_built("base", bkey, base)
+        _BASE_CACHE.put(base_key, base)
+        rows = _MATCH_CACHE.get(base_key + (min_edge,))
+        if rows is None and big:
+            rows = _built("rows", rkey)
+        if rows is None:
+            rows = _match(base, min_edge)
+            if big:
+                _keep_built("rows", rkey, rows)
+        _MATCH_CACHE.put(base_key + (min_edge,), rows)
+        return base, rows
+
+    base, rows = _single_flight(base_key + (min_edge,), build)
+    # the page renames rows in place (cluster names): each doc gets its own copies
+    rows = [dict(row) for row in rows]
+    cov = coverage(rows, [c["id"] for c in base["columns"]])
+    file_columns = [{**c, "coverage": cov[c["id"]]} for c in base["columns"]]
+    names = {c["id"]: c.get("file_name") or c["md5"] for c in base["columns"]}
+    if twins:
+        sub = {}
+        groups = twin_groups(rows, base["columns"], twin_depth, twin_link, sub)
+        twins = groups is not None
+        if twins:
+            groups = grow_columns(
+                groups, open_ids, lambda g: sub.get(g["id"]) or file_groups(g, names)
+            )
+    for g in groups or []:
+        if g.get("kind") == "file":
+            g["label"] = names.get(g["members"][0], g["label"])
+    if groups:
+        rows = project_rows(rows, groups, presence)
+    doc = {
+        "mode": mode,
+        "algo": base["algo"],
+        "min_edge": min_edge,
+        "columns": groups or file_columns,
+        "columns_mode": (
+            "focus"
+            if focus
+            else (
+                "twins"
+                if twins
+                else params.get("groups_mode", "children") if groups else "files"
+            )
+        ),
+        "file_columns": file_columns if groups else None,
+        "rows": rows,
+        "fmeta": base["fmeta"],
+        "fallback_pairs": base["fallback_pairs"],
+        "pair_stats": base.get("pair_stats"),
+        "warnings": base["warnings"],
+        # a built large set: lets the page offer a rebuild at another depth
+        "large": (
+            {
+                "members": len(members),
+                "limit": auto_build_max(),
+                "pair_k": sample[1] if sample else 0,
+                "depths": build_depths(len(members), len(base["fmeta"])),
+            }
+            if big
+            else None
+        ),
+        # Read by nway_facets_service (cache key, pair scores); never sent to clients.
+        "key": hashlib.md5(repr(doc_key).encode()).hexdigest(),
+        "edges": base["edges"],
+    }
+    _DOC_CACHE.put(doc_key, doc)
+    return doc
+
+
+def compute_functions(r, fids, params=None):
+    """Doc for a free set of functions (any collections), nothing written.
+
+    Same shape `nway_facets_service.compute` reads from a file-level doc: one
+    synthetic row holding every function, `fscore` pairwise scores instead of
+    file-pair edges. Scores come from the tf vectors with the same
+    `discover_edges` + `virtual_params` the virtual mode uses.
+    """
+    params = params or {}
+    fids = list(dict.fromkeys(fids))
+    check_caps(len(fids))
+    parsed = []
+    for f in fids:
+        coll, _, rest = f.partition(":func:")
+        md5 = rest.partition(":")[0]
+        if not coll or not _MD5.match(md5):
+            raise BadParams(f"bad function id {f!r}")
+        parsed.append((_origin_coll(coll), md5))
+    colls = sorted({c for c, _ in parsed})
+    members = list(dict.fromkeys(parsed))
+    vparams, warnings = virtual_params({"collections": colls}, members, params)
+    revs = [(read_bin_sim_rev(r, c), read_tags_rev(r, c)) for c in colls]
+    key = hashlib.md5(
+        repr((sorted(fids), vparams, revs, warnings)).encode()
+    ).hexdigest()
+    doc = _DOC_CACHE.get(("fns", key))
+    if doc is not None:
+        return doc
+
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{f}:meta")
+    metas = [_decode(x) for x in pipe.execute()]
+    missing = [f for f, m in zip(fids, metas) if not m]
+    if missing:
+        raise MemberMissing(missing)
+    fmeta = {f: _fn_meta(m) for f, m in zip(fids, metas)}
+
+    vectors = load_vectors(r, fids)
+    fscore = {
+        frozenset((a, b)): round(float(s), 4)
+        for a, b, s in discover_edges(
+            vectors, set(fids), set(fids), vparams["algo"], 0.0
+        )
+        if a < b
+    }
+    names = _file_names(r, members)
+    columns = [
+        {
+            "id": _col_id(c, m),
+            "collection": c,
+            "md5": m,
+            "file_name": names[_col_id(c, m)],
+        }
+        for c, m in members
+    ]
+    weights = {f: float(fmeta[f].get("bsim_features_count") or 0) or 1.0 for f in fids}
+    name, n_names = _label(fids, fmeta, weights)
+    doc = {
+        "mode": "functions",
+        "algo": vparams["algo"],
+        "columns": columns,
+        "file_columns": None,
+        "rows": [{"cells": {f: f for f in fids}, "name": name, "names": n_names}],
+        "fmeta": fmeta,
+        "warnings": warnings,
+        "key": key,
+        "edges": {},
+        "fscore": fscore,
+    }
+    _DOC_CACHE.put(("fns", key), doc)
+    return doc
+
+
+def _signature(fids, fmeta):
+    """Consensus return type + parameter list (the vote of nway_panel `_rowSig`), with variants."""
+    items = []
+    for f in fids:
+        m = fmeta.get(f) or {}
+        params = tuple(
+            (
+                (p.get("type") or p.get("name") or "...")
+                if isinstance(p, dict)
+                else p or "..."
+            )
+            for p in m.get("parameters") or []
+        )
+        items.append((m.get("return_type") or "void", params))
+    # Ghidra's undefined/undefined4 return types are placeholders: vote among real ones when any exist.
+    real = [i for i in items if not i[0].startswith("undefined")]
+    ret = Counter(i[0] for i in real or items).most_common(1)[0][0]
+    params = Counter(i[1] for i in items if i[0] == ret).most_common(1)[0][0]
+    variants = Counter(items).most_common()
+    return {
+        "return_type": ret,
+        "parameters": list(params),
+        "return_agree": sum(1 for i in items if i[0] == ret),
+        "variants": [
+            {"return_type": v[0], "parameters": list(v[1]), "count": n}
+            for v, n in variants
+        ],
+    }
+
+
+def _sample(fids, weights, files, cap):
+    """At most `cap` functions: the heaviest of every file first, then the heaviest rest."""
+    by_file = {}
+    for f in sorted(fids, key=lambda f: (-weights[f], f)):
+        by_file.setdefault(files[f], []).append(f)
+    firsts = sorted((v[0] for v in by_file.values()), key=lambda f: (-weights[f], f))
+    rest = sorted(
+        (f for v in by_file.values() for f in v[1:]), key=lambda f: (-weights[f], f)
+    )
+    return sorted((firsts + rest)[:cap])
+
+
+def _cohesion(r, fids, params):
+    """Pairwise score spread over `fids`; pairs the engine did not score count 0."""
+    if len(fids) < 2:
+        return None
+    try:
+        fscore = compute_functions(r, fids, params)["fscore"]
+    except (BadParams, MemberMissing) as e:
+        return {"error": str(e)}
+    total = len(fids) * (len(fids) - 1) // 2
+    scores = list(fscore.values()) + [0.0] * (total - len(fscore))
+    return {
+        "min": min(scores),
+        "median": statistics.median(scores),
+        "max": max(scores),
+        "scored_pairs": len(fscore),
+        "total_pairs": total,
+        "functions": len(fids),
+    }
+
+
+def function_meta(r, fids, ref=None, sample=None):
+    """What the function-set hero shows, for any set of functions (nothing written).
+
+    `ref` is the resolved reference (`kind`: nway | cluster | pool | None, plus
+    `ns`, `pool`, `cluster_id`, `row`). Naming reuses `_name_row`. Counts cover
+    every member; names, signature and the sample the comparison tabs take
+    (`sample` functions, default the nway cap) follow the whole set too.
+    """
+    ref = ref or {}
+    fids = list(dict.fromkeys(fids))
+    files = {}
+    for f in fids:
+        coll, _, rest = f.partition(":func:")
+        md5 = rest.partition(":")[0]
+        if not coll or not _MD5.match(md5):
+            raise BadParams(f"bad function id {f!r}")
+        files[f] = (_origin_coll(coll), md5)
+    if not fids:
+        raise BadParams("no functions")
+    pipe = r.pipeline(transaction=False)
+    for f in fids:
+        pipe.get(f"{f}:meta")
+        pipe.hkeys(
+            f"global:pool:{ref['pool']}:{f}:cluster_scores"
+            if ref.get("pool")
+            else f"{f}:cluster_scores"
+        )
+    res = pipe.execute()
+    metas = [_decode(x) for x in res[0::2]]
+    missing = [f for f, m in zip(fids, metas) if not m]
+    if missing:
+        raise MemberMissing(missing)
+    fmeta = {f: _fn_meta(m) for f, m in zip(fids, metas)}
+    weights = {f: float(fmeta[f].get("bsim_features_count") or 0) or 1.0 for f in fids}
+    cids = {
+        f: {c.decode() if isinstance(c, bytes) else str(c) for c in cs}
+        for f, cs in zip(fids, res[1::2])
+    }
+
+    named = _name_row(fids, fmeta, weights)
+    source = (
+        "analyst"
+        if named.get("user_named")
+        else (
+            "tag"
+            if named.get("name_from") == "tag"
+            else "majority" if named["names"] else "fallback"
+        )
+    )
+
+    members = sorted(set(files.values()))
+    pipe = r.pipeline(transaction=False)
+    for coll, md5 in members:
+        pipe.get(f"{coll}:file:{md5}:meta")
+    fmetas = [_decode(x) for x in pipe.execute()]
+    arch = {(m.get("language_id") or "").split(":")[0] for m in fmetas} - {""}
+    batches = {m.get("batch_uuid") or m.get("batch_name") for m in fmetas} - {None, ""}
+
+    ns_of = lambda f: f"global:pool:{ref['pool']}" if ref.get("pool") else files[f][0]
+    all_clusters = {(ns_of(f), c) for f in fids for c in cids[f]}
+    shared = set.intersection(*(cids[f] for f in fids))
+    one_ns = len({ns_of(f) for f in fids}) == 1
+    cluster = None
+    stored = ref.get("cluster")  # a stored cluster's id or uuid: always linked
+    if one_ns and shared and (stored or len(shared) == 1):
+        ns = ns_of(fids[0])
+        algo = resolve_collection_algo(ns)
+        found = {
+            c: _decode(r.get(f"{ns}:cluster:{algo}:{c}:meta")) or {}
+            for c in sorted(shared)
+        }
+        cid = next(
+            (
+                c
+                for c, m in found.items()
+                if stored in (c, (m.get("cluster_uuid") or "").lower())
+            ),
+            next(iter(found)),
+        )
+        cluster = {
+            "namespace": ns,
+            "collection": files[fids[0]][0],
+            "pool": ref.get("pool"),
+            "cluster_id": cid,
+            "cluster_uuid": found[cid].get("cluster_uuid"),
+            "name": found[cid].get("cluster_name"),
+        }
+
+    cap = min(max(int(sample or 0), 2), caps()[0]) if sample else caps()[0]
+    sampled = len(fids) > cap or len(members) > caps()[0]
+    shown = _sample(fids, weights, files, cap) if sampled else sorted(fids)
+    shown_files = sorted({files[f] for f in shown})
+    return {
+        "name": named["name"],
+        "name_source": source,
+        "named_by": named.get("user_named"),
+        "aliases": named.get("aliases", []),
+        "prototype": _signature(fids, fmeta),
+        "counts": {
+            "functions": len(fids),
+            "files": len(members),
+            "collections": len({c for c, _ in members}),
+            "batches": len(batches),
+            "clusters": len(all_clusters),
+            "arch": sorted(arch),
+        },
+        "cohesion": _cohesion(r, shown, {}),
+        "sample": {"shown": len(shown), "total": len(fids), "cap": cap},
+        "fids": shown,
+        "links": {
+            "kind": ref.get("kind") or "set",
+            "nway": {
+                "md5s": [f"{c}:{m}" for c, m in shown_files],
+                "files": len(members),
+                "pool": ref.get("pool"),
+            },
+            "cluster": cluster,
+        },
+    }
+
+
+if __name__ == "__main__":
+    demo()

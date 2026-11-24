@@ -147,6 +147,8 @@
                 norm.tag_id = data.tag_id || norm.id;
                 norm.uuid = data.uuid || data.cluster_uuid;
                 norm.name = data.name || data.cluster_name || norm.uuid || norm.id;
+                // Which cluster to rename, independent of the page the menu opened on.
+                norm.rctx = JSON.stringify({ uuid: norm.uuid, collection: data.collection, pool: data.pool, axis: data.axis, node_type: data.node_type });
             }
         } else if (type === 'node' || type === 'function') {
             resolvedType = 'function';
@@ -179,6 +181,13 @@
             const qualifiedFileId = [data.fileId, data.id].find(v => v && v.includes(':'));
             const fileCol = data.collection || (typeof getCollectionFromHash === 'function' ? getCollectionFromHash() : 'main');
             norm.id = qualifiedFileId || `${fileCol}:file:${norm.md5}`;
+        } else if (type === 'string') {
+            resolvedType = 'string';
+            norm.value = data.value || '';
+            norm.sid = data.id || '';
+            // Only a row of one file's table is a taggable entity.
+            norm.id = data.eid || '';
+            norm.md5 = data.md5 || '';
         } else if (type === 'link' || type === 'similarity') {
             resolvedType = 'similarity';
             norm.id1 = data.id1;
@@ -209,16 +218,19 @@
         let headerTitle = '';
         if (resolvedType === 'function') headerTitle = `Function: ${norm.name}`;
         else if (resolvedType === 'file') headerTitle = `File: ${norm.name}`;
+        else if (resolvedType === 'string') headerTitle = `String: ${norm.value.length > 40 ? norm.value.slice(0, 40) + '\u2026' : norm.value}`;
         else if (resolvedType === 'similarity') headerTitle = `Similarity: ${(parseFloat(norm.score) * 100).toFixed(1)}% Match`;
         else if (resolvedType === 'bin_similarity') headerTitle = `Link: ${norm.name_a.substring(0,10)} ↔ ${norm.name_b.substring(0,10)}`;
         else if (resolvedType === 'cluster') headerTitle = `Cluster: ${norm.name}`;
         else if (resolvedType === 'bin_cluster') headerTitle = `Binary Cluster: ${norm.name}`;
         else if (resolvedType === 'bin_sim') headerTitle = `Pair: ${String(norm.name_a).substring(0,10)} ↔ ${String(norm.name_b).substring(0,10)}`;
 
-        html += `<div class="context-menu-header">${headerTitle}</div>`;
+        html += `<div class="context-menu-header">${escapeHtml(headerTitle)}</div>`;
 
         // -- Bookmark & Ignore (Pinned at the Top) --
-        if (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType)) {
+        // A live (not yet saved) similarity has no doc to bookmark or tag.
+        const isLiveSim = resolvedType === 'similarity' && !!(data && data.live);
+        if (!isLiveSim && (['function', 'file', 'similarity', 'cluster', 'bin_cluster', 'bin_sim'].includes(resolvedType) || (resolvedType === 'string' && norm.id))) {
             const etype = resolvedType;
             const eid = (resolvedType === 'similarity' || resolvedType === 'bin_sim')
                 ? norm.sid
@@ -337,6 +349,9 @@
             copySubmenuHtml += renderCopyItem('Name', norm.fileName, 'fa-signature');
             copySubmenuHtml += renderCopyItem('MD5', norm.md5, 'fa-fingerprint');
             copySubmenuHtml += renderCopyItem('File ID', norm.id, 'fa-id-badge');
+        } else if (resolvedType === 'string') {
+            copySubmenuHtml += renderCopyItem('Value', norm.value, 'fa-font');
+            copySubmenuHtml += renderCopyItem('String ID', norm.sid, 'fa-id-badge');
         } else if (resolvedType === 'similarity') {
             copySubmenuHtml += renderCopyItem('Similarity ID', norm.sid, 'fa-id-badge');
             copySubmenuHtml += renderCopyItem('Match Score', norm.score, 'fa-percent');
@@ -428,7 +443,66 @@
                     </div>`;
                 }
             }
-
+            // N-way diff of the files behind the selected functions or file cells.
+            const nwayFiles = [...new Set([
+                ...window.getSelectedTableIds('file').map(id => `${id.split(':')[0]}:${id.split(':').pop()}`),
+                ...window.getSelectedTableIds('function').map(id => {
+                    const p = window.parseFuncId(id);
+                    return p.md5 ? `${p.collection}:${p.md5}` : '';
+                }),
+            ].filter(Boolean))];
+            if (nwayFiles.length >= 2 && window.NwayPanel) {
+                const nwayUrl = NwayPanel.urlFor(nwayFiles, col);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(nwayUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>N-way Diff of ${nwayFiles.length} Files</span>
+                </div>`;
+            }
+            // N-way diff of the selected functions themselves, whatever their files or collections.
+            const nwayFns = window.getSelectedTableIds('function').filter(id => id.includes(':func:'));
+            if (nwayFns.length >= 2 && window.NwayPanel) {
+                const fnUrl = NwayPanel.urlForFunctions(nwayFns);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(fnUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>N-way Diff of ${nwayFns.length} Functions</span>
+                </div>`;
+            }
+            // The selected rows, or this function alone when nothing is selected.
+            const llmIds = `(window.getSelectedTableIds && window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [${jsString(norm.id)}])`;
+            actionsSubmenuHtml += renderLLMSubmenu(`{ funcIds: ${llmIds} }`);
+            // N-way table: rename the rows behind the selected functions (by hand or by the LLM).
+            const nwaySel = window.getSelectedTableIds('function').length ? window.getSelectedTableIds('function') : [norm.id];
+            const nwayRows = window.nwayRowsForFids ? window.nwayRowsForFids(nwaySel).length : 0;
+            if (nwayRows) {
+                const ids = `[${nwaySel.map(i => escapeAttr(jsString(i))).join(',')}]`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.nwayRenameSelected(${ids}, false)">
+                    <i class="fa-solid fa-pen" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Rename (${nwayRows})</span>
+                </div>
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); window.nwayRenameSelected(${ids}, true)">
+                    <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>AI Rename (${nwayRows})</span>
+                </div>`;
+            } else {
+                const ids = `[${nwaySel.map(i => escapeAttr(jsString(i))).join(',')}]`;
+                const one = nwaySel.length === 1;
+                const nm = escapeAttr(jsString(norm.name || ''));
+                const act = auto => one && !auto
+                    ? `FunctionRename.open(${ids}, ${nm})`
+                    : `FunctionRename.openBatch(${ids}.map(i => ({ fids: [i], name: i === ${escapeAttr(jsString(norm.id))} ? ${nm} : (window.parseFuncId(i).address || i) })), ${auto})`;
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); ${act(false)}">
+                    <i class="fa-solid fa-pen" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Rename${one ? '' : ` (${nwaySel.length})`}</span>
+                </div>
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); ${act(true)}">
+                    <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>AI Rename${one ? '' : ` (${nwaySel.length})`}</span>
+                </div>`;
+            }
         } else if (resolvedType === 'file') {
             const cgUrl = Nav.buildUIUrl(col, ['call_graph', norm.md5]);
             const funcsUrl = Nav.buildUIUrl(col, ['functions']) + '?file_md5=' + encodeURIComponent(norm.md5);
@@ -459,6 +533,35 @@
                 <span>Similar Files (by container)</span>
             </div>
             `;
+            if (window.getSelectedTableIds && window.getSelectedTableIds('file').length >= 2 && window.NwayPanel) {
+                const nwayFiles = window.getSelectedTableIds('file');
+                const nwayUrl = NwayPanel.urlFor(nwayFiles, col);
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(nwayUrl))}, event, { title: 'N-way diff', type: 'bin_sim' })">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8; color: #fd971f;"></i>
+                    <span>Compare ${nwayFiles.length} Files (N-way)</span>
+                </div>`;
+            }
+            if (window.yaraUrl) {
+                const pickedY = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
+                const yFiles = (pickedY.length ? pickedY : [norm.id]).slice(0, 200);
+                const yCol = yFiles[0].split(':')[0] || col;
+                const yUrl = window.yaraUrl(yCol, yFiles.filter(id => (id.split(':')[0] || col) === yCol).map(id => `only_md5=${id.split(':').pop()}`));
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(yUrl))}, event, { title: 'YARA workbench' })">
+                    <i class="fa-solid fa-shield-halved" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>YARA rule for ${yFiles.length > 1 ? yFiles.length + ' files' : 'this file'} <i class="fa-solid fa-flask" style="color:var(--warning,#d97706);margin-left:4px" title="Experimental"></i></span>
+                </div>`;
+            }
+            if (window.NwayBasket) {
+                const picked = window.getSelectedTableIds ? window.getSelectedTableIds('file') : [];
+                const basketIds = picked.length ? picked : [norm.id];
+                actionsSubmenuHtml += `
+                <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); NwayBasket.add(${escapeAttr('[' + basketIds.map(jsString).join(',') + ']')}, ${escapeAttr(jsString(col))})">
+                    <i class="fa-solid fa-table-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                    <span>Add ${basketIds.length > 1 ? basketIds.length + ' files ' : ''}to compare set</span>
+                </div>`;
+            }
             if (window.getSelectedTableIds && window.getSelectedTableIds('file').length === 2) {
                 const selFiles = window.getSelectedTableIds('file');
                 const md5a = selFiles[0].split(':').pop();
@@ -474,12 +577,32 @@
                 </div>`;
             }
             actionsSubmenuHtml += renderFileAnalysisSubmenu(norm.md5);
+        } else if (resolvedType === 'string') {
+            const q = '?strings=' + encodeURIComponent(quoteFilterValue(norm.value.slice(0, 128)));
+            const funcsUrl = Nav.buildUIUrl(col, ['functions']) + q;
+            const filesUrl = Nav.buildUIUrl(col, ['files']) + q;
+            actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(funcsUrl))}, event, { title: 'Functions', type: 'functions' })">
+                <i class="fa-solid fa-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Functions using this string</span>
+            </div>
+            <div class="context-menu-item" onclick="window.closeGraphContextMenu(); Nav.openPath(${escapeAttr(jsString(filesUrl))}, event, { title: 'Files', type: 'files' })">
+                <i class="fa-solid fa-file-code" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Files containing this string</span>
+            </div>`;
         } else if (resolvedType === 'similarity') {
             actionsSubmenuHtml += `
             <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); openDiffDirectly(${escapeAttr(jsString(norm.id1))}, ${escapeAttr(jsString(norm.name1 || ''))}, ${escapeAttr(jsString(norm.id2))}, ${escapeAttr(jsString(norm.name2 || ''))}, event)">
                 <i class="fa-solid fa-columns" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Show Diff</span>
             </div>`;
+            if (isLiveSim && window.FunctionView) {
+                actionsSubmenuHtml += `
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); FunctionView.saveDiscovered([${escapeAttr(jsString(norm.id2))}])">
+                <i class="fa-solid fa-link" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>Save as similarity edge</span>
+            </div>`;
+            }
         } else if (resolvedType === 'bin_similarity') {
             const diffUrl = (window.buildFileDiffUrl || (window.parent && window.parent.buildFileDiffUrl) || buildFileDiffUrl)(col, norm.md5_a, col, norm.md5_b);
             const diffTitle = `Bin Diff: ${String(norm.name_a || '')} vs ${String(norm.name_b || '')}`;
@@ -496,7 +619,7 @@
                 <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, JSON.parse(${escapeAttr(jsString(norm.rctx || '{}'))}))">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -512,7 +635,7 @@
                 <i class="fa-solid fa-bullseye" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Open Cluster</span>
             </div>
-            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))})">
+            <div class="context-menu-item" onclick="event.stopPropagation(); window.closeGraphContextMenu(); renameBinCluster(${escapeAttr(jsString(norm.id))}, ${escapeAttr(jsString(norm.name || ''))}, JSON.parse(${escapeAttr(jsString(norm.rctx || '{}'))}))">
                 <i class="fa-solid fa-pen-to-square" style="width: 16px; text-align: center; opacity: 0.8;"></i>
                 <span>Rename Cluster</span>
             </div>
@@ -521,6 +644,15 @@
                 <span>View Files</span>
             </div>`;
         }
+
+        // A cell selection can hold functions the clicked row is not itself one of
+        // (both function columns of a bin diff row).
+        if (resolvedType !== 'function' && window.getSelectedTableIds && window.getSelectedTableIds('function').length) {
+            // Read back at click time: inlined ids would break the onclick attribute.
+            actionsSubmenuHtml += renderLLMSubmenu("{ funcIds: window.getSelectedTableIds('function') }", ` (${window.getSelectedTableIds('function').length} selected)`);
+        }
+
+        if (resolvedType === 'file' && data.__nway && window.NwayPanel) html += NwayPanel.menuHtml(data.__nway);
 
         if (actionsSubmenuHtml) {
             html += `
@@ -747,6 +879,30 @@
 
         return [];
     }
+    /** "AI ▸" entry: summary / tags / both / both with a custom prompt. */
+    function renderLLMSubmenu(opts, suffix = '') {
+        const items = [
+            { label: 'Summary', icon: 'fa-note-sticky', actions: "['notes']", extra: '' },
+            { label: 'Tags', icon: 'fa-tags', actions: "['tags']", extra: '' },
+            { label: 'Summary + tags', icon: 'fa-wand-magic-sparkles', actions: "['notes','tags']", extra: '' },
+            { label: '… with custom prompt', icon: 'fa-pen-nib', actions: "['notes','tags']", extra: ', askPrompt: true' }
+        ];
+        const entries = items.map(i => `
+            <div class="context-menu-item" onclick="${escapeAttr(`event.stopPropagation(); window.closeGraphContextMenu(); startLLMBatch(${i.actions}, ${opts.replace(/ }$/, i.extra + ' }')})`)}">
+                <i class="fa-solid ${i.icon}" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>${escapeHtml(i.label + (i.extra ? '' : suffix))}</span>
+            </div>`).join('');
+        return `
+            <div class="context-menu-item submenu-trigger" style="position: relative;">
+                <i class="fa-solid fa-robot" style="width: 16px; text-align: center; opacity: 0.8;"></i>
+                <span>AI${escapeHtml(suffix)}</span>
+                <i class="fa-solid fa-chevron-right" style="margin-left: auto; font-size: 0.7rem; opacity: 0.5;"></i>
+                <div class="context-menu submenu" style="position: absolute; left: 100%; top: -6px; display: none; min-width: 200px; background: var(--card-bg); border: 1px solid var(--border); z-index: 20006;">
+                    ${entries}
+                </div>
+            </div>`;
+    }
+
     // One item, so a submenu was a level of nesting around a single click.
     function renderFileAnalysisSubmenu(md5) {
         return `
@@ -1197,7 +1353,7 @@
         if (valueEl?.dataset.filterValue) return valueEl.dataset.filterValue.trim();
         const firstChild = cell.querySelector('[data-filter-value]');
         if (firstChild?.dataset.filterValue) return firstChild.dataset.filterValue.trim();
-        return (cell.dataset.filterValue || cell.innerText || '').trim();
+        return (cell.dataset.filterValue || cell.textContent || '').trim();
     };
 
     const cellFilter = (cell) => {
@@ -1229,6 +1385,18 @@
         return true;
     };
 
+    // The entity a cell stands for: its only one, or in a stacked cell (file A
+    // over file B) the one on the clicked line. A row of file squares is
+    // ambiguous and gets none.
+    const cellEntity = (cell, y) => {
+        const one = (els) => (new Set(els.map(el => el.dataset.entityData)).size === 1 ? els[0] : null);
+        const ents = [...cell.querySelectorAll('[data-entity-data]')].filter(el => !el.parentElement.closest('[data-entity-data]'));
+        if (ents.length < 2) return ents[0] || null;
+        const dist = ents.map(el => { const b = el.getBoundingClientRect(); return Math.max(0, b.top - y, y - b.bottom); });
+        const min = Math.min(...dist);
+        return one(ents) || one(ents.filter((el, i) => dist[i] === min));
+    };
+
     window.applyContextCellFilter = () => {
         const cell = window.currentContextMenu?.data?.__cell;
         if (cell && applyCellFilter(cell.filterCell, cell.value)) {
@@ -1242,6 +1410,15 @@
         // EntityRenderer owns its rows. Let its bubble handler open the unified
         // menu, which now includes this cell's filter/copy operations.
         if (event.target.closest('[data-entity-data]')) return;
+        // A right-click on a cell's padding means the cell's entity. Re-fire it
+        // there so every entity handler (inline or listener) runs, instead of
+        // the bare cell menu below swallowing the event.
+        const ent = cellEntity(cell, event.clientY);
+        if (ent && !ent.dispatchEvent(new MouseEvent('contextmenu', event))) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
         const value = cellValue(cell, event.target);
         if (!value) return;
 
@@ -1251,7 +1428,7 @@
 
         const filterCell = cellFilter(cell);
         const table = cell.closest('table');
-        const header = (table?.id === 'data-table' ? document.getElementById('header-table') : table)?.querySelector('thead tr:not(.filter-row)')?.cells[cell.cellIndex]?.innerText.trim() || 'column';
+        const header = (table?.id === 'data-table' ? document.getElementById('header-table') : table)?.querySelector('thead tr:not(.filter-row)')?.cells[cell.cellIndex]?.textContent.trim() || 'column';
         const menu = document.createElement('div');
         menu.id = 'table-cell-context-menu';
         menu.className = 'context-menu';

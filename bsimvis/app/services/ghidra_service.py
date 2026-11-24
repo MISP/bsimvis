@@ -15,7 +15,7 @@ import tomllib
 
 from bsimvis.app.services import tag_taxonomy
 from bsimvis.app.services.boilerplate_tag_service import (
-    boilerplate_tag_for_function_name,
+    boilerplate_tags_for_names,
 )
 from bsimvis.app.services.bsim_profiles import get_signature_settings
 
@@ -83,6 +83,14 @@ def fid_tags_from_records(fid_query_service, records):
         )
         for (name, version), names in libraries.items()
     ]
+
+
+def string_addr_key(addr):
+    """Key of a string record: the plain offset in the default space, the full
+    `SPACE:offset` elsewhere (e.g. unloaded ELF sections), so keys never collide."""
+    if addr.getAddressSpace().isMemorySpace() and addr.isLoadedMemoryAddress():
+        return str(addr).split(":")[-1]
+    return str(addr)
 
 
 class GhidraService:
@@ -182,7 +190,7 @@ class GhidraService:
             return "syntax"
         return "text"
 
-    def build_semantic_source(self, markup, program=None):
+    def build_semantic_source(self, markup, program=None, stmts=None):
         c_lines = []
         c_tokens = []
         addr_to_line = {}
@@ -210,8 +218,14 @@ class GhidraService:
 
             num_children = node.numChildren() if hasattr(node, "numChildren") else 0
             if num_children > 0:
+                first = token_counter
                 for i in range(num_children):
                     walk_tokens(node.Child(i))
+                if (
+                    stmts is not None
+                    and node.getClass().getSimpleName() == "ClangStatement"
+                ):
+                    stmts.append((first, token_counter))
                 return
 
             clazz = node.getClass().getSimpleName()
@@ -316,6 +330,42 @@ class GhidraService:
             seq_to_token_idx,
         )
 
+    @staticmethod
+    def build_tok_block(c_tokens, stmts, seq_to_block):
+        """Run-length [[token_idx, block_idx], ...]. Tokens without a pcode op take
+        the block of their Clang statement, then of a neighbour on the same line,
+        else -1."""
+        blk = [seq_to_block.get(t.get("seq")) for t in c_tokens]
+        for a, b in stmts:
+            known = next((blk[k] for k in range(a, b) if blk[k] is not None), None)
+            if known is not None:
+                for k in range(a, b):
+                    if blk[k] is None:
+                        blk[k] = known
+        by_line = {}
+        for k, t in enumerate(c_tokens):
+            by_line.setdefault(t.get("line"), []).append(k)
+        for ks in by_line.values():
+            last = None
+            for k in ks:
+                if blk[k] is None:
+                    blk[k] = last
+                else:
+                    last = blk[k]
+            nxt = None
+            for k in reversed(ks):
+                if blk[k] is None:
+                    blk[k] = nxt
+                else:
+                    nxt = blk[k]
+        runs, prev = [], object()
+        for k, b in enumerate(blk):
+            b = -1 if b is None else b
+            if b != prev:
+                runs.append([k, b])
+                prev = b
+        return runs
+
     def extract_bsim_features(
         self,
         decomp_results,
@@ -326,6 +376,7 @@ class GhidraService:
         addr_to_line,
         addr_to_token_idx,
         seq_to_token_idx,
+        block_out=None,
     ):
         from ghidra.app.decompiler.signature import (
             VarnodeSignature,
@@ -347,10 +398,14 @@ class GhidraService:
         addr_to_pcodes = {}
         block_addr_to_pcode_dump = {}
         addr_to_block_start = {}
+        seq_to_block = {}
+        addr_to_blocks = {}
+        cfg_blocks = []
 
         for block in hfunction.getBasicBlocks():
             start_hex = str(block.getStart()).split(":")[-1]
             this_block_ops = {}
+            bidx = block.getIndex()
             op_iter = block.getIterator()
             while op_iter.hasNext():
                 op = op_iter.next()
@@ -360,6 +415,7 @@ class GhidraService:
                 instr_hex = str(s_num.getTarget()).split(":")[-1]
 
                 seq_to_pcode[s_num] = op
+                seq_to_block[s_str] = bidx
                 seq_to_pcode_full[s_str] = op_str
                 this_block_ops[s_str] = op_str
 
@@ -367,8 +423,32 @@ class GhidraService:
                     addr_to_pcodes[instr_hex] = {}
                 addr_to_pcodes[instr_hex][s_str] = op_str
                 addr_to_block_start[instr_hex] = start_hex
+                addr_to_blocks.setdefault(instr_hex, set()).add(bidx)
 
             block_addr_to_pcode_dump[start_hex] = this_block_ops
+            n_out = block.getOutSize()
+            cfg_blocks.append(
+                {
+                    "i": bidx,
+                    "start": start_hex,
+                    "stop": str(block.getStop()).split(":")[-1],
+                    "ops": len(this_block_ops),
+                    "kind": (
+                        "ret"
+                        if n_out == 0
+                        else (
+                            "cond" if n_out == 2 else "switch" if n_out > 2 else "plain"
+                        )
+                    ),
+                    "out": [block.getOut(k).getIndex() for k in range(n_out)],
+                }
+            )
+        if block_out is not None:
+            block_out["seq_to_block"] = seq_to_block
+            block_out["cfg"] = {
+                "entry": cfg_blocks[0]["i"] if cfg_blocks else 0,
+                "blocks": cfg_blocks,
+            }
         times["pcode"] = time.time() - ts_pcode
 
         ts_sigs = time.time()
@@ -377,6 +457,26 @@ class GhidraService:
 
         if not signatures:
             return bsim_meta, bsim_raw, [], times
+
+        starts = {b["start"]: b["i"] for b in cfg_blocks}
+        ranges = sorted(
+            (int(b["start"], 16), int(b["stop"], 16), b["i"]) for b in cfg_blocks
+        )
+
+        def block_for(seq_str, a):
+            # debugSignatures runs its own decompile pass, so most feature seqs
+            # (and every sig.index) are not ops/blocks of this HighFunction: fall
+            # back to the block starting at the address, the instruction's block,
+            # then the one block whose range holds the address.
+            if seq_str in seq_to_block:
+                return seq_to_block[seq_str]
+            if a in starts:
+                return starts[a]
+            hit = addr_to_blocks.get(a)
+            if hit is None:
+                v = int(a, 16)
+                hit = {i for lo, hi, i in ranges if lo <= v <= hi}
+            return next(iter(hit)) if len(hit) == 1 else None
 
         ts_loop = time.time()
         for i in range(signatures.size()):
@@ -439,6 +539,9 @@ class GhidraService:
 
             if hex_addr:
                 feature_data["addr"] = hex_addr
+                bi = block_for(feature_data["seq"], hex_addr)
+                if bi is not None:
+                    feature_data["block_index"] = bi
                 if feature_data["seq"] and feature_data["seq"] in seq_to_pcode_full:
                     feature_data["pcode_block"] = {
                         feature_data["seq"]: seq_to_pcode_full[feature_data["seq"]]
@@ -533,6 +636,72 @@ class GhidraService:
 
         return list(fid_tags)
 
+    def extract_strings(self, program, options, valid_entries):
+        """Defined strings in the program, as `string_service` records.
+
+        Reads what Ghidra already defined (ASCII/UTF-8/UTF-16/32), longer than
+        `strings.min_length`, up to `strings.max_per_file`. Referencing
+        functions are resolved like the YARA mapper does: refs to the data
+        item's start, limited to functions that will exist (`valid_entries`).
+        `yara_string_tags` / `yara_string_rules` (keyed by string address) are
+        set by the analyze job when a YARA rule hit that string.
+        """
+        from ghidra.program.model.data import StringDataInstance
+        from bsimvis.app.services.config_service import config_service
+        from bsimvis.app.services.string_service import make_record
+
+        min_len = int(config_service.get("strings.min_length", 4))
+        cap = int(config_service.get("strings.max_per_file", 10000))
+        listing = program.getListing()
+        memory = program.getMemory()
+        refs = program.getReferenceManager()
+        funcs = program.getFunctionManager()
+        y_tags = options.get("yara_string_tags") or {}
+        y_rules = options.get("yara_string_rules") or {}
+
+        out = []
+        for data in listing.getDefinedData(True):
+            if len(out) >= cap:
+                logging.warning(f"[!] String cap {cap} reached; the rest are dropped")
+                break
+            try:
+                if not data.hasStringValue():
+                    continue
+                inst = StringDataInstance.getStringDataInstance(data)
+                value = inst.getStringValue()
+                if value is None:
+                    continue
+                value = str(value)
+                if len(value) < min_len or not value.strip():
+                    continue
+                addr = data.getMinAddress()
+                addr_str = string_addr_key(addr)
+                encoding = str(inst.getCharsetName()).lower().replace("us-", "")
+                block = memory.getBlock(addr)
+                entries = set()
+                for ref in refs.getReferencesTo(addr):
+                    func = funcs.getFunctionContaining(ref.getFromAddress())
+                    if func:
+                        entry = str(func.getEntryPoint()).split(":")[-1]
+                        if entry in valid_entries:
+                            entries.add(entry)
+                out.append(
+                    make_record(
+                        value,
+                        addr_str,
+                        encoding,
+                        block.getName() if block else "",
+                        tags=tag_taxonomy.filter_tags(
+                            y_tags.get(addr_str, []), "analysis"
+                        ),
+                        rules=y_rules.get(addr_str, []),
+                        funcs=entries,
+                    )
+                )
+            except Exception as e:
+                logging.debug(f"string at {data.getMinAddress()} skipped: {e}")
+        return out
+
     def stream_bsim_data(
         self, program, options=None, chunk_size=100, job_service=None, job_id=None
     ):
@@ -582,6 +751,26 @@ class GhidraService:
             "file_format": file_format,
         }
 
+        # Count total eligible functions first
+        all_funcs = list(program.getFunctionManager().getFunctions(True))
+        eligible_funcs = [
+            f
+            for f in all_funcs
+            if not (f.isExternal() or f.isThunk())
+            and f.getBody().getNumAddresses() >= min_func_len
+        ]
+        total_funcs = len(eligible_funcs)
+
+        try:
+            # Popped by index_metadata / the scan cache; never stored on the file doc.
+            file_metadata["strings"] = self.extract_strings(
+                program,
+                options,
+                {str(f.getEntryPoint()).split(":")[-1] for f in eligible_funcs},
+            )
+        except Exception as e:
+            logging.warning(f"[!] String extraction failed: {e}")
+
         # Yield file_metadata first as the initial item
         yield file_metadata
 
@@ -601,15 +790,26 @@ class GhidraService:
 
         decompiler_id = f"{decomp_interface.getMajorVersion()}.{decomp_interface.getMinorVersion()}:{decomp_interface.getCompilerSpec().getLanguage()}:{hex(decomp_interface.getSignatureSettings())}"
 
-        # Count total eligible functions first
-        all_funcs = list(program.getFunctionManager().getFunctions(True))
-        eligible_funcs = [
-            f
-            for f in all_funcs
-            if not (f.isExternal() or f.isThunk())
-            and f.getBody().getNumAddresses() >= min_func_len
-        ]
-        total_funcs = len(eligible_funcs)
+        # The header entry usually lands on a thunk or a tiny stub that the
+        # filter above dropped; follow the thunk, and only tag what is stored.
+        entry_key = None
+        if options.get("entry_addr") is not None:
+            try:
+                addr = (
+                    program.getAddressFactory()
+                    .getDefaultAddressSpace()
+                    .getAddress(options["entry_addr"])
+                )
+                ef = program.getFunctionManager().getFunctionContaining(addr)
+                if ef and ef.isThunk():
+                    ef = ef.getThunkedFunction(True)
+                if ef and ef in eligible_funcs:
+                    entry_key = ef.getEntryPoint().getOffset()
+                    file_metadata["entry_point"] = str(ef.getEntryPoint()).split(":")[
+                        -1
+                    ]
+            except Exception as e:
+                logging.warning(f"entry point lookup failed: {e}")
 
         if job_service and job_id:
             job_service.add_log(
@@ -709,6 +909,12 @@ class GhidraService:
         except Exception as e:
             logging.debug(f"FID service unavailable: {e}")
 
+        boilerplate_tags = (
+            {}
+            if skip_boilerplate
+            else boilerplate_tags_for_names(f.getName() for f in eligible_funcs)
+        )
+
         chunk = []
         decompiled_count = 0
 
@@ -777,10 +983,9 @@ class GhidraService:
                 if ft not in func_tags:
                     func_tags.append(ft)
 
-            if not skip_boilerplate:
-                boilerplate_tag = boilerplate_tag_for_function_name(func_name)
-                if boilerplate_tag:
-                    func_tags.append(boilerplate_tag)
+            boilerplate_tag = boilerplate_tags.get(func_name)
+            if boilerplate_tag:
+                func_tags.append(boilerplate_tag)
 
             # Insert Capa tags based on function address
             addr_hex = hex(func.getEntryPoint().getOffset())
@@ -794,6 +999,9 @@ class GhidraService:
             for ytag in yara_tags.get(addr_hex, []):
                 if ytag not in func_tags:
                     func_tags.append(ytag)
+
+            if entry_key is not None and func.getEntryPoint().getOffset() == entry_key:
+                func_tags.append("entry:process")
 
             func_tags = tag_taxonomy.filter_tags(func_tags, "analysis")
             entry_symbols = symbol_table.getSymbols(entry_point)
@@ -814,6 +1022,7 @@ class GhidraService:
                 seq_to_token_idx,
             ) = ([], [], {}, {}, {}, {}, {})
             bsim_meta, bsim_raw, bsim_tf = [], [], []
+            stmts, block_out, tok_block = [], {}, None
 
             if decomp_results.decompileCompleted():
                 # The listing signature above is the program DB one, which stays
@@ -839,7 +1048,7 @@ class GhidraService:
                     line_to_token_idx,
                     line_to_addr,
                     seq_to_token_idx,
-                ) = self.build_semantic_source(markup, program)
+                ) = self.build_semantic_source(markup, program, stmts)
                 bsim_meta, bsim_raw, bsim_tf, ext_times = self.extract_bsim_features(
                     decomp_results,
                     decomp_interface,
@@ -849,7 +1058,12 @@ class GhidraService:
                     addr_to_line,
                     addr_to_token_idx,
                     seq_to_token_idx,
+                    block_out,
                 )
+                if block_out.get("cfg", {}).get("blocks"):
+                    tok_block = self.build_tok_block(
+                        c_tokens, stmts, block_out["seq_to_block"]
+                    )
 
             callees_list = callees_graph.get(entry_str, [])
             callers_list = callers_graph.get(entry_str, [])
@@ -893,6 +1107,11 @@ class GhidraService:
                         "seq_to_token": seq_to_token_idx,
                         "line_to_token": line_to_token_idx,
                         "line_to_addr": line_to_addr,
+                        **(
+                            {"tok_block": tok_block, "cfg": block_out["cfg"]}
+                            if tok_block is not None
+                            else {}
+                        ),
                     },
                     "function_features": {
                         "bsim_features_meta": bsim_meta,

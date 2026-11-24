@@ -11,6 +11,9 @@ from bsimvis.app.services.cluster_utils import (
     cluster_tree_slice,
     cluster_children_page,
     get_tree_links,
+    Tree,
+    _s,
+    real_links,
     resolve_cluster_id_by_uuid,
 )
 from bsimvis.app.services.index_service import get_pool_id
@@ -296,7 +299,7 @@ def _structural_direct_members(r, collection, algo, cid, parent_to_children):
     return r.sdiff(f"{base}:{cid}:members", *kids)
 
 
-def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_id):
+def _shape_cluster_result(m, parent, child_total, is_pool, pool_id):
     """meta blob -> the dict shape the UI expects (parent, has_children, distributions)."""
     raw_samples = m.get("sample_members") or m.get("sample_functions") or []
     sample_members = []
@@ -313,6 +316,8 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
                     "file_md5": s.get("file_md5"),
                     "function_id": fid,
                     "function_name": s.get("function_name", "Unknown"),
+                    "user_name": s.get("user_name"),
+                    "user_name_source": s.get("user_name_source"),
                 }
             )
         else:
@@ -330,7 +335,7 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
         "cohesion_score": m.get("cohesion_score", 0),
         "count": m.get("member_count"),
         "created_at": m.get("created_at"),
-        "parent": child_to_parent.get(cid),
+        "parent": parent,
         "sample_members": sample_members,
         "direct_members": m.get("direct_members", []),
         "tag_distribution": normalize_tag_distribution(
@@ -340,10 +345,29 @@ def _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_
         ),
         "architecture_distribution": m.get("architecture_distribution", []),
         "executable_format_distribution": m.get("executable_format_distribution", []),
+        "inferred_tags": m.get("inferred_tags", []),
+        "file_inferred_tags": m.get("file_inferred_tags", []),
+        "file_tag_distribution": m.get("file_tag_distribution", {}),
+        "filetype_distribution": m.get("filetype_distribution", []),
+        "stats_sampled": m.get("stats_sampled", False),
         "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
-        "has_children": bool(parent_to_children.get(cid)),
-        "child_total": len(parent_to_children.get(cid, [])),
+        "has_children": bool(child_total),
+        "child_total": child_total,
     }
+
+
+def _local_links(tree, start, with_ancestors):
+    """child_to_parent / parent_to_children for `start` and its ancestors only."""
+    nodes, curr = [start], start
+    while with_ancestors and (curr := tree.parent(curr)) is not None:
+        nodes.append(curr)
+    c2p, p2c = {}, {}
+    for n in nodes:
+        if (p := tree.parent(n)) is not None:
+            c2p[n] = p
+        if kids := tree.children(n)[0]:
+            p2c[n] = kids
+    return c2p, p2c
 
 
 def _list_clusters_slice(collection, algo, is_pool, pool_id, r):
@@ -356,15 +380,14 @@ def _list_clusters_slice(collection, algo, is_pool, pool_id, r):
     if parent_q:
         width = request.args.get("width", 10, type=int)
         offset = request.args.get("offset", 0, type=int)
-        links = get_tree_links(r, collection, algo)
-        _, parent_to_children = links
+        tree = Tree(r, collection, algo)
         metas, total_children = cluster_children_page(
-            r, collection, algo, parent_q, offset=offset, width=width, links=links
+            r, collection, algo, parent_q, offset=offset, width=width, tree=tree
         )
-        child_to_parent = {cid: parent_q for cid in metas}
+        _, counts = tree.info(metas)
         results = [
             _shape_cluster_result(
-                m, child_to_parent, parent_to_children, is_pool, pool_id
+                m, parent_q, counts.get(str(m.get("cluster_id")), 0), is_pool, pool_id
             )
             for m in metas.values()
         ]
@@ -380,13 +403,19 @@ def _list_clusters_slice(collection, algo, is_pool, pool_id, r):
     up = request.args.get("up", 3, type=int)
     down = request.args.get("down", 3, type=int)
     width = request.args.get("width", 10, type=int)
-    links = get_tree_links(r, collection, algo)
-    child_to_parent, parent_to_children = links
+    tree = Tree(r, collection, algo)
     metas, center, hidden_above = cluster_tree_slice(
-        r, collection, algo, slice_uuid, up=up, down=down, width=width, links=links
+        r, collection, algo, slice_uuid, up=up, down=down, width=width, tree=tree
     )
+    parents, counts = tree.info(metas)
     results = [
-        _shape_cluster_result(m, child_to_parent, parent_to_children, is_pool, pool_id)
+        _shape_cluster_result(
+            m,
+            parents.get(str(m.get("cluster_id"))),
+            counts.get(str(m.get("cluster_id")), 0),
+            is_pool,
+            pool_id,
+        )
         for m in metas.values()
     ]
     return {
@@ -418,6 +447,16 @@ def list_clusters():
         for value in request.args.getlist("exclude_cluster_tag")
         if value.strip()
     ]
+    inferred_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("inferred_tag")
+        if value.strip()
+    ]
+    exclude_inferred_filters = [
+        parse_filter_value("user_tags", value)
+        for value in request.args.getlist("exclude_inferred_tag")
+        if value.strip()
+    ]
     cluster_id_q = request.args.get("cluster_id", "").lower()
     cluster_uuid_q = request.args.get("cluster_uuid", "").lower()
     cluster_name_q = request.args.get("cluster_name", "").lower()
@@ -445,6 +484,7 @@ def list_clusters():
         show_parents = request.args.get("show_parents", "false").lower() == "true"
         show_children = request.args.get("show_children", "false").lower() == "true"
         show_members = request.args.get("show_members", "false").lower() == "true"
+        with_medoid = request.args.get("with_medoid", "false").lower() == "true"
     except ValueError:
         return {"error": "Invalid numeric parameter"}, 400
 
@@ -513,22 +553,50 @@ def list_clusters():
     results = []
     total = 0
 
-    # Fetch tree links to provide parent information
-    links_key = f"{collection}:cluster:tree_links:{algo}"
-    links_raw = r.get(links_key)
+    # Fetch tree links to provide parent information. One cluster (the detail
+    # view's member fetch) reads just its own neighbourhood from the node index.
     child_to_parent = {}
     parent_to_children = {}
-    if links_raw:
-        try:
-            links = json.loads(links_raw)
-            child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
-            for l in links:
-                p = str(l["parent"])
-                if p not in parent_to_children:
-                    parent_to_children[p] = []
-                parent_to_children[p].append(str(l["child"]))
-        except Exception:
-            pass
+    tree = Tree(r, collection, algo) if exact_cid and not show_children else None
+    if tree and tree.indexed:
+        child_to_parent, parent_to_children = _local_links(
+            tree, _s(exact_cid), show_parents
+        )
+    else:
+        links_key = f"{collection}:cluster:tree_links:{algo}"
+        links_raw = r.get(links_key)
+        child_to_parent = {}
+        parent_to_children = {}
+        if links_raw:
+            try:
+                links = real_links(json.loads(links_raw))
+                child_to_parent = {str(l["child"]): str(l["parent"]) for l in links}
+                for l in links:
+                    p = str(l["parent"])
+                    if p not in parent_to_children:
+                        parent_to_children[p] = []
+                    parent_to_children[p].append(str(l["child"]))
+            except Exception:
+                pass
+
+    # The exact-uuid shortcut loaded one meta; load the relatives it will expand to.
+    if exact_cid and (show_parents or show_children):
+        start = exact_cid.decode() if isinstance(exact_cid, bytes) else str(exact_cid)
+        related = set()
+        if show_parents:
+            curr = start
+            while curr in child_to_parent:
+                curr = child_to_parent[curr]
+                related.add(curr)
+        if show_children:
+            queue = [start]
+            while queue:
+                for child in parent_to_children.get(queue.pop(), []):
+                    if child not in related:
+                        related.add(child)
+                        queue.append(child)
+        related.discard(start)
+        all_meta_keys += [f"{collection}:cluster:{algo}:{cid}:meta" for cid in related]
 
     if all_meta_keys:
         t_fetch = time.perf_counter()
@@ -585,6 +653,23 @@ def list_clusters():
                 continue
             if any(
                 spec.matches(tag) for spec in exclude_tag_filters for tag in user_tags
+            ):
+                continue
+
+            inferred = [
+                str(t).lower()
+                for t in (m.get("inferred_tags") or [])
+                + (m.get("file_inferred_tags") or [])
+            ]
+            if any(
+                not any(spec.matches(tag) for tag in inferred)
+                for spec in inferred_filters
+            ):
+                continue
+            if any(
+                spec.matches(tag)
+                for spec in exclude_inferred_filters
+                for tag in inferred
             ):
                 continue
 
@@ -750,6 +835,8 @@ def list_clusters():
                             "file_md5": s.get("file_md5"),
                             "function_id": fid,
                             "function_name": s.get("function_name", "Unknown"),
+                            "user_name": s.get("user_name"),
+                            "user_name_source": s.get("user_name_source"),
                         }
                     )
                 else:
@@ -780,6 +867,11 @@ def list_clusters():
                 "executable_format_distribution": m.get(
                     "executable_format_distribution", []
                 ),
+                "inferred_tags": m.get("inferred_tags", []),
+                "file_inferred_tags": m.get("file_inferred_tags", []),
+                "file_tag_distribution": m.get("file_tag_distribution", {}),
+                "filetype_distribution": m.get("filetype_distribution", []),
+                "stats_sampled": m.get("stats_sampled", False),
                 "batch_uuid_distribution": m.get("batch_uuid_distribution", []),
                 "has_children": bool(parent_to_children.get(str(m.get("cluster_id")))),
             }
@@ -847,12 +939,43 @@ def list_clusters():
                         "function_name", "Unknown"
                     ),
                     "addr": member_meta_map.get(mid, {}).get("entrypoint_address"),
+                    "user_name": member_meta_map.get(mid, {}).get("user_name"),
+                    "user_name_source": member_meta_map.get(mid, {}).get(
+                        "user_name_source"
+                    ),
                     "bin": member_meta_map.get(mid, {}).get("file_name"),
                     "file_md5": member_meta_map.get(mid, {}).get("file_md5"),
                     "v_size": member_meta_map.get(mid, {}).get("bsim_features_count"),
                 }
                 for mid in mids
             ]
+
+    # Only for an exact-uuid lookup: the medoid is computed on read.
+    if with_medoid and exact_cid and page:
+        from bsimvis.app.services.cluster_service import function_medoid
+
+        base = f"{collection}:cluster:{algo}:{exact_cid}"
+        raw = r.smembers(f"{base}:members") or r.smembers(f"{base}:direct_members")
+        fids = [x.decode() if isinstance(x, bytes) else x for x in raw or ()]
+        if is_pool:
+            sid_prefix = f"{collection}:sim:"
+            score_key = f"{collection}:sim:score"
+            func_prefix = ""
+        else:
+            sid_prefix = f"{collection}:sim:{algo}:"
+            score_key = f"{collection}:sim:score:{algo}"
+            func_prefix = f"{collection}:func:"
+        clean = [
+            f[len(func_prefix) :] if func_prefix and f.startswith(func_prefix) else f
+            for f in fids
+        ]
+        medoid, centrality = function_medoid(r, score_key, sid_prefix, clean)
+        for cluster_res in page:
+            if str(cluster_res["cluster_id"]) == str(exact_cid):
+                cluster_res["medoid"] = (
+                    f"{func_prefix}{medoid}" if medoid is not None else None
+                )
+                cluster_res["medoid_centrality"] = centrality
 
     logging.info(
         f"CLUSTERS | total={total} | TOTAL: {time.perf_counter()-t_start:.3f}s"
@@ -906,15 +1029,24 @@ def update_cluster_meta():
     collection = data.get("collection", "main")
     algo = resolve_collection_algo(collection, data.get("algo"))
     cluster_id = data.get("cluster_id")
-    cluster_name = data.get("cluster_name")
+    cluster_name = (data.get("cluster_name") or "").strip()
 
     pool_id = data.get("pool") or get_pool_id(collection)
     is_pool = pool_id is not None
 
-    if not cluster_id or not cluster_name:
-        return {"error": "cluster_id and cluster_name required"}, 400
-
     r = get_redis()
+    if not cluster_id and data.get("cluster_uuid"):
+        from bsimvis.app.services.cluster_utils import resolve_cluster_id_by_uuid
+
+        cluster_id = resolve_cluster_id_by_uuid(
+            r,
+            f"global:pool:{pool_id}" if is_pool else collection,
+            algo,
+            data["cluster_uuid"],
+        )
+    if not cluster_id:
+        return {"error": "cluster_id or cluster_uuid required"}, 400
+
     if is_pool:
         meta_key = f"global:pool:{pool_id}:cluster:{algo}:{cluster_id}:meta"
         collection_for_tags = f"global:pool:{pool_id}"
@@ -922,14 +1054,24 @@ def update_cluster_meta():
         meta_key = f"{collection}:cluster:{algo}:{cluster_id}:meta"
         collection_for_tags = collection
 
-    if not r.exists(meta_key):
+    meta_val = r.get(meta_key)
+    if not meta_val:
         return {"error": "Cluster meta not found"}, 404
 
-    meta_val = r.get(meta_key)
-    if meta_val:
-        meta_doc = json.loads(meta_val)
-        meta_doc["cluster_name"] = cluster_name
-        r.set(meta_key, json.dumps(meta_doc))
+    # Empty name = back to the name the build gave it.
+    meta_doc = json.loads(meta_val)
+    prev_custom = (
+        meta_doc.get("cluster_name") if meta_doc.get("is_custom_name") else None
+    )
+    if not cluster_name:
+        cluster_name = meta_doc.get("auto_name") or f"Cluster {cluster_id}"
+        meta_doc["is_custom_name"] = False
+    else:
+        if not meta_doc.get("is_custom_name"):
+            meta_doc["auto_name"] = meta_doc.get("cluster_name")
+        meta_doc["is_custom_name"] = True
+    meta_doc["cluster_name"] = cluster_name
+    r.set(meta_key, json.dumps(meta_doc))
 
     # Propagate name to all member functions for filtering
     from bsimvis.app.services.index_service import _index_tag, _unindex_tag
@@ -939,6 +1081,18 @@ def update_cluster_meta():
     else:
         members_key = f"{collection}:cluster:{algo}:{cluster_id}:members"
     members = r.smembers(members_key)
+    from bsimvis.app.services.cluster_utils import save_cluster_name
+
+    save_cluster_name(
+        r,
+        collection_for_tags,
+        "func",
+        algo,
+        [m.decode() if isinstance(m, bytes) else str(m) for m in members],
+        cluster_name if meta_doc["is_custom_name"] else "",
+        replaces=prev_custom,
+        label=cluster_id,
+    )
 
     # Get old name to unindex
     old_meta = json.loads(meta_val) if meta_val else {}
@@ -1108,6 +1262,8 @@ def get_cluster_functions():
             {
                 "function_id": m.get("function_id") or fid,
                 "function_name": m.get("function_name", "Unknown"),
+                "user_name": m.get("user_name"),
+                "user_name_source": m.get("user_name_source"),
                 "parameters": m.get("parameters", []),
                 "return_type": m.get("return_type", "void"),
                 "namespace": m.get("namespace", ""),

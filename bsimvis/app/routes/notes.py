@@ -1,6 +1,7 @@
 from flask import request
 from bsimvis.app.services.note_service import note_service
 import logging
+import re
 
 
 def add_note():
@@ -132,6 +133,95 @@ def get_notes():
 
     notes = note_service.get_notes(collection, func_id)
     return {"status": "success", "notes": notes}
+
+
+def rename_functions():
+    """
+    Sets or clears the analyst name of functions (empty `name` clears).
+    Payload: {"func_ids": [str], "name": str, "owner": "user" | "llm"}, or a batch
+    {"renames": [that, ...]} that flushes the N-way cache once.
+    """
+    data = request.json or {}
+    batch = data.get("renames") or [data]
+    todo = []
+    for item in batch:
+        func_ids = item.get("func_ids") or []
+        if not func_ids or "name" not in item:
+            return {"error": "Missing parameters"}, 400
+        owner = "llm" if item.get("owner") == "llm" else "user"
+        todo += [(f, item["name"], owner) for f in func_ids]
+    done = note_service.set_user_names(todo)
+    if not done:
+        return {"error": "Could not rename"}, 500
+    from bsimvis.app.services import nway_diff_service
+
+    nway_diff_service.invalidate()
+    return {"status": "success", "renamed": done}
+
+
+def _neighbour_names(func_ids):
+    """({address: name}, [caller names]) for the stripped callees and callers of
+    `func_ids`, named after their cohesive named cluster the way the N-way table
+    names its rows: a stripped helper gets the real name of its unstripped twins."""
+    from bsimvis.app.routes.nway import _attach_clusters
+    from bsimvis.app.services.llm_tools import get_call_graph
+    from bsimvis.app.services.redis_client import get_redis
+
+    rows, callers = {}, set()
+    for fid in func_ids:
+        graph = get_call_graph(fid)
+        for side in ("callees", "callers"):
+            for c in graph.get(side) or []:
+                cid, name = c.get("id") or "", c.get("name") or ""
+                if cid in func_ids or ":func:" not in cid:
+                    continue
+                if re.fullmatch(r"FUN_[0-9a-fA-F]+", name):
+                    rows.setdefault(
+                        cid, {"cells": {0: cid}, "name": name, "side": side}
+                    )
+                elif side == "callers":
+                    callers.add(c.get("user_name") or name)
+    named = list(rows.values())
+    if named:
+        _attach_clusters(get_redis(), named, {}, None, {})
+    named = [r for r in named if r.get("name_from") == "cluster"]
+    callers |= {r["name"] for r in named if r["side"] == "callers"}
+    return {r["cells"][0].rsplit(":", 1)[1]: r["name"] for r in named}, sorted(callers)
+
+
+def suggest_function_name():
+    """
+    Asks the LLM for a name for the functions of one N-way row. Never applies it.
+    Payload: {"func_ids": [str]} (at most 3 are sent to the model)
+    """
+    from bsimvis.app.services.llm_service import llm_service
+    from bsimvis.app.services.llm_tools import get_function
+
+    func_ids = ((request.json or {}).get("func_ids") or [])[:3]
+    names, callers = _neighbour_names(func_ids)
+    parts = []
+    for fid in func_ids:
+        f = get_function(fid)
+        code = re.sub(
+            r"\bFUN_([0-9a-fA-F]+)\b",
+            lambda m: names.get(m.group(1).lower(), m.group(0)),
+            f.get("code") or "",
+        )
+        if code:
+            parts.append(f"// {f.get('file_name')}\n{code[:6000]}")
+    if not parts:
+        return {"error": "No code available"}, 404
+    prompt = (
+        "Name this function, which is the same function across several binaries. "
+        "Reply with one C identifier in snake_case, nothing else.\n\n"
+        + (f"Called from: {', '.join(callers[:8])}\n\n" if callers else "")
+        + "\n\n".join(parts)
+    )
+    reply = llm_service.chat([{"role": "user", "content": prompt}])
+    m = re.search(r"[A-Za-z_][A-Za-z0-9_]*", reply or "")
+    if not m or reply.startswith("Error"):
+        return {"error": reply or "No name returned"}, 502
+    return {"name": m.group(0)[:64]}
 
 
 # --- File notes ---
@@ -335,3 +425,47 @@ def get_bin_sim_notes():
 
     notes = note_service.get_bin_sim_notes(collection, sid)
     return {"status": "success", "notes": notes}
+
+
+# --- Binary cluster notes ---
+# `cluster_key` = `{collection}:bin_cluster:{algo}:{uuid}`, as the cluster list
+# answers it (`{collection}:bin_cluster:{algo}:{cluster_uuid}`).
+
+
+def add_cluster_note():
+    data = request.json or {}
+    key, text = data.get("cluster_key"), data.get("text")
+    if not all([key, text]):
+        return {"error": "Missing parameters"}, 400
+    note = note_service.add_cluster_note(key, text, data.get("owner", "user"))
+    if note:
+        return {"status": "success", "note": note}
+    return {"error": "Invalid cluster_key"}, 400
+
+
+def update_cluster_note():
+    data = request.json or {}
+    key, note_id, text = data.get("cluster_key"), data.get("note_id"), data.get("text")
+    if not all([key, note_id, text]):
+        return {"error": "Missing parameters"}, 400
+    note = note_service.update_cluster_note(key, note_id, text)
+    if note:
+        return {"status": "success", "note": note}
+    return {"error": "Note not found"}, 404
+
+
+def remove_cluster_note():
+    data = request.json or {}
+    key, note_id = data.get("cluster_key"), data.get("note_id")
+    if not all([key, note_id]):
+        return {"error": "Missing parameters"}, 400
+    if note_service.remove_cluster_note(key, note_id):
+        return {"status": "success"}
+    return {"error": "Note not found"}, 404
+
+
+def get_cluster_notes():
+    key = request.args.get("cluster_key")
+    if not note_service.split_cluster_key(key)[0]:
+        return {"error": "Missing or invalid cluster_key"}, 400
+    return {"status": "success", "notes": note_service.get_cluster_notes(key)}

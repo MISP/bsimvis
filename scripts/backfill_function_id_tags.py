@@ -1,4 +1,9 @@
-"""Refresh FunctionID and boilerplate tags without re-analyzing binaries.
+"""Re-derive `fid:` tags from the stored function_id_hash, with no Ghidra analysis.
+
+Drops the legacy `origin:lib:*` / `lib:*` tags an old bug left behind and keeps
+only `fid:` (`#ambiguous` on a multi-match, as at analysis time). Boilerplate
+tags belong to backfill_boilerplate_tags.py and are not touched here. Run that
+one too, and rebuild sims afterwards (sim-level func_tags are not refreshed).
 
 Preview: ``uv run python scripts/backfill_function_id_tags.py --collection main``
 Apply: ``uv run python scripts/backfill_function_id_tags.py --collection main --apply``
@@ -11,9 +16,6 @@ import re
 from itertools import islice
 
 from bsimvis.app.services.bin_sim_tags import bump_tags_rev
-from bsimvis.app.services.boilerplate_tag_service import (
-    boilerplate_tag_for_function_name,
-)
 from bsimvis.app.services.ghidra_service import GhidraService, fid_tags_from_records
 from bsimvis.app.services.index_service import _unindex_tag, save_file, save_function
 from bsimvis.app.services.processing_service import lib_parents
@@ -21,7 +23,7 @@ from bsimvis.app.services.redis_client import get_redis
 
 BATCH = 500
 HASH = re.compile(r"^[0-9a-f]{16}$")
-GENERATED = ("fid:", "boilerplate:")
+GENERATED = ("fid:", "origin:lib:", "lib:")
 
 
 def metas(r, ids):
@@ -76,7 +78,7 @@ class FidLookup:
                 pass
 
 
-def file_fid_tags(r, collection, md5, changes):
+def file_fid_tags(r, collection, md5, changes, prefix="fid:"):
     tags = set()
     ids = r.sscan_iter(f"{collection}:idx:file:functions:{md5}", count=BATCH)
     while batch := list(islice(ids, BATCH)):
@@ -84,20 +86,22 @@ def file_fid_tags(r, collection, md5, changes):
             tags.update(
                 t
                 for t in lib_parents(changes.get(fid, meta.get("tags")))
-                if t.startswith("fid:")
+                if t.startswith(prefix)
             )
     return tags
 
 
-def sync_file(r, collection, md5, changes, apply):
+def sync_file(r, collection, md5, changes, apply, prefix="fid:", strip=GENERATED):
     key = f"{collection}:file:{md5}:meta"
     raw = r.get(key)
     if not raw:
         return False
     meta = json.loads(raw)
     old = list(meta.get("tags") or [])
-    fid_tags = file_fid_tags(r, collection, md5, changes)
-    new = [tag for tag in old if not str(tag).startswith("fid:")] + sorted(fid_tags)
+    fid_tags = file_fid_tags(r, collection, md5, changes, prefix)
+    new = [tag for tag in old if not str(tag).lower().startswith(strip)] + sorted(
+        fid_tags
+    )
     if new == old:
         return False
     if apply:
@@ -107,7 +111,11 @@ def sync_file(r, collection, md5, changes, apply):
         pipe.set(key, json.dumps(meta))
         save_file(pipe, collection, md5, meta)
         acc = f"{collection}:file:{md5}:lib_tags"
-        stale = [tag for tag in r.smembers(acc) if str(tag).startswith("fid:")]
+        stale = [
+            tag
+            for tag in r.smembers(acc)
+            if str(tag.decode() if isinstance(tag, bytes) else tag).startswith(strip)
+        ]
         if stale:
             pipe.srem(acc, *stale)
         if fid_tags:
@@ -137,13 +145,9 @@ def backfill(r, collection, lookup, apply=False):
                         "Skipping %s after FID lookup failure: %s", fid, exc
                     )
                     continue
-            boilerplate = boilerplate_tag_for_function_name(meta.get("function_name"))
-            generated = set(found)
-            if boilerplate:
-                generated.add(boilerplate)
             new = [
                 tag for tag in old if not str(tag).lower().startswith(GENERATED)
-            ] + sorted(generated)
+            ] + sorted(set(found))
             if new == old:
                 continue
             changes[fid] = new

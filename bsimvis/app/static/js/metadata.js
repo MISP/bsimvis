@@ -18,7 +18,7 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
     if (!m) return "";
     
     // Core data extraction
-    const label = m['function_name'] || 'unknown_func';
+    const label = fnName(m) || 'unknown_func';
     const returnType = m['return_type'] || 'void';
     const namespace = m['namespace'] || '';
     const parameters = m['parameters'] || [];
@@ -59,7 +59,8 @@ function renderFunctionMetadata(container, m, fullId, options = {}) {
                 };
 
                 const renderOptions = {
-                    showActions: false
+                    showActions: false,
+                    noNav: !!options.relationNav
                 };
 
                 const funcHtml = EntityRenderer.renderFunction(funcData, renderOptions);
@@ -91,7 +92,16 @@ window.getNavHandler = () => {
     };
 };
 
-return `<span class="relation-tag" onclick="event.stopPropagation(); window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event);" style="border-color:${color}; color:${color}; cursor:pointer;">
+// A pair diff routes relation clicks/hovers through its greedy partner lookup.
+const nav = options.relationNav;
+const clickJs = nav
+    ? `${nav}.openCalledPair(${escapeAttr(jsString(funcData.function_id))}, event)`
+    : `window.getNavHandler()(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, '', event)`;
+const hoverJs = nav && !isExt
+    ? ` onmouseenter="${nav}.previewCalledPair(${escapeAttr(jsString(funcData.function_id))}, ${escapeAttr(jsString(funcData.function_name || ''))}, event)" onmousemove="typeof moveCodePreview === 'function' && moveCodePreview(event)" onmouseleave="${nav}.hideCalledPreview(event)"`
+    : '';
+
+return `<span class="relation-tag" onclick="event.stopPropagation(); ${clickJs};"${hoverJs} style="border-color:${color}; color:${color}; cursor:pointer;">
     ${funcHtml}
     ${isExt ? '<span class="ext-badge" style="background:${color}; color:white; font-size:0.6rem; padding:1px 3px; border-radius:2px; margin-left:4px;">EXT</span>' : ''}
 </span>`;
@@ -200,7 +210,7 @@ return `<span class="relation-tag" onclick="event.stopPropagation(); window.getN
                      oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'function', this)">
                     <span class="meta-return-type">${escapeHtml(returnType)}</span>
                     ${namespace ? `<span class="meta-namespace">${escapeHtml(namespace)}::</span>` : ''}
-                    <span class="meta-func-name">${escapeHtml(label)}</span>
+                    <span class="meta-func-name">${escapeHtml(label)}</span>${nameBadge(m)}
                     <span class="meta-params">(</span>${parameters.map(p => `<span class="meta-param-type">${escapeHtml(typeof p === 'object' && p !== null ? (p.name || JSON.stringify(p)) : p)}</span>`).join('<span class="meta-comma">, </span>')}<span class="meta-params">)</span>
                     
                     <div class="meta-sig-actions" style="margin-left: 10px;">
@@ -656,10 +666,11 @@ function renderTagDist(title, icon, dist) {
         children.forEach(child => walk(child, depth + 1, id));
     };
     dist.forEach(item => walk(item, 0, null));
+    const coll = typeof getCurrentCollection === 'function' ? getCurrentCollection() : '';
     const body = rows.map(({item, id, depth, parentId, color, hasChildren}) => {
         const coverage = metadataPercent(item);
-        return `<tr data-tag-parent="${parentId || ''}" data-tag-id="${escapeAttr(item.tag_id)}" data-tag-coverage="${coverage}" data-tag-color="${escapeAttr(color)}" style="${depth ? 'display:none;' : ''}">
-            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono metadata-value-cell">${escapeHtml(item.tag_id)}</span></td>
+        return `<tr data-tag-row="${id}" data-tag-parent="${parentId || ''}" data-tag-id="${escapeAttr(item.tag_id)}" data-tag-coverage="${coverage}" data-tag-color="${escapeAttr(color)}" style="${depth ? 'display:none;' : ''}">
+            <td style="padding-left:${10 + depth * 18}px;"><button class="btn-copy" aria-expanded="false" ${hasChildren ? `onclick="toggleTagTreeRow(${escapeAttr(jsString(id))}, event)"` : 'style="visibility:hidden;"'}><i class="fa-solid fa-chevron-${hasChildren ? 'right' : 'minus'}"></i></button><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${escapeAttr(color)};margin:0 7px;"></span><span class="mono metadata-value-cell" style="cursor:help;" onmouseenter="showTooltip(event, ${escapeAttr(jsString(item.tag_id))}, ${escapeAttr(jsString(coll))})" onmouseleave="hideTooltip()" oncontextmenu="handleTagContextMenu(event, ${escapeAttr(jsString(item.tag_id))})">${escapeHtml(item.tag_id)}</span></td>
             <td class="mono">${Number(item.count || 0).toLocaleString()}</td><td class="mono"><div class="metadata-bar"><span style="width:${Math.min(100, coverage)}%;background:${escapeAttr(color)}"></span></div>${coverage.toFixed(0)}%</td><td><button class="btn-copy" title="Copy tag" onclick="copyToClipboard(${escapeAttr(jsString(item.tag_id))}, this); event.stopPropagation();"><i class="fa-regular fa-copy"></i></button></td>
         </tr>`;
     }).join('');
@@ -676,6 +687,59 @@ window.initMetadataTables = function (root) {
 };
 
 window.renderTagDist = renderTagDist;
+
+function setTagTreeOpen(row, open) {
+    const button = row.querySelector('button[aria-expanded]');
+    if (!button || button.style.visibility === 'hidden') return;
+    button.setAttribute('aria-expanded', String(open));
+    button.innerHTML = `<i class="fa-solid fa-chevron-${open ? 'down' : 'right'}"></i>`;
+}
+
+// Full-text filter over the metadata cards under `root`: a card whose title matches
+// shows whole; otherwise only its matching rows show, tag rows with their ancestors
+// expanded, and the card opens. An empty query puts every row back as rendered.
+window.filterMetadataAxes = function (root, query) {
+    if (!root) return 0;
+    const q = String(query || '').trim().toLowerCase();
+    let shown = 0;
+    root.querySelectorAll('details.metadata-axis').forEach(card => {
+        const rows = Array.from(card.querySelectorAll('tbody tr'));
+        const isTree = rows.some(row => row.dataset.tagRow);
+        const titleHit = !q || card.querySelector('summary').textContent.toLowerCase().includes(q);
+        let hits = 0;
+        if (titleHit) {
+            rows.forEach(row => {
+                row.style.display = isTree && row.dataset.tagParent ? 'none' : '';
+                if (isTree) setTagTreeOpen(row, false);
+            });
+        } else {
+            // Only tag tree rows have ids; a plain table must not walk (undefined -> itself forever).
+            const byId = new Map(isTree ? rows.map(row => [row.dataset.tagRow, row]) : []);
+            const keep = new Set();
+            const open = new Set();
+            rows.forEach(row => {
+                const text = (row.dataset.tagId ?? row.querySelector('.metadata-value-cell')?.textContent ?? '').toLowerCase();
+                if (!text.includes(q)) return;
+                hits++;
+                keep.add(row);
+                for (let p = byId.get(row.dataset.tagParent); p && !open.has(p); p = byId.get(p.dataset.tagParent)) {
+                    keep.add(p);
+                    open.add(p);
+                }
+            });
+            rows.forEach(row => {
+                row.style.display = keep.has(row) ? '' : 'none';
+                if (isTree) setTagTreeOpen(row, open.has(row));
+            });
+        }
+        const visible = titleHit || hits > 0;
+        card.style.display = visible ? '' : 'none';
+        if (q && hits) card.open = true;
+        if (visible) shown++;
+        if (isTree) updateTagChart(card.id);
+    });
+    return shown;
+};
 
 window.renderDist = renderDist;
 

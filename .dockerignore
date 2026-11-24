@@ -1,0 +1,14 @@
+.claude
+.worktrees
+.venv
+bin
+data/*
+!data/yara_rules
+data-wttest
+logs
+scratch_build
+bsimvis/app/static/vendor
+.env
+.env.*
+!.env.example
+**/__pycache__

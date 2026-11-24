@@ -10,7 +10,8 @@ offline -- no kvrocks needed:
 
 import random
 
-from bsimvis.app.services.bin_sim_service import discover_edges
+from bsimvis.app.services import bin_sim_service
+from bsimvis.app.services.bin_sim_service import discover_edges, _discover_edges_py
 from bsimvis.app.services.bin_sim_tags import greedy_match
 
 
@@ -145,8 +146,54 @@ def test_discovery_only_fills_unmatched():
     assert found == [("a:1", "b:1", 1.0)], found
 
 
+def test_sparse_matches_python_fallback():
+    # Tiny row blocks force the block loop; max_df and skip_pairs must agree too.
+    bin_sim_service._BLOCK_ROWS = 4
+    try:
+        for algo in ("unweighted_cosine", "binary_cosine", "jaccard"):
+            for seed in range(5):
+                vectors, fids_a, fids_b = make_corpus(seed)
+                skip = {frozenset(("a:0", "b:0"))}
+                for max_df in (1.0, 0.3):
+                    args = (vectors, fids_a, fids_b, algo, 0.2, skip, max_df)
+                    key = lambda es: sorted((a, b, round(s, 9)) for a, b, s in es)
+                    assert key(discover_edges(*args)) == key(
+                        _discover_edges_py(*args)
+                    ), (algo, seed, max_df)
+    finally:
+        bin_sim_service._BLOCK_ROWS = 1000
+
+
+def test_greedy_returns_exactly_what_greedy_match_accepts():
+    # greedy=True must be greedy_match over the full candidate list -- same
+    # edges, same order -- on the sparse path (any block size) and the fallback.
+    from bsimvis.app.services.bin_sim_tags import greedy_match
+
+    try:
+        for rows in (1000, 7):
+            bin_sim_service._BLOCK_ROWS = rows
+            for algo in ("unweighted_cosine", "jaccard", "binary_cosine"):
+                for seed in range(4):
+                    vectors, fids_a, fids_b = make_corpus(seed)
+                    skip = {frozenset((min(fids_a), max(fids_b)))} if seed % 2 else ()
+                    full = discover_edges(vectors, fids_a, fids_b, algo, 0.05, skip)
+                    want = greedy_match(full)[0]
+                    got = discover_edges(
+                        vectors, fids_a, fids_b, algo, 0.05, skip, greedy=True
+                    )
+                    assert got == want, (rows, algo, seed)
+                    py = greedy_match(
+                        _discover_edges_py(vectors, fids_a, fids_b, algo, 0.05, skip)
+                    )[0]
+                    assert [(a, b) for a, b, _ in py] == [(a, b) for a, b, _ in got]
+    finally:
+        bin_sim_service._BLOCK_ROWS = 1000
+
+
 if __name__ == "__main__":
+    test_greedy_returns_exactly_what_greedy_match_accepts()
     test_matches_dense_sweep()
+    test_sparse_matches_python_fallback()
     test_skip_pairs_respected()
     test_max_df_drops_only_common_features()
     test_discovery_only_fills_unmatched()

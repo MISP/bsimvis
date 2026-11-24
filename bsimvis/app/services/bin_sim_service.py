@@ -47,9 +47,20 @@ def stored_discovery():
 
     if not bool(config_service.get("similarity.discovery", False)):
         return None
-    min_score = float(config_service.get("similarity.discovery_min_score", 0.5))
     max_df = float(config_service.get("similarity.discovery_max_df", 1.0))
-    return max(0.0, min(1.0, min_score)), max(0.0, min(1.0, max_df))
+    return discovery_floor(), max(0.0, min(1.0, max_df))
+
+
+def discovery_floor():
+    """Lowest score any discovery may reach: `similarity.discovery_min_score`.
+
+    Also the floor of live function discovery (`/api/similarity/discover`),
+    whether or not `similarity.discovery` is on.
+    """
+    from bsimvis.app.services.config_service import config_service
+
+    min_score = float(config_service.get("similarity.discovery_min_score", 0.5))
+    return max(0.0, min(1.0, min_score))
 
 
 def load_vectors(r, fids):
@@ -68,7 +79,9 @@ def load_vectors(r, fids):
     return vectors
 
 
-def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0):
+def _discover_edges_py(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0
+):
     """Score every A/B function pair that shares a feature, from tf vectors.
 
     Same three formulas the comparison view uses, so a discovered score means
@@ -153,6 +166,225 @@ def discover_edges(vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_
     return edges
 
 
+_BLOCK_ROWS = 1000
+
+
+def discover_edges(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0, greedy=False
+):
+    """Sparse-matmul discovery; same contract and output as `_discover_edges_py`.
+
+    Falls back to the pure-Python loop when numpy/scipy are missing or tf values
+    are not positive integers (the layer identity below needs integers).
+
+    `greedy=True` returns only what `greedy_match` would accept from the result.
+    Exact for a caller that discovers over the functions its stored edges left
+    unmatched and then greedy-matches stored + discovered: the two edge sets
+    share no function, so the combined assignment is the union of both. Keeps
+    the candidates in numpy instead of a tuple list -- one 15k x 15k DEX pair
+    had 120M of them (13.5 GB) and OOM-killed the worker.
+    """
+    try:
+        return _discover_edges_sparse(
+            vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df, greedy
+        )
+    except (ImportError, _NotSparsable):
+        edges = _discover_edges_py(
+            vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df
+        )
+        if not greedy:
+            return edges
+        from bsimvis.app.services.bin_sim_tags import greedy_match
+
+        return greedy_match(edges)[0]
+
+
+def _greedy_arrays(fids_a, fids_b, rows, cols, scores, skip_pairs):
+    """`greedy_match` over candidates held as arrays; same order, same result.
+
+    fids_a and fids_b are sorted, so (row, col) index order is greedy_match's
+    (fid_a, fid_b) tie-break.
+    """
+    import numpy as np
+
+    order = np.lexsort((cols, rows, -scores))
+    used_a = bytearray(len(fids_a))
+    used_b = bytearray(len(fids_b))
+    left = min(len(fids_a), len(fids_b))
+    accepted = []
+    for start in range(0, len(order), 1 << 20):
+        o = order[start : start + (1 << 20)]
+        for x, y, sc in zip(rows[o].tolist(), cols[o].tolist(), scores[o].tolist()):
+            if used_a[x] or used_b[y]:
+                continue
+            fa, fb = fids_a[x], fids_b[y]
+            if skip_pairs and frozenset((fa, fb)) in skip_pairs:
+                continue
+            used_a[x] = used_b[y] = 1
+            accepted.append((fa, fb, sc))
+            left -= 1
+            if not left:
+                return accepted
+    return accepted
+
+
+class _NotSparsable(Exception):
+    pass
+
+
+def _discover_edges_sparse(
+    vectors, fids_a, fids_b, algo, min_score, skip_pairs, max_df, greedy=False
+):
+    import numpy as np
+    from scipy import sparse
+
+    fids_a = [fid for fid in sorted(fids_a) if vectors.get(fid)]
+    fids_b = [fid for fid in sorted(fids_b) if vectors.get(fid)]
+    if not fids_a or not fids_b:
+        return []
+
+    is_jaccard = algo == "jaccard"
+    is_binary = algo == "binary_cosine"
+    is_weighted = algo == "weighted_cosine" or algo.startswith("weighted_cosine:")
+    layered = is_jaccard or is_weighted
+
+    col = {}
+
+    def build(fids):
+        rows, cols, vals = [], [], []
+        for i, fid in enumerate(fids):
+            for h, x in vectors[fid].items():
+                if layered and (x < 1 or x != int(x)):
+                    raise _NotSparsable
+                rows.append(i)
+                cols.append(col.setdefault(h, len(col)))
+                vals.append(x)
+        return rows, cols, vals
+
+    ra, ca, va = build(fids_a)
+    rb, cb, vb = build(fids_b)
+    shape = len(col)
+    A = sparse.csr_matrix((va, (ra, ca)), shape=(len(fids_a), shape), dtype=np.float64)
+    B = sparse.csr_matrix((vb, (rb, cb)), shape=(len(fids_b), shape), dtype=np.float64)
+
+    def rows(M):
+        return np.asarray(M.sum(axis=1)).ravel()
+
+    def ones(M):
+        M = M.copy()
+        M.data[:] = 1.0
+        return M
+
+    if is_weighted:
+        from bsimvis.app.services import bsim_profiles, bsim_weights
+
+        _, profile_name = bsim_profiles.parse_algo(algo)
+        table = bsim_weights.load(bsim_profiles.get_profile(profile_name).weights_path)
+        len_a = np.array([table.stats(vectors[f])[0] for f in fids_a])
+        len_b = np.array([table.stats(vectors[f])[0] for f in fids_b])
+        hashes = [None] * shape
+        for h, i in col.items():
+            hashes[i] = h
+        coeff_sq = {}
+
+        def layer_weights(cols, k):
+            # squared-coeff increment (k-1 -> k) for each column of this layer
+            out = np.empty(len(cols))
+            for j, c in enumerate(cols):
+                key = (c, k)
+                if key not in coeff_sq:
+                    c1 = table.coeff(hashes[c], k)
+                    c0 = table.coeff(hashes[c], k - 1) if k > 1 else 0.0
+                    coeff_sq[key] = c1 * c1 - c0 * c0
+                out[j] = coeff_sq[key]
+            return out
+
+    if is_jaccard:
+        tot_a, tot_b = rows(A), rows(B)
+    elif is_binary:
+        A, B = ones(A), ones(B)
+        norm_a, norm_b = rows(A), rows(B)
+    elif not is_weighted:
+        norm_a = np.sqrt(rows(A.multiply(A)))
+        norm_b = np.sqrt(rows(B.multiply(B)))
+
+    # norms above use the full vectors, as the Python loop does
+    if max_df < 1.0:
+        cap = max(1, int(len(fids_b) * max_df))
+        df = np.bincount(B.indices, minlength=shape)
+        B = (B @ sparse.diags((df <= cap).astype(np.float64))).tocsr()
+        B.eliminate_zeros()
+
+    top = int(min(A.max(), B.max())) if layered else 0
+    b_layers = []
+    if layered:
+        Bk = B.copy()
+        for k in range(1, top + 1):
+            Bk.data[Bk.data < k] = 0
+            Bk.eliminate_zeros()
+            b_layers.append(ones(Bk).T.tocsr())
+
+    edges = []
+    found = []
+    for start in range(0, len(fids_a), _BLOCK_ROWS):
+        end = min(start + _BLOCK_ROWS, len(fids_a))
+        Ablk = A[start:end]
+        if layered:
+            # sum_h f(min(a,b)) = sum_k [a>=k][b>=k] * (f(k) - f(k-1)), so each
+            # layer is one sparse product; all layers are summed in one COO->CSR
+            # (adding CSR layers one by one is quadratic in the accumulator).
+            parts = []
+            Ak = Ablk.copy()
+            for k in range(1, top + 1):
+                Ak.data[Ak.data < k] = 0
+                Ak.eliminate_zeros()
+                L = ones(Ak)
+                if is_weighted:
+                    L.data = layer_weights(L.indices, k)
+                part = (L @ b_layers[k - 1]).tocoo()
+                parts.append((part.row, part.col, part.data))
+            if not parts:
+                continue
+            cat = [np.concatenate([p[i] for p in parts]) for i in range(3)]
+            S = sparse.coo_matrix(
+                (cat[2], (cat[0], cat[1])), shape=(end - start, len(fids_b))
+            ).tocsr()
+        else:
+            S = (Ablk @ B.T).tocsr()
+        S = S.tocoo()
+        i, j, shared = S.row + start, S.col, S.data
+        if is_jaccard:
+            denom = tot_a[i] + tot_b[j] - shared
+        elif is_weighted:
+            denom = len_a[i] * len_b[j]
+        elif is_binary:
+            denom = np.sqrt(norm_a[i] * norm_b[j])
+        else:
+            denom = norm_a[i] * norm_b[j]
+        ok = denom > 0
+        score = np.divide(shared, denom, out=np.zeros_like(shared), where=ok)
+        if is_weighted:
+            score = np.minimum(score, 1.0)
+        keep = ok & (score >= min_score) & (score > 0)
+        if greedy:
+            found.append(
+                (i[keep].astype(np.int32), j[keep].astype(np.int32), score[keep])
+            )
+            continue
+        for x, y, sc in zip(i[keep], j[keep], score[keep]):
+            fa, fb = fids_a[x], fids_b[y]
+            if skip_pairs and frozenset((fa, fb)) in skip_pairs:
+                continue
+            edges.append((fa, fb, float(sc)))
+    if greedy:
+        if not found:
+            return []
+        rows, cols, scores = (np.concatenate([f[k] for f in found]) for k in range(3))
+        del found
+        return _greedy_arrays(fids_a, fids_b, rows, cols, scores, skip_pairs)
+    return edges
+
+
 BIN_SIM_TAG_FIELDS = (
     "md5_a",
     "md5_b",
@@ -200,6 +432,16 @@ def _zadd_score_split(pipe, base, algo, sid, scores):
         pipe.zadd(f"{base}:score_content:{algo}", {sid: scores["score_content"]})
     else:
         pipe.zrem(f"{base}:score_content:{algo}", sid)
+
+
+CLEAR_CHUNK = 200  # bin_sim docs read per round trip when clearing
+
+
+def _decode_doc(raw):
+    if not raw:
+        return {}
+    value = json.loads(raw) if not isinstance(raw, dict) else raw
+    return json.loads(value) if isinstance(value, str) else value
 
 
 def _matches_algo(doc, algo):
@@ -325,6 +567,9 @@ def _origin_coll(collection):
     return collection.split(":col:")[-1] if collection else collection
 
 
+RESPLIT_SLICE_SIZE = 5000
+
+
 class BinSimService:
     def __init__(self, r=None):
         self.r = r or get_redis()
@@ -433,7 +678,7 @@ class BinSimService:
             f"{endpoints[0][0]}:{endpoints[0][1]}::{endpoints[1][0]}:{endpoints[1][1]}"
         )
 
-    def cached_pair_from_stored_sims(
+    def stored_sim_edges(
         self,
         collection,
         md5_a,
@@ -442,23 +687,23 @@ class BinSimService:
         coll_b=None,
         pool_id=None,
         min_score=0.0,
-        unweighted=None,
+        fid_sets=None,
+        vectors=None,
     ):
-        """Build one transient file diff from stored function-sim docs."""
-        if unweighted is None:
-            unweighted = stored_unweighted_match()
+        """Edges of one pair from stored function-sim docs, plus discovery.
+
+        -> `(edges, fids_a, fids_b)`, edges oriented a->b. `fid_sets`
+        (`{(coll, md5): fids}`) and `vectors` let a caller reading many pairs
+        load each file once.
+        """
         coll_a = _origin_coll(collection) if pool_id else collection
         coll_b = _origin_coll(coll_b or collection) if pool_id else collection
         if not pool_id and md5_a > md5_b:
             md5_a, md5_b = md5_b, md5_a
 
-        def decode(raw):
-            if not raw:
-                return {}
-            value = json.loads(raw) if not isinstance(raw, dict) else raw
-            return json.loads(value) if isinstance(value, str) else value
-
         def file_fids(coll, md5):
+            if fid_sets is not None and (coll, md5) in fid_sets:
+                return fid_sets[(coll, md5)]
             return {
                 (fid.decode() if isinstance(fid, bytes) else str(fid)).removesuffix(
                     ":meta"
@@ -467,7 +712,6 @@ class BinSimService:
             }
 
         fids_a, fids_b = file_fids(coll_a, md5_a), file_fids(coll_b, md5_b)
-        fids = fids_a | fids_b
         sim_prefix = (
             f"global:pool:{pool_id}:sim:involves:file:"
             if pool_id
@@ -483,19 +727,8 @@ class BinSimService:
         pipe = self.r.pipeline(transaction=False)
         for key in sim_keys:
             pipe.get(key)
-        for fid in fids:
-            pipe.get(f"{fid}:meta")
-        pipe.get(f"{coll_a}:file:{md5_a}:meta")
-        pipe.get(f"{coll_b}:file:{md5_b}:meta")
-        results = pipe.execute()
+        sim_docs = (_decode_doc(raw) for raw in pipe.execute())
 
-        sim_count = len(sim_keys)
-        sim_docs = (decode(raw) for raw in results[:sim_count])
-        meta = {fid: decode(raw) for fid, raw in zip(fids, results[sim_count:-2])}
-        raw_file_meta_a, raw_file_meta_b = results[-2:]
-        if not raw_file_meta_a or not raw_file_meta_b:
-            return None
-        file_meta_a, file_meta_b = map(decode, (raw_file_meta_a, raw_file_meta_b))
         edges = []
         seen_pairs = set()
         for doc in sim_docs:
@@ -527,7 +760,11 @@ class BinSimService:
         # "what did BSim propose above similarity.min_score".
         edges.extend(
             discover_edges(
-                load_vectors(self.r, fids_a | fids_b),
+                (
+                    vectors
+                    if vectors is not None
+                    else load_vectors(self.r, fids_a | fids_b)
+                ),
                 fids_a,
                 fids_b,
                 algo,
@@ -535,6 +772,42 @@ class BinSimService:
                 skip_pairs=seen_pairs,
             )
         )
+        return edges, fids_a, fids_b
+
+    def cached_pair_from_stored_sims(
+        self,
+        collection,
+        md5_a,
+        md5_b,
+        algo,
+        coll_b=None,
+        pool_id=None,
+        min_score=0.0,
+        unweighted=None,
+    ):
+        """Build one transient file diff from stored function-sim docs."""
+        if unweighted is None:
+            unweighted = stored_unweighted_match()
+        coll_a = _origin_coll(collection) if pool_id else collection
+        coll_b = _origin_coll(coll_b or collection) if pool_id else collection
+        if not pool_id and md5_a > md5_b:
+            md5_a, md5_b = md5_b, md5_a
+        edges, fids_a, fids_b = self.stored_sim_edges(
+            collection, md5_a, md5_b, algo, coll_b, pool_id, min_score
+        )
+        fids = fids_a | fids_b
+        pipe = self.r.pipeline(transaction=False)
+        for fid in fids:
+            pipe.get(f"{fid}:meta")
+        pipe.get(f"{coll_a}:file:{md5_a}:meta")
+        pipe.get(f"{coll_b}:file:{md5_b}:meta")
+        results = pipe.execute()
+
+        meta = {fid: _decode_doc(raw) for fid, raw in zip(fids, results[:-2])}
+        raw_file_meta_a, raw_file_meta_b = results[-2:]
+        if not raw_file_meta_a or not raw_file_meta_b:
+            return None
+        file_meta_a, file_meta_b = map(_decode_doc, (raw_file_meta_a, raw_file_meta_b))
 
         fid_tags = {
             fid: tags
@@ -893,6 +1166,7 @@ class BinSimService:
                         algo,
                         discovery_min_score,
                         max_df=discovery_max_df,
+                        greedy=True,
                     )
                 )
 
@@ -1013,14 +1287,13 @@ class BinSimService:
                 s.decode() if isinstance(s, bytes) else str(s)
                 for s in (r.smembers(involves_key) or ())
             ]
-            if sids:
-                # Read the docs before deleting them: the secondary indexes are
-                # keyed by the fields they denormalise, so a sid dropped without
-                # its doc stays in every index bucket it was ever filed under.
-                reader = r.pipeline(transaction=False)
-                for sid in sids:
-                    reader.get(sid)
-                raw_docs = reader.execute()
+            # Read the docs before deleting them: the secondary indexes are
+            # keyed by the fields they denormalise, so a sid dropped without
+            # its doc stays in every index bucket it was ever filed under.
+            # Chunked: the docs carry their diff rows (MBs each).
+            for i in range(0, len(sids), CLEAR_CHUNK):
+                chunk = sids[i : i + CLEAR_CHUNK]
+                raw_docs = r.mget(chunk)
 
                 docs = []
                 md5s = set()
@@ -1043,7 +1316,7 @@ class BinSimService:
                         meta_cache[value] = {}
 
                 pipe = r.pipeline(transaction=False)
-                for sid, doc in zip(sids, docs):
+                for sid, doc in zip(chunk, docs):
                     pipe.delete(sid)
                     pipe.zrem(f"{collection}:bin_sim:score:{algo}", sid)
                     pipe.zrem(f"{collection}:bin_sim:score_code:{algo}", sid)
@@ -1069,53 +1342,64 @@ class BinSimService:
                             meta_cache.get(m_b, {}),
                         )
 
-                pipe.delete(involves_key)
                 pipe.execute()
+            r.delete(involves_key)
         else:
             prefix = f"{collection}:bin_sim:{algo}:"
             sids = list(r.scan_iter(match=f"{prefix}*"))
-            raw_docs = r.mget(sids) if sids else []
-            docs = []
-            md5s = set()
-            for raw in raw_docs:
-                try:
-                    doc = json.loads(raw) if raw else {}
-                except (ValueError, TypeError):
-                    doc = {}
-                docs.append(doc)
-                md5s.update(m for m in (doc.get("md5_a"), doc.get("md5_b")) if m)
-
-            meta_pipe = r.pipeline(transaction=False)
-            for value in sorted(md5s):
-                meta_pipe.get(f"{collection}:file:{value}:meta")
             file_meta = {}
-            for value, raw in zip(sorted(md5s), meta_pipe.execute()):
-                try:
-                    file_meta[value] = json.loads(raw) if raw else {}
-                except (ValueError, TypeError):
-                    file_meta[value] = {}
-
-            pipe = r.pipeline(transaction=False)
-            for sid, doc in zip(sids, docs):
-                if not doc:
-                    continue
-                pipe.delete(sid)
-                for axis in ("", "_code", "_library", "_content"):
-                    pipe.zrem(f"{collection}:bin_sim:score{axis}:{algo}", sid)
-                pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
-                for md5 in (doc.get("md5_a"), doc.get("md5_b")):
-                    if md5:
-                        pipe.srem(f"{collection}:bin_sim:involves:{md5}", sid)
-                _unindex_bin_sim_pair(
-                    pipe,
-                    collection,
-                    sid,
-                    doc,
-                    file_meta.get(doc.get("md5_a"), {}),
-                    file_meta.get(doc.get("md5_b"), {}),
+            # Docs carry their diff rows (MBs each): reading every one at once
+            # OOM-killed the worker at 10 GB on AndroZooComAndroidSystem.
+            for i in range(0, len(sids), CLEAR_CHUNK):
+                chunk = sids[i : i + CLEAR_CHUNK]
+                docs = []
+                for raw in r.mget(chunk):
+                    try:
+                        doc = json.loads(raw) if raw else {}
+                    except (ValueError, TypeError):
+                        doc = {}
+                    docs.append(doc)
+                new_md5s = sorted(
+                    {m for d in docs for m in (d.get("md5_a"), d.get("md5_b")) if m}
+                    - file_meta.keys()
                 )
-            pipe.delete(f"{collection}:bin_sim:built:{algo}")
-            pipe.execute()
+                if new_md5s:
+                    meta_pipe = r.pipeline(transaction=False)
+                    for value in new_md5s:
+                        meta_pipe.get(f"{collection}:file:{value}:meta")
+                    for value, raw in zip(new_md5s, meta_pipe.execute()):
+                        try:
+                            file_meta[value] = json.loads(raw) if raw else {}
+                        except (ValueError, TypeError):
+                            file_meta[value] = {}
+
+                pipe = r.pipeline(transaction=False)
+                for sid, doc in zip(chunk, docs):
+                    if not doc:
+                        continue
+                    pipe.delete(sid)
+                    for axis in ("", "_code", "_library", "_content"):
+                        pipe.zrem(f"{collection}:bin_sim:score{axis}:{algo}", sid)
+                    pipe.srem(f"{collection}:bin_sim:built:{algo}", sid)
+                    for md5 in (doc.get("md5_a"), doc.get("md5_b")):
+                        if md5:
+                            pipe.srem(f"{collection}:bin_sim:involves:{md5}", sid)
+                    _unindex_bin_sim_pair(
+                        pipe,
+                        collection,
+                        sid,
+                        doc,
+                        file_meta.get(doc.get("md5_a"), {}),
+                        file_meta.get(doc.get("md5_b"), {}),
+                    )
+                pipe.execute()
+                if job_service and job_id and (i // CLEAR_CHUNK) % 50 == 0:
+                    job_service.update_progress(
+                        job_id,
+                        int((i + len(chunk)) / len(sids) * 99),
+                        f"Cleared {i + len(chunk)}/{len(sids)} pairs",
+                    )
+            r.delete(f"{collection}:bin_sim:built:{algo}")
 
             # Drop empty tag buckets for this pair type; registries may also
             # point at buckets still used by another algorithm, so retain those.
@@ -1226,6 +1510,8 @@ class BinSimService:
         sid=None,
         job_service=None,
         job_id=None,
+        slice_key=None,
+        offset=0,
     ):
         """Recompute the tag split of stored pairs from their persisted diff.
 
@@ -1250,6 +1536,11 @@ class BinSimService:
             wanted = [md5] if isinstance(md5, str) else list(md5 or ())
             if wanted:
                 sids = [s for s in sids if any(m and m in s for m in wanted)]
+        if slice_key:
+            raw = r.get(slice_key)
+            if not raw:
+                return True
+            sids = json.loads(raw)[offset : offset + RESPLIT_SLICE_SIZE]
         total = len(sids)
         if not total:
             if job_service and job_id:
@@ -1259,6 +1550,39 @@ class BinSimService:
         if job_service and job_id:
             job_service.add_log(job_id, f"[*] Resplitting {total} bin_sim pairs")
 
+        if not slice_key and total > RESPLIT_SLICE_SIZE and job_service and job_id:
+            parent = job_service.r.hget(f"job:{job_id}", "parent_id") or job_id
+            # A standalone job has no task_ids to splice into: run it inline.
+            if job_service.r.hget(f"job:{parent}", "task_ids"):
+                from bsimvis.app.services.job_service import JobType
+
+                sids.sort()
+                slice_key = f"{collection}:bin_sim_jobs:{job_id}:resplit_sids"
+                r.set(slice_key, json.dumps(sids), ex=86400)
+                tasks = [
+                    (
+                        JobType.RESPLIT_BIN_SIM.value,
+                        {
+                            "collection": collection,
+                            "algo": algo,
+                            "slice_key": slice_key,
+                            "offset": off,
+                        },
+                    )
+                    for off in range(0, total, RESPLIT_SLICE_SIZE)
+                ]
+                group_id = job_service.create_group(
+                    tasks, parent_id=parent, enqueue=False
+                )
+                job_service.splice_tasks(parent, job_id, [group_id])
+                return True
+
+        self._resplit_sids(sids, collection, algo, job_service, job_id)
+        return True
+
+    def _resplit_sids(self, sids, collection, algo, job_service, job_id):
+        r = self.r
+        total = len(sids)
         tag_meta = load_tag_meta(r, collection)
         rev = read_tags_rev(r, collection)
         # fid -> tags, kept across pairs: the same libc function shows up in
@@ -1332,7 +1656,17 @@ class BinSimService:
             for sid, doc in docs:
                 diff = doc.get("diff") or {}
                 doc_unweighted = bool(doc.get("unweighted_match"))
-                split = AxisSplit(fid_tags, tag_meta)
+                doc_fids = {
+                    m.get(k)
+                    for m in diff.get("matched") or []
+                    for k in ("func_a", "func_b")
+                }
+                doc_fids.update(
+                    u.get("func_id")
+                    for u in (diff.get("unique_to_a") or [])
+                    + (diff.get("unique_to_b") or [])
+                )
+                split = AxisSplit(fid_tags, tag_meta, fids=doc_fids)
                 total_a = total_b = 0.0
                 for m in diff.get("matched") or []:
                     fa, fb = m.get("func_a"), m.get("func_b")
@@ -1376,7 +1710,6 @@ class BinSimService:
 
         if job_service and job_id:
             job_service.update_progress(job_id, 100, f"Resplit {total} bin_sim pairs.")
-        return True
 
 
 bin_sim_service = BinSimService()

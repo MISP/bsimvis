@@ -533,9 +533,10 @@ window.renderTagEditor = (etype, eid, tagsList, userTagsList, options = {}) => {
  * cluster now goes to the cluster. Filtering a list by a cluster is still on
  * the context menu, where it says what it does.
  */
-window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
+window.openCluster = (uuid, isBinary = false, event = null, axis = null, inCollection = null) => {
     const targetWindow = (window.parent && window.parent !== window) ? window.parent : window;
-    const { collection, pool } = targetWindow.getRoutingState
+    // inCollection: a cluster listed outside its collection's pages (the homepage).
+    const { collection, pool } = inCollection ? { collection: inCollection, pool: null } : targetWindow.getRoutingState
         ? targetWindow.getRoutingState()
         : { collection: '', pool: null };
 
@@ -544,7 +545,7 @@ window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
     
     if (nav) {
         let url = nav.buildUIUrl(collection || '', segs);
-        if (isBinary && axis && axis !== 'overall') {
+        if (isBinary && axis && axis !== (window.BINSIM_DEFAULT_AXIS || 'code')) {
             url += '?axis=' + encodeURIComponent(axis);
         }
         nav.openPath(url, event);
@@ -556,10 +557,43 @@ window.openCluster = (uuid, isBinary = false, event = null, axis = null) => {
         ? `/pools/${encodeURIComponent(pool)}`
         : `/collections/${encodeURIComponent(collection || '')}`;
     let href = `${base}/${segs.map(encodeURIComponent).join('/')}`;
-    if (isBinary && axis && axis !== 'overall') {
+    if (isBinary && axis && axis !== (window.BINSIM_DEFAULT_AXIS || 'code')) {
         href += '?axis=' + encodeURIComponent(axis);
     }
     targetWindow.location.href = href;
+};
+
+// Where a file cluster's name came from: name_source / name_basis / name_ref on the cluster.
+// Legacy objects only carry is_custom_name; with neither field there is nothing to say (null).
+const CLUSTER_NAME_BASIS = { av: 'AV labels', tag: 'tags', yara: 'YARA rules', files: 'file names', arch: 'architecture', size: 'size', packer: 'packer', parent: 'parent cluster' };
+window.clusterNameSourceInfo = c => {
+    if (!c) return null;
+    const src = c.name_source || (c.is_custom_name === undefined ? null : (c.is_custom_name ? 'analyst' : 'auto'));
+    if (src === 'analyst') return { kind: 'user', icon: 'fa-user-pen', text: 'Named by an analyst' };
+    if (src === 'tag') return { kind: 'tag', icon: 'fa-tag', text: 'Name from a user tag' };
+    if (src === 'near') {
+        const r = c.name_ref || {};
+        const d = Number(r.delta || 0);
+        const diff = d ? `${d > 0 ? '+' : ''}${d} file${Math.abs(d) === 1 ? '' : 's'}` : 'same size';
+        return { kind: 'near', icon: 'fa-link', ref: r.cluster_uuid || '', text: `Analyst name of a near-identical cluster (${diff}): ${r.cluster_name || c.cluster_name || ''}` };
+    }
+    if (src !== 'auto') return null;
+    const words = (c.name_basis || []).map(b => CLUSTER_NAME_BASIS[b] || b);
+    return { kind: 'auto', icon: 'fa-wand-magic-sparkles', text: words.length ? `Automatic name from: ${words.join(', ')}` : 'Automatic name' };
+};
+
+// The source as a small icon chip, placed right after the name element (a near name is
+// muted by CSS through that adjacency). A near chip opens the cluster it took its name from,
+// in `collection` when given (a page outside that collection), else in the current one.
+window.clusterNameSource = (c, axis = null, collection = null) => {
+    const s = clusterNameSourceInfo(c);
+    if (!s) return '';
+    const ax = axis || c.axis || '';
+    const key = `data-cluster-src="${escapeAttr(c.cluster_uuid || '')}" data-cluster-src-id="${escapeAttr(c.cluster_id ?? '')}" data-src-axis="${escapeAttr(ax)}"`;
+    const open = s.kind === 'near' && s.ref
+        ? ` role="link" tabindex="0" onclick="${escapeAttr(`event.stopPropagation(); event.preventDefault(); openCluster(${jsString(s.ref)}, true, event, ${jsString(ax)}, ${collection ? jsString(collection) : 'null'})`)}" onkeydown="if (event.key === 'Enter') this.click()"`
+        : '';
+    return `<span class="nway-by cl-src ${s.kind}" ${key} title="${escapeAttr(s.text)}"${open}><i class="fa-solid ${s.icon}"></i></span>`;
 };
 
 window.showClusterCardTooltip = function(event, uuid, name, size, stability, cohesion, avg_features, clusterType = 'function', axis = null) {
@@ -688,14 +722,17 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
             const borderAlpha = options.fullAxisColor ? 50 : Math.round(10 + coh * 40);
             const bgAlpha = options.fullAxisColor ? 20 : Math.round(3 + coh * 17);
             const textOpacity = options.fullAxisColor ? 1 : (0.35 + coh * 0.65).toFixed(2);
+            const srcTip = (clusterNameSourceInfo(c) || {}).text;
             return `
             <span class="${cardClass}"
                   data-filter-value="${escapeAttr(uuid)}"
+                  data-entity-data='${escapeAttr(JSON.stringify({ cluster_id: c.cluster_id, cluster_uuid: uuid, cluster_name: name, tag_id: c.tag_id, axis: c.axis, node_type: c.node_type, collection: c.collection, pool: c.pool }))}'
+                  oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, '${isBinary ? 'bin_cluster' : 'cluster'}', this)"
                   onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
                   onmouseleave="hideClusterCardTooltip(event)"
                   onmousemove="moveClusterCardTooltip(event)"
                   onclick="openCluster(${escapeAttr(jsString(uuid))}, ${isBinary}, event, ${isBinary ? escapeAttr(jsString(c.axis)) : 'null'})"
-                  style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})">
+                  style="border-color:${tagAlpha(axisColor, borderAlpha)}; color:${axisColor}; background:${tagAlpha(axisColor, bgAlpha)}; opacity:${textOpacity}; align-items:center; gap:4px; padding:2px 6px; font-size:0.65rem; border-radius:12px; margin:2px; cursor:pointer;" title="${escapeAttr(name)} (cohesion: ${coh.toFixed(2)})${srcTip ? escapeAttr('\n' + srcTip) : ''}">
                 <i class="${escapeHtml(axisIcon)}" style="font-size:0.6rem;"></i>
                 <span style="font-family:monospace; font-size:0.65rem;">${options.showUuid ? escapeHtml(uuid) : Number(c.member_count || 0)}</span>
             </span>`;
@@ -707,6 +744,8 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
         return `
         <span class="${cardClass}"
               data-filter-value="${escapeAttr(uuid)}"
+              data-entity-data='${escapeAttr(JSON.stringify({ cluster_id: c.cluster_id, cluster_uuid: uuid, cluster_name: name, tag_id: c.tag_id, axis: c.axis, node_type: c.node_type, collection: c.collection, pool: c.pool }))}'
+              oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, '${isBinary ? 'bin_cluster' : 'cluster'}', this)"
               onmouseenter="showClusterCardTooltip(event, ${escapeAttr(jsString(uuid))}, ${escapeAttr(jsString(name))}, ${Number(c.member_count || 0)}, ${Number(c.cluster_stability || 0)}, ${Number(c.cohesion_score || 0)}, ${Number(c.avg_features || 0)}, ${escapeAttr(jsString(clusterType))}, ${escapeAttr(jsString(c.axis))})"
               onmouseleave="hideClusterCardTooltip(event)"
               onmousemove="moveClusterCardTooltip(event)"
@@ -717,7 +756,7 @@ window.renderClusterCards = (clusters, isBinary = false, visibleAxes = null, opt
                 <circle cx="12" cy="12" r="10"></circle>
                 <circle cx="12" cy="12" r="4"></circle>
             </svg>
-            <span style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
+            <span data-cluster-name="${escapeAttr(uuid)}" style="max-width:${maxWidth}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeAttr(displayName)}">${escapeHtml(displayName)}</span>
             <span style="opacity:0.8; font-family:monospace; font-size:0.65rem;">${Number(c.member_count || 0)}</span>
         </span>`;
     };
@@ -1184,8 +1223,11 @@ async function startAddTag(event, etype, eid, prefill = '', onAdded = null) {
 function clusterTagContext(etype) {
     if (etype !== 'cluster' && etype !== 'bin_cluster') return {};
     const params = new URLSearchParams(window.location.hash.split('?')[1] || window.location.search);
+    // No algo = the collection's own (the server resolves it); axis picks the
+    // score axis namespace, whose cluster ids overlap the overall ones.
     return {
-        algo: params.get('algo') || 'unweighted_cosine',
+        algo: params.get('algo') || undefined,
+        axis: params.get('axis') || undefined,
         node_type: params.get('node_type') || 'file'
     };
 }

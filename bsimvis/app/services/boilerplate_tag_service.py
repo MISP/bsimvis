@@ -1,13 +1,35 @@
 """Cheap boilerplate tags from exact Ghidra function names."""
 
+import re
+
 from bsimvis.app.services import tag_taxonomy
+from bsimvis.app.services.boilerplate_libc_names import (
+    GATED_FAMILY_NAMES,
+    GLIBC_PLAIN_NAMES,
+)
 
 # Exact names only: a broad name rule would label application code as runtime.
+# `entry` is deliberately absent: it is Ghidra's name for any entry point, and
+# in a packed file that is the unpacker stub, not CRT startup.
 BOILERPLATE_SYMBOLS = {
+    "_INIT_0": "boilerplate:runtime:elf:init",
+    "_FINI_0": "boilerplate:runtime:elf:fini",
+    "_PREINIT_0": "boilerplate:runtime:elf:init",
+    "call_weak_fn": "boilerplate:runtime:gcc:support",
+    # OpenSSL statically linked into a sample: library code, not runtime.
+    "BIO_printf": "boilerplate:library:openssl:bio",
+    "BIO_snprintf": "boilerplate:library:openssl:bio",
+    "ERR_add_error_data": "boilerplate:library:openssl:err",
+    "md5_block_asm_data_order": "boilerplate:library:openssl:asm",
+    "bn_add_words": "boilerplate:library:openssl:bn",
+    "bn_sub_words": "boilerplate:library:openssl:bn",
+    "bn_mul_comba4": "boilerplate:library:openssl:bn",
+    "bn_mul_comba8": "boilerplate:library:openssl:bn",
+    "bn_sqr_comba4": "boilerplate:library:openssl:bn",
+    "bn_sqr_comba8": "boilerplate:library:openssl:bn",
     "_start": "boilerplate:runtime:elf:startup",
     "_init": "boilerplate:runtime:elf:init",
     "_fini": "boilerplate:runtime:elf:fini",
-    "entry": "boilerplate:runtime:elf:startup",
     "_DT_INIT": "boilerplate:runtime:elf:init",
     "_DT_FINI": "boilerplate:runtime:elf:fini",
     "__libc_start_main": "boilerplate:runtime:glibc:startup",
@@ -110,11 +132,155 @@ BOILERPLATE_PREFIXES = {
     "_uintmaxtostr": "boilerplate:runtime:libc:printf",
     "___mingw_": "boilerplate:runtime:mingw:support",
     "___pformat_": "boilerplate:runtime:mingw:printf",
+    # glibc/libgcc-reserved namespaces: application code does not use these.
+    "_IO_": "boilerplate:runtime:glibc:stdio",
+    "__libio_": "boilerplate:runtime:glibc:stdio",
+    "_dl_": "boilerplate:runtime:glibc:loader",
+    "_dlfo_": "boilerplate:runtime:glibc:loader",
+    "__gconv": "boilerplate:runtime:glibc:iconv",
+    "_nl_": "boilerplate:runtime:glibc:locale",
+    "__wcsmbs_": "boilerplate:runtime:glibc:locale",
+    "__printf_": "boilerplate:runtime:glibc:printf",
+    "__wprintf_": "boilerplate:runtime:glibc:printf",
+    "__vfprintf_": "boilerplate:runtime:glibc:printf",
+    "__vfscanf_": "boilerplate:runtime:glibc:scanf",
+    "__strto": "boilerplate:runtime:glibc:strtod",
+    "____strto": "boilerplate:runtime:glibc:strtod",
+    "__isoc": "boilerplate:runtime:glibc:support",
+    "__mpn_": "boilerplate:runtime:glibc:mpn",
+    "__libc_": "boilerplate:runtime:glibc:support",
+    "__nptl_": "boilerplate:runtime:glibc:thread",
+    "__pthread_": "boilerplate:runtime:glibc:thread",
+    "__futex_": "boilerplate:runtime:glibc:thread",
+    "__lll_": "boilerplate:runtime:glibc:thread",
+    "__tunable": "boilerplate:runtime:glibc:tunables",
+    "__syscall_": "boilerplate:runtime:glibc:support",
+    "__malloc_": "boilerplate:runtime:glibc:allocator",
+    "_int_": "boilerplate:runtime:glibc:allocator",
+    "__aeabi_": "boilerplate:runtime:libgcc:support",
+    "__sync_": "boilerplate:runtime:libgcc:support",
+    "__gnu_": "boilerplate:runtime:libgcc:support",
+    "_Unwind_": "boilerplate:runtime:libgcc:unwind",
+    "___Unwind_": "boilerplate:runtime:libgcc:unwind",
+    "_nss_": "boilerplate:runtime:glibc:nss",
+    "__nss_": "boilerplate:runtime:glibc:nss",
+    "__nscd_": "boilerplate:runtime:glibc:nss",
+    "__rpc_": "boilerplate:runtime:glibc:rpc",
+    "_svcauth_": "boilerplate:runtime:glibc:rpc",
+    "__res_": "boilerplate:runtime:glibc:resolver",
+    "_res_": "boilerplate:runtime:glibc:resolver",
+    "__resolv_": "boilerplate:runtime:glibc:resolver",
+    "__dns_": "boilerplate:runtime:glibc:resolver",
+    "_pthread_": "boilerplate:runtime:glibc:thread",
+    "__sig": "boilerplate:runtime:glibc:support",
+    "__sys_": "boilerplate:runtime:glibc:support",
+    "__getdents": "boilerplate:runtime:glibc:support",
+    "__GI_": "boilerplate:runtime:glibc:support",
+    "__glibc_": "boilerplate:runtime:glibc:support",
+    "__aarch64_": "boilerplate:runtime:libgcc:support",
+    "_stdlib_": "boilerplate:runtime:libc:support",
+    "_fp_out_": "boilerplate:runtime:libc:printf",
+    # Ghidra's name for a byte-matched FID candidate set; not gated.
+    "FID_conflict:": "boilerplate:runtime:libc:support",
 }
 
 BOILERPLATE_SUFFIXES = {
     "_D2A": "boilerplate:runtime:libc:dtoa",
 }
+
+# Tag-only prefixes: unlike BOILERPLATE_PREFIXES they are no evidence of a
+# static libc, so they never count toward the gate below.
+EXTRA_PREFIXES = {
+    "__i686.get_pc_thunk.": "boilerplate:runtime:gcc:support",
+    "vpaes_": "boilerplate:library:openssl:asm",
+    "bsaes_": "boilerplate:library:openssl:asm",
+}
+
+
+# Plain glibc names (`read`, `check_match`, `do_sym`) also belong to application
+# code, so they only count in a file that already shows a static libc through
+# the reserved-namespace prefixes above. Any `__name` counts there too; a single
+# leading underscore does not (malware helpers such as `_memcpy` use it).
+# A smaller file still passes when a libc startup symbol backs a few prefixes
+# (uClibc statics show 3-24 of them).
+LIBC_GATE_MIN = 25
+LIBC_GATE_SOFT = 3
+LIBC_START_SYMBOLS = frozenset(
+    ("__uClibc_main", "__uClibc_init", "__libc_start_main", "__libc_csu_init")
+)
+CLONE_SUFFIX = re.compile(r"(\.(isra|constprop|part)\.\d+)+$")
+FAMILY_OF_GATED_NAME = {
+    n: fam for fam, names in GATED_FAMILY_NAMES.items() for n in names
+}
+
+# Go names are `pkg/path.Func`; a C clone (`sort.part.0`) has the same shape, so
+# the rule needs a Go runtime to be present as well as a stdlib root.
+GO_GATE_MIN = 10
+GO_STD_ROOTS = frozenset(
+    "archive bufio bytes cmp compress container context crypto database debug "
+    "embed encoding errors expvar flag fmt hash html image index internal io iter "
+    "log maps math mime net os path plugin reflect regexp runtime slices sort "
+    "strconv strings structs sync syscall testing text time unicode unique "
+    "unsafe vendor weak".split()
+)
+GO_NAME = re.compile(
+    r"^([a-z0-9_]+)(?:/[A-Za-z0-9_.\-]+)*\.(?!(isra|part|constprop|cold)\b)"
+)
+GO_RUNTIME_PREFIXES = (
+    "runtime.",
+    "internal/runtime/",
+    "internal/abi.",
+    "internal/cpu.",
+    "internal/bytealg.",
+    "internal/chacha8rand.",
+)
+GO_ASM_NAMES = frozenset(
+    "gosave_systemstack_switch setg_gcc setg gogo callRet gcWriteBarrier "
+    "go:textfipsstart go:textfipsend cmpbody memeqbody indexbytebody countbytebody "
+    "countbody indexbody aeshashbody kernelcas kernelPublicationBarrier "
+    "_rt0_arm_linux _rt0_arm_linux1 exit1 debugCall32 addMulVVWx armCas64 armXadd64 "
+    "armXchg64 armLoad64 armStore64 armAnd8 armOr8 armXchg8".split()
+)
+# The compiler's equality/hash helper for a type: as generic as the type's package.
+GO_TYPEGEN = re.compile(r"^type:\.(eq|hash)\.")
+
+
+def _go_family(name):
+    """Tag family of a Go standard-library symbol, or None."""
+    name = GO_TYPEGEN.sub("", name)
+    m = GO_NAME.match(name)
+    if not m or m.group(1) not in GO_STD_ROOTS:
+        return None
+    if name.startswith(GO_RUNTIME_PREFIXES):
+        return "boilerplate:runtime:go:runtime"
+    return "boilerplate:library:go:stdlib"
+
+
+def boilerplate_tags_for_names(names):
+    """Map name -> tag for a whole file, adding gated plain libc and Go names."""
+    names = list(names)
+    tags = {n: boilerplate_tag_for_function_name(n) for n in names}
+    prefixed = sum(
+        1 for n in names if tags[n] and str(n).startswith(tuple(BOILERPLATE_PREFIXES))
+    )
+    libc_start = any(n in LIBC_START_SYMBOLS for n in names)
+    if prefixed >= LIBC_GATE_MIN or (prefixed >= LIBC_GATE_SOFT and libc_start):
+        for n in names:
+            base = CLONE_SUFFIX.sub("", str(n))
+            if tags[n]:
+                continue
+            fam = FAMILY_OF_GATED_NAME.get(base)
+            if fam or base in GLIBC_PLAIN_NAMES or base.startswith("__"):
+                fam = fam or "boilerplate:runtime:libc:support"
+                tags[n] = tag_taxonomy.canonical_tag_id(f"{fam}#{n}")
+    if sum(1 for n in names if str(n).startswith("runtime.")) >= GO_GATE_MIN:
+        for n in names:
+            fam = None if tags[n] else _go_family(str(n))
+            if fam is None and not tags[n] and n in GO_ASM_NAMES:
+                fam = "boilerplate:runtime:go:runtime"
+            if fam:
+                tags[n] = tag_taxonomy.canonical_tag_id(f"{fam}#{n}")
+    return tags
 
 
 def boilerplate_tag_for_function_name(name):
@@ -124,6 +290,12 @@ def boilerplate_tag_for_function_name(name):
 
     if not family:
         for prefix, tag_fam in BOILERPLATE_PREFIXES.items():
+            if name_str.startswith(prefix):
+                family = tag_fam
+                break
+
+    if not family:
+        for prefix, tag_fam in EXTRA_PREFIXES.items():
             if name_str.startswith(prefix):
                 family = tag_fam
                 break
@@ -151,6 +323,63 @@ def demo():
         == "boilerplate:runtime:libc:dtoa#___Balloc_D2A"
     )
     assert boilerplate_tag_for_function_name("main") is None
+    assert boilerplate_tag_for_function_name("_IO_flush_all")
+    assert boilerplate_tag_for_function_name("read") is None
+    assert boilerplate_tag_for_function_name("__clock_gettime64") is None
+
+    libc = [f"_dl_fn{i}" for i in range(LIBC_GATE_MIN)]
+    gated = boilerplate_tags_for_names(libc + ["read", "check_match.isra.0", "main"])
+    assert gated["read"] and gated["check_match.isra.0"] and gated["main"] is None
+    small = boilerplate_tags_for_names(["_dl_a", "read", "check_match"])
+    assert small["read"] is None and small["check_match"] is None
+
+    dunder = boilerplate_tags_for_names(
+        libc + ["__clock_gettime64", "_memcpy", "_itoa"]
+    )
+    assert dunder["__clock_gettime64"] and dunder["_itoa"] and dunder["_memcpy"] is None
+    assert (
+        boilerplate_tags_for_names(["__clock_gettime64"])["__clock_gettime64"] is None
+    )
+
+    # `entry` is the unpacker stub in a packed file, so it is never boilerplate.
+    assert boilerplate_tag_for_function_name("entry") is None
+    assert boilerplate_tag_for_function_name("__i686.get_pc_thunk.bx")
+    assert boilerplate_tag_for_function_name("_INIT_0")
+    assert boilerplate_tag_for_function_name("bn_mul_comba8").startswith(
+        "boilerplate:library:openssl:bn"
+    )
+    assert boilerplate_tag_for_function_name("bn_mul") is None
+
+    # A small static uClibc passes the gate only with a libc startup symbol.
+    soft = ["__stdio_a", "__stdio_b", "__stdio_c", "xdr_callhdr", "read", "main"]
+    assert boilerplate_tags_for_names(soft)["xdr_callhdr"] is None
+    soft.append("__uClibc_main")
+    got = boilerplate_tags_for_names(soft)
+    assert got["xdr_callhdr"].startswith("boilerplate:runtime:libc:rpc")
+    assert got["read"] and got["main"] is None
+
+    # Family names keep their family; unknown look-alikes stay untagged.
+    fam = boilerplate_tags_for_names(libc + ["enqueue", "fde_radixsort", "attack_udp"])
+    assert fam["enqueue"].startswith("boilerplate:runtime:libc:thread")
+    assert fam["fde_radixsort"].startswith("boilerplate:runtime:libgcc:unwind")
+    assert fam["attack_udp"] is None
+    assert boilerplate_tags_for_names(["enqueue"])["enqueue"] is None
+
+    # Go stdlib needs a Go runtime in the file; `main.` stays custom code.
+    go = [f"runtime.fn{i}" for i in range(GO_GATE_MIN)]
+    got = boilerplate_tags_for_names(
+        go + ["crypto/tls.(*Conn).Read", "main.beacon", "sort.part.0", "net.Dial"]
+    )
+    assert got["runtime.fn0"].startswith("boilerplate:runtime:go:runtime")
+    assert got["crypto/tls.(*Conn).Read"].startswith("boilerplate:library:go:stdlib")
+    assert got["net.Dial"] and got["main.beacon"] is None and got["sort.part.0"] is None
+    assert boilerplate_tags_for_names(["net.Dial"])["net.Dial"] is None
+    typed = boilerplate_tags_for_names(
+        go + ["type:.eq.internal/abi.Type", "type:.eq.main.Cfg", "gogo", "memeqbody"]
+    )
+    assert typed["type:.eq.internal/abi.Type"] and typed["gogo"] and typed["memeqbody"]
+    assert typed["type:.eq.main.Cfg"] is None
+    assert boilerplate_tags_for_names(["gogo"])["gogo"] is None
 
 
 if __name__ == "__main__":

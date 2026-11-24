@@ -1,6 +1,10 @@
 from flask import request
 from bsimvis.app.services.collection_config import resolve_collection_algo
-from bsimvis.app.services.function_service import fetch_function_data, get_feature_map
+from bsimvis.app.services.function_service import (
+    fetch_function_data,
+    get_feature_map,
+    source_tokens,
+)
 from bsimvis.app.services.index_service import (
     parse_timestamp,
     get_pool_id,
@@ -20,7 +24,7 @@ def render_single_function(
     Renders the semantic tokens for a single function without any diffing logic.
     """
     f_map = get_feature_map(features)
-    tokens = source.get("c_tokens", [])
+    tokens = source_tokens(source)
     if not tokens:
         return []
 
@@ -264,7 +268,13 @@ def get_function_code():
         if pool_id and meta:
             enrich_pool_data(meta, pool_id)
 
-        return {"rows": rows, "tips": tips, "meta": meta or {}}
+        return {
+            "rows": rows,
+            "tips": tips,
+            "meta": meta or {},
+            "cfg": source.get("cfg"),
+            "tok_block": source.get("tok_block"),
+        }
     except Exception as e:
         # Capture the full stack trace as a string
         error_traceback = traceback.format_exc()
@@ -328,7 +338,9 @@ def get_function_call_graph():
 
         node = {
             "id": f"{collection}:func:{md5}:{addr}",
-            "name": meta.get("function_name"),
+            "name": meta.get("user_name") or meta.get("function_name"),
+            "user_name": meta.get("user_name"),
+            "user_name_source": meta.get("user_name_source"),
             "entrypoint": meta.get("entrypoint_address", addr),
             "namespace": meta.get("namespace"),
             "return_type": meta.get("return_type"),
@@ -583,7 +595,9 @@ def get_file_call_graph():
                     meta = json.loads(meta)
 
             func_name = (
-                meta.get("function_name") if meta else f"func_{fid.split(':')[-1]}"
+                (meta.get("user_name") or meta.get("function_name"))
+                if meta
+                else f"func_{fid.split(':')[-1]}"
             )
             addr = fid.split(":")[-1]
 
@@ -591,6 +605,8 @@ def get_file_call_graph():
                 {
                     "id": fid,
                     "name": func_name,
+                    "user_name": meta.get("user_name") if meta else None,
+                    "user_name_source": meta.get("user_name_source") if meta else None,
                     "entrypoint": addr,
                     "namespace": meta.get("namespace") if meta else None,
                     "return_type": meta.get("return_type") if meta else None,
@@ -637,13 +653,19 @@ def get_file_call_graph():
                         meta = json.loads(meta)
 
                 func_name = (
-                    meta.get("function_name") if meta else f"func_{oid.split(':')[-1]}"
+                    (meta.get("user_name") or meta.get("function_name"))
+                    if meta
+                    else f"func_{oid.split(':')[-1]}"
                 )
                 addr = oid.split(":")[-1]
                 nodes.append(
                     {
                         "id": oid,
                         "name": func_name,
+                        "user_name": meta.get("user_name") if meta else None,
+                        "user_name_source": (
+                            meta.get("user_name_source") if meta else None
+                        ),
                         "entrypoint": addr,
                         "namespace": meta.get("namespace") if meta else None,
                         "return_type": meta.get("return_type") if meta else None,

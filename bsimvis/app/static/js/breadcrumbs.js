@@ -244,14 +244,14 @@ window.Breadcrumbs = {
             case 'search':
                 segments.push({
                     label: 'Searches',
-                    url: '/searches',
+                    url: window.location.pathname,
                     icon: 'fa-solid fa-list-check'
                 });
                 break;
             case 'search-detail':
                 segments.push({
                     label: 'Searches',
-                    url: '/searches',
+                    url: window.location.pathname.replace(/\/[^/]+$/, ''),
                     icon: 'fa-solid fa-list-check'
                 });
                 segments.push({
@@ -267,6 +267,13 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-microscope'
                 });
                 break;
+            case 'yara':
+                segments.push({
+                    label: 'YARA',
+                    url: '/yara',
+                    icon: 'fa-solid fa-shield-halved'
+                });
+                break;
             case 'scan-detail':
                 segments.push({
                     label: 'Scan',
@@ -277,6 +284,62 @@ window.Breadcrumbs = {
                     label: (restful.scan_id || '').slice(0, 8) || 'Scan',
                     url: window.location.pathname,
                     icon: 'fa-solid fa-microscope'
+                });
+                break;
+            case 'nway':
+                if (window.location.pathname.endsWith('/nway/function') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    const back = q.get('fx_back') || '';
+                    if (q.get('scope') !== 'functions') segments.push({
+                        label: 'N-way diff',
+                        url: back.startsWith('/') && !back.startsWith('//') ? back : window.NwayPanel.backUrl(q),
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    segments.push({
+                        label: `Function: ${(window.NwayView && window.NwayView._familyName) || ''}`,
+                        url: window.location.pathname + window.location.search,
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    break;
+                }
+                if (window.location.pathname.endsWith('/nway/lineage') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    q.delete('order'); q.delete('root');
+                    segments.push({ label: 'N-way diff', url: window.NwayPanel.backUrl(q), icon: 'fa-solid fa-code-compare' });
+                    segments.push({ label: 'Lineage', url: window.location.pathname + window.location.search, icon: 'fa-solid fa-sitemap' });
+                    break;
+                }
+                if (window.location.pathname.endsWith('/nway/graph') && window.NwayPanel) {
+                    const q = new URLSearchParams(window.location.search);
+                    segments.push({
+                        label: 'N-way diff',
+                        url: window.NwayPanel.backUrl(q),
+                        icon: 'fa-solid fa-code-compare'
+                    });
+                    segments.push({
+                        label: `Call graph: ${q.get('cg_name') || ''}`,
+                        url: window.location.pathname + window.location.search,
+                        icon: 'fa-solid fa-diagram-project'
+                    });
+                    break;
+                }
+                {
+                    // From a cluster the trail runs down the cluster; a bare set sits under Files.
+                    const nav = (window.Nav || window.parent.Nav);
+                    const cuuid = params.get('cluster_uuid');
+                    const base = params.get('pool') ? null : collection;
+                    if (base || cuuid) {
+                        segments.push({ label: 'Files', url: nav.buildUIUrl(collection, ['files']), icon: 'fa-solid fa-file-code' });
+                        if (cuuid) {
+                            segments.push({ label: 'Clusters', url: nav.buildUIUrl(collection, ['files', 'clusters']), icon: 'fa-solid fa-bullseye' });
+                            segments.push({ label: this.getClusterLabel(cuuid), url: nav.buildUIUrl(collection, ['files', 'clusters', cuuid]), icon: 'fa-solid fa-bullseye' });
+                        }
+                    }
+                }
+                segments.push({
+                    label: 'N-way diff',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-code-compare'
                 });
                 break;
             case 'upload':
@@ -327,6 +390,30 @@ window.Breadcrumbs = {
                     icon: 'fa-solid fa-code'
                 });
                 break;
+            case 'strings':
+                segments.push({
+                    label: 'Strings',
+                    url: window.location.pathname + window.location.search,
+                    icon: 'fa-solid fa-font'
+                });
+                break;
+            case 'file-strings': {
+                segments.push({
+                    label: 'Files',
+                    url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['files']),
+                    icon: 'fa-solid fa-file-code'
+                });
+                const strMd5 = params.get('md5') || restful.md5;
+                if (strMd5) {
+                    segments.push({
+                        label: this.getFileLabel(strMd5),
+                        url: (window.Nav || window.parent.Nav).buildUIUrl(collection, ['file', strMd5]),
+                        icon: 'fa-solid fa-file-code'
+                    });
+                }
+                segments.push({ label: 'Strings', url: window.location.pathname + window.location.search, icon: 'fa-solid fa-font' });
+                break;
+            }
             case 'function_features':
                 segments.push({
                     label: 'Files',
@@ -480,8 +567,13 @@ window.Breadcrumbs = {
     },
 
     render: function (segments) {
+        if (window.UI && UI.EntityTabs) UI.EntityTabs.render();
         const container = document.getElementById('breadcrumbs-list');
         if (!container) return;
+
+        // The tab strip already links to its own sections; keep the scope root and any detail leaf.
+        const stripPaths = (window.UI && UI.EntityTabs && UI.EntityTabs.paths) || [];
+        if (stripPaths.length) segments = segments.filter(sg => !stripPaths.includes(String(sg.url || '').split('?')[0]));
 
         if (segments.length === 0) {
             container.innerHTML = '';

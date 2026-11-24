@@ -617,6 +617,112 @@ def test_retry_resets_the_lease_attempt_counter():
     assert int(svc.r.hget("job:burnt", "attempts")) == 0
 
 
+def test_retry_resumes_a_pipeline_at_its_failed_step():
+    # Retrying a pipeline whose build_bin_sim died must not re-run the Ghidra
+    # analyses before it. A group that finished with a failed member is still
+    # "completed", so it must be retried too.
+    import json
+    import bsimvis.app.routes.jobs as jobs_routes
+
+    svc = make_service()
+    done, failed, cancelled = (
+        JobStatus.COMPLETED.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    )
+    for jid, status in [
+        ("ok_group", done),
+        ("ga1", done),
+        ("mixed_group", done),
+        ("ga2", done),
+        ("ga3", failed),
+        ("bin", failed),
+        ("cluster", cancelled),
+    ]:
+        svc.r.hset(f"job:{jid}", mapping={"status": status})
+    svc.r.hset("job:ok_group", "task_ids", json.dumps(["ga1"]))
+    svc.r.hset("job:mixed_group", "task_ids", json.dumps(["ga2", "ga3"]))
+    tids = ["ok_group", "mixed_group", "bin", "cluster"]
+    svc.r.hset("job:pipe", mapping={"status": failed, "task_ids": json.dumps(tids)})
+
+    real = jobs_routes.job_service
+    jobs_routes.job_service = svc
+    try:
+        jobs_routes._reset_job_recursive("pipe")
+    finally:
+        jobs_routes.job_service = real
+
+    status = {
+        j: svc.r.hget(f"job:{j}", "status")
+        for j in tids + ["ga1", "ga2", "ga3", "pipe"]
+    }
+    for kept in ("ok_group", "ga1", "ga2"):
+        assert status[kept] == done, (kept, status)
+    for reset in ("mixed_group", "ga3", "bin", "cluster", "pipe"):
+        assert status[reset] == JobStatus.PENDING.value, (reset, status)
+
+
+def test_spliced_group_runs_in_parallel_then_resumes_the_pipeline():
+    # A big build_sim splices N shard jobs after itself: they must all be
+    # queued together when it completes, and the pipeline's next step may only
+    # start once every shard is done.
+    import json
+
+    svc = make_service()
+    for jid in ("a", "b"):
+        svc.r.hset(
+            f"job:{jid}",
+            mapping={
+                "id": jid,
+                "type": JobType.BUILD_SIM.value,
+                "status": JobStatus.PENDING.value,
+                "parent_id": "pipe",
+                "payload": "{}",
+            },
+        )
+    svc.r.hset(
+        "job:pipe",
+        mapping={
+            "id": "pipe",
+            "type": "pipeline",
+            "status": JobStatus.RUNNING.value,
+            "task_ids": json.dumps(["a", "b"]),
+        },
+    )
+    svc.r.hset("job:a", "status", JobStatus.RUNNING.value)
+    tasks = [(JobType.BUILD_SIM.value, {"shard": k, "shards": 3}) for k in range(3)]
+    gid = svc.splice_group("pipe", "a", tasks)
+
+    assert json.loads(svc.r.hget("job:pipe", "task_ids")) == ["a", gid, "b"]
+    kids = json.loads(svc.r.hget(f"job:{gid}", "task_ids"))
+    assert [json.loads(svc.r.hget(f"job:{k}", "payload"))["shard"] for k in kids] == [
+        0,
+        1,
+        2,
+    ]
+
+    svc.complete_job("a")
+    queued = svc.r.lrange("jobs:pending", 0, -1)
+    assert sorted(queued) == sorted(kids), queued
+    assert svc.r.hget("job:b", "status") == JobStatus.PENDING.value
+
+    for k in kids[:2]:
+        svc.complete_job(k)
+    assert "b" not in svc.r.lrange("jobs:pending", 0, -1)
+    svc.complete_job(kids[2])
+    assert "b" in svc.r.lrange("jobs:pending", 0, -1)
+
+
+def test_in_shard_partitions_every_id_exactly_once():
+    from bsimvis.app.services.similarity_service import in_shard
+
+    ids = [f"coll:func:{i:032x}:{i * 16:x}" for i in range(5000)]
+    seen = [sum(in_shard(f, k, 8) for k in range(8)) for f in ids]
+    assert set(seen) == {1}
+    sizes = [sum(in_shard(f, k, 8) for f in ids) for k in range(8)]
+    assert min(sizes) > 500, sizes
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

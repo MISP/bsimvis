@@ -1,6 +1,5 @@
 import json
 import logging
-from collections import Counter
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_config import (
     INDEX_CONFIG,
@@ -26,9 +25,11 @@ from bsimvis.app.services.bin_sim_service import (
 )
 from bsimvis.app.services.config_service import config_service
 from bsimvis.app.services.cluster_utils import (
+    default_bin_cluster_name,
     bin_cluster_ns,
     cluster_summary,
     function_count_stats,
+    timeline_stats,
 )
 from bsimvis.app.services import tag_taxonomy
 
@@ -429,10 +430,12 @@ class MetadataService:
 
                 cohesion_score = old_cm.get("cohesion_score", 1.0)
                 snippet = names[0] if names else "unknown"
-                new_default_name = (
-                    Counter(names).most_common(1)[0][0]
-                    if names
-                    else f"Binary Cluster {cid}"
+                new_default_name = default_bin_cluster_name(
+                    names,
+                    [],
+                    [],
+                    f"Binary Cluster {cid}",
+                    tag_distribution=summary.get("tag_distribution"),
                 )
 
                 new_cm = dict(old_cm)
@@ -444,6 +447,8 @@ class MetadataService:
                 fc_stats = function_count_stats(decoded_metas)
                 if fc_stats:
                     new_cm["function_count_stats"] = fc_stats
+                # first_seen / last_seen arrive through this path (API uploads).
+                new_cm["timeline"] = timeline_stats(decoded_metas)
 
                 is_custom = old_cm.get("is_custom_name", False)
                 old_name = old_cm.get("cluster_name")

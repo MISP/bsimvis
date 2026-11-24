@@ -82,6 +82,18 @@ function jobStatusCell(target) {
 // File rows carry a real lifecycle (data-service-set on upload/analysis, see
 // index_service.update_file_status), not just "is a job running right now" --
 // so they get their own badge instead of jobStatusCell's generic one.
+// The cell shows a clipped value; this hands over the whole one. Selecting the
+// clipped text copies it whole too, since only CSS shortens it.
+function copyFullButton(value, label) {
+    return `<button class="ft-copy" title="Copy full ${escapeAttr(label)}"
+        onclick="event.stopPropagation(); copyToClipboard(${escapeAttr(jsString(value))}, this)"><i class="fa-regular fa-copy"></i></button>`;
+}
+
+// MD5 and batch columns of the file search are opt-in (FileTree toolbar).
+function showExtraFileCols() {
+    return !window.FileTree || FileTree.extraCols();
+}
+
 function fileStatusBadgeHtml(f) {
     // Files indexed before this field existed have no `status` -- they are,
     // by definition, already fully analyzed.
@@ -352,10 +364,8 @@ window.TableRenderers = {
                         <span class="dim" style="font-size:0.65rem;">contains ${group.rows.length} match${group.rows.length === 1 ? '' : 'es'}</span>
                     </div>
                 </td>
-                <td class="sim-cell">${EntityRenderer.renderMd5(group.file_md5, { full: true })}</td>
-                <td class="sim-cell"></td>
-                <td class="sim-cell"></td>
-                <td class="sim-cell"></td>
+                ${showExtraFileCols() ? `<td class="sim-cell">${EntityRenderer.renderMd5(group.file_md5, { full: true })}</td>
+                <td class="sim-cell"></td>` : ''}
                 <td class="sim-cell"></td>
                 <td class="sim-cell"></td>
                 <td class="sim-cell"></td>
@@ -364,9 +374,16 @@ window.TableRenderers = {
             </tr>`;
     },
 
-    /** The file rows themselves, all at one depth under one parent. */
-    _fileRows: function(rows, clustersMap, depth, parentMd5, injected) {
+    /**
+     * The file rows themselves, all at one depth under one parent.
+     *
+     * `tree` is set by FileTree (file_tree.js): it supplies the name cell
+     * (indent, archive band, path prefix) and the ancestor ids that collapsing
+     * reads. Every other cell is the same row a flat search draws.
+     */
+    _fileRows: function(rows, clustersMap, depth, parentMd5, injected, tree) {
         const { collection } = getRoutingState();
+        const extraCols = showExtraFileCols();
         return rows.map(f => {
             // Base collection: pool searches span collections, so fall back to the id prefix.
             const col = f.collection || (f['file_id'] || '').split(':')[0] || collection;
@@ -398,8 +415,40 @@ window.TableRenderers = {
             // depth, which is how collapsing knows where to stop. data-lineage-
             // parent is what stops an expand from re-adding a child already
             // drawn under this same container.
+            const nameCell = tree ? FileTree.nameCell(f, targetCol, depth, tree, nameHtml) : `
+                    <div class="lineage-cell" style="padding-left:${depth * 18}px;">
+                        ${depth > 0 ? '<span class="lineage-guide">└</span>' : ''}
+                        ${Lineage.toggleButton(f['child_count'])}
+                        ${f['is_container'] ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
+                        ${nameHtml}
+                    </div>
+                    ${contextHtml}`;
+
+            // One meta line under the name instead of a column each: what the
+            // file is, where it runs, when it was first seen, and its status
+            // only while it is not simply analyzed.
+            const filetype = Array.isArray(f['filetype']) ? f['filetype'].join(', ') : (f['filetype'] || '');
+            const day = v => {
+                const d = new Date(toEpochMs(v));
+                return isNaN(d) ? String(v) : d.toISOString().slice(0, 10);
+            };
+            const seen = [].concat(f['first_seen'] || []).filter(Boolean).map(day).join(', ');
+            const busy = (f.status && f.status !== 'analyzed')
+                || (window.activeJobsByTarget && window.activeJobsByTarget[f['file_md5']]);
+            const meta = [
+                tree && tree.sub ? `<span class="ft-meta-sub">${escapeHtml(tree.sub)}</span>` : '',
+                filetype ? `<span class="ft-meta-type" title="${escapeAttr(filetype)}">${escapeHtml(filetype)}</span>` : '',
+                f['language_id'] ? `<span class="ft-meta-arch">${escapeHtml(f['language_id'])}</span>` : '',
+                seen ? `<span title="First seen">seen ${escapeHtml(seen)}</span>` : '',
+                busy ? fileStatusBadgeHtml(f) : '',
+            ].filter(Boolean).join('<span class="ft-meta-sep">·</span>');
+            const indent = tree ? depth * 18 + 22 : depth * 18;
+
+            const entryShort = f['entry_date'] ? day(f['entry_date']) : '---';
+
             return `
-            <tr class="sim-row${depth > 0 ? ' lineage-row' : ''}" style="background: ${rowStyle}; font-size: 0.75rem;" data-id="${escapeAttr(fileId)}"
+            <tr class="sim-row ft-row${depth > 0 && !tree ? ' lineage-row' : ''}${tree && tree.band ? ' ft-band' : ''}" style="background: ${rowStyle};" data-id="${escapeAttr(fileId)}"
+                ${tree ? `data-ft-anc="${escapeAttr(tree.anc || '')}"` : ''}
                 data-lineage-depth="${depth}" data-lineage-md5="${escapeAttr(f['file_md5'])}"
                 data-lineage-parent="${escapeAttr(parentMd5 || f['parent_md5'] || '')}"
                 ${injected ? 'data-lineage-injected="1"' : ''}
@@ -411,55 +460,27 @@ window.TableRenderers = {
                     collection: col
                 }))}'
                 oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
-                <td class="sim-cell">
-                    <div class="lineage-cell" style="padding-left:${depth * 18}px;">
-                        ${depth > 0 ? '<span class="lineage-guide">└</span>' : ''}
-                        ${Lineage.toggleButton(f['child_count'])}
-                        ${f['is_container'] ? '<i class="fa-solid fa-box-archive dim" title="Container: holds code but is not code itself" style="font-size:0.7rem;"></i>' : ''}
-                        ${nameHtml}
-                    </div>
-                    ${contextHtml}
+                <td class="sim-cell ft-file-cell">
+                    ${nameCell}
+                    ${meta ? `<div class="ft-meta" style="padding-left:${indent}px;">${meta}</div>` : ''}
                 </td>
-                <td class="sim-cell">
-                    ${EntityRenderer.renderMd5(f['file_md5'], { full: true })}
-                    <div class="dim" style="font-size:0.65rem">${escapeHtml(f['language_id'])}</div>
+                ${extraCols ? `<td class="sim-cell">
+                    <div class="ft-clip-cell"><span class="ft-clip">${EntityRenderer.renderMd5(f['file_md5'], { full: true })}</span>${copyFullButton(f['file_md5'], 'MD5')}</div>
                 </td>
-                <td class="sim-cell">
-                    <div style="display:flex; flex-direction:column; gap:2px; font-size:0.65rem;">
-                        ${(() => {
-                            // Plan D3.5/D5: yara/avtype/cc_ip retired -- the file's own tag
-                            // chips (Tags column) carry the av:/yara:/ip: evidence now.
-                            // filetype stays a plain field (Decision 5). Cluster
-                            // distributions were never sent on this listing (stripped
-                            // for payload size), so there was never a real inferred
-                            // fallback to preserve here.
-                            const val = f['filetype'];
-                            return (val && val.length)
-                                ? `<div class="dim">Type: <span style="color:var(--accent)">${escapeHtml(Array.isArray(val) ? val.join(', ') : val)}</span></div>`
-                                : '';
-                        })()}
-                        ${f['first_seen'] && f['first_seen'].length ? `<div class="dim">Seen: <span style="color:var(--accent)">${escapeHtml(Array.isArray(f['first_seen']) ? f['first_seen'].join(', ') : f['first_seen'])}</span></div>` : ''}
-                    </div>
+                <td class="sim-cell" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
+                    <div class="ft-clip-cell"><span class="ft-clip mono dim">${escapeHtml(batchUuid)}</span>${batchUuid !== '---' ? copyFullButton(batchUuid, 'batch UUID') : ''}</div>
+                </td>` : ''}
+                <td class="sim-cell ft-num">${Number(funcCount).toLocaleString()}</td>
+                <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
+                    ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}
                 </td>
-                <td class="sim-cell mono dim" style="font-size:0.7rem" title="${escapeAttr(batchUuid)}" data-filter-value="${escapeAttr(batchUuid)}">
-                    ${escapeHtml(batchUuid.length > 8 ? batchUuid.substring(0, 8) + '...' : batchUuid)}
-                </td>
-                <td class="sim-cell">${fileStatusBadgeHtml(f)}</td>
-                <td class="sim-cell">
-                    <div style="display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%;">
-                        <span style="font-weight: bold; min-width: 20px; text-align: right;">${funcCount}</span>
-                    </div>
+                <td class="ft-tags-cell">
+                    ${EntityRenderer.renderTag('file', fileId, tags, user_tags, { maxTags: 3 })}
                 </td>
                 <td class="sim-cell file-note-cell" style="text-align:center;">
                     ${EntityRenderer.renderFileNoteButton(fileId, f.note_owners, { isTable: true, raw_data: f })}
                 </td>
-                <td class="cluster-cards-cell" data-is-binary="true" data-clusters='${escapeAttr(JSON.stringify(clusters))}'>
-                    ${EntityRenderer.renderClusterCard(clusters, true, visibleAxes)}
-                </td>
-                <td class="sim-cell dim">${formatDate(f['entry_date'])}</td>
-                <td>
-                    ${EntityRenderer.renderTag('file', fileId, tags, user_tags, { maxTags: 4 })}
-                </td>
+                <td class="sim-cell dim ft-date" title="${escapeAttr(formatDate(f['entry_date']))}">${entryShort}</td>
                 ${renderCollectionCell(col)}
             </tr>
         `;
@@ -515,6 +536,76 @@ window.TableRenderers = {
                 ${renderCollectionCell(fColl)}
             </tr>
         `}).join('');
+    },
+
+    // Read-only analysis tag badges (aggregated strings have no single owner to tag).
+    stringTagBadges: function(tags) {
+        return (tags || []).map(t => {
+            const color = window.tagInk(window.getTagMetadata(t).color);
+            return `<span class="analysis-tag-badge" style="border-color:${tagAlpha(color, 40)}; color:${color}; background:${tagAlpha(color, 7)};" title="${escapeAttr(t)}">${escapeHtml(t)}</span>`;
+        }).join('');
+    },
+
+    stringValueCell: function(value) {
+        const shown = value.length > 300 ? value.slice(0, 300) + '…' : value;
+        return `<span class="mono" style="color:var(--accent); white-space:pre-wrap; word-break:break-all;" title="${escapeAttr(value.slice(0, 500))}">${escapeHtml(shown)}</span>`;
+    },
+
+    stringFilterQuery: function(value) {
+        return '?strings=' + encodeURIComponent(quoteFilterValue(value.slice(0, 128)));
+    },
+
+    // Collection-wide strings: one row per distinct value.
+    renderStrings: function(items) {
+        const { collection } = getRoutingState();
+        const count = (n, url, title) => n
+            ? `<a class="clickable-count" href="${escapeAttr(url)}" title="${escapeAttr(title)}" onclick="Nav.openPath(this.getAttribute('href'), event)" style="color:var(--accent); font-weight:bold;">${Number(n).toLocaleString()}</a>`
+            : '<span class="dim">0</span>';
+        return items.map(s => {
+            const q = TableRenderers.stringFilterQuery(s.value);
+            const fnUrl = Nav.buildUIUrl(collection, ['functions']) + q;
+            const flUrl = Nav.buildUIUrl(collection, ['files']) + q;
+            const data = { id: s.id, value: s.value };
+            return `
+            <tr class="sim-row" style="font-size: 0.75rem;" data-id="${escapeAttr(s.id)}"
+                data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                oncontextmenu="EntityRenderer.handleContextMenu(event, 'string', this)">
+                <td class="sim-cell" style="max-width:520px;">${TableRenderers.stringValueCell(s.value)}</td>
+                <td class="sim-cell">${(s.encodings || []).map(e => `<span class="badge">${escapeHtml(e)}</span>`).join(' ')}</td>
+                <td class="sim-cell mono">${escapeHtml(s.length)}</td>
+                <td class="sim-cell" style="text-align:center;">${count(s.files, flUrl, 'Files containing this string')}</td>
+                <td class="sim-cell" style="text-align:center;">${count(s.functions, fnUrl, 'Functions using this string')}</td>
+                <td>${TableRenderers.stringTagBadges(s.tags)}</td>
+            </tr>`;
+        }).join('');
+    },
+
+    // One file's strings: one row per address, taggable like any other entity.
+    renderFileStrings: function(items, ctx) {
+        const state = getRoutingState();
+        const collection = (ctx && ctx.collection) || state.collection;
+        const md5 = (ctx && ctx.md5) || state.params.get('md5');
+        return items.map(s => {
+            const eid = `${collection}:string:${md5}:${s.addr}`;
+            const q = TableRenderers.stringFilterQuery(s.value) + '&file_md5=' + encodeURIComponent(md5);
+            const refs = (s.funcs || []).length;
+            const refCell = refs
+                ? `<a class="clickable-count" href="${escapeAttr(Nav.buildUIUrl(collection, ['functions']) + q)}" title="Functions in this file using the string" onclick="Nav.openPath(this.getAttribute('href'), event)" style="color:var(--accent); font-weight:bold;">${refs}</a>`
+                : '<span class="dim">0</span>';
+            const data = { id: s.id, value: s.value, eid, md5 };
+            return `
+            <tr class="sim-row" style="font-size: 0.75rem;" data-id="${escapeAttr(eid)}"
+                data-entity-data='${escapeAttr(JSON.stringify(data))}'
+                oncontextmenu="EntityRenderer.handleContextMenu(event, 'string', this)">
+                <td class="sim-cell"><span class="mono" style="color:var(--accent);">${escapeHtml(s.addr)}</span></td>
+                <td class="sim-cell" style="max-width:520px;">${TableRenderers.stringValueCell(s.value)}</td>
+                <td class="sim-cell"><span class="badge">${escapeHtml(s.encoding)}</span></td>
+                <td class="sim-cell dim">${escapeHtml(s.section || '')}</td>
+                <td class="sim-cell mono">${escapeHtml(s.length)}</td>
+                ${ctx && ctx.noRefs ? '' : `<td class="sim-cell" style="text-align:center;">${refCell}</td>`}
+                <td>${EntityRenderer.renderTag('string', eid, s.tags || [], s.user_tags || [], { maxTags: 4 })}</td>
+            </tr>`;
+        }).join('');
     },
 
     renderGlobalFeatures: function(items) {
@@ -624,6 +715,8 @@ window.removeFiles = async function(collection, md5s, batchUuid) {
 window.renderFiles = TableRenderers.renderFiles;
 window.renderFunctions = TableRenderers.renderFunctions;
 window.renderGlobalFeatures = TableRenderers.renderGlobalFeatures;
+window.renderStrings = TableRenderers.renderStrings;
+window.renderFileStrings = TableRenderers.renderFileStrings;
 
 window.onTableRowDragStart = function(e) {
     let id = null;

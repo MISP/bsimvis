@@ -414,6 +414,28 @@ function fileAnalysisPanel() {
     return panel;
 }
 
+/** Function-level AI batch: notes, tags or both over the given function ids. */
+window.startLLMBatch = async function (actions, opts = {}) {
+    const ids = opts.funcIds || [];
+    if (!ids.length) {
+        showToast('Select one or more functions first', 'warning');
+        return;
+    }
+    const body = tagApiBody({ actions, func_ids: ids });
+    if (opts.askPrompt) {
+        const prompt = window.prompt('Custom prompt (leave empty for the configured default):', '');
+        if (prompt === null) return;
+        if (prompt.trim()) body.custom_prompt = prompt.trim();
+    }
+    try {
+        const res = await tagPost('/api/llm/batch', body);
+        showToast(`AI batch started on ${res.total} function(s)`, 'success');
+        trackFileAnalysis(res.job_id);
+    } catch (e) {
+        showToast(`Could not start AI batch: ${e.message}`, 'error');
+    }
+};
+
 window.trackFileAnalysis = function (jobId) {
     const card = document.createElement('div');
     card.style.cssText =

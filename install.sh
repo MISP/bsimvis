@@ -3,6 +3,12 @@ set -e
 
 # Configuration
 REDIS_VERSION="7.2.4"
+# Keep in sync with the apache/kvrocks image tag in docker-compose.yml
+KVROCKS_VERSION="2.17.0"
+# Prebuilt amd64 .deb from the Kvrocks maintainers (Apache ships source only).
+# Bump the sha256 with the version: GitHub shows it as the asset's digest.
+KVROCKS_DEB="kvrocks_${KVROCKS_VERSION}-1_amd64.deb"
+KVROCKS_DEB_SHA256="aa7d18c9e5aa3ae4f80ebf413c81b9f8b9602658eb3c39f604362c34f00716e5"
 
 # Directories
 PROJECT_ROOT=$(pwd)
@@ -55,6 +61,14 @@ mkdir -p "${BIN_DIR}"
 mkdir -p "${SCRATCH_DIR}"
 mkdir -p "${DATA_BASE_DIR}/etcd" "${DATA_BASE_DIR}/minio" "${DATA_BASE_DIR}/milvus" "${DATA_BASE_DIR}/kvrocks" "${DATA_BASE_DIR}/redis"
 
+# Parallel build jobs: cores, capped at ~2 GB RAM per C++ compile job (override with BUILD_JOBS)
+if [ -z "${BUILD_JOBS}" ]; then
+    CORES=$(nproc 2>/dev/null || echo 4)
+    MEM_JOBS=$(awk '/MemTotal/ {j=int($2/2097152); print (j<1?1:j)}' /proc/meminfo 2>/dev/null || echo "${CORES}")
+    BUILD_JOBS=$(( CORES < MEM_JOBS ? CORES : MEM_JOBS ))
+fi
+echo "Using ${BUILD_JOBS} parallel build jobs"
+
 echo "--- Setting up Python environment ---"
 if command -v uv > /dev/null; then
     echo "Using uv for dependency management..."
@@ -73,13 +87,15 @@ echo "--- Fetching frontend vendor assets ---"
 ./scripts/fetch_vendor_assets.sh
 
 echo "--- Installing Redis ---"
-if [ ! -f "${BIN_DIR}/redis-server" ]; then
+if [ "${DOCKER_DATASTORES}" = "true" ]; then
+    echo "Skipping Redis build (DOCKER_DATASTORES=true, runs from docker-compose.yml)"
+elif [ ! -f "${BIN_DIR}/redis-server" ]; then
     echo "Building Redis from source..."
     cd "${SCRATCH_DIR}"
     curl -L "https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz" -o redis.tar.gz
     tar -xzf redis.tar.gz
     cd "redis-${REDIS_VERSION}"
-    make -j$(nproc 2>/dev/null || echo 4)
+    make -j"${BUILD_JOBS}"
     cp src/redis-server src/redis-cli "${BIN_DIR}/"
     cd "${PROJECT_ROOT}"
 else
@@ -87,15 +103,25 @@ else
 fi
 
 echo "--- Installing Kvrocks ---"
-if [ ! -f "${BIN_DIR}/kvrocks" ]; then
+if [ "${DOCKER_DATASTORES}" = "true" ]; then
+    echo "Skipping Kvrocks build (DOCKER_DATASTORES=true, runs from docker-compose.yml)"
+elif [ ! -f "${BIN_DIR}/kvrocks" ] && [ "$(uname -m)" = "x86_64" ] && command -v dpkg-deb > /dev/null \
+    && curl -fsSL -o "${SCRATCH_DIR}/${KVROCKS_DEB}" \
+        "https://github.com/RocksLabs/kvrocks-fpm/releases/download/${KVROCKS_VERSION}-1/${KVROCKS_DEB}" \
+    && echo "${KVROCKS_DEB_SHA256}  ${SCRATCH_DIR}/${KVROCKS_DEB}" | sha256sum -c - \
+    && dpkg-deb -x "${SCRATCH_DIR}/${KVROCKS_DEB}" "${SCRATCH_DIR}/kvrocks-deb"; then
+    cp "${SCRATCH_DIR}/kvrocks-deb/usr/bin/kvrocks" "${BIN_DIR}/"
+    echo "Installed prebuilt Kvrocks ${KVROCKS_VERSION} (sha256 verified)"
+elif [ ! -f "${BIN_DIR}/kvrocks" ]; then
+    rm -f "${SCRATCH_DIR}/${KVROCKS_DEB}"
     echo "Building Kvrocks from source..."
     cd "${SCRATCH_DIR}"
     if [ ! -d "kvrocks" ]; then
-        git clone https://github.com/apache/kvrocks.git
+        git clone --depth 1 --branch "v${KVROCKS_VERSION}" https://github.com/apache/kvrocks.git
     fi
     cd kvrocks
     # Use x.py to build
-    ./x.py build -j$(nproc 2>/dev/null || echo 4)
+    ./x.py build -j"${BUILD_JOBS}"
     cp build/kvrocks "${BIN_DIR}/"
     cd "${PROJECT_ROOT}"
 else

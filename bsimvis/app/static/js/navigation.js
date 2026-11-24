@@ -35,6 +35,8 @@ window.Nav = {
             mapped = ['files', mapped[1], 'functions'];
         } else if (mapped[0] === 'file' && mapped[1]) {
             mapped = ['files', mapped[1]];
+        } else if (mapped[0] === 'file-strings' && mapped[1]) {
+            mapped = ['files', mapped[1], 'strings'];
         } else if (mapped[0] === 'function' && mapped[1] && mapped[2]) {
             mapped = ['files', mapped[1], 'functions', mapped[2]];
         } else if (mapped[0] === 'function_features' && mapped[1] && mapped[2]) {
@@ -88,6 +90,8 @@ window.Nav = {
             window.parent.Nav.openPath(path, null, options);
             return;
         }
+        // A preview left open by the old page would float over the new one.
+        if (window.hideAllTooltips) window.hideAllTooltips(true);
 
         // Standard logic for Ctrl/Meta + Click: Open in new tab
         const ctrlKey = event && (event.ctrlKey || event.metaKey);
@@ -149,7 +153,7 @@ window.addEventListener('keydown', (e) => {
 
     // Cycle with Alt+Up and Alt+Down (works everywhere, even in inputs)
     if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        const navLinks = Array.from(document.querySelectorAll('nav.sidebar-nav a[id^="nav-"]'));
+        const navLinks = Array.from(document.querySelectorAll('.global-menu-list a[id^="nav-"]'));
         if (!navLinks.length) return;
         
         const activeIndex = navLinks.findIndex(a => a.classList.contains('active'));
@@ -170,7 +174,7 @@ window.addEventListener('keydown', (e) => {
     
     // Direct select with Alt+1 to Alt+9
     if (e.altKey && !e.ctrlKey && !e.metaKey && e.key >= '1' && e.key <= '9') {
-        const navLinks = Array.from(document.querySelectorAll('nav.sidebar-nav a[id^="nav-"]'));
+        const navLinks = Array.from(document.querySelectorAll('.global-menu-list a[id^="nav-"]'));
         const index = parseInt(e.key) - 1;
         
         if (index >= 0 && index < navLinks.length) {

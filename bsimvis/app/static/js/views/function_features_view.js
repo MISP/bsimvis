@@ -194,7 +194,7 @@ window.FunctionFeaturesView = {
                     const funcData = await funcRes.json();
                     if (funcData.meta) {
                         const fn = funcData.meta.file_name || 'File';
-                        const fname = funcData.meta.function_name || 'Function';
+                        const fname = fnName(funcData.meta) || 'Function';
                         const col = this.id.split(':')[0];
                         Breadcrumbs.setFilename(this.params.md5 || this.params.file_md5, fn);
                         Breadcrumbs.setFuncName(col, this.params.md5 || this.params.file_md5, this.params.address, fname);

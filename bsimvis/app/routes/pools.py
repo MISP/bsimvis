@@ -6,6 +6,27 @@ from bsimvis.app.routes import _list_query as lq
 job_service = JobService()
 
 
+def _pool_sim_task(pool_id, collections, skip_write=False):
+    """Per-md5 BUILD_POOL_SIM group (parallel across workers); whole-pool fallback if no files."""
+    file_tasks = []
+    for coll in collections:
+        for d in pool_service.r.smembers(f"{coll}:all_files"):
+            k = d.decode() if isinstance(d, bytes) else str(d)
+            if k.endswith(":meta"):
+                continue
+            parts = k.split(":")
+            if len(parts) >= 3:
+                payload = {
+                    "pool_id": pool_id,
+                    "file_md5": parts[2],
+                    "skip_write": skip_write,
+                }
+                file_tasks.append((JobType.BUILD_POOL_SIM, payload))
+    if file_tasks:
+        return job_service.create_group(file_tasks, enqueue=False)
+    return (JobType.BUILD_POOL_SIM, {"pool_id": pool_id})
+
+
 def create_pool():
     import uuid
 
@@ -24,37 +45,16 @@ def create_pool():
     if not success:
         return {"error": message}, 400
 
-    # Fetch all files in the member collections to build parallel build_pool_sim tasks
-    redis_client = pool_service.r
-    file_tasks = []
-    for coll in collections:
-        all_files_key = f"{coll}:all_files"
-        file_keys = [
-            d.decode() if isinstance(d, bytes) else str(d)
-            for d in redis_client.smembers(all_files_key)
-        ]
-        for k in file_keys:
-            if k.endswith(":meta"):
-                continue
-            parts = k.split(":")
-            if len(parts) >= 3:
-                md5 = parts[2]
-                skip_write = config.get("func_sim_params", {}).get(
-                    "skip_write", config.get("skip_write", False)
-                )
-                file_tasks.append(
-                    (
-                        JobType.BUILD_POOL_SIM,
-                        {"pool_id": pool_id, "file_md5": md5, "skip_write": skip_write},
-                    )
-                )
-
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
-    if file_tasks:
-        group_id = job_service.create_group(file_tasks, enqueue=False)
-        tasks.append(group_id)
-    else:
-        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+    tasks.append(
+        _pool_sim_task(
+            pool_id,
+            collections,
+            config.get("func_sim_params", {}).get(
+                "skip_write", config.get("skip_write", False)
+            ),
+        )
+    )
 
     tasks.extend(
         [
@@ -200,7 +200,8 @@ def pool_maintenance(pool_id):
         targets.add("binary_similarity")
     if not targets or not targets <= allowed:
         return {"error": "targets must contain supported maintenance targets"}, 400
-    if not pool_service.get_pool(pool_id):
+    pool = pool_service.get_pool(pool_id)
+    if not pool:
         return {"error": "Pool not found"}, 404
     if operation in {"clear", "rebuild"}:
         pool_service.clear_pool_targets(pool_id, targets)
@@ -210,7 +211,11 @@ def pool_maintenance(pool_id):
     if "function_similarity" in targets:
         tasks += [
             (JobType.INIT_POOL_BUILD, {"pool_id": pool_id}),
-            (JobType.BUILD_POOL_SIM, {"pool_id": pool_id}),
+            _pool_sim_task(
+                pool_id,
+                pool.get("collections", []),
+                pool.get("func_sim_params", {}).get("skip_write", False),
+            ),
             (JobType.FINALIZE_POOL_BUILD, {"pool_id": pool_id}),
         ]
     if "function_cluster" in targets:
@@ -235,37 +240,16 @@ def build_pool(pool_id):
         return {"error": "Pool not found"}, 404
 
     collections = pool.get("collections", [])
-    redis_client = pool_service.r
-    file_tasks = []
-    for coll in collections:
-        all_files_key = f"{coll}:all_files"
-        file_keys = [
-            d.decode() if isinstance(d, bytes) else str(d)
-            for d in redis_client.smembers(all_files_key)
-        ]
-        for k in file_keys:
-            if k.endswith(":meta"):
-                continue
-            parts = k.split(":")
-            if len(parts) >= 3:
-                md5 = parts[2]
-                func_sim_params = pool.get("func_sim_params", {})
-                skip_write = func_sim_params.get(
-                    "skip_write", pool.get("skip_write", False)
-                )
-                file_tasks.append(
-                    (
-                        JobType.BUILD_POOL_SIM,
-                        {"pool_id": pool_id, "file_md5": md5, "skip_write": skip_write},
-                    )
-                )
-
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
-    if file_tasks:
-        group_id = job_service.create_group(file_tasks, enqueue=False)
-        tasks.append(group_id)
-    else:
-        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+    tasks.append(
+        _pool_sim_task(
+            pool_id,
+            collections,
+            pool.get("func_sim_params", {}).get(
+                "skip_write", pool.get("skip_write", False)
+            ),
+        )
+    )
 
     tasks.extend(
         [
@@ -343,39 +327,14 @@ def rebuild_pool(pool_id):
     pool_service.wipe_pool_data(pool_id)
 
     collections = pool.get("collections", [])
-    redis_client = pool_service.r
-    file_tasks = []
-    for coll in collections:
-        all_files_key = f"{coll}:all_files"
-        file_keys = [
-            d.decode() if isinstance(d, bytes) else str(d)
-            for d in redis_client.smembers(all_files_key)
-        ]
-        for k in file_keys:
-            if k.endswith(":meta"):
-                continue
-            parts = k.split(":")
-            if len(parts) >= 3:
-                md5 = parts[2]
-                file_tasks.append(
-                    (
-                        JobType.BUILD_POOL_SIM,
-                        {
-                            "pool_id": pool_id,
-                            "file_md5": md5,
-                            "skip_write": pool.get("func_sim_params", {}).get(
-                                "skip_write", False
-                            ),
-                        },
-                    )
-                )
-
     tasks = [(JobType.INIT_POOL_BUILD, {"pool_id": pool_id})]
-    if file_tasks:
-        group_id = job_service.create_group(file_tasks, enqueue=False)
-        tasks.append(group_id)
-    else:
-        tasks.append((JobType.BUILD_POOL_SIM, {"pool_id": pool_id}))
+    tasks.append(
+        _pool_sim_task(
+            pool_id,
+            collections,
+            pool.get("func_sim_params", {}).get("skip_write", False),
+        )
+    )
 
     tasks.extend(
         [

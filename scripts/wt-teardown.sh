@@ -28,12 +28,17 @@ echo "=== teardown $PROJECT_NAME ==="
 # a loop costs the sum of every worker's shutdown instead of the slowest one.
 # Stopped before the datastores so they exit on their own SIGTERM rather than
 # spinning on connection errors first.
-UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-*worker-*.scope" 2>/dev/null | awk '{print $1}')
+UNITS=$(systemctl --user list-units --plain --no-legend "bsimvis-${PROJECT_NAME}-worker-*.scope" "bsimvis-${PROJECT_NAME}-scan-worker-*.scope" 2>/dev/null | awk '{print $1}')
 if [ -n "$UNITS" ]; then
   echo "  stopping $(echo $UNITS | tr '\n' ' ')"
   systemctl --user stop $UNITS 2>/dev/null || true
 fi
-redis-cli -p "$REDIS_PORT"   shutdown nosave 2>/dev/null || true
-redis-cli -p "$KVROCKS_PORT" shutdown 2>/dev/null || true  # kvrocks SHUTDOWN takes no args
+if [ "${DOCKER_DATASTORES:-false}" = "true" ]; then
+  # A SHUTDOWN would just be undone by the restart policy: remove the containers.
+  docker compose --env-file "$ENV_FILE" -p "${PROJECT_NAME,,}" down 2>/dev/null || true
+else
+  redis-cli -p "$REDIS_PORT"   shutdown nosave 2>/dev/null || true
+  redis-cli -p "$KVROCKS_PORT" shutdown 2>/dev/null || true  # kvrocks SHUTDOWN takes no args
+fi
 tmux kill-session -t "$PROJECT_NAME" 2>/dev/null || true
 echo "done."

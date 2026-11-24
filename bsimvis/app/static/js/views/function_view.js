@@ -42,7 +42,9 @@ window.FunctionView = {
         this.id = `idx:${collection}:func:${file_md5}:${address}`;
         window.currentFuncId = `${collection}:func:${file_md5}:${address}`;
         this.neighborsLoaded = false;
+        this.nbrLive = false;
         this.callGraphLoaded = false;
+        this.stringsLoaded = false;
         if (this.graphController) {
             this.graphController.destroy();
             this.graphController = null;
@@ -76,6 +78,8 @@ window.FunctionView = {
                         <button class="bsim-tab active" id="function-tab-btn-code" onclick="FunctionView.switchTab('code')">Code</button>
                         <button class="bsim-tab" id="function-tab-btn-neighbors" onclick="FunctionView.switchTab('neighbors')">Similar<span id="fn-nbr-count-wrap" style="display:none;"> (<span id="fn-nbr-count">0</span>)</span></button>
                         <button class="bsim-tab" id="function-tab-btn-callgraph" onclick="FunctionView.switchTab('callgraph')">Call Graph</button>
+                        <button class="bsim-tab" id="function-tab-btn-cfg" onclick="FunctionView.switchTab('cfg')">CFG</button>
+                        <button class="bsim-tab" id="function-tab-btn-strings" onclick="FunctionView.switchTab('strings')">Strings<span id="fn-str-count-wrap" style="display:none;"> (<span id="fn-str-count">0</span>)</span></button>
                     </div>
 
                     <div id="function-panel-code" class="function-view-panel" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
@@ -87,6 +91,8 @@ window.FunctionView = {
                             </button>
                         </div>
                     </div>
+
+                    <div id="function-panel-cfg" class="function-view-panel" style="display:none; flex:1; overflow:auto; padding:6px;"></div>
 
                     <div id="function-panel-neighbors" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
                         <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
@@ -116,6 +122,16 @@ window.FunctionView = {
                                     <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Limit</h3>
                                     <input type="number" id="fn-nbr-limit" value="50" min="1" max="1000" style="width:70px; font-size:0.8rem; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:5px;" oninput="FunctionView.debounceNeighborsSearch()">
                                 </div>
+                                <div class="home-card" style="padding:16px; min-width:220px;">
+                                    <h3 style="margin:0 0 12px 0; font-size:0.9rem; color:var(--text);">Source</h3>
+                                    <input type="hidden" id="fn-nbr-source" value="stored">
+                                    <div id="fn-nbr-source-pills" style="display:flex; flex-wrap:wrap; gap:8px;"></div>
+                                </div>
+                            </div>
+                            <div id="fn-nbr-live-bar" style="display:none; align-items:center; gap:12px; flex-wrap:wrap;">
+                                <span id="fn-nbr-live-status" style="font-size:0.75rem; color:var(--dim);"></span>
+                                <span style="font-size:0.75rem; color:var(--dim);"><i class="fa-solid fa-arrows-up-down"></i> shift/ctrl-click or drag to select rows, or right-click a live row</span>
+                                <button class="ui-button hdr-btn" style="margin-left:auto;" onclick="FunctionView.saveDiscovered()" title="Store the selected live matches as similarity edges, tagged 'discovered'"><i class="fa-solid fa-link"></i> Save selected as edges</button>
                             </div>
                             <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
                                 <table id="fn-nbr-results-table">
@@ -174,6 +190,17 @@ window.FunctionView = {
                         </div>
                     </div>
 
+                    <div id="function-panel-strings" class="function-view-panel" style="display:none; flex:1; overflow-y:auto;">
+                        <div class="card" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+                            <div style="overflow-x: auto; max-height: 600px; overflow-y: auto;">
+                                <table id="fn-str-table">
+                                    <thead><tr><th>Address</th><th>Value</th><th>Encoding</th><th>Section</th><th>Len</th><th>Tags</th></tr></thead>
+                                    <tbody id="fn-str-body"><tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">Loading strings...</td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="function-panel-callgraph" class="function-view-panel" style="display:none; flex:1; overflow:hidden;">
                         <div style="display:flex; height:100%;">
                             <div style="flex:1; overflow:hidden; position:relative;">
@@ -212,10 +239,17 @@ window.FunctionView = {
             const res = await fetch(`/api/function/code?id=${encodeURIComponent(this.id)}`);
             if (!res.ok) throw new Error("Function not found");
             const data = await res.json();
+            if (!this.vHeightEl) return; // destroyed while loading
 
             this.funcRows = data.rows || [];
             this.funcTips = data.tips || {};
-            window.currentFuncName = data.meta?.['function_name'] || 'unknown';
+            this.cfg = data.cfg || null;
+            this.tokBlock = data.tok_block || null;
+            this.cfgSel = null;
+            this._cfgDone = false;
+            this._cfgBound = false;
+            this._cfgMaps = null;
+            window.currentFuncName = fnName(data.meta) || 'unknown';
             if (data.meta && data.meta.file_name && file_md5) {
                 window.filenameCache = window.filenameCache || {};
                 window.filenameCache[file_md5] = data.meta.file_name;
@@ -244,6 +278,7 @@ window.FunctionView = {
             if (window.fetchTagMetadata) {
                 await window.fetchTagMetadata(collection);
             }
+            if (!this.vHeightEl) return; // destroyed while loading
 
             // Set virtual height
             this.vHeightEl.style.height = (this.funcRows.length * this.rowH) + 'px';
@@ -260,19 +295,7 @@ window.FunctionView = {
                 }
             });
 
-            this.scrollEl.addEventListener('click', e => {
-                const token = this.findToken(e);
-                if (token) {
-                    const calledFuncId = token.getAttribute('data-called-func-id');
-                    if (calledFuncId) {
-                        const isExternal = token.getAttribute('data-is-external') === 'true';
-                        this.navigateToFunction(calledFuncId, isExternal, e);
-                        return;
-                    }
-                    const hashes = token.getAttribute('data-hashes');
-                    if (hashes && window.toggleLock) window.toggleLock(hashes, token);
-                }
-            });
+            this.scrollEl.addEventListener('click', e => this.onTokenClick(e));
 
             this.scrollEl.addEventListener('pointermove', e => {
                 if (window.parent && window.parent !== window && typeof window.parent.moveCodePreviewFromIframe === 'function') {
@@ -344,6 +367,310 @@ window.FunctionView = {
         }
     },
 
+    // ---- CFG tab: Ghidra high-pcode basic blocks, linked to the decompiled lines through tok_block ----
+    CFG_MAX_BLOCKS: 500,
+
+    // Line <-> block maps, built once from the rendered rows and the run-length tok_block.
+    cfgMaps() {
+        if (this._cfgMaps) return this._cfgMaps;
+        const tb = [], runs = this.tokBlock || [];
+        const n = Math.max(0, ...this.funcRows.flatMap(r => r.tokens.map(t => t.global_idx + 1)));
+        runs.forEach(([a, b], k) => { for (let i = a, end = k + 1 < runs.length ? runs[k + 1][0] : n; i < end; i++) tb[i] = b; });
+        const lineBlocks = new Map(), blockLines = new Map(), rowOf = new Map();
+        // Same rule as nway_facets_service._cfg_spans: a line goes to the block most of its tokens are in,
+        // a line without block tokens inherits the previous line's block (none before the first one).
+        const dom = new Map(), conf = new Map(), counts = new Map(), blockFeats = new Map();
+        let prev = null;
+        for (const row of this.funcRows) {
+            rowOf.set(row.line_idx, row);
+            const set = new Set(), c = new Map();
+            for (const t of row.tokens) {
+                const b = tb[t.global_idx];
+                if (b >= 0) {
+                    set.add(b);
+                    c.set(b, (c.get(b) || 0) + 1);
+                    (blockFeats.get(b) || blockFeats.set(b, new Set()).get(b));
+                    (t.hash_list || []).forEach(h => blockFeats.get(b).add(h));
+                }
+            }
+            lineBlocks.set(row.line_idx, set);
+            set.forEach(b => (blockLines.get(b) || blockLines.set(b, []).get(b)).push(row.line_idx));
+            let d = null, best = 0;
+            c.forEach((k, b) => { if (k > best) { best = k; d = b; } });
+            if (d !== null) { prev = d; conf.set(row.line_idx, c.size > 1 ? 'mixed' : 'pure'); }
+            else { d = prev; conf.set(row.line_idx, d === null ? 'none' : 'inherit'); }
+            dom.set(row.line_idx, d);
+            counts.set(row.line_idx, c);
+        }
+        return (this._cfgMaps = { lineBlocks, blockLines, rowOf, dom, conf, counts, blockFeats });
+    },
+
+    loadCfgPanel() {
+        const el = document.getElementById('function-panel-cfg');
+        if (!el || this._cfgDone) return;
+        const blocks = this.cfg?.blocks || [];
+        if (!blocks.length || !this.tokBlock) {
+            el.innerHTML = '<p class="xp-hint" style="padding:14px;">This function was analysed before CFG storage; re-analyse the file to see its control-flow graph.</p>';
+            return;
+        }
+        if (blocks.length > this.CFG_MAX_BLOCKS) {
+            el.innerHTML = `<p class="xp-hint" style="padding:14px;">${blocks.length} basic blocks: too many to draw (limit ${this.CFG_MAX_BLOCKS}).</p>`;
+            return;
+        }
+        this._cfgDone = true;
+        const { blockLines } = this.cfgMaps();
+        const pos = new Map(blocks.map((b, k) => [b.i, k]));
+        const edges = [];
+        blocks.forEach((b, k) => b.out.forEach(o => pos.has(o) && edges.push([k, pos.get(o)])));
+        const g = CfgLayout.grid({ nodes: blocks, edges }, { nodes: [], edges: [] }, new Map());
+        const NW = 44, NH = 22, ROW = 46, W = g.L.w + 30, H = g.rows * ROW;
+        const sc = Math.max(0.4, Math.min(1, ((el.clientWidth || 1200) - 40) * (this.cfgLinesPref() ? 0.5 : 1) / W));
+        // ry(row) is the y of a graph row; the first drawing uses even rows, the second lines rows up with the code bands.
+        const draw = ry => {
+            const cx = id => g.L.x.get(id), at = id => ({ x: cx(id) - NW / 2, y: ry(g.row.get(id)) });
+            let svg = '';
+            for (const [u, v] of edges) {
+                const a = 'r' + u, b = 'r' + v, key = a + '|' + b;
+                if (g.back.has(key)) {
+                    const p = at(a), q = at(b), s = 26;
+                    svg += `<path class="e back" d="M${p.x + NW},${p.y + NH / 2} C${p.x + NW + s},${p.y + NH / 2} ${q.x + NW + s},${q.y + NH / 2} ${q.x + NW},${q.y + NH / 2}"/>`;
+                    continue;
+                }
+                const pts = [{ x: cx(a), y: ry(g.row.get(a)) + NH }]
+                    .concat((g.L.chain.get(key) || []).map(d => ({ x: g.L.x.get(d), y: ry(g.L.rowOf.get(d)) + NH / 2 })))
+                    .concat([{ x: cx(b), y: ry(g.row.get(b)) }]);
+                svg += `<path class="e" d="${CfgLayout.path(pts)}"/>`;
+            }
+            let nodes = '';
+            blocks.forEach((b, k) => {
+                const p = at('r' + k), n = (blockLines.get(b.i) || []).length;
+                const cls = `k-${escapeAttr(b.kind)}${b.i === this.cfg.entry ? ' k-entry' : ''}`;
+                nodes += `<button class="xp-cell xp-cfn ${cls}" style="left:${p.x}px;top:${p.y}px" data-cfb="${Number(b.i)}" title="${escapeAttr(`block ${b.i} · ${b.kind} · ${n} lines · ${b.ops} ops · ${b.start}`)}">${Number(b.i)}</button>`;
+            });
+            const Hh = ry(g.rows - 1) + NH + 4;
+            return `<div class="xp-cfgw" style="width:${Math.round(W * sc)}px;height:${Math.round(Hh * sc)}px"><div class="xp-cfg" id="fn-cfg-graph" style="width:${W}px;height:${Hh}px;transform:scale(${sc})"><svg width="${W}" height="${Hh}">${svg}</svg>${nodes}</div></div>`;
+        };
+        this.cfgLines = this.cfgLinesPref();
+        const order = blocks.map((b, k) => [b, g.row.get('r' + k), g.L.x.get('r' + k)]).sort((a, b) => a[1] - b[1] || a[2] - b[2]).map(x => x[0]);
+        el.innerHTML = `<p class="xp-hint">${blocks.length} Ghidra high-pcode blocks. Green outline: entry; tint by kind (conditional, red return, amber switch). Dashed arcs are back edges. Hover or click a block to see its lines, hover or click a line to see its blocks. <label class="cl-lab"><input type="checkbox" id="fn-cfg-lines"${this.cfgLines ? ' checked' : ''}> Lines</label></p>
+            <div class="cl-row"><div class="cl-gs${this.cfgLines ? ' cl-sync' : ''}" id="fn-cfg-gscroll">${draw(r => r * ROW)}</div>${this.cfgLines ? `<div class="cl-col" id="fn-cfg-col">${this.cfgColumnHtml(order)}</div>` : ''}</div>`;
+        el.querySelector('#fn-cfg-lines').onchange = e => {
+            try { localStorage.setItem('fnCfgLines', e.target.checked ? '1' : '0'); } catch (_) {}
+            this._cfgDone = false;
+            this.loadCfgPanel();
+        };
+        if (!this._cfgBound) {
+            this._cfgBound = true;
+            el.addEventListener('mouseover', e => this.cfgHover(e, true));
+            el.addEventListener('mouseout', e => this.cfgHover(e, false));
+            el.addEventListener('click', e => this.cfgClick(e));
+            el.addEventListener('pointerover', e => e.target.closest('#fn-cfg-col') && this.handleHoverMove(e, true));
+            el.addEventListener('pointerout', e => e.target.closest('#fn-cfg-col') && this.handleHoverMove(e, false));
+            // Code lines -> blocks: hover shows them in the graph, a click on the line number keeps them marked.
+            this.scrollEl.addEventListener('mouseover', e => this.cfgLineBlocks(e, false));
+            this.scrollEl.addEventListener('mouseout', () => this.cfgMark());
+            this.scrollEl.addEventListener('click', e => { if (e.target.closest('.gutter')) this.cfgLineBlocks(e, true); });
+        }
+        if (this.cfgLines) {
+            // Stretch the rows to the code: each row sits at the top of its first band, so the graph is as long as the lines.
+            const col = el.querySelector('#fn-cfg-col'), top = new Map();
+            blocks.forEach((b, k) => {
+                const band = col.querySelector(`.cl-band[data-lb="${Number(b.i)}"]`), r = g.row.get('r' + k);
+                if (band) top.set(r, Math.min(top.has(r) ? top.get(r) : Infinity, band.offsetTop / sc));
+            });
+            const ys = [];
+            for (let r = 0; r < g.rows; r++) {
+                if (top.has(r)) ys[r] = top.get(r);
+                else {
+                    let nxt = r + 1;
+                    while (nxt < g.rows && !top.has(nxt)) nxt++;
+                    const prev = r ? ys[r - 1] : 0, to = top.has(nxt) ? top.get(nxt) : prev + (nxt - r + 1) * ROW;
+                    ys[r] = prev + (to - prev) / (nxt - r + 1);
+                }
+                if (r) ys[r] = Math.max(ys[r], ys[r - 1] + ROW);
+            }
+            el.querySelector('#fn-cfg-gscroll').innerHTML = draw(r => ys[r]);
+        }
+        this.cfgSyncBind();
+        this.cfgMark();
+    },
+
+    // Graph and column scroll together: each band's top lines up with its node, in between they interpolate.
+    cfgSyncBind() {
+        const g = document.getElementById('fn-cfg-gscroll'), c = document.getElementById('fn-cfg-col');
+        if (!g || !c) return;
+        // Anchors are measured once per drawing (and after a window resize): measuring hundreds of bands on every scroll event is slow.
+        this._cfgAnchors = null;
+        if (!this._cfgResizeBound) {
+            this._cfgResizeBound = true;
+            window.addEventListener('resize', () => { this._cfgAnchors = null; });
+        }
+        const anchors = () => this._cfgAnchors || (this._cfgAnchors = measure());
+        const measure = () => {
+            const gt = g.getBoundingClientRect().top;
+            const pts = [...c.querySelectorAll('.cl-band')].map(band => {
+                const node = band.dataset.lb === undefined ? null : g.querySelector(`[data-cfb="${band.dataset.lb}"]`);
+                return { c: band.offsetTop, g: node ? node.getBoundingClientRect().top - gt + g.scrollTop - 4 : 0 };
+            }).sort((a, b) => a.c - b.c);
+            const cmax = c.scrollHeight - c.clientHeight, gmax = g.scrollHeight - g.clientHeight;
+            let top = 0;
+            const out = pts.filter(a => a.c < cmax).map(a => ({ c: a.c, g: (top = Math.min(gmax, Math.max(top, a.g))) }));
+            return [{ c: 0, g: 0 }, ...out, { c: cmax, g: gmax }];
+        };
+        const lerp = (x, A, from, to) => {
+            for (let i = 0; i < A.length - 1; i++) {
+                const a = A[i], b = A[i + 1];
+                if (x >= a[from] && x <= b[from]) return b[from] === a[from] ? a[to] : a[to] + (b[to] - a[to]) * (x - a[from]) / (b[from] - a[from]);
+            }
+            return A[A.length - 1][to];
+        };
+        let busy = null;
+        const follow = (src, dst, from, to) => src.addEventListener('scroll', () => {
+            if (busy === src) { busy = null; return; }
+            if (src === g && Date.now() < (this._cfgMute || 0)) { this._cfgMute = Date.now() + 150; return; }
+            const t = lerp(src.scrollTop, anchors(), from, to);
+            if (Math.abs(dst.scrollTop - t) > 1) { busy = dst; dst.scrollTop = t; }
+        });
+        follow(c, g, 'c', 'g');
+        follow(g, c, 'g', 'c');
+    },
+
+    cfgLinesPref() {
+        try { return localStorage.getItem('fnCfgLines') !== '0'; } catch (_) { return true; }
+    },
+
+    // "Code by block": lines grouped under the block they were assigned to, in graph reading order.
+    cfgColumnHtml(order) {
+        const { blockLines, rowOf, dom, conf, counts, blockFeats } = this.cfgMaps();
+        const byBlock = new Map(), loose = [];
+        for (const row of this.funcRows) {
+            const d = dom.get(row.line_idx);
+            if (d === null) loose.push(row.line_idx);
+            else (byBlock.get(d) || byBlock.set(d, []).get(d)).push(row.line_idx);
+        }
+        const known = new Set(order.map(b => b.i));
+        const chip = (b, n) => `<button class="cl-chip" data-lo="${Number(b)}" title="also touches block ${Number(b)}">b${Number(b)}${n > 1 ? '&times;' + Number(n) : ''}</button>`;
+        const lineHtml = ln => {
+            const row = rowOf.get(ln), cf = conf.get(ln), d = dom.get(ln);
+            const tag = cf === 'mixed' ? [...counts.get(ln)].filter(([b]) => b !== d).map(([b, n]) => chip(b, n)).join('')
+                : cf === 'inherit' ? '<span class="cl-hint" title="no op tokens on this line: assigned to the previous line\'s block">inherited</span>' : '';
+            const toks = row.tokens.map(t => window.renderTokenHtml(t, { inlineHoverHandlers: false })).join('');
+            return `<div class="cl-line c-${cf}" data-ln="${Number(ln)}"><span class="cl-num">${Number(ln)}</span><span class="cl-code">${toks || ' '}</span><span class="cl-tag">${tag}</span></div>`;
+        };
+        let html = '';
+        if (loose.length) html += `<div class="cl-band cl-none"><div class="cl-bh"><b>no block</b><span>${loose.length} lines before the first op</span></div>${loose.map(lineHtml).join('')}</div>`;
+        for (const b of order) {
+            const ls = byBlock.get(b.i) || [], mixed = ls.filter(l => conf.get(l) === 'mixed').length, inh = ls.filter(l => conf.get(l) === 'inherit').length;
+            const succ = b.out.filter(o => known.has(o)).map(o => 'b' + Number(o)).join(', ');
+            const range = ls.length ? `L${ls[0]}&ndash;${ls[ls.length - 1]}` : 'no lines';
+            html += `<div class="cl-band" data-lb="${Number(b.i)}"><div class="cl-bh"><b>b${Number(b.i)}</b><span class="cl-k k-${escapeAttr(b.kind)}">${escapeHtml(b.kind)}</span><span>${range}</span><span>${ls.length} lines${mixed ? `, ${mixed} mixed` : ''}${inh ? `, ${inh} inherited` : ''}</span><span>${(blockFeats.get(b.i) || []).size} feat</span><span>${succ ? '&rarr; ' + succ : 'exit'}</span><a href="#" class="cl-open" data-lopen="${Number(b.i)}">open in Code</a></div>${ls.map(lineHtml).join('')}</div>`;
+        }
+        return html;
+    },
+
+    cfgClick(e) {
+        const col = e.target.closest('#fn-cfg-col');
+        if (!col) {
+            const n = e.target.closest('[data-cfb]');
+            if (n) this.cfgSelect([Number(n.dataset.cfb)], !this.cfgLines);
+            if (n && this.cfgLines) this.cfgScroll(Number(n.dataset.cfb));
+            return;
+        }
+        const open = e.target.closest('[data-lopen]');
+        if (open) { e.preventDefault(); this.cfgSelect([Number(open.dataset.lopen)], true); return; }
+        if (e.target.closest('.token')) { this.onTokenClick(e); return; }
+        const chip = e.target.closest('[data-lo]');
+        if (chip) { this.cfgSelect([Number(chip.dataset.lo)]); this.cfgScroll(Number(chip.dataset.lo)); return; }
+        const line = e.target.closest('.cl-line');
+        const set = line ? this.cfgLineSet(Number(line.dataset.ln)) : e.target.closest('[data-lb]') ? [Number(e.target.closest('[data-lb]').dataset.lb)] : null;
+        if (!set) return;
+        this.cfgSelect(set);
+        this.cfgReveal(set[0]);
+    },
+
+    // Bring a block's node to the middle of the graph pane without dragging the code column along.
+    cfgReveal(b) {
+        const g = document.getElementById('fn-cfg-gscroll'), nd = g?.querySelector(`[data-cfb="${b}"]`);
+        if (!nd) return;
+        const gr = g.getBoundingClientRect(), nr = nd.getBoundingClientRect();
+        this._cfgMute = Date.now() + 600;
+        g.scrollTo({ top: nr.top - gr.top + g.scrollTop - g.clientHeight / 2, left: nr.left - gr.left + g.scrollLeft - g.clientWidth / 2, behavior: 'smooth' });
+    },
+
+    cfgLineSet(ln) {
+        const { dom, lineBlocks } = this.cfgMaps(), d = dom.get(ln);
+        return [...new Set([d, ...lineBlocks.get(ln)])].filter(b => b !== null && b !== undefined);
+    },
+
+    cfgScroll(b) {
+        const col = document.getElementById('fn-cfg-col'), band = col?.querySelector(`.cl-band[data-lb="${b}"]`);
+        if (band) col.scrollTo({ top: band.offsetTop - 4, behavior: 'smooth' });
+    },
+
+    cfgMark(extra) {
+        const marked = new Set([...(this.cfgSel || []), ...(extra || [])]);
+        document.querySelectorAll('#fn-cfg-graph .xp-cfpair, #fn-cfg-col .hi, #fn-cfg-col .target-highlight').forEach(x => x.classList.remove('xp-cfpair', 'hi', 'target-highlight'));
+        const dom = this._cfgMaps?.dom;
+        for (const b of marked) {
+            document.querySelector(`#fn-cfg-graph [data-cfb="${b}"]`)?.classList.add('xp-cfpair');
+            document.querySelector(`#fn-cfg-col .cl-band[data-lb="${b}"]`)?.classList.add('hi');
+        }
+        document.querySelectorAll('#fn-cfg-col .cl-line').forEach(l => marked.has(dom.get(Number(l.dataset.ln))) && l.classList.add('target-highlight'));
+    },
+
+    cfgLineBlocks(e, keep) {
+        const line = e.target.closest('.code-line');
+        if (!line || !this._cfgDone) return;
+        const blocks = [...(this.cfgMaps().lineBlocks.get(parseInt(line.querySelector('.line-num')?.innerText)) || [])];
+        if (keep) { this.cfgSel = blocks; this.cfgMark(); } else this.cfgMark(blocks);
+    },
+
+    // Mark blocks in the graph; with open, show their lines highlighted in the Code tab.
+    cfgSelect(blocks, open) {
+        this.cfgSel = blocks;
+        this.cfgMark();
+        if (!open) return;
+        const { blockLines } = this.cfgMaps();
+        const lines = blocks.flatMap(b => blockLines.get(b) || []).sort((a, b) => a - b);
+        window.targetLineSet = new Set(lines);
+        document.querySelectorAll('.cfg-tip').forEach(x => x.remove());
+        this.switchTab('code');
+        if (!lines.length) return;
+        // Drop the cached line elements so renderRows rebuilds them with target-highlight.
+        this.vContentEl.innerHTML = '';
+        const idx = this.funcRows.findIndex(r => r.line_idx === lines[0]);
+        this.scrollEl.scrollTop = Math.max(0, idx * this.rowH - this.scrollEl.clientHeight / 3);
+        this.onScroll();
+    },
+
+    cfgHover(e, on) {
+        const lb = e.target.closest('#fn-cfg-col [data-lb], #fn-cfg-col .cl-line, #fn-cfg-col [data-lo]');
+        if (lb) {
+            if (lb.contains(e.relatedTarget)) return;
+            const o = lb.closest('[data-lo]'), l = lb.closest('.cl-line'), band = lb.closest('[data-lb]');
+            this.cfgMark(!on ? [] : o ? [Number(o.dataset.lo)] : l ? this.cfgLineSet(Number(l.dataset.ln)) : [Number(band.dataset.lb)]);
+            return;
+        }
+        const n = e.target.closest('[data-cfb]');
+        if (!n || n.contains(e.relatedTarget)) return;
+        document.querySelectorAll('.cfg-tip').forEach(x => x.remove());
+        this.cfgMark();
+        if (!on) return;
+        const b = Number(n.dataset.cfb), { blockLines, rowOf } = this.cfgMaps();
+        this.cfgMark([b]);
+        const lines = (blockLines.get(b) || []).map(i => {
+            const row = rowOf.get(i);
+            return `${String(i).padStart(3)}  ${row.tokens.map(t => (window.renderTokenHtml ? window.renderTokenHtml(t, {}) : escapeHtml(t.text))).join('')}`;
+        });
+        const tip = document.createElement('div');
+        tip.className = 'xp-cfgtip cfg-tip';
+        tip.innerHTML = `<div class="xp-cfgpane"><div class="xp-ph">block ${b} &middot; ${lines.length} lines</div><pre class="c-code-container">${lines.join('\n') || 'no decompiled lines'}</pre></div>`;
+        document.body.appendChild(tip);
+        const r = tip.getBoundingClientRect();
+        tip.style.left = Math.max(4, Math.min(e.clientX + 14, innerWidth - r.width - 8)) + 'px';
+        tip.style.top = Math.max(4, Math.min(e.clientY + 14, innerHeight - r.height - 8)) + 'px';
+    },
+
     switchTab(tabId) {
         document.querySelectorAll('#function-view-tabs .bsim-tab').forEach(btn => btn.classList.remove('active'));
         document.querySelectorAll('.function-view-panel').forEach(panel => panel.style.display = 'none');
@@ -357,6 +684,33 @@ window.FunctionView = {
         // ponytail: no hash-routing for tabs here -- #L<line> hash is already owned by scrollToLine()
         if (tabId === 'neighbors') this.loadNeighborsPanel();
         if (tabId === 'callgraph') this.loadCallGraphPanel();
+        if (tabId === 'cfg') this.loadCfgPanel();
+        if (tabId === 'strings') this.loadStringsPanel();
+    },
+
+    async loadStringsPanel() {
+        if (this.stringsLoaded) return;
+        const body = document.getElementById('fn-str-body');
+        const md5 = this.params.md5 || this.params.file_md5;
+        const qs = new URLSearchParams({ collection: this.params.collection, md5, addr: this.params.address });
+        try {
+            const res = await fetch(`/api/strings/function?${qs}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load strings');
+            this.stringsLoaded = true;
+            this.fillStringsCount(data.strings.length);
+            body.innerHTML = data.strings.length
+                ? TableRenderers.renderFileStrings(data.strings, { collection: this.params.collection, md5, noRefs: true })
+                : '<tr><td colspan="6" style="text-align: center; color: var(--dim); padding: 20px;">No strings referenced by this function.</td></tr>';
+            if (window.TableSelection) new window.TableSelection('fn-str-table');
+        } catch (err) {
+            body.innerHTML = `<tr><td colspan="6" style="text-align: center; color:#f92672; padding: 20px;">${escapeHtml(err.message)}</td></tr>`;
+        }
+    },
+
+    fillStringsCount(n) {
+        const count = document.getElementById('fn-str-count');
+        if (count) { count.textContent = n; document.getElementById('fn-str-count-wrap').style.display = ''; }
     },
 
     async loadCallGraphPanel() {
@@ -549,7 +903,7 @@ window.FunctionView = {
         div.style.cssText = `width:190px; padding:5px 8px; border-radius:8px; border-left:3px solid ${border}; background:var(--card-bg, #222); font:12px/1.35 monospace; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.4);`;
 
         if (!raw || raw.is_external) {
-            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
+            div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold;">${name}${nameBadge(raw)}</div>${raw?.is_external ? `<div style="${lineCss} color:var(--dim,#888); font-size:9px;">EXT</div>` : ''}`;
             return div;
         }
 
@@ -558,7 +912,7 @@ window.FunctionView = {
         const nsHtml = raw.namespace ? `<span style="color:#fff; opacity:0.8;">${escapeHtml(raw.namespace)}::</span>` : '';
         const retHtml = raw.return_type ? `<span style="color:#ae81ff; opacity:0.85; font-size:9.5px;">${escapeHtml(raw.return_type)}</span>` : '';
 
-        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}</div>`
+        div.innerHTML = `<div style="${lineCss} color:${border}; font-weight:bold; font-size:12px;">${nsHtml}${name}${nameBadge(raw)}</div>`
             + `<div style="${lineCss} font-size:9.5px;">${retHtml} <span style="color:#fff; opacity:0.7;">(</span>${paramHtml}<span style="color:#fff; opacity:0.7;">)</span></div>`
             + fileHtml
             + this.callGraphMoreBadgeHtml(more);
@@ -668,20 +1022,127 @@ window.FunctionView = {
         tagList('fn-nbr-exclude-func-tag').forEach(t => qs.append('exclude_func_tag', t));
 
         try {
-            const res = await fetch(`/api/similarity/search?${qs.toString()}`);
+            const [res, live] = await Promise.all([
+                fetch(`/api/similarity/search?${qs.toString()}`),
+                this.nbrLive ? this.fetchLiveNeighbors(qs, collection, scope === 'pool' ? poolId : null) : null,
+            ]);
             if (!res.ok) throw new Error("Neighbors search failed");
             const data = await res.json();
-            const items = data.pairs || data.items || data.results || [];
+            let items = data.pairs || data.items || data.results || [];
+            let total = data.total ?? items.length;
+            if (live && live.pairs.length) {
+                // Stored rows win: discover already leaves stored pairs out, this
+                // only guards against an edge saved between the two requests.
+                const anchor = live.pairs[0].id1;
+                const shown = new Set(items.map(p => p.id1 === anchor ? p.id2 : p.id1));
+                const fresh = live.pairs.filter(p => !shown.has(p.id2));
+                items = items.concat(fresh).sort((a, b) => b.score - a.score);
+                total += live.total;
+            }
             const html = window.renderTopCorrelations ? window.renderTopCorrelations(items, {}, file_md5, address) : '';
             tbody.innerHTML = html || '<tr><td colspan="11" style="text-align: center; color: var(--dim); padding: 20px;">No similar functions found.</td></tr>';
             const countEl = document.getElementById('fn-nbr-count');
-            if (countEl) countEl.innerText = data.total ?? items.length;
+            if (countEl) countEl.innerText = total;
             const countWrap = document.getElementById('fn-nbr-count-wrap');
             if (countWrap) countWrap.style.display = 'inline';
             if (window.TableSelection) new window.TableSelection('fn-nbr-results-table');
         } catch (e) {
             console.error(e);
             tbody.innerHTML = `<tr><td colspan="11" style="text-align: center; color:#f92672; padding: 20px;"><i class="fa-solid fa-circle-exclamation"></i> Error loading similar functions: ${e.message}</td></tr>`;
+        }
+    },
+
+    /**
+     * Live (below-threshold) partners for the Similar tab: the stored-search
+     * query with the anchor's collection, the Score min only when it is below
+     * the build threshold (the server clamps it to the discovery floor).
+     * Returns {pairs, total} or null, and writes the outcome to the status line.
+     */
+    async fetchLiveNeighbors(qs, collection, poolId) {
+        const status = document.getElementById('fn-nbr-live-status');
+        const liveQs = new URLSearchParams(qs);
+        liveQs.set('collection', collection);
+        if (poolId) liveQs.set('pool', poolId); else liveQs.delete('pool');
+        const buildMin = parseFloat(window.defaultMinScore ? window.defaultMinScore() : '0.9');
+        if (!(parseFloat(liveQs.get('min_score')) < buildMin)) liveQs.delete('min_score');
+        try {
+            const res = await fetch(`/api/similarity/discover?${liveQs.toString()}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            if (data.below_min_features) {
+                if (status) status.textContent = `Under ${data.min_features} features: matched by FunctionID hash only, no BSim discovery.`;
+                return null;
+            }
+            if (status) status.innerHTML = `<i class="fa-solid fa-satellite-dish"></i> ${data.total} live match${data.total === 1 ? '' : 'es'} from ${Number(data.min_score).toFixed(2)} (floor ${Number(data.floor).toFixed(2)}), not saved`;
+            return { pairs: data.pairs || [], total: data.total || 0 };
+        } catch (e) {
+            if (status) status.textContent = `Live discovery failed: ${e.message}`;
+            return null;
+        }
+    },
+
+    /** Source pill: 'live' adds live (below-threshold) rows to the stored ones. */
+    setLive(on) {
+        this.nbrLive = on;
+        const bar = document.getElementById('fn-nbr-live-bar');
+        if (bar) bar.style.display = on ? 'flex' : 'none';
+        const status = document.getElementById('fn-nbr-live-status');
+        if (status && !on) status.textContent = '';
+        // Drop Score min to the discovery floor while live is on, so a saved
+        // (sub-threshold) edge stays visible as a stored row after the refresh.
+        const minEl = document.getElementById('fn-nbr-min-score');
+        const buildMin = window.defaultMinScore ? window.defaultMinScore() : '0.9';
+        const floor = String(window.APP_CONFIG?.similarity?.discovery_min_score ?? 0.5);
+        if (minEl) {
+            if (this.nbrLive && !(parseFloat(minEl.value) < parseFloat(buildMin))) minEl.value = floor;
+            else if (!this.nbrLive && minEl.value === floor) minEl.value = buildMin;
+        }
+    },
+
+    /** Partner ids of the live rows in the table selection. */
+    selectedLivePartners() {
+        const sel = new Set(window.getSelectedTableIds ? window.getSelectedTableIds() : []);
+        return [...document.querySelectorAll('#fn-nbr-results-tbody tr[data-live="1"]')]
+            .filter(tr => sel.has(tr.dataset.id))
+            .map(tr => tr.dataset.id2);
+    },
+
+    /** Save live rows as real edges: `ids` given (context menu) or the selected rows. */
+    async saveDiscovered(ids) {
+        const status = document.getElementById('fn-nbr-live-status');
+        const partnerIds = ids || this.selectedLivePartners();
+        if (!partnerIds.length) {
+            const msg = 'Select live rows first (click, shift/ctrl-click or drag).';
+            if (typeof showToast === 'function') showToast(msg, 'warning');
+            else if (status) status.textContent = msg;
+            return;
+        }
+        const poolId = window.getRoutingState ? window.getRoutingState().pool : null;
+        const scope = document.getElementById('fn-nbr-scope')?.value || (poolId ? 'pool' : 'collection');
+        const body = {
+            collection: this.params.collection || '',
+            md5: this.params.md5 || this.params.file_md5,
+            address: this.params.address,
+            partner_ids: partnerIds,
+        };
+        if (scope === 'pool' && poolId) body.pool = poolId;
+        try {
+            const res = await fetch('/api/similarity/discover/persist', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            const saved = (data.saved || []).length;
+            const skipped = (data.skipped || []).length;
+            await this.searchNeighbors();
+            const msg = `Saved ${saved} edge${saved === 1 ? '' : 's'} (tag: discovered)${skipped ? `, skipped ${skipped}: ${[...new Set(data.skipped.map(s => s.reason))].join(', ')}` : ''}`;
+            if (typeof showToast === 'function') showToast(msg, saved ? 'success' : 'warning');
+            else if (status) status.textContent = msg;
+        } catch (e) {
+            if (typeof showToast === 'function') showToast(`Save failed: ${e.message}`, 'error');
+            else if (status) status.textContent = `Save failed: ${e.message}`;
         }
     },
 
@@ -705,6 +1166,10 @@ window.FunctionView = {
             if (value === 'overall') params.delete('score_axis'); else params.set('score_axis', value);
             window.history.replaceState(window.history.state, '', window.location.pathname + (params.toString() ? `?${params}` : '') + window.location.hash);
         }
+        if (inputId === 'fn-nbr-source') {
+            this.setLive(value === 'live');
+            this.renderNeighborPillGroup(inputId, containerId, this.SOURCE_OPTIONS, '#ae81ff');
+        }
         if (inputId === 'fn-nbr-scope') this.renderScopePills();
         else if (inputId === 'fn-nbr-score-axis') this.renderNeighborPillGroup(inputId, containerId, this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         else if (inputId === 'fn-nbr-cross-binary') this.renderNeighborPillGroup(inputId, containerId, this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
@@ -717,6 +1182,11 @@ window.FunctionView = {
         { v: 'library', label: 'Library', icon: 'fa-solid fa-book' },
         { v: 'content', label: 'Content', icon: 'fa-solid fa-file-lines' },
     ],
+    SOURCE_OPTIONS: [
+        { v: 'stored', label: 'Stored', icon: 'fa-solid fa-database' },
+        { v: 'live', label: 'Stored + Live', icon: 'fa-solid fa-satellite-dish' },
+    ],
+
     CROSS_BINARY_OPTIONS: [
         { v: '', label: 'All Binaries', icon: 'fa-solid fa-globe' },
         { v: 'false', label: 'Same Binary', icon: 'fa-solid fa-file' },
@@ -739,6 +1209,7 @@ window.FunctionView = {
         this.renderScopePills();
         this.renderNeighborPillGroup('fn-nbr-score-axis', 'fn-nbr-score-axis-pills', this.SCORE_AXIS_OPTIONS, 'var(--info, #3b82f6)');
         this.renderNeighborPillGroup('fn-nbr-cross-binary', 'fn-nbr-cross-binary-pills', this.CROSS_BINARY_OPTIONS, 'var(--warning, #d97706)');
+        this.renderNeighborPillGroup('fn-nbr-source', 'fn-nbr-source-pills', this.SOURCE_OPTIONS, '#ae81ff');
     },
 
     copyFunctionCode(btn) {
@@ -898,6 +1369,18 @@ window.FunctionView = {
             node = node.parentNode;
         }
         return null;
+    },
+
+    onTokenClick(e) {
+        const token = this.findToken(e);
+        if (!token) return;
+        const calledFuncId = token.getAttribute('data-called-func-id');
+        if (calledFuncId) {
+            this.navigateToFunction(calledFuncId, token.getAttribute('data-is-external') === 'true', e);
+            return;
+        }
+        const hashes = token.getAttribute('data-hashes');
+        if (hashes && window.toggleLock) window.toggleLock(hashes, token);
     },
 
     handleHoverMove(e, state) {

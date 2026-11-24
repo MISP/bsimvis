@@ -245,6 +245,7 @@ class ScanService:
             self.key(scan_id, "raw"),
             self.key(scan_id, "doc"),
             self.key(scan_id, "meta"),
+            self.key(scan_id, "strings"),
         ]
         keys += [
             self.key(scan_id, "chunk", str(i))
@@ -263,6 +264,11 @@ class ScanService:
         return bool(doc)
 
     def store_meta(self, scan_id, file_meta, modules):
+        # The string table is cached under its own key, like a chunk.
+        file_meta = dict(file_meta)
+        strings = file_meta.pop("strings", None)
+        if strings is not None:
+            self.q.setex(self.key(scan_id, "strings"), cache_ttl(), json.dumps(strings))
         self.q.setex(
             self.key(scan_id, "meta"),
             cache_ttl(),
@@ -337,6 +343,10 @@ class ScanService:
             }
         )
 
+        # Cached strings travel in the file meta; INDEX_META writes them like
+        # it does for a freshly analysed file.
+        strings = _decode(self.q.get(self.key(scan_id, "strings")))
+
         get_raw_redis().set(f"{collection}:file:{md5}:raw", raw)
 
         job_service = JobService()
@@ -375,7 +385,9 @@ class ScanService:
                 {
                     "collection": collection,
                     "file_id": None,
-                    "file_meta": file_meta,
+                    "file_meta": (
+                        {**file_meta, "strings": strings} if strings else file_meta
+                    ),
                     "num_functions": num_functions,
                     "total_features": total_features,
                 },
@@ -751,7 +763,9 @@ class ScanService:
             if t["fid"] in left_a and t["features"]
         }
         vectors.update(load_vectors(self.r, left_b))
-        return discover_edges(vectors, left_a, left_b, algo, min_score, max_df=max_df)
+        return discover_edges(
+            vectors, left_a, left_b, algo, min_score, max_df=max_df, greedy=True
+        )
 
     def _enrich_clusters(self, collection, diff, meta_b, params, names_a):
         """Attach, per matched row, the cluster the scan function would land in.

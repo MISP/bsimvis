@@ -1,6 +1,6 @@
 venv/
 .venv/
-bsimvis/app/static/vendor/
+bsimvis/app/static/vendor
 trash/
 archive/
 pyrightconfig.json

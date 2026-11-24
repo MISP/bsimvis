@@ -10,6 +10,7 @@ All endpoints are prefixed with `/api`. Unless noted, `collection` defaults to `
 - [Collections & Batches](#collections--batches)
 - [Files](#files)
 - [Functions](#functions)
+- [Strings](#strings)
 - [Features](#features)
 - [Feature Indexing](#feature-indexing)
 - [Search Utilities](#search-utilities)
@@ -176,6 +177,7 @@ Searches functions with rich filtering, sorting, and export. Accepts `pool` to t
 - **Cluster:** `cluster_id`, `cluster_uuid`, `cluster_name`, `cluster_stability`.
 - **Inherited file metadata:** `first_seen`, `last_seen`, `filetype`, `avtype`, `yara`, `cc_ip`, `file_names`, `type`, `entry_date`, `file_date` — indexed at function level and filterable here.
 - **Tags:** `tag`, `static_tag`, `user_tag`, and `func_`/`file_`-scoped variants, each with an `exclude_` counterpart. Repeatable.
+- **Strings:** `strings` — substring (or `*` glob) over the strings the function references; opt-in, a bare `q` never matches strings. `file/search` takes the same param for files.
 - **Filters:** `min_features`, `min_callers`, `min_callees`, `min_cohesion` (default 0.95 — clusters below the threshold are dropped from the response).
 - **Paging/sort:** `sort_by` (`id` (default) or a numeric function-level index: `bsim_features_count` | `instruction_count` | `caller_count` | `callee_count` | `entry_date` | `file_date` | `batch_order` | `cluster_stability`), `sort_order` (default `desc`), `offset`, `limit`, `pool_limit` (default 1000000), `format`.
 
@@ -200,6 +202,35 @@ Call graph for a function: callers and callees with function metadata.
 ### `GET /api/function/relations`
 Bulk relation lookup for a set of function IDs across call and similarity edges.
 - **Params:** `collection`, `id` (repeatable), `algo`.
+
+---
+
+## Strings
+
+Ghidra-defined strings (length >= `strings.min_length`, at most `strings.max_per_file`), stored per file and cross-referenced to the functions that use them. Only analyses run after the feature shipped have strings. `collection` may be replaced by `pool` on every read route.
+
+### `GET /api/strings/file`
+A file's string table, filtered, sorted and paged server-side.
+- **Params:** `collection` or `pool`, `md5`, `q` (substring, `*` = glob), `encoding`, `section`, `tag` (analyzer or user tag substring), `yara` (`true` = a YARA rule hit it), `referenced` (`true`/`false`), `min_length`, `sort_by` (`addr` | `length` | `value` | `refs` | `encoding` | `section`), `sort_order`, `offset`, `limit` (max 5000).
+- **Returns:** `{total, offset, limit, strings: [{id, value, encoding, addr, section, length, tags, rules, user_tags, funcs}], rules}`; `rules` describes each YARA rule id in `strings[].rules`.
+
+### `GET /api/strings/function`
+Strings one function references. **Params:** `collection`/`pool`, `md5`, `addr`.
+
+### `GET /api/strings/functions`
+Pivot: functions (and files) sharing a string, across the collection or every member of a pool. **Params:** `collection`/`pool`, `id` or `value`, `offset`, `limit`.
+
+### `GET /api/strings/search`
+Collection-wide listing: one row per distinct string, aggregated over all files of the collection (or every member of a pool). Paged, filtered and sorted server-side.
+- **Params:** `collection` or `pool`, `q` (substring, `*` = glob), `encoding`, `section`, `tag` (analyzer tag substring), `yara` (`true`), `referenced` (`true`/`false`), `min_length`, `sort_by` (`files` (default) | `functions` | `length` | `value` | `encoding`), `sort_order` (default `desc`), `offset`, `limit` (max 5000).
+- **Returns:** `{total, offset, limit, items: [{id, value, length, encodings, sections, tags, rules, files, functions}]}`.
+- The UI pivots a row to `/collections/<c>/functions?strings=<value>` and `/collections/<c>/files?strings=<value>`; both are the normal search tables.
+
+### Tagging strings
+`POST /api/tags/add` and `/remove` (and `bulk_add` / `bulk_remove`) accept `entity_type: "string"` with `entity_id` = `<collection>:string:<md5>:<addr>`. Analyst tags live on the string's record; YARA rule provenance for a string is recorded under the same entity id.
+
+### `GET /api/scan/<scan_id>/strings`
+The scanned file's cached strings (same filters as `strings/file`). `POST /api/scan/<id>/commit` writes them into the collection.
 
 ---
 
@@ -376,6 +407,17 @@ Searches binary similarity pairs with filtering and sorting. Accepts `pool`.
 
 ### `GET /api/bin_sim/diff`
 Same unified diff behavior as `/api/diff`, plus `algo`. See [Diff](#diff) for filters, `table` paging and `view=sankey`.
+
+### `GET /api/bin_sim/nway/facets`
+Inline function diff of one N-way row (the panel a row of the N-way table expands into). Takes the member params of `/api/bin_sim/nway` (`md5s`/`cluster_uuid`, `collection`/`pool`, `mode`, `min_edge`, `columns`, ...) plus `fids`, the row's function ids (at least 2). Nothing is extracted again: everything comes from stored callees, decompiled tokens and metadata. Cached server-side per row.
+- **Returns:** `functions` (id, letter A..N, file, address, name, instruction count, tags), `similarity` (N x N matcher scores, `null` = no match), `reference` (index of the medoid), `facets` (`strings`, `apis`, `callees`, `consts`: items with a presence `mask` string and `count`, plus `total`/`in_all`; `skipped` when the row is too big), `shape` (per-function counts, `off` flags values >20% from the median), `consensus`, `level` and `limits`.
+- **Strings** come from `string_service.function_strings` when that module exists, otherwise the facet is empty. **APIs** are the `ext:` callees, **callees** are grouped by the N-way row they belong to (else by name), **constants** are numeric literals in the decompiled source.
+- **Levels:** `full` up to `nway.code_max_functions` (100) functions, `facets` up to `nway.facet_max_functions` (300, no code blocks), `light` beyond (call-graph facets and metadata shape only). Code is compared on at most `nway.max_code_lines` lines and `nway.max_code_blocks` blocks per function (defaults 20000 and 2000).
+- **`consensus`:** each function is cut into blocks (signature, compound statements, straight runs) and matched to the reference's blocks by token-bag and BSim-feature similarity, in any order. `blocks[]` has the reference text, a deterministic `title`, `cells[j]` (`st` = same / mod / moved / restr / miss, `sim`, `segs`, `into`) and `groups[]` (functions with an identical variant). `funcs[j]` is the whole of function j as ordered segments (`refs`, token `text` runs with a changed flag, `x` for blocks with no counterpart); `extras[]` are those blocks.
+- **Errors:** 400 (fewer than 2 `fids`), 404 `unknown_functions`.
+
+### `GET /api/bin_sim/nway/facets/titles`
+Short LLM titles for the reference blocks of a row (same params as `/nway/facets`). Never waits for the model: returns `{"status": "off" | "pending" | "ready" | "failed", "titles": {"b1": "..."}}`. The first call after a cache miss starts one batched background call; poll while `pending`. `off` when `llm.ollama_url` is not configured. Cached in Redis (`nway:titles:{sha1 of the reference block texts}`, 30 days) and in process.
 
 ### `POST /api/bin_sim/reindex`
 Rebuilds secondary indexes for existing binary similarity pairs (backfill).

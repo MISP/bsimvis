@@ -41,14 +41,14 @@
     # cluster: the shallowest surviving ancestor whose cohesion clears
     # cohesion_cut, not just its deepest one.
     # hdbscan: legacy path, kept for comparison/rollback.
-    engine = "threshold_uf"
+    engine = "hierarchical_uf"
     # bin_engine also supports hierarchical_snn: hierarchical_uf with
     # shared-nearest-neighbor overlap, over binary (file) similarity.
     # Same engines, over binary (file) similarity instead of function
     # similarity -- see bin_cluster_service.py. bin_* keys below tune it;
     # non-bin_-prefixed keys above (cohesion_cut, epsilon, min_cluster_size,
     # etc.) are shared with the func-level engines.
-    bin_engine = "threshold_uf"
+    bin_engine = "hierarchical_snn"
     bin_uf_threshold = 0.1
     uf_threshold = 0.98
     cohesion_cut = 0.9
@@ -74,7 +74,8 @@
     # overridden per-request via `enable`/`disable` (CLI: --enable/--disable;
     # API: repeatable `enable`/`disable` query params on /api/file/upload).
     # Choices: "FunctionID", "boilerplate", "capa", "yara", "rulezet".
-    enabled = []
+    # capa (slow on big binaries) and rulezet (needs `bsimvis rulezet sync`) are opt-in.
+    enabled = ["FunctionID", "boilerplate", "yara"]
 
 [bsim]
     # Which signature/weights profile to use. See doc/bsim_signature_settings.md.
@@ -107,49 +108,85 @@
         settings = 0x49
         weights = "lshweights_cpool.xml"
 
+[strings]
+    # Ghidra-defined strings stored per file (new analyses only).
+    min_length = 4
+    # Strings kept per file, in address order; the rest are dropped.
+    max_per_file = 10000
+
+[yara_editor]
+    # Live rule workbench (/yara). The negative side is sampled to these caps;
+    # "Full sweep" lifts them by running a job over every file.
+    neg_cap_files = 500
+    neg_cap_mb = 500
+    # Files scanned on the target side, and negatives considered before sampling.
+    target_cap_files = 2000
+    neg_pool_cap = 20000
+    scan_timeout = 20
+    # Hit files whose offsets are mapped to functions / strings.
+    land_files = 20
+
 [similarity]
     top_k = 1000
     min_score = 0.9
+    # A batch build_sim with at least shard_min_functions unbuilt functions splits
+    # into build_shards parallel jobs (same result, ~8x faster on idle workers).
+    # 0 or 1 = always one serial job.
+    build_shards = 8
+    shard_min_functions = 5000
     # min_features: BSim floor. Functions below it match by exact FunctionID hash
     # instead (BSim is false-positive-prone on tiny funcs). 10 = canonical default.
     min_features = 10
-    algo = "unweighted_cosine"
+    # weighted_cosine weights features by rarity (BSim IDF); it separated families best in
+    # the bench and on Mirai. A collection keeps the algo of its first build.
+    algo = "weighted_cosine"
     # min_score above governs FUNCTION edges only. build_bin_sim has no
     # build-time gate of any kind: it writes a doc for every pair it sweeps, so
     # the floor on what you SEE is this one, applied at read time in the UI.
     # (It once took a `min_cohesion` argument that read like such a gate but
     # was never consulted; that argument is gone.)
     file_min_score = 0.0
-    # How a matched function pair counts toward the FILE score. false (default):
+    # How a matched function pair counts toward the FILE score. false:
     # by its own similarity, so the score is a feature-weighted similarity mean.
     # true: every accepted match counts as a full 1.0, so the score becomes
     # feature-weighted match coverage -- how much of the two binaries matched at
-    # all, not how well. Affects what the collection and pool builders store;
+    # all, not how well (default). Affects what the collection and pool builders store;
     # the comparison view can also try it per request (runtime greedy matching,
     # `unweighted=1`) without rebuilding anything. Scores built under the two
     # settings are not comparable, so rebuild bin_sim after flipping it.
-    unweighted_match = false
+    unweighted_match = true
     # Stored function edges only exist for pairs BSim proposed above min_score
     # above, so a rewritten function leaves no edge and the file score never
     # counts it. true: build_bin_sim re-matches whatever the stored edges could
     # not place, straight from the tf vectors, at discovery_min_score. Costs one
     # extra sparse sweep per pair over the unmatched functions only; rebuild
     # bin_sim after flipping it.
-    discovery = false
-    discovery_min_score = 0.5
+    discovery = true
+    discovery_min_score = 0.4
     # Drop features carried by more than this share of the partner binary's
     # functions. 1.0 (default) drops nothing and the sweep is exact; lower it
     # only if a boilerplate-heavy collection makes discovery too slow.
     discovery_max_df = 1.0
 
 
+[nway]
+# N-way file diff runs in the request, so it is capped. Over either cap the
+# endpoint answers 413 and the UI points at smaller clusters.
+max_members = 1000
+max_functions = 1000000
+# Above sample_above files, stored mode reads each file's pair_k best-scored
+# partners plus pair_random random ones instead of every file pair (pair_k = 0
+# reads them all). Rows still chain across partners; support counts pairs read.
+sample_above = 100
+pair_k = 16
+pair_random = 4
+
 [llm]
     ollama_url = "http://localhost:11434"
     model = "qwen3.6:35b"
+    # One context size for every call: Ollama reloads the model each time it changes.
+    num_ctx = 65536
     prompt = "Act as a senior malware reverse engineer. In at most two sentences, state the function's observed purpose and the decisive code evidence. If its purpose cannot be established, say so without suggesting possibilities. Do not discuss vulnerabilities or hypothetical impact."
-    # Ollama defaults to a 4096-token window and silently truncates past it;
-    # the analysis rules alone are ~1.5k tokens.
-    num_ctx = 8192
 
 # Per-task generation settings; anything unset keeps the built-in default
 # (think = false, temperature = 0.1). Tasks: summary, tag, tag_batch, triage,
@@ -175,6 +212,14 @@
         "-XX:MinHeapFreeRatio=10",
         "-XX:MaxHeapFreeRatio=30",
     ]
+
+[capa]
+    # Address-space cap (RLIMIT_AS) for the capa subprocess, which runs inside
+    # the worker's cgroup next to the Ghidra JVM. vivisect on a large x86-64
+    # binary grew past 8 GB (imp_amd64, vr) and got the whole worker OOM-killed.
+    # Over the cap capa dies of MemoryError and the file is analysed without
+    # capa tags. 0 = no cap. Raise together with WORKER_MEMORY_MAX.
+    max_mem_mb = 4096
 
 [rulezet]
 # Mirror of rulezet.org's YARA rules, built by `bsimvis rulezet sync`.

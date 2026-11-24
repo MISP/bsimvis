@@ -573,10 +573,10 @@ window.ScanView = {
                     </div>
                 </div>
                 <div style="display:flex; gap:10px;">
-                    <button onclick="window.ScanViewInstance.openCommit()" ${running || doc.committed || doc.container ? 'disabled' : ''} style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer; ${running || doc.committed || doc.container ? 'opacity:0.4; cursor:not-allowed;' : ''}">
+                    <button onclick="window.ScanViewInstance.openCommit()" ${running || doc.committed || doc.container ? 'disabled' : ''} class="ui-button hdr-btn primary">
                         <i class="fa-solid fa-database"></i> Commit
                     </button>
-                    <button onclick="window.ScanViewInstance.discard()" style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#f87171; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer;">
+                    <button onclick="window.ScanViewInstance.discard()" class="ui-button hdr-btn danger">
                         <i class="fa-solid fa-trash-can"></i> Discard
                     </button>
                 </div>
@@ -673,9 +673,9 @@ window.ScanView = {
             const ax = axisMeta[axis] || { label: axis, icon: 'fa-solid fa-layer-group', color: 'var(--text)' };
 
             return `
-            <tr style="border-bottom:1px solid var(--border);">
+            <tr style="border-bottom:1px solid var(--border);" data-entity-data='${escapeAttr(JSON.stringify({ cluster_id: c.cluster_id, cluster_uuid: c.cluster_uuid, cluster_name: c.cluster_name, axis, collection: scope.collection, node_type: 'file' }))}' oncontextmenu="EntityRenderer.handleContextMenu(event, 'bin_cluster', this)">
                 <td style="padding:12px; vertical-align:top; font-weight:bold; color:${ax.color}; white-space:nowrap; width:1px;"><i class="${ax.icon}" style="margin-right:6px;"></i>${escapeHtml(ax.label)}</td>
-                <td style="padding:12px; vertical-align:top;"><a href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a><div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div></td>
+                <td style="padding:12px; vertical-align:top;"><a data-cluster-name="${escapeAttr(c.cluster_uuid)}" href="${escapeAttr(url)}" onclick="Nav.openPath(this.href, event)" style="color:var(--accent); text-decoration:none; font-weight:600; display:inline-block; word-break:break-word; max-width:250px;">${escapeHtml(c.cluster_name || c.cluster_id || c.cluster_uuid)}</a>${clusterNameSource(c, axis)}<div style="font-size:0.72rem; color:var(--dim); margin-top:4px;">${Number(c.member_count || 0)} members · via ${Number((c.via || []).length)}</div></td>
                 <td style="padding:12px; vertical-align:top; text-align:right;">${scanScoreCell(fit)}${c.affinity_exact === false ? `<div style="font-size:0.68rem; color:var(--dim);">sampled ${Number(c.affinity_sample_size || 0)}</div>` : ''}</td>
                 <td style="padding:12px; vertical-align:top; text-align:right;">${scanScoreCell(c.cluster_affinity)}</td>
                 <td style="padding:12px; vertical-align:top; text-align:right;">${scanScoreCell(maxSim)}</td>
@@ -853,7 +853,7 @@ window.ScanView = {
             <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--dim); cursor:pointer;" title="A lean scan skipped some tagging modules; Ghidra has to run again to add them">
                 <input type="checkbox" id="scan-commit-topup" checked> Tag top-up
             </label>
-            <button onclick="window.ScanViewInstance.commit()" style="background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.35); color:#10b981; padding:8px 18px; border-radius:6px; font-size:0.82rem; font-weight:700; cursor:pointer;">
+            <button onclick="window.ScanViewInstance.commit()" class="ui-button hdr-btn primary">
                 <i class="fa-solid fa-database"></i> Ingest, no re-analysis
             </button>
             <div id="scan-commit-error" style="flex-basis:100%; color:#f87171; font-size:0.8rem;"></div>

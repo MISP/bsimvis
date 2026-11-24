@@ -128,6 +128,31 @@ These are externally standardised. They are recorded verbatim, not remapped
 into `category:`, precisely because their value is that they match what other
 tools emit.
 
+## Metadata-derived tags
+
+`av:` and `ip:` are imported from CSV metadata columns (`avtype` and `cc_ip`)
+and remain orthogonal to the main four-axis taxonomy — they do not appear on
+any Sankey axis.
+
+**AV tags** (`av:<vendor>:<family>#<signature>`):
+```
+av:clamav:mirai#Unix.Trojan.Mirai-7100807-0
+av:unknown:trojan#Generic.Trojan.Variant.A
+```
+
+ClamAV signatures auto-detected by regex and mapped to `vendor: clamav`; others
+default to `vendor: unknown`. The raw label is preserved after `#` for
+reference.
+
+**IP tags** (`ip:<address>`):
+```
+ip:192.0.2.1
+ip:10.0.0.5
+```
+
+Set via CSV metadata or inline during upload. Used for network-based
+attribution / clustering, read-only in the UI (not emitted by LLM).
+
 ## Migration
 
 One-shot rewrite of every tag id plus a reindex. Old ids do not survive.

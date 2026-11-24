@@ -144,7 +144,7 @@ window.SearchPalette = (function () {
     /** Appends one streamed group, keeping the current selection where it is. */
     function appendGroup(g) {
         if (!g.items || !g.items.length) return;
-        groups.push({ kind: g.kind, items: g.items, more: g.items.length >= LIMIT, loading: false });
+        groups.push({ kind: g.kind, items: g.items, views: g.views || [], more: g.items.length >= LIMIT, loading: false });
         render();
     }
 
@@ -155,7 +155,8 @@ window.SearchPalette = (function () {
         flat = [];
         box.innerHTML = groups.map((g, gi) => {
             const meta = KIND_META[g.kind] || { label: g.kind, icon: 'fa-circle', color: 'var(--accent)' };
-            let html = `<div style="padding:8px 16px 4px; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:${meta.color};">${escapeHtml(meta.label)}</div>`;
+            let html = `<div style="padding:8px 16px 4px; font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:${meta.color}; display:flex; gap:8px; align-items:baseline;">
+                <span>${escapeHtml(meta.label)}</span>${viewLinks(g, meta)}</div>`;
             html += g.items.map(it => { flat.push(it); return rowHtml(it, flat.length - 1, meta); }).join('');
             if (g.more) {
                 flat.push({ more: gi });
@@ -182,6 +183,8 @@ window.SearchPalette = (function () {
             if (mine !== seq) return;
             const all = ((data.groups || []).find(x => x.kind === g.kind) || {}).items || [];
             g.items = g.items.concat(all.slice(shown));
+            const v = ((data.groups || []).find(x => x.kind === g.kind) || {}).views;
+            if (v && v.length) g.views = v;
             g.more = all.length >= want;
         } catch (e) {
             if (mine !== seq) return;
@@ -189,6 +192,24 @@ window.SearchPalette = (function () {
         }
         g.loading = false;
         render();
+    }
+
+    /** "Files in A · B": one link per collection with hits, to that collection's full list view. */
+    function viewLinks(g, meta) {
+        // Only same-origin collection paths; anything else from the server is dropped.
+        const ok = g.views.filter(v => typeof v.url === 'string' && v.url.startsWith('/collections/'));
+        if (!ok.length) return '';
+        const links = ok.map(v => `<a href="${escapeHtml(v.url)}" onmousedown="event.preventDefault()" onclick="SearchPalette.go(event, this)"
+            style="color:var(--dim); text-decoration:underline; text-transform:none;" title="Open the ${escapeHtml(meta.label.toLowerCase())} view">${escapeHtml(v.collection)}</a>`);
+        return `<span style="margin-left:auto; text-transform:none; letter-spacing:0; color:var(--dim);">${escapeHtml(meta.label)} in ${links.join(' · ')} →</span>`;
+    }
+
+    function go(e, a) {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // browser opens a new tab
+        e.preventDefault();
+        close();
+        const url = a.getAttribute('href');
+        if (window.Nav) Nav.openPath(url, null); else window.location.href = url;
     }
 
     function rowHtml(it, idx, meta) {
@@ -310,5 +331,5 @@ window.SearchPalette = (function () {
         }
     });
 
-    return { show, close, open, isOpen };
+    return { show, close, open, isOpen, go };
 })();

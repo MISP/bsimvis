@@ -569,6 +569,16 @@ def cluster_bookmarks(r, col, limit=20):
 # --- Unified search -------------------------------------------------------
 
 
+# kind -> (list view path, the URL param that view forwards to the same search route)
+_VIEWS = {
+    "files": ("files", "q"),
+    "functions": ("functions", "q"),
+    "strings": ("strings", "q"),
+    "function_strings": ("functions", "strings"),
+    "batches": ("batches", "q"),
+}
+
+
 def _group(kind, items, mapper, limit):
     return {"kind": kind, "items": [mapper(i) for i in items[:limit]]}
 
@@ -680,7 +690,21 @@ def _search_groups(q, limit, scope, kind=None):
                 items.append(it)
             if len(items) >= limit:
                 break
-        return _group(kind, items, mapper, limit) if items else None
+        if not items:
+            return None
+        g = _group(kind, items, mapper, limit)
+        view = _VIEWS.get(kind)
+        if view:
+            path, param = view
+            seen = list(dict.fromkeys(i["_collection"] for i in items[:limit]))
+            g["views"] = [
+                {
+                    "collection": c,
+                    "url": f"/collections/{quote(c, safe='')}/{path}?{param}={quote(q, safe='')}",
+                }
+                for c in seen
+            ]
+        return g
 
     fans = [
         (

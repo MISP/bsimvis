@@ -3115,6 +3115,23 @@ def run_all_tests():
             only_kinds == ["files"],
             str(only_kinds),
         )
+        views = ((only or {}).get("groups") or [{}])[0].get("views", [])
+        check(
+            "unified search files group links its collection's files view",
+            any(
+                v.get("collection") == COLLECTION
+                and v.get("url", "").startswith(f"/collections/{COLLECTION}/files?q=")
+                for v in views
+            ),
+            str(views),
+        )
+        if views:
+            page = requests.get(f"{BASE_URL}{views[0]['url']}", timeout=10)
+            check(
+                "files view link serves a page",
+                page.status_code == 200,
+                str(page.status_code),
+            )
     empty = test_endpoint(
         "GET", "/api/search/unified", label="GET /api/search/unified (no query)"
     )

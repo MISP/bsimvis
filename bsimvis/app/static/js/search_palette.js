@@ -61,6 +61,14 @@ window.SearchPalette = (function () {
         const input = el.querySelector('#palette-input');
         input.addEventListener('input', () => schedule(input.value));
         input.addEventListener('keydown', onKey);
+        el.querySelector('#palette-results').addEventListener('mousedown', (e) => {
+            const ex = e.target.closest('.palette-ex'), sx = e.target.closest('.palette-syntax');
+            if (!ex && !sx) return;
+            e.preventDefault(); // keep focus in the input
+            if (sx) { syntaxOpen = !syntaxOpen; e.currentTarget.innerHTML = hint(); return; }
+            input.value = ex.dataset.q;
+            run(input.value);
+        });
         el.querySelector('#palette-scope').addEventListener('mousedown', (e) => {
             const b = e.target.closest('button[data-scope]');
             if (!b) return;
@@ -229,14 +237,32 @@ window.SearchPalette = (function () {
         </div>`;
     }
 
-    const QHINT = `<br><code>tag:mirai</code>, <code>name:…</code>, <code>string:"…"</code> filter; <code>"…"</code> is literal.`;
+    const EXAMPLES = ['mirai', 'tag:mirai', 'name:busybox', 'md5:b7680c69', 'cluster:gafgyt',
+        'string:"/bin/busybox"', 'tag:yara:mirai name:arm', '"tag:mirai"'];
+    const SYNTAX = [
+        ['word', 'Names, MD5s, cluster names'],
+        ['tag:x', 'Tag (file or function)'],
+        ['name:x', 'File or function name'],
+        ['md5:x', 'File MD5'],
+        ['cluster:x', 'Cluster name'],
+        ['string:x', 'Strings in the binary'],
+        ['field:x', 'Any indexed field'],
+        ['a b', 'Both (AND)'],
+        ['x*', 'Wildcard'],
+        ['"a b"', 'Literal phrase'],
+        ['"a \\"b\\""', 'Quote inside a phrase'],
+    ];
+    let syntaxOpen = false;
+
     function hint() {
-        if (scopeColl) return `<div style="padding:24px; color:var(--dim); font-size:0.85rem;">
-            Type to search in <b>${escapeHtml(scopeColl)}</b> — a filename, an MD5, a function name,
-            a tag or a cluster name. <b>Tab</b> searches the whole instance.${QHINT}</div>`;
-        return `<div style="padding:24px; color:var(--dim); font-size:0.85rem;">
-            Type to search across the whole instance — a filename, an MD5, a function name,
-            a tag, a cluster name, a collection or a pool.${QHINT}</div>`;
+        const chip = (q) => `<code class="palette-ex" data-q="${escapeHtml(q)}" style="cursor:pointer; padding:2px 7px; border:1px solid var(--border); border-radius:4px; background:var(--hover);">${escapeHtml(q)}</code>`;
+        const rows = SYNTAX.map(([k, v]) => `<tr><td style="padding:3px 24px 3px 0; border:none;"><code>${escapeHtml(k)}</code></td><td style="color:var(--dim); border:none; padding:3px 0;">${escapeHtml(v)}</td></tr>`).join('');
+        return `<div style="padding:18px 16px; font-size:0.8rem;">
+            <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">${EXAMPLES.map(chip).join('')}
+                <button type="button" class="palette-syntax" aria-expanded="${syntaxOpen}" style="margin-left:auto; background:none; border:none; color:var(--accent); cursor:pointer; font-size:0.75rem;">
+                    <i class="fa-solid fa-circle-question"></i> Syntax</button></div>
+            ${syntaxOpen ? `<table style="margin-top:12px; width:auto; border-collapse:collapse; font-size:0.78rem;">${rows}</table>` : ''}
+        </div>`;
     }
 
     function renderScope() {

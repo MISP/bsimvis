@@ -3196,7 +3196,34 @@ def run_all_tests():
 
     # ── Files ──────────────────────────────────────────────────────────────
     print(_color("\n  [Files]", BOLD))
-    test_endpoint("GET", "/api/file/search", params={"collection": COLLECTION})
+    all_files = test_endpoint(
+        "GET", "/api/file/search", params={"collection": COLLECTION}
+    )
+
+    # q understands field:value terms; an unknown prefix stays a bare word.
+    first = ((all_files or {}).get("files") or [{}])[0]
+    fname = first.get("file_name")
+    if fname:
+
+        def _qfiles(q):
+            res = test_endpoint(
+                "GET",
+                "/api/file/search",
+                params={"collection": COLLECTION, "q": q},
+                label=f"GET /api/file/search?q={q}",
+            )
+            return [f.get("file_name") for f in (res or {}).get("files") or []]
+
+        check(
+            "q=name:<file> finds the file",
+            fname in _qfiles(f'name:"{fname}"'),
+            fname,
+        )
+        check("q=name:zzz_nomatch finds nothing", _qfiles("name:zzz_nomatch") == [])
+        check(
+            "q=<unknown prefix>:x behaves as a bare word",
+            _qfiles("zzqprefix:x") == _qfiles('"zzqprefix:x"') == [],
+        )
     test_endpoint(
         "GET",
         "/api/file/search",

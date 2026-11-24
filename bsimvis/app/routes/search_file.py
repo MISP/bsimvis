@@ -127,6 +127,10 @@ def search_files():
 
 def filters_from_args():
     """The file search filters named in the query string."""
+    from bsimvis.app.services.query_syntax import expand_q_args
+
+    # `field:value` terms in q become their URL params (no second filter path).
+    request.args = expand_q_args(request.args, "file")
     # Filtering parameters
     filters = {
         "fields": {},

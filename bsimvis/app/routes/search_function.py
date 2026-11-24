@@ -173,6 +173,10 @@ def search_functions():
             limit = 100000
 
         # Search parameters
+        from bsimvis.app.services.query_syntax import expand_q_args, split_q
+
+        # `field:value` terms in q become their URL params (no second filter path).
+        request.args = expand_q_args(request.args, "func")
         search_q = request.args.get("q", "").lower().strip()
 
         tag_filters = request.args.getlist("tag")
@@ -632,7 +636,7 @@ def search_functions():
 
             all_levels = list(INDEX_CONFIG.keys())
 
-            for word in [w for w in search_q.split() if w.strip()]:
+            for word in split_q(search_q)[0]:
                 all_matches = []
                 for lvl in all_levels:
                     # Free-text box: a bare word stays a substring search.

@@ -229,13 +229,14 @@ window.SearchPalette = (function () {
         </div>`;
     }
 
+    const QHINT = `<br><code>tag:mirai</code>, <code>name:…</code>, <code>string:"…"</code> filter; <code>"…"</code> is literal.`;
     function hint() {
         if (scopeColl) return `<div style="padding:24px; color:var(--dim); font-size:0.85rem;">
             Type to search in <b>${escapeHtml(scopeColl)}</b> — a filename, an MD5, a function name,
-            a tag or a cluster name. <b>Tab</b> searches the whole instance.</div>`;
+            a tag or a cluster name. <b>Tab</b> searches the whole instance.${QHINT}</div>`;
         return `<div style="padding:24px; color:var(--dim); font-size:0.85rem;">
             Type to search across the whole instance — a filename, an MD5, a function name,
-            a tag, a cluster name, a collection or a pool.</div>`;
+            a tag, a cluster name, a collection or a pool.${QHINT}</div>`;
     }
 
     function renderScope() {

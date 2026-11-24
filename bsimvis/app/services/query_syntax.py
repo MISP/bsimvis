@@ -270,3 +270,120 @@ def _drop_covered(field, targets):
     return [
         t for t in targets if not any(a in present for a in tag_ancestors(field, t))
     ]
+
+
+# `field:value` terms in the free-text `q`, mapped per level to the URL param
+# the route already reads, so a term is exactly that param added to the URL.
+# Files and functions both have a `strings` param, so `string:` works on both.
+Q_ALIASES = {
+    "file": {
+        "tag": "tag",
+        "name": "file_name",
+        "md5": "md5",
+        "cluster": "bin_cluster_name",
+        "string": "strings",
+    },
+    "func": {
+        "tag": "tag",
+        "name": "function_name",
+        "md5": "md5",
+        "cluster": "cluster_name",
+        "string": "strings",
+    },
+}
+
+
+def _known_prefixes():
+    from bsimvis.app.services.index_config import INDEX_CONFIG
+
+    names = {f for fields in INDEX_CONFIG.values() for f in fields}
+    return names | {a for m in Q_ALIASES.values() for a in m}
+
+
+def _requote(text, quoted):
+    return '"' + text.replace('"', '\\"') + '"' if quoted else text
+
+
+def split_q(q):
+    """Split `q` into (bare, fields). Values come back in raw form (a quoted
+    part re-wrapped in quotes) so parse_filter_value keeps it literal."""
+    q = q or ""
+    tokens, parts, buf = [], [], []
+    in_q, i = False, 0
+
+    def end_part():
+        if buf:
+            parts.append(("".join(buf), in_q))
+        buf.clear()
+
+    def end_token():
+        end_part()
+        if parts:
+            tokens.append(list(parts))
+        parts.clear()
+
+    while i < len(q):
+        ch = q[i]
+        if in_q and ch == "\\" and q[i + 1 : i + 2] == '"':
+            buf.append('"')
+            i += 1
+        elif ch == '"':
+            end_part()
+            in_q = not in_q
+        elif ch.isspace() and not in_q:
+            end_token()
+        else:
+            buf.append(ch)
+        i += 1
+    end_token()
+
+    known = _known_prefixes()
+    bare, fields = [], {}
+    for parts in tokens:
+        head, head_q = parts[0]
+        prefix, sep, rest = head.partition(":")
+        vparts = ([(rest, False)] if rest else []) + parts[1:]
+        if not head_q and sep and prefix.lower() in known and vparts:
+            quoted = any(qd for _, qd in vparts)
+            val = _requote("".join(t for t, _ in vparts), quoted)
+            fields.setdefault(prefix.lower(), []).append(val)
+            continue
+        quoted = any(qd for _, qd in parts)
+        bare.append(_requote("".join(t for t, _ in parts), quoted))
+    return bare, fields
+
+
+def expand_q_args(args, level):
+    """`args` with q's field terms moved into their URL params. Returned as is
+    when q has none, so bare behaviour is identical.
+
+    ponytail: a param the route reads with .get() keeps only its first value,
+    so `name:a name:b` filters on `a`; switch those reads to getlist if needed."""
+    from werkzeug.datastructures import ImmutableMultiDict, MultiDict
+
+    bare, fields = split_q(args.get("q", ""))
+    if not fields:
+        return args
+    out = MultiDict(args)
+    out.setlist("q", [" ".join(bare)] if bare else [])
+    for name, vals in fields.items():
+        param = Q_ALIASES[level].get(name, name)
+        for v in vals:
+            out.add(param, v)
+    return ImmutableMultiDict(out)
+
+
+if __name__ == "__main__":
+    assert split_q("test:test") == (["test:test"], {})
+    assert split_q('"tag:mirai"') == (['"tag:mirai"'], {})
+    assert split_q("tag:yara:mirai") == ([], {"tag": ["yara:mirai"]})
+    assert split_q('string:"GET /admin"') == ([], {"string": ['"GET /admin"']})
+    b, f = split_q(r'string:"\"test:test\""')
+    assert not b and f == {"string": [r'"\"test:test\""']}
+    assert parse_filter_value("strings", f["string"][0]).value == '"test:test"'
+    assert split_q('""test:test""') == (["test:test"], {})
+    assert split_q('"mirai botnet"') == (['"mirai botnet"'], {})
+    assert split_q("tag:mirai arm") == (["arm"], {"tag": ["mirai"]})
+    assert split_q("yara:mirai  Name:x") == (["yara:mirai"], {"name": ["x"]})
+    assert parse_filter_value("strings", '"a*"').kind != "glob"
+    print("query_syntax self-check OK")

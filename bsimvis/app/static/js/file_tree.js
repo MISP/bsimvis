@@ -295,7 +295,8 @@ window.FileTree = {
     /** 'cluster' (default) or 'archive'; pools and cluster-less collections are archive. */
     mode(params) {
         const pool = window.getRoutingState ? getRoutingState().pool : null;
-        const coll = params.get('collection') || this._collection;
+        // _collection is only set once clusters render, so a never-clustered page needs the route's.
+        const coll = params.get('collection') || (window.getRoutingState && getRoutingState().collection) || this._collection;
         if (params.get('group') === 'archive' || pool || this._noClusters.has(coll)) return 'archive';
         return 'cluster';
     },

@@ -3224,6 +3224,26 @@ def run_all_tests():
             "q=<unknown prefix>:x behaves as a bare word",
             _qfiles("zzqprefix:x") == _qfiles('"zzqprefix:x"') == [],
         )
+        # Bare q searches identity fields only: a tag needs `tag:`.
+        check(
+            "bare q=<upload tag> does not match by tag",
+            fname not in _qfiles(UPLOAD_TAG),
+        )
+        check(
+            "q=tag:<upload tag> finds the file", fname in _qfiles(f"tag:{UPLOAD_TAG}")
+        )
+        uni = test_endpoint(
+            "GET",
+            "/api/search/unified",
+            params={"q": f"tag:{UPLOAD_TAG}", "collection": COLLECTION},
+            label="GET /api/search/unified?q=tag:<upload tag>",
+        )
+        kinds = {g["kind"] for g in (uni or {}).get("groups", [])}
+        check(
+            "unified q=tag:x returns files, skips batches/features",
+            "files" in kinds and not kinds & {"batches", "features"},
+            sorted(kinds),
+        )
     test_endpoint(
         "GET",
         "/api/file/search",

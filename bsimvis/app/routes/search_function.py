@@ -243,16 +243,15 @@ def search_functions():
         filter_truncated = [False]
 
         def get_group_targets(lvl, val, allowed_fields=None, default_kind="exact"):
-            from bsimvis.app.services.index_config import INDEX_CONFIG
+            from bsimvis.app.services.index_config import BARE_Q_FIELDS, INDEX_CONFIG
 
             if not allowed_fields:
                 # Dynamically discover all fields allowed at this level from config
                 allowed_fields = []
                 for src_lvl, fields in INDEX_CONFIG.items():
                     for field, targets in fields.items():
-                        # `strings` is opt-in (`strings=`): a bare `q` word
-                        # would otherwise match every literal in the corpus.
-                        if lvl in targets and field != "strings":
+                        # Bare `q` searches identity fields only (BARE_Q_FIELDS).
+                        if lvl in targets and field in BARE_Q_FIELDS.get(src_lvl, ()):
                             from bsimvis.app.services.index_config import (
                                 resolve_target_field,
                             )

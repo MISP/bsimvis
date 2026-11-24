@@ -577,14 +577,13 @@ def query_files_advanced(r, collection, filters):
         if field == "q":
             q_matches = set()
             # Search across all indexed file fields
-            from bsimvis.app.services.index_config import INDEX_CONFIG
+            from bsimvis.app.services.index_config import BARE_Q_FIELDS
 
-            for f_name, targets in INDEX_CONFIG.get("file", {}).items():
-                if "file" in targets and f_name not in ("inferred_tags", "strings"):
-                    # Free-text box: a bare word stays a substring search.
-                    q_matches.update(
-                        get_field_matches(f_name, val, default_kind="substring")
-                    )
+            for f_name in BARE_Q_FIELDS["file"]:
+                # Free-text box: a bare word stays a substring search.
+                q_matches.update(
+                    get_field_matches(f_name, val, default_kind="substring")
+                )
             candidates &= q_matches
         elif field == "_any_md5":
             candidates &= (

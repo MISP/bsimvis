@@ -417,6 +417,11 @@ search route, never by writing a second query path. `/api/index/home/insights`
 (top tags, biggest clusters, recent batches) is the expensive half and is cached
 120s in-process; `/api/index/home/stats` stays cheap and uncached.
 
+A bare `q` word only searches the identity fields in `index_config.BARE_Q_FIELDS`
+(names, md5, cluster names); tags and the rest need `field:` terms, parsed by
+`query_syntax.split_q`. In the unified search a group that cannot honour a term
+(`_GROUP_TERMS` in `home.py`) is skipped, never searched for the literal text.
+
 ## Workers and Ghidra memory
 
 Each worker holds its own JVM, so heap limits multiply by worker count.

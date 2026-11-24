@@ -15,6 +15,7 @@ from flask import current_app, request
 
 from bsimvis.app.services.cluster_utils import _AXES as BIN_AXES, name_fields
 from bsimvis.app.services.job_service import JobService
+from bsimvis.app.services.query_syntax import _unquote, split_q
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.tag_service import tag_service
 
@@ -579,6 +580,34 @@ _VIEWS = {
 }
 
 
+# kind -> the q field terms that group can honour. files / functions parse the
+# full q themselves and are not listed.
+# ponytail: groups are skipped here (_group_q) when q has a term they can't
+# honour, rather than searched for the literal `tag:x` text.
+_GROUP_TERMS = {
+    "collections": (),
+    "pools": (),
+    "features": (),
+    "tags": ("tag",),
+    "strings": ("string",),
+    "function_strings": ("string",),
+    "batches": ("name",),
+    "function_clusters": ("cluster", "name"),
+    "binary_clusters": ("cluster", "name"),
+}
+
+
+def _group_q(kind, q):
+    """The q one group searches, or None to skip the group."""
+    if kind not in _GROUP_TERMS:
+        return q
+    bare, fields = split_q(q)
+    if any(f not in _GROUP_TERMS[kind] for f in fields):
+        return None
+    vals = [v for vs in fields.values() for v in vs]
+    return " ".join(_unquote(t)[0] for t in bare + vals) or None
+
+
 def _group(kind, items, mapper, limit):
     return {"kind": kind, "items": [mapper(i) for i in items[:limit]]}
 
@@ -612,10 +641,12 @@ def _search_groups(q, limit, scope, kind=None):
     from bsimvis.app.routes.strings import search_strings
 
     def want(k):
-        return not kind or kind == k
+        return (not kind or kind == k) and _group_q(k, q) is not None
 
     cols = (
-        _call(search_collections, q=q, limit=limit).get("collections", [])
+        _call(search_collections, q=_group_q("collections", q), limit=limit).get(
+            "collections", []
+        )
         if want("collections")
         else []
     )
@@ -635,7 +666,7 @@ def _search_groups(q, limit, scope, kind=None):
     pool_items = [
         p
         for p in (pools.get("items") or pools.get("pools") or [])
-        if q.lower() in str(p.get("name", "")).lower()
+        if _group_q("pools", q).lower() in str(p.get("name", "")).lower()
     ]
     if pool_items:
         yield _group(
@@ -651,9 +682,10 @@ def _search_groups(q, limit, scope, kind=None):
 
     # Tags have no search route: match names straight off the tag index.
     tag_hits = []
+    tag_q = (_group_q("tags", q) or "").lower()
     for name in scope if want("tags") else []:
         for t in tag_service.get_collection_tags(name):
-            if q.lower() in t.lower():
+            if tag_q in t.lower():
                 tag_hits.append({"tag": t, "collection": name})
         if len(tag_hits) >= limit:
             break
@@ -683,7 +715,13 @@ def _search_groups(q, limit, scope, kind=None):
     def fan(kind, fn, key, mapper, q_param="q", **extra):
         items = []
         for name in scope:
-            res = _call(fn, **{q_param: q}, collection=name, limit=limit, **extra)
+            res = _call(
+                fn,
+                **{q_param: _group_q(kind, q)},
+                collection=name,
+                limit=limit,
+                **extra,
+            )
             for it in res.get(key, res.get("items", []))[:limit]:
                 it = dict(it)
                 it["_collection"] = name
@@ -746,7 +784,7 @@ def _search_groups(q, limit, scope, kind=None):
             "functions",
             lambda f: {
                 "title": f.get("function_name") or f.get("name"),
-                "subtitle": f"{f['_collection']} · uses string \u201c{q}\u201d",
+                "subtitle": f"{f['_collection']} · uses string \u201c{_group_q('function_strings', q)}\u201d",
                 "url": (
                     f"/collections/{quote(f['_collection'])}/files/{f.get('file_md5')}"
                     f"/functions/{f.get('entrypoint_address')}"

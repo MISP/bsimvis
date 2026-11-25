@@ -129,7 +129,7 @@ INDEX_CONFIG = {
 # (tags, inferred_*, parent/related, type, ...) needs a named filter or a
 # `field:` term, or a common word matches most of the corpus.
 BARE_Q_FIELDS = {
-    "file": ["file_name", "file_names", "file_md5", "bin_cluster_name"],
+    "file": ["file_name", "file_names", "file_md5"],
     "func": ["function_name", "user_name", "cluster_name"],
 }
 

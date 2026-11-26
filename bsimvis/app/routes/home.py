@@ -577,6 +577,8 @@ _VIEWS = {
     "strings": ("strings", "q"),
     "function_strings": ("functions", "strings"),
     "batches": ("batches", "q"),
+    "function_clusters": ("functions/clusters", "q"),
+    "binary_clusters": ("files/clusters", "q"),
 }
 
 

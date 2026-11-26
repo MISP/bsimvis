@@ -686,12 +686,23 @@ def test_ext_intel():
     res = test_endpoint(
         "POST",
         f"{base}/import",
+        data={"collection": COLLECTION, "source": "mb", "tags": ["mirai", "nope"]},
+        label="POST ext/import (picked tags)",
+    )
+    check(
+        "import with tags= adds only the picked card tags",
+        (res or {}).get("added") == ["mb:mirai"],
+        str(res),
+    )
+    res = test_endpoint(
+        "POST",
+        f"{base}/import",
         data={"collection": COLLECTION, "source": "mb"},
         label="POST ext/import (cached card)",
     )
     check(
-        "import adds mb:<tag>",
-        sorted((res or {}).get("added") or []) == ["mb:elf", "mb:mirai"],
+        "import adds the rest as mb:<tag>",
+        (res or {}).get("added") == ["mb:elf"],
         str(res),
     )
     check(

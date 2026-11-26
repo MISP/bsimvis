@@ -1481,6 +1481,9 @@ def ext_intel_import(file_md5):
     card = ext.cached(get_redis(), collection, file_md5).get(source)
     if not card:
         return {"error": "No lookup cached for this source: look it up first"}, 400
+    pick = data.get("tags")
+    if isinstance(pick, list):
+        card = {**card, "tags": [t for t in card.get("tags") or [] if t in pick]}
     return {"added": ext.import_tags(collection, file_md5, source, card, tag_service)}
 
 

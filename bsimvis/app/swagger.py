@@ -1163,6 +1163,16 @@ ext_lookup_model = api.model(
         "source": fields.String(description="mb | mwdb", required=True),
     },
 )
+ext_import_model = api.model(
+    "ExtImport",
+    {
+        "collection": fields.String(default="main"),
+        "source": fields.String(description="mb | mwdb", required=True),
+        "tags": fields.List(
+            fields.String, description="Only these card tags (bare, no prefix)"
+        ),
+    },
+)
 ext_bulk_model = api.model(
     "ExtLookupBulk",
     {
@@ -1206,7 +1216,7 @@ class FileExtLookup(Resource):
 @ns_file.route("/<string:file_md5>/ext/import")
 class FileExtImport(Resource):
     @ns_file.doc(description="Writes a cached lookup's tags as mb:<tag> / mwdb:<tag>.")
-    @ns_file.expect(ext_lookup_model)
+    @ns_file.expect(ext_import_model)
     def post(self, file_md5):
         """Imports a cached lookup's tags onto the file."""
         from bsimvis.app.routes.file import ext_intel_import

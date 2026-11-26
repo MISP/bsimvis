@@ -418,7 +418,7 @@ search route, never by writing a second query path. `/api/index/home/insights`
 120s in-process; `/api/index/home/stats` stays cheap and uncached.
 
 A bare `q` word only searches the identity fields in `index_config.BARE_Q_FIELDS`
-(names, md5, function cluster names; function search uses only the function's own fields, and skips unnamed `Cluster N` names); tags and the rest need `field:` terms, parsed by
+(names, md5; function search uses only the function's own names, never file or cluster names); tags and the rest need `field:` terms, parsed by
 `query_syntax.split_q`. In the unified search a group that cannot honour a term
 (`_GROUP_TERMS` in `home.py`) is skipped, never searched for the literal text.
 

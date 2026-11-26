@@ -4,10 +4,7 @@ import redis
 import hashlib
 import time
 import uuid
-import re
 from flask import request
-
-_FALLBACK_CLUSTER = re.compile(r"^cluster [\w-]+$", re.I)
 from bsimvis.app.services.redis_client import get_redis
 from bsimvis.app.services.index_service import (
     parse_timestamp,
@@ -256,7 +253,8 @@ def search_functions():
                     for field, targets in fields.items():
                         # Bare `q` searches identity fields only (BARE_Q_FIELDS),
                         # and only the function's own: a file name copied onto
-                        # every function would return all of that file's functions.
+                        # every function would return all of that file's functions,
+                        # and a cluster name onto every member, however loose.
                         if (
                             lvl in targets
                             and src_lvl in (lvl, "func")
@@ -277,10 +275,6 @@ def search_functions():
                 targets, truncated, spec = resolve_targets(
                     r, col, lvl, field, val, default_kind=default_kind
                 )
-                if bare and field == "cluster_name":
-                    # Unnamed clusters are `Cluster {label}`: `cluster` or `1`
-                    # would match every one of them.
-                    targets = [t for t in targets if not _FALLBACK_CLUSTER.match(t)]
                 if truncated:
                     filter_truncated[0] = True
                 if targets:

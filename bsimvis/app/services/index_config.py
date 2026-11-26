@@ -130,7 +130,7 @@ INDEX_CONFIG = {
 # `field:` term, or a common word matches most of the corpus.
 BARE_Q_FIELDS = {
     "file": ["file_name", "file_names", "file_md5"],
-    "func": ["function_name", "user_name", "cluster_name"],
+    "func": ["function_name", "user_name"],
 }
 
 INDEX_CONFIG_legacy = {

@@ -141,7 +141,8 @@ window.FileView = {
                 <div id="file-title-strip" class="bin-sim-strip" style="margin-bottom: 20px; cursor: context-menu;"
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                     <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
-                    <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 10px;">(MD5: ---)</span>
+                    <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 6px;">(MD5: ---)</span>
+                    <span id="file-ext-links" style="display:inline-flex; gap:4px; margin-right:10px;"></span>
                     <span id="file-tags-container" style="display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1;"></span>
                     <span id="file-actions-container" style="margin-left:auto; display: inline-flex; align-items: center; gap: 8px;"></span>
                     <span id="file-note-btn-container" style="display: inline-flex; align-items: center; margin-left: 8px;"></span>
@@ -156,6 +157,7 @@ window.FileView = {
                     <button class="bsim-tab" id="file-tab-btn-strings" onclick="FileView.switchTab('strings')">Strings</button>
                     <button class="bsim-tab" id="file-tab-btn-clusters" onclick="FileView.switchTab('clusters')">Clusters (<span id="cluster-count">0</span>)</button>
                     <button class="bsim-tab" id="file-tab-btn-extracted_from" onclick="FileView.switchTab('extracted_from')" style="display: none;">Extracted From</button>
+                    <button class="bsim-tab" id="file-tab-btn-intel" onclick="FileView.switchTab('intel')" title="MalwareBazaar / MWDB lookups (only on request)">Intel</button>
                     <button class="bsim-tab" id="file-tab-btn-neighbors" onclick="FileView.switchTab('neighbors')">Similar<span id="nbr-count-wrap" style="display:none;"> (<span id="nbr-count">0</span>)</span></button>
                 </div>
                 <div id="file-axis-selector" style="padding:10px 0 14px;"></div>
@@ -169,6 +171,9 @@ window.FileView = {
                 <div id="file-panel-extracted_from" class="file-view-panel" style="display: none;">
                     <div id="file-lineage-parents-panel"></div>
                 </div>
+
+                <!-- External intel Tab Panel -->
+                <div id="file-panel-intel" class="file-view-panel" style="display: none;"></div>
 
                 <!-- Metadata Tab Panel (Default Active) -->
                 <div id="file-panel-metadata" class="file-view-panel" style="display: block;">
@@ -395,7 +400,12 @@ window.FileView = {
             window.filenameCache = window.filenameCache || {};
             window.filenameCache[file.file_md5] = fileName;
             document.getElementById('file-title-text').innerText = fileName;
-            document.getElementById('file-md5-text').innerText = `(MD5: ${file.file_md5})`;
+            const md5El = document.getElementById('file-md5-text');
+            md5El.innerHTML = window.ExtIntel ? ExtIntel.hashesHtml(file) : escapeHtml(`(MD5: ${file.file_md5})`);
+            if (window.ExtIntel) {
+                ExtIntel.bindCopy(md5El);
+                document.getElementById('file-ext-links').innerHTML = ExtIntel.linksHtml(file);
+            }
 
             // buildFunctionsQuery and the lineage panel both need the raw doc.
             this.file = file;
@@ -479,6 +489,7 @@ window.FileView = {
                 'File Name': 'fa-solid fa-file',
                 'Other Names': 'fa-solid fa-tags',
                 'MD5': 'fa-solid fa-fingerprint',
+                'SHA256': 'fa-solid fa-fingerprint',
                 'Batch UUID': 'fa-solid fa-box',
                 'Language': 'fa-solid fa-microchip',
                 'File Type': 'fa-solid fa-file-code',
@@ -497,6 +508,7 @@ window.FileView = {
                     ['File Name', file.file_name],
                     ['Other Names', file.file_names],
                     ['MD5', file.file_md5],
+                    ['SHA256', window.ExtIntel ? ExtIntel.sha256Of(file) : file.sha256],
                     ['Related MD5s', file.related_md5],
                     ['Batch UUID', file.batch_uuid],
                     ['First Seen', file.first_seen ? fmtDate(file.first_seen) : ''],
@@ -929,6 +941,9 @@ window.FileView = {
         if (tabId === 'strings') {
             this.loadStringsPanel();
         }
+        if (tabId === 'intel' && window.ExtIntel && this.file) {
+            ExtIntel.renderPanel(document.getElementById('file-panel-intel'), this.params.collection || this.file.collection, this.file);
+        }
 
         if (push && location.hash.slice(1) !== tabId) {
             history.pushState(null, '', location.pathname + location.search + '#' + tabId);
@@ -936,7 +951,7 @@ window.FileView = {
     },
 
     applyTabFromHash() {
-        const allowedTabs = ['metadata', 'inferred', 'tags', 'functions', 'clusters', 'strings', 'extracted_from', 'files', 'neighbors'];
+        const allowedTabs = ['metadata', 'inferred', 'tags', 'functions', 'clusters', 'strings', 'extracted_from', 'files', 'neighbors', 'intel'];
         let tab = location.hash.slice(1);
         if (!tab && location.pathname.endsWith('/strings')) tab = 'strings';
 

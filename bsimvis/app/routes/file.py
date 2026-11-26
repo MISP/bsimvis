@@ -1424,3 +1424,86 @@ def download_file(file_md5):
             name if zipped is data and name.endswith(".zip") else name + ".zip"
         ),
     )
+
+
+def _ext_file(file_md5, collection):
+    """(meta, sha256) of a stored file, or None."""
+    from bsimvis.app.services.index_service import file_sha256
+
+    raw = get_redis().get(f"{collection}:file:{file_md5}:meta")
+    if not raw:
+        return None
+    meta = json.loads(raw)
+    return meta, file_sha256(meta)
+
+
+def ext_intel(file_md5):
+    """Cached MalwareBazaar / MWDB cards of one file. Never calls out."""
+    from bsimvis.app.services import ext_intel_service as ext
+
+    collection = request.args.get("collection", "main")
+    if not _ext_file(file_md5, collection):
+        return {"error": "File not found"}, 404
+    return {
+        "configured": ext.configured(),
+        "mwdb_url": ext.mwdb_base(),
+        "cards": ext.cached(get_redis(), collection, file_md5),
+    }
+
+
+def ext_intel_lookup(file_md5):
+    """Explicit lookup: sends this file's hash to one source, caches the card."""
+    from bsimvis.app.services import ext_intel_service as ext
+
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    source = data.get("source")
+    if source not in ext.SOURCES:
+        return {"error": f"source must be one of {list(ext.SOURCES)}"}, 400
+    found = _ext_file(file_md5, collection)
+    if not found:
+        return {"error": "File not found"}, 404
+    try:
+        card = ext.lookup(get_redis(), collection, file_md5, source, found[1])
+    except RuntimeError as e:
+        return {"error": str(e)}, 400
+    return {"card": card}
+
+
+def ext_intel_import(file_md5):
+    """Writes a cached card's tags on the file as mb:<tag> / mwdb:<tag>. No network."""
+    from bsimvis.app.services import ext_intel_service as ext
+    from bsimvis.app.services.tag_service import tag_service
+
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    source = data.get("source")
+    card = ext.cached(get_redis(), collection, file_md5).get(source)
+    if not card:
+        return {"error": "No lookup cached for this source: look it up first"}, 400
+    return {"added": ext.import_tags(collection, file_md5, source, card, tag_service)}
+
+
+def ext_intel_bulk():
+    """Queues an explicit lookup of many files (EXT_LOOKUP). Sends their hashes out."""
+    from bsimvis.app.services import ext_intel_service as ext
+
+    data = request.json or {}
+    collection = data.get("collection", "main")
+    sources = [s for s in data.get("sources") or [] if s in ext.SOURCES]
+    md5s = [m for m in data.get("md5s") or [] if isinstance(m, str)]
+    if not sources or not md5s:
+        return {"error": "sources and md5s are required"}, 400
+    sources = [s for s in sources if ext.configured()[s]]
+    if not sources:
+        return {"error": "No requested source is configured on the server"}, 400
+    job_id = job_service.create_job(
+        JobType.EXT_LOOKUP,
+        {
+            "collection": collection,
+            "md5s": md5s,
+            "sources": sources,
+            "import_tags": bool(data.get("import_tags")),
+        },
+    )
+    return {"status": "processing", "job_id": job_id, "sources": sources}

@@ -1097,6 +1097,35 @@ class Worker:
                 self.job_service.enqueue_job(next_job_id, is_continuation=True)
             return True
 
+        elif jtype == JobType.EXT_LOOKUP.value:
+            from bsimvis.app.services import ext_intel_service as ext
+            from bsimvis.app.services.index_service import file_sha256
+            from bsimvis.app.services.tag_service import tag_service
+
+            md5s, sources = payload.get("md5s") or [], payload.get("sources") or []
+            found = tagged = 0
+            for i, md5 in enumerate(md5s):
+                raw = self.r_data.get(f"{collection}:file:{md5}:meta")
+                if not raw:
+                    continue
+                sha = file_sha256(json.loads(raw))
+                for source in sources:
+                    card = ext.lookup(
+                        self.r_data, collection, md5, source, sha, retries=(5, 15, 45)
+                    )
+                    found += bool(card.get("found"))
+                    if card.get("found") and payload.get("import_tags"):
+                        tagged += len(
+                            ext.import_tags(collection, md5, source, card, tag_service)
+                        )
+                if job_id:
+                    self.job_service.update_progress(
+                        job_id,
+                        int((i + 1) * 100 / len(md5s)),
+                        f"Looked up {i + 1}/{len(md5s)} files: {found} hits, {tagged} tags",
+                    )
+            return True
+
         elif jtype == JobType.BACKFILL_SHA256.value:
             cursor = str(payload.get("cursor", "0"))
             next_cursor, seen, changed = self.metadata_service.backfill_sha256(

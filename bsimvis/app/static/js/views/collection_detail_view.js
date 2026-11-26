@@ -596,6 +596,7 @@ window.CollectionDetailView = {
                     ${UI.MoreMenu.render([
                         { label: 'Maintenance…', icon: 'fa-solid fa-screwdriver-wrench', onClick: `window.openMaintenanceWindow(${jsString(name)})` },
                         { label: 'Clean', icon: 'fa-solid fa-broom', onClick: `window.collectionDetailClean(${jsString(name)}, this)` },
+                        { label: 'External lookup…', icon: 'fa-solid fa-satellite-dish', tooltip: 'Look files up on MalwareBazaar / MWDB. Sends their hashes out.', onClick: `ExtIntel.bulkLookup(${jsString(name)})` },
                         '-',
                         { label: 'Delete collection', icon: 'fa-solid fa-trash-can', danger: true, onClick: `window.collectionDetailDelete(${jsString(name)}, this)` },
                     ])}

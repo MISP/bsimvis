@@ -91,6 +91,10 @@ analysts can annotate, and reworks navigation around collections.
 * **Sample download** : download a stored sample as an `infected` password zip.
 * **`bsimvis fetch malwarebazaar|mwdb`** (`mb` alias) : pull samples from MalwareBazaar or MWDB by hash list or tag
   and upload them with their first_seen / last_seen dates and a `source:malwarebazaar` / `source:mwdb` tag (keys from `.env` only).
+* **SHA256 and external intel** : every file has a searchable `sha256` (`sha256=`, a bare `q`,
+  `bsimvis metadata backfill-sha256` for older files). The file header links the sample on
+  MalwareBazaar, MWDB and VirusTotal, and an Intel tab looks it up on MalwareBazaar / MWDB and
+  imports their tags as `mb:` / `mwdb:`. A hash only leaves the instance when you click.
 * **Performance** : large `build_sim` batches split into parallel shard jobs, `redis[hiredis]`
   for reply parsing, gzip responses, a file search that stops sorting at the requested page,
   and an overview that serves its cached copy while it refreshes.

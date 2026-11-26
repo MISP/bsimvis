@@ -607,6 +607,100 @@ def test_sha256():
     check("backfill re-indexes sha256", _found({"sha256": want}))
 
 
+def test_ext_intel():
+    """MalwareBazaar / MWDB cards: read is cache-only, import writes mb:/mwdb: tags.
+
+    Never reaches the network: lookups are only tried when no key is set, and
+    the one card imported here is written straight into the cache.
+    """
+    from bsimvis.app.services.redis_client import get_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" External intel", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    base = f"/api/file/{file_md5}/ext"
+    st = test_endpoint("GET", base, params={"collection": COLLECTION})
+    check("ext read: no cards yet", (st or {}).get("cards") == {}, str(st)[:200])
+    # The stack inherits the launching shell's env: with a key set, any lookup
+    # would send the fixture's hash out, so those checks only run without keys.
+    offline = (st or {}).get("configured") == {"mb": False, "mwdb": False}
+    if offline:
+        test_endpoint(
+            "POST",
+            f"{base}/lookup",
+            data={"collection": COLLECTION, "source": "mb"},
+            expected_status=400,
+            label="POST ext/lookup without MB_API_KEY (400)",
+        )
+        test_endpoint(
+            "POST",
+            "/api/file/ext/lookup_bulk",
+            data={"collection": COLLECTION, "md5s": [file_md5], "sources": ["mb"]},
+            expected_status=400,
+            label="POST ext/lookup_bulk without keys (400)",
+        )
+    else:
+        print("  (keys configured: skipping the no-key lookup checks, no call made)")
+    test_endpoint(
+        "POST",
+        f"{base}/lookup",
+        data={"collection": COLLECTION, "source": "vt"},
+        expected_status=400,
+        label="POST ext/lookup unknown source (400)",
+    )
+    test_endpoint(
+        "POST",
+        f"{base}/import",
+        data={"collection": COLLECTION, "source": "mwdb"},
+        expected_status=400,
+        label="POST ext/import with nothing cached (400)",
+    )
+    test_endpoint(
+        "POST",
+        "/api/file/ext/lookup_bulk",
+        data={"collection": COLLECTION, "md5s": [file_md5], "sources": ["vt"]},
+        expected_status=400,
+        label="POST ext/lookup_bulk unknown source (400)",
+    )
+    test_endpoint(
+        "GET",
+        "/api/file/0123456789abcdef0123456789abcdef/ext",
+        params={"collection": COLLECTION},
+        expected_status=404,
+        label="GET ext of an unknown file (404)",
+    )
+
+    r = get_redis()
+    key = f"{COLLECTION}:file:{file_md5}:ext:mb"
+    r.set(
+        key,
+        json.dumps(
+            {"source": "mb", "found": True, "fetched_at": 1, "tags": ["mirai", "elf"]}
+        ),
+    )
+    st = test_endpoint(
+        "GET", base, params={"collection": COLLECTION}, label="GET ext (cached card)"
+    )
+    check("ext read returns the cached card", "mb" in (st or {}).get("cards", {}))
+    res = test_endpoint(
+        "POST",
+        f"{base}/import",
+        data={"collection": COLLECTION, "source": "mb"},
+        label="POST ext/import (cached card)",
+    )
+    check(
+        "import adds mb:<tag>",
+        sorted((res or {}).get("added") or []) == ["mb:elf", "mb:mirai"],
+        str(res),
+    )
+    check(
+        "q=tag:mb:mirai finds the file",
+        file_md5 in _search_file_md5s({"collection": COLLECTION, "q": "tag:mb:mirai"}),
+    )
+    r.delete(key)
+
+
 def test_cluster_tags():
     """Cluster tags persist once on cluster metadata and remain searchable."""
     from redis import Redis
@@ -12775,6 +12869,7 @@ if __name__ == "__main__":
         test_cluster_rename,
         test_entrypoint_backfill,
         test_sha256,
+        test_ext_intel,
         test_incremental_hierarchical_cluster_equivalence,
         test_bin_cluster_uuid_history,
         test_function_search_unindexed_cluster,

@@ -115,6 +115,9 @@ NAMESPACE_POLICY = {
     "av": Policy(
         "family", vocabulary=True, aggregate=True, writers=("import", "analysis")
     ),
+    # Imported on request from a MalwareBazaar / MWDB lookup (ext_intel_service).
+    "mb": Policy("family", vocabulary=True, aggregate=True, writers=("ext",)),
+    "mwdb": Policy("family", vocabulary=True, aggregate=True, writers=("ext",)),
     "ip": Policy(
         "ioc", vocabulary=False, aggregate=False, writers=("import", "analysis", "user")
     ),

@@ -16,21 +16,17 @@ uploads them with their in-the-wild dates.
 
 import csv
 import hashlib
-import io
 import os
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
-import pyzipper
-import requests
+from bsimvis.app.services.ext_intel_service import Bazaar, Mwdb
 
 HASH_RE = re.compile(
     r"(?<![0-9a-fA-F])(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{32})(?![0-9a-fA-F])"
 )
-MB_URL = "https://mb-api.abuse.ch/api/v1/"
 META_COLS = ["HASH", "names", "avtype", "first_seen", "last_seen"]
 SOURCE_TAG = {"malwarebazaar": "source:malwarebazaar", "mwdb": "source:mwdb"}
 
@@ -51,105 +47,9 @@ def parse_inputs(items):
     return list(hashes), tags
 
 
-def _call(fn, *a, **kw):
-    """One HTTP call, retried with backoff on 429 / 5xx (both APIs rate-limit)."""
-    for wait in (5, 15, 45, 90, None):
-        r = fn(*a, **kw)
-        if wait is None or (r.status_code != 429 and r.status_code < 500):
-            r.raise_for_status()
-            return r
-        print(f"HTTP {r.status_code}, retrying in {wait}s", file=sys.stderr)
-        time.sleep(wait)
-
-
 def _cell(v):
     """One CSV cell: `|` is the delimiter and `,` splits lists on upload."""
     return re.sub(r"[|,\r\n]", "_", str(v or "").strip()) or "-"
-
-
-class Bazaar:
-    def __init__(self):
-        self.s = requests.Session()
-        self.s.headers["Auth-Key"] = os.environ["MB_API_KEY"]
-
-    def _post(self, **data):
-        return _call(self.s.post, MB_URL, data=data, timeout=120)
-
-    def tag(self, name, limit=None):
-        n = min(limit or 1000, 1000)
-        j = self._post(query="get_taginfo", tag=name, limit=n).json()
-        if j.get("query_status") == "ok":
-            return [d["sha256_hash"] for d in j["data"]]
-        # Big tags (Mirai, ...) time out server-side; the family signature does not.
-        # The public CSV dumps that used to back this are gone (HTTP 410).
-        print(
-            f"tag {name}: {j.get('data') or j.get('query_status')}, trying signature",
-            file=sys.stderr,
-        )
-        j = self._post(query="get_siginfo", signature=name, limit=n).json()
-        if j.get("query_status") == "ok":
-            return [d["sha256_hash"] for d in j["data"]]
-        raise RuntimeError(f"tag {name}: {j}")
-
-    def info(self, h):
-        j = self._post(query="get_info", hash=h).json()
-        if j.get("query_status") != "ok":
-            raise RuntimeError(f"unknown hash ({j.get('query_status')})")
-        d = j["data"][0]
-        return {
-            "names": d.get("file_name"),
-            "avtype": d.get("signature"),
-            "first_seen": d.get("first_seen"),  # "YYYY-MM-DD HH:MM:SS", UTC
-            "last_seen": d.get("last_seen"),
-        }, d["sha256_hash"]
-
-    def fetch(self, h):
-        """-> (file name, bytes, metadata row)."""
-        meta, sha = self.info(h)  # get_file only takes sha256
-        r = self._post(query="get_file", sha256_hash=sha)
-        if r.headers.get("content-type", "").startswith("application/json"):
-            raise RuntimeError(r.json().get("query_status"))
-        with pyzipper.AESZipFile(io.BytesIO(r.content)) as z:
-            z.setpassword(b"infected")
-            return sha, z.read(z.namelist()[0]), meta
-
-
-class Mwdb:
-    def __init__(self):
-        self.base = os.environ.get("MWDB_URL", "https://mwdb.cert.pl").rstrip("/")
-        self.s = requests.Session()
-        self.s.headers["Authorization"] = "Bearer " + os.environ["MWDB_API_KEY"]
-
-    def _get(self, path, **params):
-        return _call(self.s.get, f"{self.base}/api/{path}", params=params, timeout=300)
-
-    def tag(self, name, limit=None):
-        out, older = [], None
-        while True:  # keyset pagination: `older_than` = last id seen
-            params = {"query": f'tag:"{name}"'}
-            if older:
-                params["older_than"] = older
-            files = self._get("file", **params).json()["files"]
-            if not files or (limit and len(out) >= limit):
-                return out
-            out += [f["sha256"] for f in files]
-            older = files[-1]["id"]
-
-    def info(self, h):
-        d = self._get(f"file/{h}").json()
-        # Plain tags are families (`mirai`); `yara:`, `runnable:`, `feed:` ... are not.
-        fam = [t["tag"] for t in d.get("tags", []) if ":" not in t["tag"]]
-        return {
-            "names": d.get("file_name"),
-            "avtype": fam[0] if fam else None,
-            # MWDB has no sighting dates: its upload time is the first sighting.
-            "first_seen": d.get("upload_time"),
-            "last_seen": None,
-        }, d["sha256"]
-
-    def fetch(self, h):
-        meta, sha = self.info(h)
-        return sha, self._get(f"file/{sha}/download").content, meta
 
 
 def read_meta(path):

@@ -100,6 +100,17 @@ drop-zone + multi-file picker like the upload view, recent scans as a filter/sor
 whose columns are `SCAN_LIST_COLS`) and the `scan_file` tool in `llm_tools.py`, which the
 MCP server re-exports for free.
 
+## External intel
+
+`ext_intel_service.py` holds the MalwareBazaar / MWDB clients (the `bsimvis fetch` CLI
+imports them) and the lookup cache `{coll}:file:{md5}:ext:{mb|mwdb}`. **A hash leaves the
+instance only on an explicit user action** (the file view's Intel tab, the collection's
+External lookup, the `EXT_LOOKUP` job it queues): an instance may hold TLP:RED samples, so
+never call them on page load, in a build, or from a test that can see the keys. Reads
+(`GET /api/file/{md5}/ext`) are cache-only. Imported tags are `mb:<tag>` / `mwdb:<tag>`
+user tags, writer `ext`. The file `sha256` field comes from Ghidra's `Executable SHA256`
+(containers hash their bytes); `BACKFILL_SHA256` fills older files.
+
 ## Strings
 
 `string_service.py` owns the per-file string table (key layout in

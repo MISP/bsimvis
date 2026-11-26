@@ -1156,6 +1156,80 @@ class FileLineage(Resource):
         return get_file_lineage(file_md5)
 
 
+ext_lookup_model = api.model(
+    "ExtLookup",
+    {
+        "collection": fields.String(default="main"),
+        "source": fields.String(description="mb | mwdb", required=True),
+    },
+)
+ext_bulk_model = api.model(
+    "ExtLookupBulk",
+    {
+        "collection": fields.String(default="main"),
+        "md5s": fields.List(fields.String, required=True),
+        "sources": fields.List(fields.String, description="mb, mwdb", required=True),
+        "import_tags": fields.Boolean(default=False),
+    },
+)
+
+
+@ns_file.route("/<string:file_md5>/ext")
+class FileExtIntel(Resource):
+    @ns_file.doc(
+        params={"collection": "Collection name (default: main)"},
+        description="Cached MalwareBazaar / MWDB lookups of a file. Never calls out.",
+    )
+    def get(self, file_md5):
+        """Cached external intel cards of a file."""
+        from bsimvis.app.routes.file import ext_intel
+
+        return ext_intel(file_md5)
+
+
+@ns_file.route("/<string:file_md5>/ext/lookup")
+class FileExtLookup(Resource):
+    @ns_file.doc(
+        description=(
+            "Sends the file's hash to MalwareBazaar or MWDB and caches the answer. "
+            "Only on an explicit user request: the hash leaves the instance."
+        )
+    )
+    @ns_file.expect(ext_lookup_model)
+    def post(self, file_md5):
+        """Looks a file up on one external source."""
+        from bsimvis.app.routes.file import ext_intel_lookup
+
+        return ext_intel_lookup(file_md5)
+
+
+@ns_file.route("/<string:file_md5>/ext/import")
+class FileExtImport(Resource):
+    @ns_file.doc(description="Writes a cached lookup's tags as mb:<tag> / mwdb:<tag>.")
+    @ns_file.expect(ext_lookup_model)
+    def post(self, file_md5):
+        """Imports a cached lookup's tags onto the file."""
+        from bsimvis.app.routes.file import ext_intel_import
+
+        return ext_intel_import(file_md5)
+
+
+@ns_file.route("/ext/lookup_bulk")
+class FileExtLookupBulk(Resource):
+    @ns_file.doc(
+        description=(
+            "Queues an EXT_LOOKUP job over many files. Sends every hash out: "
+            "only on an explicit user request."
+        )
+    )
+    @ns_file.expect(ext_bulk_model)
+    def post(self):
+        """Queues an external lookup of many files."""
+        from bsimvis.app.routes.file import ext_intel_bulk
+
+        return ext_intel_bulk()
+
+
 @ns_file.route("/<string:file_md5>/download")
 class FileDownload(Resource):
     @ns_file.doc(

@@ -171,6 +171,7 @@ def filters_from_args():
         ("root_md5", "root_md5"),
         # One file by its own md5 only; `md5` also matches its children.
         ("exact_md5", "file_md5"),
+        ("sha256", "sha256"),
         ("only_md5", "file_md5"),
         ("strings", "strings"),
     ]:
@@ -619,6 +620,7 @@ def query_files_advanced(r, collection, filters):
             "note_owners",
             "root_md5",
             "file_md5",
+            "sha256",
         ]:
             if field in ("root_md5", "file_md5") and "," in val:
                 # A list of md5s: any of them. The file tree loads every

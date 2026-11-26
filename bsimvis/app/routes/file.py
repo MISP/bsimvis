@@ -901,6 +901,7 @@ def _ingest_container(
         "tags": list(tags),
         "filetype": handler.name,
         "file_size": len(raw_bytes),
+        "sha256": hashlib.sha256(raw_bytes).hexdigest(),
         "is_container": True,
         "language_id": "",
     }
@@ -1363,6 +1364,13 @@ def backfill_entrypoints():
     except Exception as e:
         logging.error(f"Failed to enqueue entry-point backfill: {e}")
         return {"error": str(e)}, 500
+
+
+def backfill_sha256():
+    """Enqueues the collection-wide `sha256` field backfill (BACKFILL_SHA256)."""
+    collection = (request.json or {}).get("collection", "main")
+    job_id = job_service.create_job(JobType.BACKFILL_SHA256, {"collection": collection})
+    return {"status": "processing", "job_id": job_id}
 
 
 def backfill_import_tags():

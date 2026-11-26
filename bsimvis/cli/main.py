@@ -745,6 +745,14 @@ def main():
         "-c", "--collection", required=True, help="Target collection name"
     )
 
+    metadata_backfill_sha256 = metadata_actions.add_parser(
+        "backfill-sha256",
+        help="Store the searchable sha256 field on files analysed before it existed",
+    )
+    metadata_backfill_sha256.add_argument(
+        "-c", "--collection", required=True, help="Target collection name"
+    )
+
     rulezet_parser = subparsers.add_parser(
         "rulezet", help="Mirror YARA rules from rulezet.org"
     )

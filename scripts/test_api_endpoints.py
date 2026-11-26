@@ -557,6 +557,56 @@ def test_entrypoint_backfill():
     )
 
 
+def test_sha256():
+    """sha256 is stored at ingest, searchable by field and bare q, and backfilled."""
+    import hashlib
+    from bsimvis.app.services.redis_client import get_redis, get_raw_redis
+
+    print(_color(f"\n{'='*60}", CYAN))
+    print(_color(" sha256 field", BOLD))
+    print(_color(f"{'='*60}", CYAN))
+
+    r = get_redis()
+    file_key = f"{COLLECTION}:file:{file_md5}"
+    meta = json.loads(r.get(f"{file_key}:meta"))
+    raw = get_raw_redis().get(f"{file_key}:raw")
+    want = hashlib.sha256(raw).hexdigest() if raw else None
+    check(
+        "ingest stores sha256 = sha256(raw)",
+        meta.get("sha256") == want,
+        meta.get("sha256"),
+    )
+
+    def _found(params):
+        return file_md5 in _search_file_md5s({"collection": COLLECTION, **params})
+
+    check("file/search?sha256= finds the file", _found({"sha256": want}))
+    check("bare q=<sha256> finds the file", _found({"q": want}))
+    check(
+        "q=sha256:#<SHA256> (upper, #) finds the file",
+        _found({"q": "sha256:#" + want.upper()}),
+    )
+    check("sha256=<other> finds nothing", not _found({"sha256": "0" * 64}))
+
+    # Drop the field as an older file has it, backfill, expect it back.
+    del meta["sha256"]
+    r.set(f"{file_key}:meta", json.dumps(meta))
+    r.srem(f"{COLLECTION}:idx:file:sha256:{want}", file_key)
+    check("unindexed sha256 no longer matches", not _found({"sha256": want}))
+    res = test_endpoint(
+        "POST",
+        "/api/file/metadata/backfill_sha256",
+        data={"collection": COLLECTION},
+        label="POST /api/file/metadata/backfill_sha256",
+    )
+    wait_for_pipeline((res or {}).get("job_id"), banner=" Wait for sha256 backfill")
+    check(
+        "backfill restores sha256 on the meta",
+        json.loads(r.get(f"{file_key}:meta")).get("sha256") == want,
+    )
+    check("backfill re-indexes sha256", _found({"sha256": want}))
+
+
 def test_cluster_tags():
     """Cluster tags persist once on cluster metadata and remain searchable."""
     from redis import Redis
@@ -12724,6 +12774,7 @@ if __name__ == "__main__":
         test_cluster_tags,
         test_cluster_rename,
         test_entrypoint_backfill,
+        test_sha256,
         test_incremental_hierarchical_cluster_equivalence,
         test_bin_cluster_uuid_history,
         test_function_search_unindexed_cluster,

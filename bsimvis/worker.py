@@ -1097,6 +1097,26 @@ class Worker:
                 self.job_service.enqueue_job(next_job_id, is_continuation=True)
             return True
 
+        elif jtype == JobType.BACKFILL_SHA256.value:
+            cursor = str(payload.get("cursor", "0"))
+            next_cursor, seen, changed = self.metadata_service.backfill_sha256(
+                self.r_raw, collection, cursor=cursor
+            )
+            if job_id:
+                self.job_service.update_progress(
+                    job_id,
+                    0 if next_cursor != "0" else 100,
+                    f"Stored sha256 on {changed}/{seen} files (cursor {cursor} -> {next_cursor})",
+                )
+            if next_cursor != "0":
+                next_job_id = self.job_service.create_job(
+                    JobType.BACKFILL_SHA256,
+                    {"collection": collection, "cursor": next_cursor},
+                    enqueue=False,
+                )
+                self.job_service.enqueue_job(next_job_id, is_continuation=True)
+            return True
+
         elif jtype == JobType.BACKFILL_ENTRYPOINTS.value:
             from bsimvis.app.services.entrypoint_service import backfill_entrypoints
 

@@ -6,7 +6,7 @@ from bsimvis.app.services.index_service import (
 )
 import json
 from bsimvis.app.services.redis_client import get_redis
-from bsimvis.app.services.index_service import save_file, save_function
+from bsimvis.app.services.index_service import save_file, save_function, file_sha256
 from bsimvis.app.services import lineage_service, tag_taxonomy
 from bsimvis.app.services.collection_config import lock_signature_settings
 
@@ -124,6 +124,9 @@ class ProcessingService:
         coll_file_meta["function_count"] = num_functions
 
         coll_file_meta["bsim_features_count"] = total_features
+        sha = file_sha256(coll_file_meta)
+        if sha:
+            coll_file_meta["sha256"] = sha
 
         # Plan D1: mint av:/yara:/ip: tags from the (possibly CSV-merged)
         # avtype/yara/cc_ip fields, unioned into `tags`. Covers both the

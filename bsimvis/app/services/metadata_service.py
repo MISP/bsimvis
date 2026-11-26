@@ -15,6 +15,7 @@ from bsimvis.app.services.index_service import (
     normalize_timestamp,
     normalize_timestamp_fields,
     save_file,
+    file_sha256,
     save_function,
     save_similarity,
     delete_similarity,
@@ -524,6 +525,39 @@ class MetadataService:
             pipe.set(f"{file_base_id}:meta", json.dumps(meta))
             _unindex_tag(pipe, collection, "file", "tags", old_tags, file_base_id)
             _index_tag(pipe, collection, "file", "tags", merged, file_base_id)
+            changed += 1
+        pipe.execute()
+        return str(new_cursor), len(file_ids), changed
+
+    def backfill_sha256(self, r_raw, collection, cursor="0", chunk_size=200):
+        """Store and index `sha256` on files analysed before it was a field.
+
+        Takes Ghidra's "Executable SHA256" off the meta, else hashes the stored
+        raw bytes. A container (its bytes are not kept) without it stays empty.
+        Returns `(next_cursor, files_seen, files_changed)`.
+        """
+        r = self.r
+        new_cursor, raw_ids = r.sscan(
+            f"{collection}:all_files", cursor=int(cursor), count=chunk_size
+        )
+        file_ids = [fid.decode() if isinstance(fid, bytes) else fid for fid in raw_ids]
+        pipe = r.pipeline(transaction=False)
+        changed = 0
+        for file_base_id in file_ids:
+            raw_meta = r.get(f"{file_base_id}:meta")
+            if not raw_meta:
+                continue
+            meta = json.loads(raw_meta)
+            if meta.get("sha256"):
+                continue
+            sha = file_sha256(meta)
+            if not sha:
+                sha = file_sha256(meta, r_raw.get(f"{file_base_id}:raw"))
+            if not sha:
+                continue
+            meta["sha256"] = sha
+            pipe.set(f"{file_base_id}:meta", json.dumps(meta))
+            _index_tag(pipe, collection, "file", "sha256", sha, file_base_id)
             changed += 1
         pipe.execute()
         return str(new_cursor), len(file_ids), changed

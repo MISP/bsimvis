@@ -832,6 +832,10 @@ class FileSearch(Resource):
                 "description": "This file only, by its own MD5 (file_md5 also matches the files it contains)",
                 "example": "59281a167473ca9b98515b11cb709f82",
             },
+            "sha256": {
+                "description": "Filter by exact file SHA256",
+                "example": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            },
             "root_md5": {
                 "description": "Every file extracted out of one upload, at any depth",
                 "example": "59281a167473ca9b98515b11cb709f82",
@@ -1224,6 +1228,23 @@ class BackfillEntrypoints(Resource):
         from bsimvis.app.routes.file import backfill_entrypoints
 
         return backfill_entrypoints()
+
+
+@ns_file.route("/metadata/backfill_sha256")
+class BackfillSha256(Resource):
+    @ns_file.doc(
+        description=(
+            "Stores and indexes `sha256` on files analysed before it was a field "
+            "(Ghidra's Executable SHA256, else the stored raw bytes). "
+            "Chunked self-continuing job (BACKFILL_SHA256)."
+        )
+    )
+    @ns_file.expect(backfill_import_tags_model)
+    def post(self):
+        """Enqueues the sha256 backfill job for a collection."""
+        from bsimvis.app.routes.file import backfill_sha256
+
+        return backfill_sha256()
 
 
 @ns_file.route("/metadata/backfill_import_tags")

@@ -350,6 +350,16 @@ def _unindex_num(pipe, coll, level, field, doc_id):
 # ---------------------------------------------------------------------------
 
 
+def file_sha256(meta, raw=None):
+    """The file's sha256: the stored field, Ghidra's "Executable SHA256", else hashed from raw."""
+    sha = meta.get("sha256") or (meta.get("file_format") or {}).get("Executable SHA256")
+    if not sha and raw:
+        import hashlib
+
+        sha = hashlib.sha256(raw).hexdigest()
+    return str(sha).strip().lower() if sha else None
+
+
 def save_file(pipe, coll, file_md5, data):
     """Index all fields for a file doc. Standardized as {col}:file:{md5}"""
     base_id = f"{coll}:file:{file_md5}"

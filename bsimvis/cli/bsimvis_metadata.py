@@ -88,6 +88,18 @@ def run_backfill_timeline(host, port, args):
         sys.exit(1)
 
 
+def run_backfill_sha256(host, port, args):
+    """Enqueues the sha256 field backfill."""
+    api_url = f"http://{host}:{port}/api/file/metadata/backfill_sha256"
+    try:
+        resp = requests.post(api_url, json={"collection": args.collection})
+        resp.raise_for_status()
+        print(f"[+] sha256 backfill enqueued. Job ID: {resp.json().get('job_id')}")
+    except Exception as e:
+        print(f"[!] Failed to enqueue sha256 backfill: {e}")
+        sys.exit(1)
+
+
 def run_metadata(host, port, args):
     """
     Submits metadata updates via API for propagation.
@@ -98,6 +110,8 @@ def run_metadata(host, port, args):
         return run_backfill_tags(host, port, args)
     if args.action == "backfill-timeline":
         return run_backfill_timeline(host, port, args)
+    if args.action == "backfill-sha256":
+        return run_backfill_sha256(host, port, args)
 
     updates = parse_metadata_file(args.metadata)
     if updates is None:

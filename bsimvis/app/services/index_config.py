@@ -23,6 +23,7 @@ INDEX_CONFIG = {
         "parent_file_name": ["file", "func", "sim"],
         "related_file_name": ["file", "func", "sim"],
         "file_md5": ["file", "func", "sim"],  # fast MD5 lookup at sim level
+        "sha256": ["file"],
         "parent_md5": ["file", "func", "sim"],
         # md5 of the upload this file was eventually extracted from. Unpacking
         # stops at unpack_service.MAX_DEPTH, so root + parent together answer
@@ -129,7 +130,7 @@ INDEX_CONFIG = {
 # (tags, inferred_*, parent/related, type, ...) needs a named filter or a
 # `field:` term, or a common word matches most of the corpus.
 BARE_Q_FIELDS = {
-    "file": ["file_name", "file_names", "file_md5"],
+    "file": ["file_name", "file_names", "file_md5", "sha256"],
     "func": ["function_name", "user_name"],
 }
 
@@ -249,6 +250,7 @@ ADDRESS_FIELDS = {
 # matching, same idea as the `@`/`0x` stripping on ADDRESS_FIELDS.
 HASH_FIELDS = {
     "file_md5",
+    "sha256",
     "parent_md5",
     "root_md5",
     "related_md5",

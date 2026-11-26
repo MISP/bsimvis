@@ -43,6 +43,7 @@ class JobType(Enum):
     PROPAGATE_METADATA = "propagate_metadata"
     BACKFILL_IMPORT_TAGS = "backfill_import_tags"
     BACKFILL_ENTRYPOINTS = "backfill_entrypoints"
+    BACKFILL_SHA256 = "backfill_sha256"
     BACKFILL_CLUSTER_TIMELINE = "backfill_cluster_timeline"
     BUILD_POOL_SIM = "build_pool_sim"
     CLUSTER_POOL = "cluster_pool"

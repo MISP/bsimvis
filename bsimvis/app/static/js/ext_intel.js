@@ -20,12 +20,36 @@ window.ExtIntel = (() => {
     }
 
     // no-referrer: the BsimVis URL (collection, md5) must not reach the site.
+    const A = (l, cls, style, inner) =>
+        `<a class="${cls}" href="${escapeAttr(l.url)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"
+            title="Open on ${escapeAttr(l.title)} (your browser sends the hash to it)" style="text-decoration:none; ${style}">${inner}</a>`;
+
+    // Split button like the Filters one: VirusTotal by default, the rest under the chevron.
     function linksHtml(file) {
-        return links(file).map(l =>
-            `<a class="badge ext-link" href="${escapeAttr(l.url)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"
-                title="Open on ${escapeAttr(l.title)} (your browser sends the hash to it)"
-                style="font-size:0.7rem; text-decoration:none;">${l.label} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem;"></i></a>`
-        ).join(' ');
+        const all = links(file), vt = all.find(l => l.key === 'vt');
+        const rest = all.filter(l => l.key !== 'vt').map(l =>
+            A(l, 'history-item', 'display:flex; align-items:center; gap:8px; font-size:0.75rem; color:var(--text);',
+              `<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.8rem;"></i> Open on ${escapeHtml(l.title)}`)).join('');
+        return `<div class="filter-actions-container">
+            ${A(vt, 'top-action-btn', 'border-top-right-radius:0; border-bottom-right-radius:0;',
+                '<i class="fa-solid fa-arrow-up-right-from-square"></i> Open on VirusTotal')}
+            <button class="top-action-btn" onclick="ExtIntel.toggleMenu(event)" title="Other sites"
+                style="border-left:none; border-top-left-radius:0; border-bottom-left-radius:0; padding:0 7px;">
+                <i class="fa-solid fa-chevron-down" style="font-size:0.6rem;"></i></button>
+            <div class="history-dropdown view-history-dropdown ext-open-dd" style="display:none; width:auto; min-width:200px; right:0; left:auto;">
+                <div class="history-dropdown-title">Open on</div>${rest}
+            </div></div>`;
+    }
+
+    function toggleMenu(event) {
+        event.stopPropagation();
+        const dd = event.currentTarget.parentElement.querySelector('.ext-open-dd');
+        const open = dd.style.display === 'none';
+        dd.style.display = open ? 'block' : 'none';
+        if (open) {
+            const close = (e) => { if (!dd.contains(e.target)) { dd.style.display = 'none'; document.removeEventListener('click', close); } };
+            setTimeout(() => document.addEventListener('click', close), 0);
+        }
     }
 
     async function copy(text) {
@@ -150,5 +174,5 @@ window.ExtIntel = (() => {
         window.showToast?.(r.ok ? `Lookup job queued: ${md5s.length} files on ${j.sources.join(', ')}` : (j.error || 'Failed'), r.ok ? 'success' : 'error');
     }
 
-    return { links, linksHtml, hashesHtml, bindCopy, renderPanel, bulkLookup, sha256Of };
+    return { links, linksHtml, toggleMenu, hashesHtml, bindCopy, renderPanel, bulkLookup, sha256Of };
 })();

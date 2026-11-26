@@ -79,6 +79,84 @@ def load_vectors(r, fids):
     return vectors
 
 
+def _hub_order(pairs):
+    """Pairs grouped around the binary with the most remaining pairs, so a
+    batch binary stays cached while its partners stream past it."""
+    from collections import defaultdict
+
+    by_md5 = defaultdict(list)
+    for p in pairs:
+        by_md5[p[0]].append(p)
+        by_md5[p[1]].append(p)
+    done, out = set(), []
+    for hub in sorted(by_md5, key=lambda m: (-len(by_md5[m]), m)):
+        for p in by_md5[hub]:
+            if p not in done:
+                done.add(p)
+                out.append(p)
+    return out
+
+
+class _FuncCache:
+    """Function data of whole binaries, LRU-bounded by function count.
+
+    Keeps only what scoring reads: tf vectors, `bsim_features_count` and the
+    merged tags. A binary is fetched again if it was evicted, so results are
+    exact whatever the budget.
+    """
+
+    FETCH_BATCH = 5000
+
+    def __init__(self, r, binary_fids, with_vectors, budget=40000):
+        from collections import OrderedDict
+
+        self.r, self.binary_fids, self.with_vectors = r, binary_fids, with_vectors
+        self.budget, self.size, self.loads = budget, 0, 0
+        self.lru = OrderedDict()
+
+    def get(self, md5):
+        hit = self.lru.get(md5)
+        if hit is not None:
+            self.lru.move_to_end(md5)
+            return hit
+        data = self._load(sorted(self.binary_fids[md5]))
+        self.loads += 1
+        self.lru[md5] = data
+        self.size += len(self.binary_fids[md5])
+        # ponytail: never evict the two binaries of the current pair
+        while self.size > self.budget and len(self.lru) > 2:
+            old, _ = self.lru.popitem(last=False)
+            self.size -= len(self.binary_fids[old])
+        return data
+
+    def _load(self, fids):
+        vectors, feats, tags = {}, {}, {}
+        for i in range(0, len(fids), self.FETCH_BATCH):
+            part = fids[i : i + self.FETCH_BATCH]
+            if self.with_vectors:
+                vectors.update(load_vectors(self.r, part))
+            pipe = self.r.pipeline(transaction=False)
+            for fid in part:
+                pipe.get(f"{fid}:meta")
+            for fid, res in zip(part, pipe.execute()):
+                if not res:
+                    continue
+                m = json.loads(res) if not isinstance(res, dict) else res
+                if isinstance(m, str):
+                    try:
+                        m = json.loads(m)
+                    except ValueError:
+                        pass
+                if not isinstance(m, dict):
+                    continue
+                if "bsim_features_count" in m:
+                    feats[fid] = m["bsim_features_count"]
+                t = merge_tag_fields(m)
+                if t:
+                    tags[fid] = t
+        return vectors, feats, tags
+
+
 def _discover_edges_py(
     vectors, fids_a, fids_b, algo, min_score, skip_pairs=(), max_df=1.0
 ):
@@ -1023,50 +1101,14 @@ class BinSimService:
             ]
             binary_fids[md5] = set(fids)
 
-        # 3. Load function metadata (for bsim_features_count & names)
-        func_meta_cache = {}
-        all_unique_fids = set()
-        for fids_set in binary_fids.values():
-            all_unique_fids.update(fids_set)
+        # 3. Per-binary function data (vectors, feature counts, tags), loaded on
+        # first use and evicted LRU. Loading the whole chunk at once OOM-killed
+        # 3 GB workers at 212k functions. Pairs are independent, so the hub order
+        # below changes memory and read count, never a score.
+        func_cache = _FuncCache(r, binary_fids, bool(discovery))
+        pairs = _hub_order(pairs)
 
-        # One fetch per function for the whole chunk: discovery is per pair, but
-        # a binary appears in many pairs of a chunk and its vectors do not change
-        # between them.
-        # ponytail: whole-chunk vectors sit in memory next to func_meta_cache; if a
-        # chunk ever outgrows RAM, shrink CHUNK_SIZE before sharding this.
-        vectors = (
-            load_vectors(r, all_unique_fids) if discovery and all_unique_fids else {}
-        )
-
-        if all_unique_fids:
-            if job_service and job_id:
-                job_service.add_log(
-                    job_id,
-                    f"[*] Loading metadata for {len(all_unique_fids)} functions...",
-                )
-            fids_list = list(all_unique_fids)
-            pipe = r.pipeline(transaction=False)
-            for fid in fids_list:
-                pipe.get(f"{fid}:meta")
-            meta_results = pipe.execute()
-            for fid, res in zip(fids_list, meta_results):
-                if res:
-                    m = json.loads(res) if not isinstance(res, dict) else res
-                    if isinstance(m, str):
-                        try:
-                            m = json.loads(m)
-                        except ValueError:
-                            pass
-                    func_meta_cache[fid] = m if isinstance(m, dict) else {}
-
-        # Normalize each function's tags once here, not once per matched edge.
-        fid_tags = {}
-        for fid, m in func_meta_cache.items():
-            tags = merge_tag_fields(m)
-            if tags:
-                fid_tags[fid] = tags
-
-        tag_meta_cache = load_tag_meta(r, collection) if fid_tags else {}
+        tag_meta_cache = load_tag_meta(r, collection)
         tags_rev = read_tags_rev(r, collection)
 
         # 5. Process Pairs (Direct Similarity Matching with Bipartite Greedy Selection)
@@ -1150,6 +1192,11 @@ class BinSimService:
 
             all_funcs_a_total = binary_fids[m_a]
             all_funcs_b_total = binary_fids[m_b]
+            vec_a, feat_a, tags_a = func_cache.get(m_a)
+            vec_b, feat_b, tags_b = func_cache.get(m_b)
+            vectors = {**vec_a, **vec_b}
+            feats = {**feat_a, **feat_b}
+            fid_tags = {**tags_a, **tags_b}
 
             if discovery:
                 # Stored edges first, exactly as they score below; only what that
@@ -1171,9 +1218,7 @@ class BinSimService:
                 )
 
             def _feat(fid):
-                return float(
-                    func_meta_cache.get(fid, {}).get("bsim_features_count", 1.0)
-                )
+                return float(feats.get(fid, 1.0))
 
             common = score_pair(
                 edges,

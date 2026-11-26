@@ -1,8 +1,8 @@
 """Download samples from MalwareBazaar or MWDB, then optionally upload them.
 
-  bsimvis fetch mb   -o samples/ tag:Mirai -n 20 -c main
+  bsimvis fetch malwarebazaar -o samples/ tag:Mirai -n 20 -c main
   bsimvis fetch mwdb -o samples/ hashes.txt
-  echo '"md5a","md5b"' | bsimvis fetch mb -o samples/ -
+  echo '"md5a","md5b"' | bsimvis fetch mb -o samples/ -   (mb = malwarebazaar)
 
 Inputs (any mix): `tag:NAME`, a file path, `-` for stdin, or raw text. Hashes
 (md5 or sha256) are pulled out by regex, so any separator or quoting works.
@@ -32,7 +32,7 @@ HASH_RE = re.compile(
 )
 MB_URL = "https://mb-api.abuse.ch/api/v1/"
 META_COLS = ["HASH", "names", "avtype", "first_seen", "last_seen"]
-SOURCE_TAG = {"mb": "malwarebazaar", "mwdb": "mwdb"}
+SOURCE_TAG = {"malwarebazaar": "source:malwarebazaar", "mwdb": "source:mwdb"}
 
 
 def parse_inputs(items):
@@ -188,13 +188,15 @@ def upload(files, args, meta_csv, host):
 
 
 def run_fetch(api_host, args):
+    if args.source == "mb":
+        args.source = "malwarebazaar"
     if ":" not in api_host:
         api_host += ":5000"
-    key = "MB_API_KEY" if args.source == "mb" else "MWDB_API_KEY"
+    key = "MB_API_KEY" if args.source == "malwarebazaar" else "MWDB_API_KEY"
     if not os.environ.get(key):
         print(f"{key} not set (put it in .env)", file=sys.stderr)
         return 2
-    client = Bazaar() if args.source == "mb" else Mwdb()
+    client = Bazaar() if args.source == "malwarebazaar" else Mwdb()
 
     hashes, tags = parse_inputs(args.inputs)
     for t in tags:
@@ -249,7 +251,7 @@ def add_parser(subparsers):
     p = subparsers.add_parser(
         "fetch", help="Download samples from MalwareBazaar or MWDB (and upload them)"
     )
-    p.add_argument("source", choices=["mb", "mwdb"])
+    p.add_argument("source", choices=["malwarebazaar", "mb", "mwdb"])
     p.add_argument("inputs", nargs="+", help="tag:NAME, hash list file, - or hashes")
     p.add_argument("-o", "--out", required=True, type=Path)
     p.add_argument("--list", action="store_true", help="print hashes, download nothing")

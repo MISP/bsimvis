@@ -89,8 +89,8 @@ analysts can annotate, and reworks navigation around collections.
 * **Docker** : a Dockerfile and compose services for the app and workers (gunicorn, non-root,
   pinned base image and JDK), with optional Docker datastores for small machines.
 * **Sample download** : download a stored sample as an `infected` password zip.
-* **`scripts/fetch_samples.py`** : pull samples from MalwareBazaar or MWDB by hash list or tag
-  and upload them.
+* **`bsimvis fetch mb|mwdb`** : pull samples from MalwareBazaar or MWDB by hash list or tag
+  and upload them with their first_seen / last_seen dates (keys from `.env` only).
 * **Performance** : large `build_sim` batches split into parallel shard jobs, `redis[hiredis]`
   for reply parsing, gzip responses, a file search that stops sorting at the requested page,
   and an overview that serves its cached copy while it refreshes.

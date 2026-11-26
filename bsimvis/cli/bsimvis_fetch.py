@@ -188,6 +188,8 @@ def upload(files, args, meta_csv, host):
 
 
 def run_fetch(api_host, args):
+    if ":" not in api_host:
+        api_host += ":5000"
     key = "MB_API_KEY" if args.source == "mb" else "MWDB_API_KEY"
     if not os.environ.get(key):
         print(f"{key} not set (put it in .env)", file=sys.stderr)
@@ -256,6 +258,9 @@ def add_parser(subparsers):
         "-t", "--tag", action="append", default=[], help="extra upload tag (repeatable)"
     )
     p.add_argument("-n", "--limit", type=int, help="max samples per tag")
+    p.add_argument(
+        "-H", "--host", dest="hosts", action="append", help="BSimVis API host[:port]"
+    )
     p.add_argument("--skip-sim", action="store_true", help="upload with --skip-sim")
 
 

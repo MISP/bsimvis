@@ -20,6 +20,7 @@ from bsimvis.cli import (
     bsimvis_rulezet,
     bsimvis_scan,
     bsimvis_transfer,
+    bsimvis_fetch,
 )
 
 
@@ -809,6 +810,8 @@ def main():
         help="Return these rules to the mirror and remember it",
     )
 
+    bsimvis_fetch.add_parser(subparsers)
+
     # --- SCAN ---
     scan_parser = subparsers.add_parser(
         "scan",
@@ -951,6 +954,10 @@ def main():
             bsimvis_metadata.run_metadata(g_host, int(g_port), args)
         elif args.subcommand == "rulezet":
             bsimvis_rulezet.run_rulezet(g_host, int(g_port), args)
+        elif args.subcommand == "fetch":
+            rc = bsimvis_fetch.run_fetch(api_host_str, args)
+            if rc:
+                sys.exit(rc)
         elif args.subcommand == "scan":
             rc = bsimvis_scan.run_scan(g_host, int(g_port), args)
             if rc:

@@ -141,8 +141,7 @@ window.FileView = {
                 <div id="file-title-strip" class="bin-sim-strip" style="margin-bottom: 20px; cursor: context-menu;"
                     oncontextmenu="typeof EntityRenderer !== 'undefined' && EntityRenderer.handleContextMenu(event, 'file', this)">
                     <span id="file-title-text" style="font-weight:bold; color:var(--accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:30%;">unknown</span>
-                    <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 6px;">(MD5: ---)</span>
-                    <span id="file-ext-links" style="display:inline-flex; gap:4px; margin-right:10px;"></span>
+                    <span id="file-md5-text" style="font-family: 'JetBrains Mono', 'Consolas', monospace; color: var(--dim); font-size: 0.8rem; margin-right: 10px;">(MD5: ---)</span>
                     <span id="file-tags-container" style="display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; min-width: 0; flex: 1;"></span>
                     <span id="file-actions-container" style="margin-left:auto; display: inline-flex; align-items: center; gap: 8px;"></span>
                     <span id="file-note-btn-container" style="display: inline-flex; align-items: center; margin-left: 8px;"></span>
@@ -404,7 +403,6 @@ window.FileView = {
             md5El.innerHTML = window.ExtIntel ? ExtIntel.hashesHtml(file) : escapeHtml(`(MD5: ${file.file_md5})`);
             if (window.ExtIntel) {
                 ExtIntel.bindCopy(md5El);
-                document.getElementById('file-ext-links').innerHTML = ExtIntel.linksHtml(file);
             }
 
             // buildFunctionsQuery and the lineage panel both need the raw doc.
@@ -459,7 +457,7 @@ window.FileView = {
             const fileScope = `scope: 'file', collection: ${jsString(collection)}, fileMd5: ${jsString(file.file_md5)}`;
             const downloadUrl = `/api/file/${encodeURIComponent(file.file_md5)}/download?collection=${encodeURIComponent(collection)}`;
             const downloadBtn = file.is_container ? '' : `<a class="top-action-btn" href="${escapeAttr(downloadUrl)}" download title="Download the sample as a zip encrypted with the password 'infected'" style="text-decoration:none;"><i class="fa-solid fa-download"></i> Download</a>`;
-            document.getElementById('file-actions-container').innerHTML = downloadBtn + UI.MoreMenu.render([
+            document.getElementById('file-actions-container').innerHTML = (window.ExtIntel ? ExtIntel.linksHtml(file) : '') + downloadBtn + UI.MoreMenu.render([
                 { label: 'Analyze file with AI', icon: 'fa-solid fa-robot', tooltip: 'Analyze every candidate function of this file with AI', onClick: `openAnalyzeModal({ ${fileScope} })` },
                 { label: 'AI search', icon: 'fa-solid fa-magnifying-glass', tooltip: 'Ask AI which functions of this file match a description', onClick: `openSearchModal({ ${fileScope} })` },
                 '-',

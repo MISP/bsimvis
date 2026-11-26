@@ -20,12 +20,19 @@ window.ExtIntel = (() => {
     }
 
     // no-referrer: the BsimVis URL (collection, md5) must not reach the site.
+    // One segmented top-action-btn group, as the other header actions.
     function linksHtml(file) {
-        return links(file).map(l =>
-            `<a class="badge ext-link" href="${escapeAttr(l.url)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"
+        const all = links(file);
+        const btns = all.map((l, i) => {
+            const radius = i === 0 ? '0' : i === all.length - 1 ? '0 4px 4px 0' : '0';
+            const join = i ? 'margin-left:-1px;' : '';
+            return `<a class="top-action-btn" href="${escapeAttr(l.url)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"
                 title="Open on ${escapeAttr(l.title)} (your browser sends the hash to it)"
-                style="font-size:0.7rem; text-decoration:none;">${l.label} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem;"></i></a>`
-        ).join(' ');
+                style="text-decoration:none; border-radius:${radius}; ${join}">${l.label}</a>`;
+        }).join('');
+        return `<span style="display:inline-flex; align-items:center;">
+            <span class="top-action-btn" style="cursor:default; border-radius:4px 0 0 4px; margin-right:-1px; color:var(--dim); font-weight:normal;"
+                title="Look this sample up elsewhere"><i class="fa-solid fa-arrow-up-right-from-square"></i> Open on</span>${btns}</span>`;
     }
 
     async function copy(text) {
